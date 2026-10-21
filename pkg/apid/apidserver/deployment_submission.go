@@ -1,12 +1,17 @@
 package apidserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -66,21 +71,76 @@ func (s *server) withDeploymentSubmission(next accountHandler) accountHandler {
 			return
 		}
 		receipt, err := store.DeploymentSubmission(r.Context(), app.ID, values[0])
-		if err == nil {
-			s.replyAcceptedSubmission(w, r, app, receipt)
-			return
-		}
-		if !errors.Is(err, state.ErrNotFound) {
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrCapacity("could not verify deployment submission receipt"))
 			return
 		}
 		ctx := context.WithValue(r.Context(), deploymentSubmissionRequestKey{}, true)
 		ctx = state.ContextWithDeploymentSubmission(ctx, values[0])
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			// Multipart handlers fingerprint the parsed fields and source,
+			// then replay or refuse an accepted attempt themselves.
+			if err == nil {
+				ctx = context.WithValue(ctx, acceptedSubmissionKey{}, receipt)
+			}
+			next(w, r.WithContext(ctx), acct)
+			return
+		}
+		fingerprint, ok := s.jsonSubmissionFingerprint(w, r)
+		if !ok {
+			return
+		}
+		if err == nil {
+			s.replyAcceptedSubmission(w, r, app, receipt, fingerprint)
+			return
+		}
+		if fingerprint != "" {
+			ctx = state.ContextWithDeploymentSubmissionFingerprint(ctx, fingerprint)
+		}
 		next(w, r.WithContext(ctx), acct)
 	}
 }
 
-func (s *server) replyAcceptedSubmission(w http.ResponseWriter, r *http.Request, app state.App, receipt api.DeploymentSubmissionReceipt) {
+type acceptedSubmissionKey struct{}
+
+// jsonSubmissionFingerprint fingerprints a bounded JSON body and restores it for
+// the handler. A body that is not one JSON value gets no fingerprint; the
+// handler rejects it before any deployment exists.
+func (s *server) jsonSubmissionFingerprint(w http.ResponseWriter, r *http.Request) (string, bool) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, httpkit.DefaultJSONBodyMaxBytes+1))
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "could not read the request body"))
+		return "", false
+	}
+	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+	if int64(len(body)) > httpkit.DefaultJSONBodyMaxBytes {
+		return "", true
+	}
+	fingerprint, _ := deploystaging.JSONRequestFingerprint(r.Pattern, r.URL.Query(), body)
+	return fingerprint, true
+}
+
+// replyMultipartSubmission finishes a multipart attempt once its fields and
+// source are fingerprinted: it replays or refuses an accepted attempt, or
+// returns a request whose deployment will record the fingerprint.
+func (s *server) replyMultipartSubmission(w http.ResponseWriter, r *http.Request, app state.App, fingerprint string) (*http.Request, bool) {
+	if receipt, accepted := r.Context().Value(acceptedSubmissionKey{}).(api.DeploymentSubmissionReceipt); accepted {
+		s.replyAcceptedSubmission(w, r, app, receipt, fingerprint)
+		return r, true
+	}
+	if state.DeploymentSubmissionAttempt(r.Context()) == "" {
+		return r, false
+	}
+	return r.WithContext(state.ContextWithDeploymentSubmissionFingerprint(r.Context(), fingerprint)), false
+}
+
+func (s *server) replyAcceptedSubmission(w http.ResponseWriter, r *http.Request, app state.App, receipt api.DeploymentSubmissionReceipt, fingerprint string) {
+	// Receipts accepted before fingerprints existed keep replaying.
+	if receipt.RequestFingerprint != "" && receipt.RequestFingerprint != fingerprint {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeDeploymentAttemptMismatch,
+			"Deployment attempt reused", "this attempt was accepted for a different request; use a new Deployment-Attempt-ID for a new deployment"))
+		return
+	}
 	d, err := s.store.DeploymentByID(r.Context(), receipt.DeploymentID)
 	if err != nil || d.AppID != app.ID {
 		api.WriteProblem(w, api.ErrCapacity("could not read accepted deployment"))

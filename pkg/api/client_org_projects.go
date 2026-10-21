@@ -426,6 +426,8 @@ func (c *Client) ScanOrgProjectDeployment(
 }
 
 // DeployOrgProject uses the existing project namespace selected by its organization URL.
+// A safe-release context (ContextWithProjectSafeRelease and friends) sends the
+// atomic release to the company's safe-deploy URL with its durable attempt.
 func (c *Client) DeployOrgProject(
 	ctx context.Context, orgSlug string,
 	planToken string,
@@ -434,38 +436,10 @@ func (c *Client) DeployOrgProject(
 	environment, approvalToken string,
 	platformTenantRequired ...*bool,
 ) (ApplyResponse, error) {
-	var b bytes.Buffer
-	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken); err != nil {
-		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
+	path := orgProjectBase(orgSlug, projectSlug) + "/deploy"
+	if projectSafeReleaseRequested(ctx) {
+		path = orgProjectBase(orgSlug, projectSlug) + "/safe-deploy"
 	}
-	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
-		return ApplyResponse{}, fmt.Errorf("build tenant policy field: %w", err)
-	}
-	if err := w.Close(); err != nil {
-		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
-	}
-	endpoint := c.baseURL + orgProjectPath(orgSlug) + "/" + url.PathEscape(projectSlug) + "/deploy"
-	if planToken != "" {
-		endpoint += "?plan_token=" + url.QueryEscape(planToken)
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, &b)
-	if err != nil {
-		return ApplyResponse{}, err
-	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	req.Header.Set("Content-Type", w.FormDataContentType())
-	// Multipart project applies bypass Client.do because the request body
-	// carries a file. Preserve the caller's logical retry key just like the
-	// JSON and single-app multipart paths; only mint a key for legacy callers
-	// that did not attach one to the context.
-	idempotencyKey := IdempotencyKeyFromContext(ctx)
-	if idempotencyKey == "" {
-		idempotencyKey = newUUIDv4()
-	}
-	req.Header.Set("Idempotency-Key", idempotencyKey)
-	var out ApplyResponse
-	return out, c.doReq(c.uploadHTTP(), req, &out)
+	return c.applyProjectPlanTo(ctx, path, planToken, source, sourceName, projectSlug, repoFullName, productionBranch,
+		installID, only, exclude, persistExclude, noTriggers, environment, approvalToken, nil, nil, platformTenantRequired...)
 }

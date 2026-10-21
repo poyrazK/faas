@@ -328,7 +328,7 @@ func (m *MemStore) ReconcileDeploymentCrons(_ context.Context) ([]CronActivation
 			if m.deploymentCronStates[appID].Revision != a.Revision || !api.DeploymentCronsEqual(cronIntents(m.httpCronsLocked(appID)), r.Before) {
 				a.Status, reason = "conflict", "cron_changed"
 			} else {
-				limits, known := api.LimitsFor(m.accounts[app.AccountID].Plan)
+				limits, known := api.LimitsFor(m.namespacePlanLocked(app.AccountID))
 				if !known {
 					a.Status, reason = "conflict", "plan_unavailable"
 				} else if err := m.activateDeploymentCronSetLocked(appID, DeploymentCronStagingParams{AccountID: app.AccountID, Request: r, Limits: limits}); err != nil {

@@ -10,6 +10,9 @@ import (
 const (
 	CodeDeploymentAttemptAccepted = "deployment_attempt_accepted"
 	CodeDeploymentAttemptPending  = "deployment_attempt_pending"
+	// CodeDeploymentAttemptMismatch refuses an accepted attempt ID reused for a
+	// different request (ADR-20261021101500).
+	CodeDeploymentAttemptMismatch = "deployment_attempt_mismatch"
 )
 
 const DeploymentAttemptHeader = "Deployment-Attempt-ID"

@@ -3769,10 +3769,11 @@ type DeploymentSidecarSecretReloadSignal struct {
 }
 
 type DeploymentSubmissionReceipt struct {
-	AppID        pgtype.UUID
-	AttemptID    string
-	DeploymentID pgtype.UUID
-	AcceptedAt   pgtype.Timestamptz
+	AppID              pgtype.UUID
+	AttemptID          string
+	DeploymentID       pgtype.UUID
+	AcceptedAt         pgtype.Timestamptz
+	RequestFingerprint pgtype.Text
 }
 
 type DevBridgeSession struct {

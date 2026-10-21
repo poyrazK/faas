@@ -639,6 +639,7 @@ type Querier interface {
 	// not the customer-facing quota.
 	CreateUploadSession(ctx context.Context, db DBTX, arg CreateUploadSessionParams) (UploadSession, error)
 	CreateWorkflowForEachItem(ctx context.Context, db DBTX, arg CreateWorkflowForEachItemParams) error
+	// A company namespace uses its adopted organization's plan (AppResourceAccount).
 	CronActivationPlan(ctx context.Context, db DBTX, accountID string) (string, error)
 	CronActivationUploadAccepted(ctx context.Context, db DBTX, arg CronActivationUploadAcceptedParams) (bool, error)
 	CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronByIDRow, error)
@@ -3474,6 +3475,8 @@ type Querier interface {
 	LockReadinessSubscription(ctx context.Context, db DBTX, arg LockReadinessSubscriptionParams) (CustomerWorkflowReadinessSubscription, error)
 	LockReadinessSubscriptionLease(ctx context.Context, db DBTX, arg LockReadinessSubscriptionLeaseParams) (pgtype.UUID, error)
 	LockRegressionActionReceipt(ctx context.Context, db DBTX, arg LockRegressionActionReceiptParams) (LockRegressionActionReceiptRow, error)
+	// Lock the namespace createAppIfUnderQuotaTx locks; a company namespace uses
+	// its adopted organization's plan.
 	LockReleaseAdditionAccount(ctx context.Context, db DBTX, accountID string) (string, error)
 	LockReleaseAdditionProject(ctx context.Context, db DBTX, arg LockReleaseAdditionProjectParams) (string, error)
 	LockRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LockRetainedRollbackDeploymentParams) (pgtype.UUID, error)
@@ -4313,6 +4316,9 @@ type Querier interface {
 	PruneProjectBindingVerificationRunReceipts(ctx context.Context, db DBTX, projectID pgtype.UUID) error
 	PruneProjectBindingVerificationRuns(ctx context.Context, db DBTX, projectID pgtype.UUID) error
 	PruneProjectMigrations(ctx context.Context, db DBTX, arg PruneProjectMigrationsParams) error
+	// Bounded receipt retention (ADR-20261021094500). A receipt stays while its
+	// safe release may still change or any attempt-keyed release state names it.
+	PruneProjectSubmissions(ctx context.Context, db DBTX, arg PruneProjectSubmissionsParams) (int64, error)
 	PruneReadinessNotifications(ctx context.Context, db DBTX, arg PruneReadinessNotificationsParams) error
 	PruneRouteCheckHistory(ctx context.Context, db DBTX, arg PruneRouteCheckHistoryParams) error
 	PruneRouteHealthHistory(ctx context.Context, db DBTX, arg PruneRouteHealthHistoryParams) error

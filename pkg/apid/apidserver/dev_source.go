@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,7 +25,7 @@ type devSourceMetadata struct {
 	seen    map[string]bool
 }
 
-func (m *devSourceMetadata) readField(name string, part *multipart.Part) *api.Problem {
+func (m *devSourceMetadata) readField(name string, part io.Reader) *api.Problem {
 	if m.seen == nil {
 		m.seen = make(map[string]bool)
 	}

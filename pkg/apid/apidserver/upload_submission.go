@@ -3,8 +3,10 @@ package apidserver
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -33,7 +35,8 @@ func (s *server) attachUploadSubmission(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return false
 	}
-	_, err = store.AttachDeploymentSubmission(r.Context(), app.ID, id, deploymentID)
+	ctx := state.ContextWithDeploymentSubmissionFingerprint(r.Context(), uploadSubmissionFingerprint(r))
+	_, err = store.AttachDeploymentSubmission(ctx, app.ID, id, deploymentID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not retain upload deployment receipt"))
 		return false
@@ -65,6 +68,14 @@ func (s *server) replayUploadSubmission(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.ErrCapacity("could not verify upload submission"))
 		return true
 	}
-	s.replyAcceptedSubmission(w, r, app, receipt)
+	s.replyAcceptedSubmission(w, r, app, receipt, uploadSubmissionFingerprint(r))
 	return true
+}
+
+// uploadSubmissionFingerprint binds a commit attempt to its upload session,
+// whose content the session itself fixes (ADR-20261021101500).
+func uploadSubmissionFingerprint(r *http.Request) string {
+	fingerprint := deploystaging.NewRequestFingerprint(r.Pattern, r.URL.Query())
+	_ = fingerprint.AddPart("upload", strings.NewReader(r.PathValue("id")))
+	return fingerprint.Sum()
 }

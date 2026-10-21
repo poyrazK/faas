@@ -76,3 +76,8 @@ func TestDeploymentSubmissionPGReceiptPurge(t *testing.T) {
 		t.Fatalf("retained receipts=%d err=%v", count, err)
 	}
 }
+
+func TestDeploymentSubmissionFingerprintPG(t *testing.T) {
+	store, _ := pgStore(t)
+	testDeploymentSubmissionFingerprint(t, store)
+}

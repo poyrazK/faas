@@ -20,6 +20,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
@@ -165,8 +166,9 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		}
 	}(r.Context())
 
+	fingerprint := deploystaging.NewRequestFingerprint(r.Pattern, r.URL.Query())
 	for {
-		part, err := mr.NextPart()
+		rawPart, err := mr.NextPart()
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -175,11 +177,12 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				"Bad multipart", err.Error()))
 			return
 		}
+		part := fingerprint.Track(rawPart)
 		name := part.FormName()
 		switch name {
 		case "source":
 			kind = state.DeploymentKindTarball
-			if vErr := assertMultipartFileName(part); vErr != nil {
+			if vErr := assertMultipartFileName(rawPart); vErr != nil {
 				api.WriteProblem(w, vErr)
 				return
 			}
@@ -366,6 +369,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		_ = part.Close()
 	}
 
+	r, replied := s.replyMultipartSubmission(w, r, app, fingerprint.Sum())
+	if replied {
+		return
+	}
 	if sourcePath == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Source required", "multipart deploys require a 'source' file field"))
@@ -1061,7 +1068,7 @@ var truthyFlagLiterals = []string{"1", "true", "on", "yes"}
 
 // isFlagSet reads a small multipart field and reports whether it carries a
 // truthy value (used by the dockerfile checkbox).
-func isFlagSet(part *multipart.Part) bool {
+func isFlagSet(part io.Reader) bool {
 	b, _ := io.ReadAll(io.LimitReader(part, 16))
 	s := strings.ToLower(strings.TrimSpace(string(b)))
 	for _, lit := range truthyFlagLiterals {

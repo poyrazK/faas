@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"sort"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func (m *MemStore) ProjectByOrgSlug(_ context.Context, orgID, slug string) (Project, error) {
@@ -79,6 +81,15 @@ func (m *MemStore) checkProjectWorkloadOwnerLocked(app App) error {
 		return ErrConflict
 	}
 	return nil
+}
+
+// namespacePlanLocked is the plan governing a resource namespace: the human
+// account's, or an adopted organization's for a company namespace.
+func (m *MemStore) namespacePlanLocked(id string) api.Plan {
+	if org, ok := m.orgs[id]; ok && !org.Personal && org.ResourceOwnershipEnabled {
+		return org.Plan
+	}
+	return m.accounts[id].Plan
 }
 
 func (m *MemStore) resourceNamespaceExistsLocked(id string) bool {

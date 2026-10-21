@@ -28,28 +28,41 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}":      authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/promotions":                  authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/delete-preview":                                         authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/deployment-readiness":                                  authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/promotion-preview":          authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/submissions/{attempt_id}":                               authz.OrgActionReadProject,
 	"POST /v1/projects/{slug}/environments":                                          authz.OrgActionConfigureProject,
 	"PUT /v1/projects/{slug}/environments/{environment}/config":                      authz.OrgActionConfigureProject,
 	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes": authz.OrgActionConfigureProject,
 	"DELETE /v1/projects/{slug}/exclusions/{slug2}":                                  authz.OrgActionConfigureProject,
-	"POST /v1/projects":      authz.OrgActionDeployProject,
-	"POST /v1/projects/scan": authz.OrgActionDeployProject,
-	"POST /v1/projects/{slug}/environments/{environment}/qualifications":                  authz.OrgActionDeployProject,
-	"POST /v1/projects/{slug}/environments/{environment}/release-sets":                    authz.OrgActionDeployProject,
-	"POST /v1/projects/{slug}/environments/{environment}/promote":                         authz.OrgActionDeployProject,
-	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback": authz.OrgActionDeployProject,
-	"PATCH /v1/projects/{slug}":                                                        authz.OrgActionManageProjectSecurity,
-	"PATCH /v1/projects/{slug}/environments/{environment}":                             authz.OrgActionManageProjectSecurity,
-	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies": authz.OrgActionManageProjectSecurity,
-	"POST /v1/projects/{slug}/environments/{environment}/approvals":                    authz.OrgActionApproveProjectEnvironment,
-	"DELETE /v1/projects/{slug}":                                                       authz.OrgActionDeleteProject,
-	"DELETE /v1/projects/{slug}/environments/{environment}":                            authz.OrgActionDeleteProject,
+	// Release secrets need the same roles as app secrets; values are sealed on write.
+	"POST /v1/projects/{slug}/release-secrets": authz.OrgActionConfigureProject,
+	"POST /v1/projects":                        authz.OrgActionDeployProject,
+	"POST /v1/projects/scan":                   authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/qualifications":                           authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/release-sets":                             authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/promote":                                  authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback":          authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/safe-deploy":                                                         authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration": authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/{action}":          authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/submissions/{attempt_id}/{action}":                                   authz.OrgActionDeployProject,
+	"PATCH /v1/projects/{slug}":                                                                    authz.OrgActionManageProjectSecurity,
+	"PATCH /v1/projects/{slug}/environments/{environment}":                                         authz.OrgActionManageProjectSecurity,
+	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies":             authz.OrgActionManageProjectSecurity,
+	"POST /v1/projects/{slug}/environments/{environment}/approvals":                                authz.OrgActionApproveProjectEnvironment,
+	"DELETE /v1/projects/{slug}":                                                                   authz.OrgActionDeleteProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}":                                        authz.OrgActionDeleteProject,
 }
 
-// preCreationRoutes may name a personal project that its first deploy will
-// create. They create nothing and are reviewed like collection requests.
+// preCreationRoutes may name a project that its first deploy will create.
+// They create nothing and are reviewed like collection requests.
 var preCreationRoutes = map[string]bool{
 	"POST /v1/projects/{slug}/deployment-readiness": true,
+}
+
+func preCreationRoute(pattern string) bool {
+	return preCreationRoutes[strings.Replace(pattern, "/v1/orgs/{organization}/projects", "/v1/projects", 1)]
 }
 
 func Action(pattern string) (authz.OrgAction, bool) {

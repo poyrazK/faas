@@ -101,7 +101,7 @@ func (m *MemStore) StageProjectReleaseAdditions(_ context.Context, accountID, at
 	if !found || project.AccountID != accountID || !reserved || entry.Status != "processing" || m.activeProjectReleaseSets[releaseKey(projectID, "production")] != safe.PreviousReleaseID {
 		return nil, ErrConflict
 	}
-	limits := api.MustLimitsFor(m.accounts[accountID].Plan)
+	limits := api.MustLimitsFor(m.namespacePlanLocked(accountID))
 	var receipt api.ProjectSubmissionReceipt
 	if err := json.Unmarshal(entry.Payload, &receipt); err != nil {
 		return nil, err

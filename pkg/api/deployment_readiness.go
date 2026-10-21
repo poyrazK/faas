@@ -80,11 +80,15 @@ func DeploymentReadinessStatus(checks []ProjectDeploymentCheck) string {
 }
 
 func (c *Client) CheckProjectDeployment(ctx context.Context, project string, request ProjectDeploymentCheckRequest) (ProjectDeploymentReadiness, error) {
+	return c.checkProjectDeployment(ctx, "/v1/projects/"+url.PathEscape(project)+"/deployment-readiness", project, request)
+}
+
+func (c *Client) checkProjectDeployment(ctx context.Context, path, project string, request ProjectDeploymentCheckRequest) (ProjectDeploymentReadiness, error) {
 	if request.Environment == "" {
 		request.Environment = "production"
 	}
 	var out ProjectDeploymentReadiness
-	err := c.do(ctx, http.MethodPost, "/v1/projects/"+url.PathEscape(project)+"/deployment-readiness", request, &out)
+	err := c.do(ctx, http.MethodPost, path, request, &out)
 	if err == nil && (out.SchemaVersion != 1 || out.ProjectSlug != project || out.Environment != request.Environment || out.FromEnvironment != request.FromEnvironment || out.RuntimeChecked || out.Status != DeploymentReadinessStatus(out.Checks)) {
 		err = fmt.Errorf("invalid deployment readiness response")
 	}

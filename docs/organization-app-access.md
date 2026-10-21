@@ -119,6 +119,18 @@ promotions, rollbacks, source settings and deletion. The exact permission list i
 [`projectaccess/routes.go`](../pkg/apid/projectaccess/routes.go). Legacy project
 URLs and dashboard lists also enforce departure and role changes.
 
+Atomic releases use the same roles
+([ADR-20261021081828](adr/20261021081828-organization-access-to-atomic-releases.md)).
+Developers and above may `POST .../{slug}/safe-deploy`, control a release at
+`.../{slug}/submissions/{attempt}/{action}`, abort or recover a promotion and
+recover a promotion migration. Release secret staging (`.../{slug}/release-secrets`)
+needs the same roles as app secrets. Any project reader may read receipts at
+`.../{slug}/submissions/{attempt}`, run `.../{slug}/deployment-readiness` (also for
+a company project that does not exist yet) and request the secret-aware
+promotion preview. A `Deployment-Attempt-ID` on the company deploy URLs records
+a receipt; receipts of company projects are not returned by the personal
+`/v1/project-submissions/{attempt}` URL.
+
 GitHub/GitOps administration, async-route manifest bindings, resource/environment
 cloning, browser approval exchange and other unreviewed integrations remain
 outside the reviewed project surface. Shared uploads reject async-route bindings

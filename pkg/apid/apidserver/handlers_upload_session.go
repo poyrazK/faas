@@ -565,7 +565,8 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	if attemptID != "" {
-		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), attemptID))
+		ctx := state.ContextWithDeploymentSubmission(r.Context(), attemptID)
+		r = r.WithContext(state.ContextWithDeploymentSubmissionFingerprint(ctx, uploadSubmissionFingerprint(r)))
 	}
 	if s.replayUploadSubmission(w, r, row.AppSlug) {
 		return

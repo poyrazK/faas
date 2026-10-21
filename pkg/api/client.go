@@ -1922,6 +1922,19 @@ func (c *Client) applyProjectPlan(
 	environment, approvalToken string, secrets map[string]string, initialSecrets ProjectInitialSecrets,
 	platformTenantRequired ...*bool,
 ) (ApplyResponse, error) {
+	return c.applyProjectPlanTo(ctx, projectApplyRequestPath(ctx), planToken, source, sourceName, projectSlug, repoFullName, productionBranch,
+		installID, only, exclude, persistExclude, noTriggers, environment, approvalToken, secrets, initialSecrets, platformTenantRequired...)
+}
+
+// applyProjectPlanTo sends a project apply to a personal or organization URL
+// with the attempt, release-mode and configuration intent carried by ctx.
+func (c *Client) applyProjectPlanTo(
+	ctx context.Context, path, planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment, approvalToken string, secrets map[string]string, initialSecrets ProjectInitialSecrets,
+	platformTenantRequired ...*bool,
+) (ApplyResponse, error) {
 	if projectSafeReleaseRequested(ctx) && environment == "" {
 		environment = "production"
 	}
@@ -1959,7 +1972,7 @@ func (c *Client) applyProjectPlan(
 	if err := w.Close(); err != nil {
 		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
-	endpoint := c.baseURL + projectApplyRequestPath(ctx)
+	endpoint := c.baseURL + path
 	if planToken != "" {
 		endpoint += "?plan_token=" + url.QueryEscape(planToken)
 	}

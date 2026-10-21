@@ -123,13 +123,17 @@ func resource(r *http.Request, store Store, actor state.Account) (state.Project,
 		if org.Personal {
 			return state.Project{}, org, true, state.ErrNotFound
 		}
-		if slug := r.PathValue("slug"); slug != "" {
-			p, err := store.ProjectByOrgSlug(r.Context(), org.ID, slug)
-			return p, org, true, err
-		}
 		namespace := org.ID
 		if !org.ResourceOwnershipEnabled {
 			namespace = actor.ID
+		}
+		if slug := r.PathValue("slug"); slug != "" {
+			p, err := store.ProjectByOrgSlug(r.Context(), org.ID, slug)
+			if errors.Is(err, state.ErrNotFound) && preCreationRoute(r.Pattern) {
+				// Authorize like the company collection the first deploy will use.
+				return state.Project{AccountID: namespace, OrgID: org.ID}, org, true, nil
+			}
+			return p, org, true, err
 		}
 		return state.Project{AccountID: namespace, OrgID: org.ID}, org, true, nil
 	}
@@ -137,7 +141,7 @@ func resource(r *http.Request, store Store, actor state.Account) (state.Project,
 		return state.Project{}, state.Org{}, false, nil
 	}
 	p, err := store.ProjectBySlug(r.Context(), actor.ID, r.PathValue("slug"))
-	if errors.Is(err, state.ErrNotFound) && preCreationRoutes[r.Pattern] {
+	if errors.Is(err, state.ErrNotFound) && preCreationRoute(r.Pattern) {
 		// The project does not exist yet; the route reads only the actor's namespace.
 		return state.Project{}, state.Org{}, false, nil
 	}

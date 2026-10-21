@@ -771,6 +771,7 @@ from .control_data_pipeline_request import ControlDataPipelineRequest
 from .control_data_pipeline_request_action import ControlDataPipelineRequestAction
 from .control_event_execution_lineage_case_backfill_request import ControlEventExecutionLineageCaseBackfillRequest
 from .control_event_execution_lineage_retry_job_request import ControlEventExecutionLineageRetryJobRequest
+from .control_org_project_release_action import ControlOrgProjectReleaseAction
 from .control_project_release_action import ControlProjectReleaseAction
 from .control_realtime_replay_job_action import ControlRealtimeReplayJobAction
 from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
@@ -5147,6 +5148,11 @@ from .runtime_release_response_runtime import RuntimeReleaseResponseRuntime
 from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
+from .safe_apply_org_project_project_add_services import SafeApplyOrgProjectProjectAddServices
+from .safe_apply_org_project_project_progressive import SafeApplyOrgProjectProjectProgressive
+from .safe_apply_org_project_project_release_mode import SafeApplyOrgProjectProjectReleaseMode
+from .safe_apply_org_project_project_stabilization import SafeApplyOrgProjectProjectStabilization
+from .safe_apply_org_project_project_worker_health import SafeApplyOrgProjectProjectWorkerHealth
 from .safe_apply_project_project_add_services import SafeApplyProjectProjectAddServices
 from .safe_apply_project_project_progressive import SafeApplyProjectProjectProgressive
 from .safe_apply_project_project_release_mode import SafeApplyProjectProjectReleaseMode
@@ -6723,6 +6729,7 @@ __all__ = (
     "ControlDataPipelineRequestAction",
     "ControlEventExecutionLineageCaseBackfillRequest",
     "ControlEventExecutionLineageRetryJobRequest",
+    "ControlOrgProjectReleaseAction",
     "ControlProjectReleaseAction",
     "ControlRealtimeReplayJobAction",
     "ControlWorkflowRecoveryPolicyRequest",
@@ -10799,6 +10806,11 @@ __all__ = (
     "RuntimeUpgradePreviewResponse",
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
+    "SafeApplyOrgProjectProjectAddServices",
+    "SafeApplyOrgProjectProjectProgressive",
+    "SafeApplyOrgProjectProjectReleaseMode",
+    "SafeApplyOrgProjectProjectStabilization",
+    "SafeApplyOrgProjectProjectWorkerHealth",
     "SafeApplyProjectProjectAddServices",
     "SafeApplyProjectProjectProgressive",
     "SafeApplyProjectProjectReleaseMode",

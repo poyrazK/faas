@@ -4494,7 +4494,8 @@
       "accepted_at",
       "app_id",
       "attempt_id",
-      "deployment_id"
+      "deployment_id",
+      "request_fingerprint"
     ]
   },
   {

@@ -18,7 +18,14 @@ SELECT id::text AS id FROM projects
 WHERE id = sqlc.arg(project_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid FOR UPDATE;
 
 -- name: LockReleaseAdditionAccount :one
-SELECT plan FROM accounts WHERE id = sqlc.arg(account_id)::text::uuid FOR UPDATE;
+-- Lock the namespace createAppIfUnderQuotaTx locks; a company namespace uses
+-- its adopted organization's plan.
+WITH namespace AS MATERIALIZED (
+ SELECT id FROM resource_namespaces WHERE id = sqlc.arg(account_id)::text::uuid FOR UPDATE
+)
+SELECT a.plan FROM accounts a JOIN namespace n ON n.id = a.id
+UNION ALL
+SELECT o.plan FROM orgs o JOIN namespace n ON n.id = o.id WHERE NOT o.personal_org AND o.resource_ownership_enabled;
 
 -- name: HasDormantReleaseAdditions :one
 SELECT EXISTS (SELECT 1 FROM project_release_additions

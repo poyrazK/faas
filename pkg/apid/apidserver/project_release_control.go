@@ -12,6 +12,9 @@ import (
 )
 
 func (s *server) controlProjectRelease(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !s.projectSubmissionControllable(w, r, acct) {
+		return
+	}
 	if r.PathValue("action") == "resolve-contract" {
 		s.resolveProjectMigrationContract(w, r, acct)
 		return
@@ -49,6 +52,33 @@ func (s *server) controlProjectRelease(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	s.getProjectSubmission(w, r, acct)
+}
+
+// projectSubmissionControllable applies the receipt's project binding before
+// any operator decision is persisted.
+func (s *server) projectSubmissionControllable(w http.ResponseWriter, r *http.Request, acct state.Account) bool {
+	attempt := r.PathValue("attempt_id")
+	store, ok := s.store.(state.ProjectSubmissionStore)
+	if !api.ValidDeploymentAttemptID(attempt) || !ok {
+		// The action handlers report malformed attempts and missing stores.
+		return true
+	}
+	receipt, err := store.ProjectSubmission(r.Context(), acct.ID, attempt)
+	if err == nil {
+		err = s.projectSubmissionAddressed(r, acct, receipt)
+	} else if errors.Is(err, state.ErrNotFound) {
+		// Unknown attempts keep the control store's own not-found behavior.
+		return true
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "project submission receipt not found")
+		return false
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("project submission receipt could not be read"))
+		return false
+	}
+	return true
 }
 
 func (s *server) WithProjectMigrationContractsEnabled(enabled bool) *server {

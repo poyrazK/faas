@@ -38,6 +38,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -133,6 +134,15 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	fingerprint := deploystaging.NewRequestFingerprint(r.Pattern, r.URL.Query())
+	if err := fingerprint.AddMultipartForm(r.MultipartForm); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad multipart", err.Error()))
+		return
+	}
+	r, replied := s.replyMultipartSubmission(w, r, app, fingerprint.Sum())
+	if replied {
+		return
+	}
 	tarballFile, _, err := r.FormFile(fieldNameTarball)
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,

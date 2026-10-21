@@ -21730,17 +21730,17 @@ DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
 DELETE FROM route_probe_rounds WHERE window_start < sqlc.arg(before);
 
 -- name: ReadDeploymentSubmission :one
-SELECT r.attempt_id, r.deployment_id::text AS deployment_id, r.accepted_at
+SELECT r.attempt_id, r.deployment_id::text AS deployment_id, r.accepted_at, COALESCE(r.request_fingerprint, '')::text AS request_fingerprint
 FROM deployment_submission_receipts r JOIN apps a ON a.id=r.app_id
 WHERE r.app_id=sqlc.arg(app_id)::text::uuid AND r.attempt_id=sqlc.arg(attempt_id) AND a.status <> 'deleted';
 
 -- name: AttachDeploymentSubmission :one
-INSERT INTO deployment_submission_receipts (app_id, attempt_id, deployment_id)
-SELECT d.app_id, sqlc.arg(attempt_id)::text, d.id
+INSERT INTO deployment_submission_receipts (app_id, attempt_id, deployment_id, request_fingerprint)
+SELECT d.app_id, sqlc.arg(attempt_id)::text, d.id, NULLIF(sqlc.arg(request_fingerprint)::text, '')
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.app_id=sqlc.arg(app_id)::text::uuid AND d.id=sqlc.arg(deployment_id)::text::uuid AND a.status <> 'deleted'
 ON CONFLICT (app_id, attempt_id) DO UPDATE SET attempt_id=deployment_submission_receipts.attempt_id
-RETURNING attempt_id, deployment_id::text AS deployment_id, accepted_at;
+RETURNING attempt_id, deployment_id::text AS deployment_id, accepted_at, COALESCE(request_fingerprint, '')::text AS request_fingerprint;
 
 -- name: LockDeploymentSubmissionApp :exec
 SELECT id FROM apps WHERE id=sqlc.arg(app_id)::text::uuid AND status <> 'deleted' FOR UPDATE;
@@ -21852,7 +21852,10 @@ AND d.id::text=coalesce(r.deployment_id::text,u.deployment_id)
 FOR SHARE OF d;
 
 -- name: CronActivationPlan :one
-SELECT plan FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid;
+-- A company namespace uses its adopted organization's plan (AppResourceAccount).
+SELECT a.plan FROM accounts a WHERE a.id=sqlc.arg(account_id)::text::uuid
+UNION ALL
+SELECT o.plan FROM orgs o WHERE o.id=sqlc.arg(account_id)::text::uuid AND NOT o.personal_org AND o.resource_ownership_enabled;
 
 -- name: TouchCronActivation :exec
 UPDATE deployment_cron_activations SET status=sqlc.arg(status),updated_at=now() WHERE app_id=sqlc.arg(app_id)::text::uuid;
@@ -21921,6 +21924,27 @@ LEFT JOIN LATERAL (
  ) x ORDER BY x.revision DESC,x.priority DESC LIMIT 1
 ) o ON true
 WHERE d.id=sqlc.arg(deployment_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.status<>'deleted';
+
+-- name: PruneProjectSubmissions :execrows
+-- Bounded receipt retention (ADR-20261021094500). A receipt stays while its
+-- safe release may still change or any attempt-keyed release state names it.
+DELETE FROM project_submissions s
+USING (
+ SELECT c.account_id, c.attempt_id FROM project_submissions c
+ WHERE c.updated_at < sqlc.arg(before)::timestamptz
+   AND COALESCE(c.payload #>> '{apply,safe_release,status}', '') NOT IN ('building','verifying','rolling_back')
+   AND COALESCE(c.payload #>> '{apply,safe_release,verification,stabilization,status}', '') <> 'monitoring'
+   AND NOT EXISTS (SELECT 1 FROM project_release_canaries x WHERE x.account_id=c.account_id AND x.attempt_id=c.attempt_id)
+   AND NOT EXISTS (SELECT 1 FROM project_migration_contracts x WHERE x.account_id=c.account_id AND x.attempt_id=c.attempt_id)
+   AND NOT EXISTS (SELECT 1 FROM project_migration_recoveries x WHERE x.account_id=c.account_id AND c.attempt_id IN (x.attempt_id, x.replacement_attempt_id))
+   AND NOT EXISTS (SELECT 1 FROM project_release_config_intents x WHERE x.account_id=c.account_id AND x.attempt_id=c.attempt_id)
+   AND NOT EXISTS (SELECT 1 FROM deployment_project_release_workers x WHERE x.account_id=c.account_id AND x.attempt_id=c.attempt_id)
+   AND NOT EXISTS (SELECT 1 FROM project_release_additions x WHERE x.account_id=c.account_id AND x.attempt_id=c.attempt_id)
+ ORDER BY c.updated_at
+ LIMIT sqlc.arg(batch_limit)::int
+ FOR UPDATE OF c SKIP LOCKED
+) expired
+WHERE s.account_id=expired.account_id AND s.attempt_id=expired.attempt_id;
 
 -- name: ReserveProjectSubmission :execrows
 INSERT INTO project_submissions(account_id,attempt_id,fingerprint,payload,status)

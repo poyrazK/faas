@@ -33089,8 +33089,10 @@ CREATE TABLE public.deployment_submission_receipts (
     attempt_id text NOT NULL,
     deployment_id uuid NOT NULL,
     accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    request_fingerprint text,
     CONSTRAINT deployment_submission_receipts_accepted_at_check CHECK (isfinite(accepted_at)),
-    CONSTRAINT deployment_submission_receipts_attempt_id_check CHECK ((attempt_id ~ '^[0-9a-f]{32}$'::text))
+    CONSTRAINT deployment_submission_receipts_attempt_id_check CHECK ((attempt_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT deployment_submission_receipts_request_fingerprint_check CHECK ((request_fingerprint ~ '^[0-9a-f]{64}$'::text))
 );
 
 
@@ -83947,7 +83949,7 @@ ALTER TABLE ONLY public.deployment_project_release_workers
 --
 
 ALTER TABLE ONLY public.deployment_project_release_workers
-    ADD CONSTRAINT deployment_project_release_workers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT deployment_project_release_workers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -92203,7 +92205,7 @@ ALTER TABLE ONLY public.project_environments
 --
 
 ALTER TABLE ONLY public.project_migration_contracts
-    ADD CONSTRAINT project_migration_contracts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_migration_contracts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -92251,7 +92253,7 @@ ALTER TABLE ONLY public.project_release_additions
 --
 
 ALTER TABLE ONLY public.project_release_additions
-    ADD CONSTRAINT project_release_additions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+    ADD CONSTRAINT project_release_additions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id);
 
 
 --
@@ -92275,7 +92277,7 @@ ALTER TABLE ONLY public.project_release_additions
 --
 
 ALTER TABLE ONLY public.project_release_canaries
-    ADD CONSTRAINT project_release_canaries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_release_canaries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -92331,7 +92333,7 @@ ALTER TABLE ONLY public.project_release_members
 --
 
 ALTER TABLE ONLY public.project_release_secret_bundles
-    ADD CONSTRAINT project_release_secret_bundles_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_release_secret_bundles_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -92419,7 +92421,7 @@ ALTER TABLE ONLY public.project_release_worker_drains
 --
 
 ALTER TABLE ONLY public.project_submissions
-    ADD CONSTRAINT project_submissions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_submissions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --

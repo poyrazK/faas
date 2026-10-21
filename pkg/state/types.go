@@ -2477,10 +2477,11 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
 	// submissionAttemptID is creation-only metadata, never copied onto the wire.
-	submissionAttemptID  string
-	releaseWorkerAttempt string
-	releaseConfigAttempt string
-	retryDeploymentID    string
+	submissionAttemptID   string
+	submissionFingerprint string
+	releaseWorkerAttempt  string
+	releaseConfigAttempt  string
+	retryDeploymentID     string
 	// BuildDependencies is trusted APID admission input, captured atomically in
 	// a separate durable gate before the build can enter the queue.
 	BuildDependencies []DeploymentDependencyPin `json:"-"`

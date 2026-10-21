@@ -13513,6 +13513,9 @@ type DeploymentSubmissionReceipt struct {
 	AppID        string    `json:"app_id"`
 	DeploymentID string    `json:"deployment_id"`
 	AcceptedAt   time.Time `json:"accepted_at"`
+	// RequestFingerprint binds the attempt to the accepted request semantics
+	// (ADR-20261021101500). Empty on receipts accepted before it existed.
+	RequestFingerprint string `json:"-"`
 }
 
 // DeploymentStagingSnapshot binds the app policy group to a monotonic revision.

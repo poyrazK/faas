@@ -8,3 +8,8 @@ func TestProjectSubmissionPostgres(t *testing.T) {
 	store, _ := pgStore(t)
 	testProjectSubmission(t, store)
 }
+
+func TestProjectSubmissionCompanyNamespacePostgres(t *testing.T) {
+	store, _ := pgStore(t)
+	testProjectSubmissionCompanyNamespace(t, store)
+}

@@ -171,17 +171,44 @@ func (s *server) runSafeProjectReleaseWorker(ctx context.Context) {
 	}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	var pruned time.Time
 	for {
 		callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		err := deploystaging.ReconcileSafeProjectReleases(callCtx, store, s.durable.CheckProjectValidatorMembers, s.probeProjectRelease)
 		if err != nil && ctx.Err() == nil {
 			s.log.Warn("safe project release reconciliation failed", "err", err)
 		}
+		if now := time.Now(); now.Sub(pruned) >= time.Hour {
+			pruned = now
+			s.pruneProjectSubmissions(callCtx, now)
+		}
 		cancel()
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+	}
+}
+
+// pruneProjectSubmissions drains settled, unreferenced receipts older than
+// the retention period in bounded batches.
+func (s *server) pruneProjectSubmissions(ctx context.Context, now time.Time) {
+	store, ok := s.store.(state.ProjectSubmissionRetentionStore)
+	if !ok {
+		return
+	}
+	const batch = 500
+	for range 20 {
+		n, err := store.PruneProjectSubmissions(ctx, now.Add(-api.ProjectSubmissionRetention), batch)
+		if err != nil {
+			if ctx.Err() == nil {
+				s.log.Warn("project submission retention failed", "err", err)
+			}
+			return
+		}
+		if n < batch {
+			return
 		}
 	}
 }

@@ -80,9 +80,16 @@ func (q *Queries) ListProjectReleaseAdditions(ctx context.Context, db DBTX, proj
 }
 
 const lockReleaseAdditionAccount = `-- name: LockReleaseAdditionAccount :one
-SELECT plan FROM accounts WHERE id = $1::text::uuid FOR UPDATE
+WITH namespace AS MATERIALIZED (
+ SELECT id FROM resource_namespaces WHERE id = $1::text::uuid FOR UPDATE
+)
+SELECT a.plan FROM accounts a JOIN namespace n ON n.id = a.id
+UNION ALL
+SELECT o.plan FROM orgs o JOIN namespace n ON n.id = o.id WHERE NOT o.personal_org AND o.resource_ownership_enabled
 `
 
+// Lock the namespace createAppIfUnderQuotaTx locks; a company namespace uses
+// its adopted organization's plan.
 func (q *Queries) LockReleaseAdditionAccount(ctx context.Context, db DBTX, accountID string) (string, error) {
 	row := db.QueryRow(ctx, lockReleaseAdditionAccount, accountID)
 	var plan string

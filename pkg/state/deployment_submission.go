@@ -20,6 +20,18 @@ type DeploymentSubmissionStore interface {
 var ErrDeploymentSubmissionConflict = errors.New("deployment attempt already accepted")
 
 type deploymentSubmissionKey struct{}
+type deploymentSubmissionFingerprintKey struct{}
+
+// ContextWithDeploymentSubmissionFingerprint carries the accepted request's
+// fingerprint to the receipt written with the deployment (ADR-20261021101500).
+func ContextWithDeploymentSubmissionFingerprint(ctx context.Context, fingerprint string) context.Context {
+	return context.WithValue(ctx, deploymentSubmissionFingerprintKey{}, fingerprint)
+}
+
+func deploymentSubmissionFingerprint(ctx context.Context) string {
+	fingerprint, _ := ctx.Value(deploymentSubmissionFingerprintKey{}).(string)
+	return fingerprint
+}
 
 // ContextWithDeploymentSubmission carries a validated identity from apid to
 // deployment creation, including creation through the shared source enqueuer.
@@ -51,7 +63,7 @@ func (m *MemStore) DeploymentSubmission(_ context.Context, appID, attemptID stri
 	return receipt, nil
 }
 
-func (m *MemStore) AttachDeploymentSubmission(_ context.Context, appID, attemptID, deploymentID string) (api.DeploymentSubmissionReceipt, error) {
+func (m *MemStore) AttachDeploymentSubmission(ctx context.Context, appID, attemptID, deploymentID string) (api.DeploymentSubmissionReceipt, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !api.ValidDeploymentAttemptID(attemptID) {
@@ -68,14 +80,14 @@ func (m *MemStore) AttachDeploymentSubmission(_ context.Context, appID, attemptI
 		}
 		return prior, nil
 	}
-	return m.saveDeploymentSubmissionLocked(attemptID, d), nil
+	return m.saveDeploymentSubmissionLocked(attemptID, deploymentSubmissionFingerprint(ctx), d), nil
 }
 
-func (m *MemStore) saveDeploymentSubmissionLocked(attemptID string, d Deployment) api.DeploymentSubmissionReceipt {
+func (m *MemStore) saveDeploymentSubmissionLocked(attemptID, fingerprint string, d Deployment) api.DeploymentSubmissionReceipt {
 	if m.deploymentSubmissionReceipts == nil {
 		m.deploymentSubmissionReceipts = make(map[string]api.DeploymentSubmissionReceipt)
 	}
-	receipt := api.DeploymentSubmissionReceipt{AttemptID: attemptID, AppID: d.AppID, DeploymentID: d.ID, AcceptedAt: time.Now().UTC()}
+	receipt := api.DeploymentSubmissionReceipt{AttemptID: attemptID, AppID: d.AppID, DeploymentID: d.ID, AcceptedAt: time.Now().UTC(), RequestFingerprint: fingerprint}
 	m.deploymentSubmissionReceipts[submissionKey(d.AppID, attemptID)] = receipt
 	return receipt
 }
@@ -85,7 +97,7 @@ func (s *PgStore) DeploymentSubmission(ctx context.Context, appID, attemptID str
 	if err != nil {
 		return api.DeploymentSubmissionReceipt{}, mapErr(err)
 	}
-	return api.DeploymentSubmissionReceipt{AttemptID: row.AttemptID, AppID: appID, DeploymentID: row.DeploymentID, AcceptedAt: row.AcceptedAt.Time}, nil
+	return api.DeploymentSubmissionReceipt{AttemptID: row.AttemptID, AppID: appID, DeploymentID: row.DeploymentID, AcceptedAt: row.AcceptedAt.Time, RequestFingerprint: row.RequestFingerprint}, nil
 }
 
 func (s *PgStore) AttachDeploymentSubmission(ctx context.Context, appID, attemptID, deploymentID string) (api.DeploymentSubmissionReceipt, error) {
@@ -115,14 +127,14 @@ func attachDeploymentSubmission(ctx context.Context, db sqlc.DBTX, appID, attemp
 	if !api.ValidDeploymentAttemptID(attemptID) {
 		return api.DeploymentSubmissionReceipt{}, ErrInvalidArgument
 	}
-	row, err := sqlc.New().AttachDeploymentSubmission(ctx, db, sqlc.AttachDeploymentSubmissionParams{AppID: appID, AttemptID: attemptID, DeploymentID: deploymentID})
+	row, err := sqlc.New().AttachDeploymentSubmission(ctx, db, sqlc.AttachDeploymentSubmissionParams{AppID: appID, AttemptID: attemptID, DeploymentID: deploymentID, RequestFingerprint: deploymentSubmissionFingerprint(ctx)})
 	if err != nil {
 		return api.DeploymentSubmissionReceipt{}, mapErr(err)
 	}
 	if row.DeploymentID != deploymentID {
 		return api.DeploymentSubmissionReceipt{}, ErrDeploymentSubmissionConflict
 	}
-	return api.DeploymentSubmissionReceipt{AttemptID: row.AttemptID, AppID: appID, DeploymentID: row.DeploymentID, AcceptedAt: row.AcceptedAt.Time}, nil
+	return api.DeploymentSubmissionReceipt{AttemptID: row.AttemptID, AppID: appID, DeploymentID: row.DeploymentID, AcceptedAt: row.AcceptedAt.Time, RequestFingerprint: row.RequestFingerprint}, nil
 }
 
 func (m *MemStore) deleteDeploymentSubmissionsLocked(deploymentID string) {

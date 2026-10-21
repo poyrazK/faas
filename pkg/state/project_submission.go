@@ -52,7 +52,7 @@ func (m *MemStore) ReserveProjectSubmission(ctx context.Context, accountID, atte
 		}
 		return false, nil
 	}
-	if _, ok := m.accounts[accountID]; !ok {
+	if !m.resourceNamespaceExistsLocked(accountID) {
 		return false, ErrNotFound
 	}
 	m.projectSubmissions[key] = projectSubmissionEntry{Fingerprint: fingerprint, Payload: data, Status: "processing", UpdatedAt: time.Now().UTC()}

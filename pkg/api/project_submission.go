@@ -3,7 +3,13 @@ package api
 import (
 	"context"
 	"fmt"
+	"time"
 )
+
+// ProjectSubmissionRetention is how long a settled project apply receipt
+// stays readable. It exceeds the seven-day client session retention, so a
+// saved session can always recover its outcome (ADR-20261021094500).
+const ProjectSubmissionRetention = 30 * 24 * time.Hour
 
 // ProjectSubmissionReceipt is read-only recovery for one project apply attempt.
 type ProjectSubmissionReceipt struct {

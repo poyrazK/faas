@@ -5150,6 +5150,9 @@ export class ProjectsService {
     environment,
     from,
     syncConfig = false,
+    verify = false,
+    migrate = false,
+    workers = false,
   }: {
     /**
      * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
@@ -5171,6 +5174,18 @@ export class ProjectsService {
      * Copy non-secret company source configuration together with the target promotion graph.
      */
     syncConfig?: boolean,
+    /**
+     * Company project: require destination HTTP probes before cutover and success; requires snapshot-aware sync_config and qualified operator admission.
+     */
+    verify?: boolean,
+    /**
+     * Company project: run exactly one source release command as a backward-compatible destination migration before health probes. Requires sync_config, verify and qualified migration admission. Schema changes remain after code/config rollback.
+     */
+    migrate?: boolean,
+    /**
+     * Company project: promote HTTP services and one existing production push worker with coordinated job admission and delivery health. Requires sync_config and verify; migration combinations are unsupported.
+     */
+    workers?: boolean,
   }): CancelablePromise<ProjectEnvironmentPromotionPreviewResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -5183,6 +5198,9 @@ export class ProjectsService {
       query: {
         'from': from,
         'sync_config': syncConfig,
+        'verify': verify,
+        'migrate': migrate,
+        'workers': workers,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -5195,6 +5213,51 @@ export class ProjectsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Preview a company promotion with destination production secret changes.
+   * Company form of the secret-aware promotion preview. Requires secrets write permission and project read membership; approval and execution revalidate the exact secret versions.
+   * @returns ProjectEnvironmentPromotionPreviewResponse Company project: promotion preview with secret key changes and version references only.
+   * @throws ApiError
+   */
+  public static previewOrgProjectEnvironmentPromotionSecrets({
+    organization,
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    requestBody: ProjectEnvironmentPromotionSecretPreviewRequest,
+  }): CancelablePromise<ProjectEnvironmentPromotionPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-preview',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Company project: secret releases or destination verification are unavailable.`,
       },
     });
   }
@@ -5708,6 +5771,467 @@ export class ProjectsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Atomically release an existing company HTTP project.
+   * Company form of the atomic project release. The uploaded project_slug must match the path. Requires developer, admin or owner membership; release admission, verification and rollback match the personal operation.
+   * @returns ApplyResponse Company project: accepted candidate deployments and durable safe release state.
+   * @throws ApiError
+   */
+  public static safeApplyOrgProject({
+    organization,
+    slug,
+    deploymentAttemptId,
+    formData,
+    projectAddServices,
+    projectStabilization,
+    projectProgressive,
+    projectWorkerHealth,
+    projectReleaseMode,
+    planToken,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Company project: durable identity for this safe project submission and release operation.
+     */
+    deploymentAttemptId: string,
+    formData: ProjectApplyRequest,
+    /**
+     * Company project: apply the scanned independent HTTP service additions after native qualification; preserve existing membership and configuration.
+     */
+    projectAddServices?: 'required',
+    /**
+     * Company project: require ten minutes of guarded health monitoring after progressive rollout success.
+     */
+    projectStabilization?: 'required',
+    /**
+     * Company project: submit a progressive project rollout behind native qualification admission.
+     */
+    projectProgressive?: 'required',
+    /**
+     * Company project: keep the required worker delivery health policy when applying the scanned release.
+     */
+    projectWorkerHealth?: 'required',
+    /**
+     * Company project: atomic-verify enables durable probes; atomic-config-verify pairs configuration; atomic-migrate-verify and atomic-config-migrate-verify also admit one backward-compatible migration.
+     */
+    projectReleaseMode?: 'atomic' | 'atomic-verify' | 'atomic-config-verify' | 'atomic-migrate-verify' | 'atomic-config-migrate-verify' | 'atomic-verify-workers' | 'atomic-config-verify-workers' | 'atomic-migrate-verify-workers' | 'atomic-config-migrate-verify-workers',
+    /**
+     * Company project: scan token bound to the safe release baseline.
+     */
+    planToken?: string,
+  }): CancelablePromise<ApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/safe-deploy',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      headers: {
+        'Project-Add-Services': projectAddServices,
+        'Project-Stabilization': projectStabilization,
+        'Project-Progressive': projectProgressive,
+        'Project-Worker-Health': projectWorkerHealth,
+        'Project-Release-Mode': projectReleaseMode,
+        'Deployment-Attempt-ID': deploymentAttemptId,
+      },
+      query: {
+        'plan_token': planToken,
+      },
+      formData: formData,
+      mediaType: 'multipart/form-data',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read a company project apply acceptance receipt.
+   * Returns the durable receipt for an attempt submitted to this company project. Receipts for other projects are not found. Reads never enqueue builds.
+   * @returns ProjectSubmissionReceipt Company project: current project submission and accepted workload identities. Reads never enqueue builds.
+   * @throws ApiError
+   */
+  public static getOrgProjectSubmission({
+    organization,
+    slug,
+    attemptId,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Company project: the opaque project apply attempt recorded before submission.
+     */
+    attemptId: string,
+  }): CancelablePromise<ProjectSubmissionReceipt> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/submissions/{attempt_id}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'attempt_id': attemptId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Control a company progressive deployment or admit planned schema cleanup.
+   * Company form of the generation-fenced release control. Requires developer, admin or owner membership and a receipt for this project.
+   * @returns ProjectSubmissionReceipt Company project: durable decision and current receipt; acceptance does not imply restoration has completed.
+   * @throws ApiError
+   */
+  public static controlOrgProjectRelease({
+    organization,
+    slug,
+    attemptId,
+    action,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Company project: durable project deployment attempt.
+     */
+    attemptId: string,
+    /**
+     * Company project: abort a running canary, retry baseline recovery, or run declared schema cleanup after stabilization and drain barriers.
+     */
+    action: 'abort' | 'recover' | 'contract' | 'resolve-contract',
+    requestBody: (ProjectReleaseControlRequest | ProjectMigrationRecoveryRequest),
+  }): CancelablePromise<ProjectSubmissionReceipt> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/submissions/{attempt_id}/{action}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'attempt_id': attemptId,
+        'action': action,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        410: `Company project: retained rollback baseline expired; deploy a compatible replacement.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Stage encrypted secret versions for a company atomic release.
+   * Company form of release secret staging. Requires secrets write permission and developer, admin or owner membership. Values are encrypted before persistence; admission defaults off pending native qualification.
+   * @returns ProjectReleaseSecretStageResponse Company project: immutable staged version references, without encrypted or plaintext values.
+   * @throws ApiError
+   */
+  public static stageOrgProjectReleaseSecrets({
+    organization,
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    requestBody: ProjectReleaseSecretStageRequest,
+  }): CancelablePromise<ProjectReleaseSecretStageResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/release-secrets',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Check company project deployment or promotion readiness.
+   * Company form of the readiness check. A project the company does not have yet can be checked as a proposed first deployment; a slug used outside the company returns 409. Reads only.
+   * @returns ProjectDeploymentReadiness Company project: current prerequisite report, including blocked and unknown outcomes.
+   * @throws ApiError
+   */
+  public static checkOrgProjectDeployment({
+    organization,
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    requestBody: ProjectDeploymentCheckRequest,
+  }): CancelablePromise<ProjectDeploymentReadiness> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/deployment-readiness',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Abort an in-progress company environment promotion.
+   * Company form of the generation-fenced promotion abort. Requires developer, admin or owner membership.
+   * @returns ProjectPromotionControl Company project: terminal operator decision acknowledgement.
+   * @throws ApiError
+   */
+  public static abortOrgProjectEnvironmentPromotion({
+    organization,
+    slug,
+    environment,
+    promotion,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Durable promotion identifier in the company environment history.
+     */
+    promotion: string,
+    requestBody: ProjectPromotionControlRequest,
+  }): CancelablePromise<ProjectPromotionControl> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/abort',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Company project: stale generation, reused request identity, unsupported phase, or changed destination intent; inspect promotion status.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Retry restoration of a company environment promotion.
+   * Company form of the generation-fenced promotion recovery. Requires developer, admin or owner membership.
+   * @returns ProjectPromotionControl Company project: terminal acknowledgement of the restoration recovery decision.
+   * @throws ApiError
+   */
+  public static recoverOrgProjectEnvironmentPromotion({
+    organization,
+    slug,
+    environment,
+    promotion,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Durable promotion identifier in the company environment history.
+     */
+    promotion: string,
+    requestBody: ProjectPromotionControlRequest,
+  }): CancelablePromise<ProjectPromotionControl> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/recover',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Company project: recovery rejected because the inspected generation, request identity, phase or destination intent no longer permits restoration.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Recover an interrupted company promotion migration without replaying SQL.
+   * Company form of promotion migration recovery. Requires developer, admin or owner membership.
+   * @returns ProjectPromotionMigrationRecovery Company project: existing terminal recovery acknowledgement.
+   * @throws ApiError
+   */
+  public static recoverOrgProjectEnvironmentPromotionMigration({
+    organization,
+    slug,
+    environment,
+    promotion,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Durable promotion identifier in the company environment history.
+     */
+    promotion: string,
+    requestBody: ProjectPromotionMigrationRecoveryRequest,
+  }): CancelablePromise<ProjectPromotionMigrationRecovery> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Company project: task, generation, runtime or destination intent changed; inspect current promotion status.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

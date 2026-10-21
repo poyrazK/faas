@@ -7740,6 +7740,7 @@ func (m *MemStore) GetGithubInstallBindingForApp(_ context.Context, appID, accou
 // it has always lacked.
 func (m *MemStore) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
 	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.submissionFingerprint = deploymentSubmissionFingerprint(ctx)
 	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
 	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
 	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
@@ -7749,6 +7750,7 @@ func (m *MemStore) CreateDeployment(ctx context.Context, d Deployment) (Deployme
 
 func (m *MemStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment, activity OrgActivity) (Deployment, int64, error) {
 	d.submissionAttemptID = deploymentSubmissionAttempt(ctx)
+	d.submissionFingerprint = deploymentSubmissionFingerprint(ctx)
 	d.releaseConfigAttempt = projectReleaseConfigAttempt(ctx)
 	d.releaseWorkerAttempt = projectReleaseWorkerAttempt(ctx)
 	d.retryDeploymentID = deploymentRetryTarget(ctx, d.AppID)
@@ -8089,7 +8091,7 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 		m.releaseWorkerCandidates[d.ID] = d.releaseWorkerAttempt
 	}
 	if d.submissionAttemptID != "" {
-		m.saveDeploymentSubmissionLocked(d.submissionAttemptID, d)
+		m.saveDeploymentSubmissionLocked(d.submissionAttemptID, d.submissionFingerprint, d)
 	}
 	if dependencyGate != nil {
 		m.deploymentDependencyGates[d.ID] = *dependencyGate

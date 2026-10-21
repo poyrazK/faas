@@ -18,6 +18,9 @@ def _get_kwargs(
     *,
     from_: str,
     sync_config: bool | Unset = False,
+    verify: bool | Unset = False,
+    migrate: bool | Unset = False,
+    workers: bool | Unset = False,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -25,6 +28,12 @@ def _get_kwargs(
     params["from"] = from_
 
     params["sync_config"] = sync_config
+
+    params["verify"] = verify
+
+    params["migrate"] = migrate
+
+    params["workers"] = workers
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -104,6 +113,9 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     from_: str,
     sync_config: bool | Unset = False,
+    verify: bool | Unset = False,
+    migrate: bool | Unset = False,
+    workers: bool | Unset = False,
 ) -> Response[Problem | ProjectEnvironmentPromotionPreviewResponse]:
     """Preview promotion between organization project environments.
 
@@ -116,6 +128,9 @@ def sync_detailed(
         environment (str):
         from_ (str):
         sync_config (bool | Unset):  Default: False.
+        verify (bool | Unset):  Default: False.
+        migrate (bool | Unset):  Default: False.
+        workers (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -131,6 +146,9 @@ def sync_detailed(
         environment=environment,
         from_=from_,
         sync_config=sync_config,
+        verify=verify,
+        migrate=migrate,
+        workers=workers,
     )
 
     response = client.get_httpx_client().request(
@@ -148,6 +166,9 @@ def sync(
     client: AuthenticatedClient | Client,
     from_: str,
     sync_config: bool | Unset = False,
+    verify: bool | Unset = False,
+    migrate: bool | Unset = False,
+    workers: bool | Unset = False,
 ) -> Problem | ProjectEnvironmentPromotionPreviewResponse | None:
     """Preview promotion between organization project environments.
 
@@ -160,6 +181,9 @@ def sync(
         environment (str):
         from_ (str):
         sync_config (bool | Unset):  Default: False.
+        verify (bool | Unset):  Default: False.
+        migrate (bool | Unset):  Default: False.
+        workers (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,6 +200,9 @@ def sync(
         client=client,
         from_=from_,
         sync_config=sync_config,
+        verify=verify,
+        migrate=migrate,
+        workers=workers,
     ).parsed
 
 
@@ -187,6 +214,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     from_: str,
     sync_config: bool | Unset = False,
+    verify: bool | Unset = False,
+    migrate: bool | Unset = False,
+    workers: bool | Unset = False,
 ) -> Response[Problem | ProjectEnvironmentPromotionPreviewResponse]:
     """Preview promotion between organization project environments.
 
@@ -199,6 +229,9 @@ async def asyncio_detailed(
         environment (str):
         from_ (str):
         sync_config (bool | Unset):  Default: False.
+        verify (bool | Unset):  Default: False.
+        migrate (bool | Unset):  Default: False.
+        workers (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,6 +247,9 @@ async def asyncio_detailed(
         environment=environment,
         from_=from_,
         sync_config=sync_config,
+        verify=verify,
+        migrate=migrate,
+        workers=workers,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -229,6 +265,9 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     from_: str,
     sync_config: bool | Unset = False,
+    verify: bool | Unset = False,
+    migrate: bool | Unset = False,
+    workers: bool | Unset = False,
 ) -> Problem | ProjectEnvironmentPromotionPreviewResponse | None:
     """Preview promotion between organization project environments.
 
@@ -241,6 +280,9 @@ async def asyncio(
         environment (str):
         from_ (str):
         sync_config (bool | Unset):  Default: False.
+        verify (bool | Unset):  Default: False.
+        migrate (bool | Unset):  Default: False.
+        workers (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -258,5 +300,8 @@ async def asyncio(
             client=client,
             from_=from_,
             sync_config=sync_config,
+            verify=verify,
+            migrate=migrate,
+            workers=workers,
         )
     ).parsed

@@ -60919,9 +60919,25 @@ paths:
       - $ref: '#/components/parameters/OrgProjectOrganization'
       - $ref: '#/components/parameters/OrgProjectSlug'
       - $ref: '#/components/parameters/OrgProjectEnvironment'
-      - $ref: '#/components/parameters/OrgProjectFrom'
-      - $ref: '#/components/parameters/OrgProjectSyncConfig'
     get:
+      parameters:
+        - $ref: '#/components/parameters/OrgProjectFrom'
+        - $ref: '#/components/parameters/OrgProjectSyncConfig'
+        - name: verify
+          in: query
+          required: false
+          description: "Company project: require destination HTTP probes before cutover and success; requires snapshot-aware sync_config and qualified operator admission."
+          schema: { type: boolean, default: false }
+        - name: migrate
+          in: query
+          required: false
+          description: "Company project: run exactly one source release command as a backward-compatible destination migration before health probes. Requires sync_config, verify and qualified migration admission. Schema changes remain after code/config rollback."
+          schema: { type: boolean, default: false }
+        - name: workers
+          in: query
+          required: false
+          description: "Company project: promote HTTP services and one existing production push worker with coordinated job admission and delivery health. Requires sync_config and verify; migration combinations are unsupported."
+          schema: { type: boolean, default: false }
       tags: [projects]
       operationId: getOrgProjectEnvironmentPromotionPreview
       summary: "Preview promotion between organization project environments."
@@ -60939,6 +60955,31 @@ paths:
 
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
+    post:
+      tags: [projects]
+      operationId: previewOrgProjectEnvironmentPromotionSecrets
+      summary: "Preview a company promotion with destination production secret changes."
+      description: "Company form of the secret-aware promotion preview. Requires secrets write permission and project read membership; approval and execution revalidate the exact secret versions."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionSecretPreviewRequest' }
+      responses:
+        '200':
+          description: "Company project: promotion preview with secret key changes and version references only."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionPreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Company project: secret releases or destination verification are unavailable."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/orgs/{organization}/projects/{slug}/environments/{environment}/approvals/{approval}:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -61234,6 +61275,289 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/safe-deploy:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+    post:
+      tags: [projects]
+      operationId: safeApplyOrgProject
+      summary: "Atomically release an existing company HTTP project."
+      description: "Company form of the atomic project release. The uploaded project_slug must match the path. Requires developer, admin or owner membership; release admission, verification and rollback match the personal operation."
+      parameters:
+        - name: Project-Add-Services
+          in: header
+          required: false
+          description: "Company project: apply the scanned independent HTTP service additions after native qualification; preserve existing membership and configuration."
+          schema: { type: string, enum: [required] }
+        - name: Project-Stabilization
+          in: header
+          required: false
+          description: "Company project: require ten minutes of guarded health monitoring after progressive rollout success."
+          schema: { type: string, enum: [required] }
+        - name: Project-Progressive
+          in: header
+          required: false
+          description: "Company project: submit a progressive project rollout behind native qualification admission."
+          schema: { type: string, enum: [required] }
+        - name: Project-Worker-Health
+          in: header
+          required: false
+          description: "Company project: keep the required worker delivery health policy when applying the scanned release."
+          schema: { type: string, enum: [required] }
+        - name: Project-Release-Mode
+          in: header
+          description: "Company project: atomic-verify enables durable probes; atomic-config-verify pairs configuration; atomic-migrate-verify and atomic-config-migrate-verify also admit one backward-compatible migration."
+          schema: { type: string, enum: [atomic, atomic-verify, atomic-config-verify, atomic-migrate-verify, atomic-config-migrate-verify, atomic-verify-workers, atomic-config-verify-workers, atomic-migrate-verify-workers, atomic-config-migrate-verify-workers] }
+        - name: Deployment-Attempt-ID
+          in: header
+          required: true
+          description: "Company project: durable identity for this safe project submission and release operation."
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+        - name: plan_token
+          in: query
+          description: "Company project: scan token bound to the safe release baseline."
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/ProjectApplyRequest' }
+      responses:
+        '200':
+          description: "Company project: accepted candidate deployments and durable safe release state."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/orgs/{organization}/projects/{slug}/submissions/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+    get:
+      tags: [projects]
+      operationId: getOrgProjectSubmission
+      summary: "Read a company project apply acceptance receipt."
+      description: "Returns the durable receipt for an attempt submitted to this company project. Receipts for other projects are not found. Reads never enqueue builds."
+      parameters:
+        - name: attempt_id
+          description: "Company project: the opaque project apply attempt recorded before submission."
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+      responses:
+        '200':
+          description: "Company project: current project submission and accepted workload identities. Reads never enqueue builds."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectSubmissionReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/orgs/{organization}/projects/{slug}/submissions/{attempt_id}/{action}:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+    post:
+      tags: [projects]
+      operationId: controlOrgProjectRelease
+      summary: "Control a company progressive deployment or admit planned schema cleanup."
+      description: "Company form of the generation-fenced release control. Requires developer, admin or owner membership and a receipt for this project."
+      parameters:
+        - name: attempt_id
+          in: path
+          required: true
+          description: "Company project: durable project deployment attempt."
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+        - name: action
+          in: path
+          required: true
+          description: "Company project: abort a running canary, retry baseline recovery, or run declared schema cleanup after stabilization and drain barriers."
+          schema: { type: string, enum: [abort, recover, contract, resolve-contract] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { $ref: '#/components/schemas/ProjectReleaseControlRequest' }
+                - { $ref: '#/components/schemas/ProjectMigrationRecoveryRequest' }
+      responses:
+        '200':
+          description: "Company project: durable decision and current receipt; acceptance does not imply restoration has completed."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectSubmissionReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410':
+          description: "Company project: retained rollback baseline expired; deploy a compatible replacement."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/orgs/{organization}/projects/{slug}/release-secrets:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+    post:
+      tags: [projects]
+      operationId: stageOrgProjectReleaseSecrets
+      summary: "Stage encrypted secret versions for a company atomic release."
+      description: "Company form of release secret staging. Requires secrets write permission and developer, admin or owner membership. Values are encrypted before persistence; admission defaults off pending native qualification."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectReleaseSecretStageRequest' }
+      responses:
+        '200':
+          description: "Company project: immutable staged version references, without encrypted or plaintext values."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseSecretStageResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/orgs/{organization}/projects/{slug}/deployment-readiness:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+    post:
+      tags: [projects]
+      operationId: checkOrgProjectDeployment
+      summary: "Check company project deployment or promotion readiness."
+      description: "Company form of the readiness check. A project the company does not have yet can be checked as a proposed first deployment; a slug used outside the company returns 409. Reads only."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectDeploymentCheckRequest' }
+      responses:
+        '200':
+          description: "Company project: current prerequisite report, including blocked and unknown outcomes."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectDeploymentReadiness' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/abort:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectPromotion'
+    post:
+      tags: [projects]
+      operationId: abortOrgProjectEnvironmentPromotion
+      summary: "Abort an in-progress company environment promotion."
+      description: "Company form of the generation-fenced promotion abort. Requires developer, admin or owner membership."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPromotionControlRequest' }
+      responses:
+        '200':
+          description: "Company project: terminal operator decision acknowledgement."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '202':
+          description: "Company project: restoration requested; fresh baseline checks are pending."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Company project: stale generation, reused request identity, unsupported phase, or changed destination intent; inspect promotion status.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/recover:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectPromotion'
+    post:
+      tags: [projects]
+      operationId: recoverOrgProjectEnvironmentPromotion
+      summary: "Retry restoration of a company environment promotion."
+      description: "Company form of the generation-fenced promotion recovery. Requires developer, admin or owner membership."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPromotionControlRequest' }
+      responses:
+        '200':
+          description: "Company project: terminal acknowledgement of the restoration recovery decision."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '202':
+          description: "Company project: recovery accepted; baseline health and worker startup checks are pending."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Company project: recovery rejected because the inspected generation, request identity, phase or destination intent no longer permits restoration.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectPromotion'
+    post:
+      tags: [projects]
+      operationId: recoverOrgProjectEnvironmentPromotionMigration
+      summary: "Recover an interrupted company promotion migration without replaying SQL."
+      description: "Company form of promotion migration recovery. Requires developer, admin or owner membership."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPromotionMigrationRecoveryRequest' }
+      responses:
+        '200':
+          description: "Company project: existing terminal recovery acknowledgement."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionMigrationRecovery' }
+        '202':
+          description: "Company project: recovery accepted; scheduler teardown or server verification is pending."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionMigrationRecovery' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Company project: task, generation, runtime or destination intent changed; inspect current promotion status.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/policies:
     parameters:
@@ -64204,6 +64528,9 @@ components:
         Concurrent accepted/in-progress attempts may return 409 with
         deployment_attempt_accepted or deployment_attempt_pending; recover
         acceptance using the receipt instead of treating that conflict as rejection.
+        A retry must repeat the original request: reusing an accepted attempt ID
+        with a different body, query or uploaded source returns 409
+        deployment_attempt_mismatch instead of replaying the earlier deployment.
     IdempotencyKey:
       name: Idempotency-Key
       in: header

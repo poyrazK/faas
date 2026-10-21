@@ -474,6 +474,9 @@ export class DeploymentsService {
      * Concurrent accepted/in-progress attempts may return 409 with
      * deployment_attempt_accepted or deployment_attempt_pending; recover
      * acceptance using the receipt instead of treating that conflict as rejection.
+     * A retry must repeat the original request: reusing an accepted attempt ID
+     * with a different body, query or uploaded source returns 409
+     * deployment_attempt_mismatch instead of replaying the earlier deployment.
      *
      */
     deploymentAttemptId?: string,
@@ -785,6 +788,9 @@ export class DeploymentsService {
      * Concurrent accepted/in-progress attempts may return 409 with
      * deployment_attempt_accepted or deployment_attempt_pending; recover
      * acceptance using the receipt instead of treating that conflict as rejection.
+     * A retry must repeat the original request: reusing an accepted attempt ID
+     * with a different body, query or uploaded source returns 409
+     * deployment_attempt_mismatch instead of replaying the earlier deployment.
      *
      */
     deploymentAttemptId?: string,
@@ -906,6 +912,9 @@ export class DeploymentsService {
      * Concurrent accepted/in-progress attempts may return 409 with
      * deployment_attempt_accepted or deployment_attempt_pending; recover
      * acceptance using the receipt instead of treating that conflict as rejection.
+     * A retry must repeat the original request: reusing an accepted attempt ID
+     * with a different body, query or uploaded source returns 409
+     * deployment_attempt_mismatch instead of replaying the earlier deployment.
      *
      */
     deploymentAttemptId?: string,

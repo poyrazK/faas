@@ -2115,30 +2115,42 @@ func (q *Queries) AttachCloneCheckpointPgActivationConnection(ctx context.Contex
 }
 
 const attachDeploymentSubmission = `-- name: AttachDeploymentSubmission :one
-INSERT INTO deployment_submission_receipts (app_id, attempt_id, deployment_id)
-SELECT d.app_id, $1::text, d.id
+INSERT INTO deployment_submission_receipts (app_id, attempt_id, deployment_id, request_fingerprint)
+SELECT d.app_id, $1::text, d.id, NULLIF($2::text, '')
 FROM deployments d JOIN apps a ON a.id=d.app_id
-WHERE d.app_id=$2::text::uuid AND d.id=$3::text::uuid AND a.status <> 'deleted'
+WHERE d.app_id=$3::text::uuid AND d.id=$4::text::uuid AND a.status <> 'deleted'
 ON CONFLICT (app_id, attempt_id) DO UPDATE SET attempt_id=deployment_submission_receipts.attempt_id
-RETURNING attempt_id, deployment_id::text AS deployment_id, accepted_at
+RETURNING attempt_id, deployment_id::text AS deployment_id, accepted_at, COALESCE(request_fingerprint, '')::text AS request_fingerprint
 `
 
 type AttachDeploymentSubmissionParams struct {
-	AttemptID    string
-	AppID        string
-	DeploymentID string
+	AttemptID          string
+	RequestFingerprint string
+	AppID              string
+	DeploymentID       string
 }
 
 type AttachDeploymentSubmissionRow struct {
-	AttemptID    string
-	DeploymentID string
-	AcceptedAt   pgtype.Timestamptz
+	AttemptID          string
+	DeploymentID       string
+	AcceptedAt         pgtype.Timestamptz
+	RequestFingerprint string
 }
 
 func (q *Queries) AttachDeploymentSubmission(ctx context.Context, db DBTX, arg AttachDeploymentSubmissionParams) (AttachDeploymentSubmissionRow, error) {
-	row := db.QueryRow(ctx, attachDeploymentSubmission, arg.AttemptID, arg.AppID, arg.DeploymentID)
+	row := db.QueryRow(ctx, attachDeploymentSubmission,
+		arg.AttemptID,
+		arg.RequestFingerprint,
+		arg.AppID,
+		arg.DeploymentID,
+	)
 	var i AttachDeploymentSubmissionRow
-	err := row.Scan(&i.AttemptID, &i.DeploymentID, &i.AcceptedAt)
+	err := row.Scan(
+		&i.AttemptID,
+		&i.DeploymentID,
+		&i.AcceptedAt,
+		&i.RequestFingerprint,
+	)
 	return i, err
 }
 
@@ -11690,9 +11702,12 @@ func (q *Queries) CreateWorkflowForEachItem(ctx context.Context, db DBTX, arg Cr
 }
 
 const cronActivationPlan = `-- name: CronActivationPlan :one
-SELECT plan FROM accounts WHERE id=$1::text::uuid
+SELECT a.plan FROM accounts a WHERE a.id=$1::text::uuid
+UNION ALL
+SELECT o.plan FROM orgs o WHERE o.id=$1::text::uuid AND NOT o.personal_org AND o.resource_ownership_enabled
 `
 
+// A company namespace uses its adopted organization's plan (AppResourceAccount).
 func (q *Queries) CronActivationPlan(ctx context.Context, db DBTX, accountID string) (string, error) {
 	row := db.QueryRow(ctx, cronActivationPlan, accountID)
 	var plan string
@@ -66991,6 +67006,41 @@ func (q *Queries) PruneExpiredRuntimeUpgradeGatewayReceipts(ctx context.Context,
 	return result.RowsAffected(), nil
 }
 
+const pruneProjectSubmissions = `-- name: PruneProjectSubmissions :execrows
+DELETE FROM project_submissions s
+USING (
+ SELECT c.account_id, c.attempt_id FROM project_submissions c
+ WHERE c.updated_at < $1::timestamptz
+   AND COALESCE(c.payload #>> '{apply,safe_release,status}', '') NOT IN ('building','verifying','rolling_back')
+   AND COALESCE(c.payload #>> '{apply,safe_release,verification,stabilization,status}', '') <> 'monitoring'
+   AND NOT EXISTS (SELECT 1 FROM project_release_canaries x WHERE x.account_id=c.account_id AND x.attempt_id=c.attempt_id)
+   AND NOT EXISTS (SELECT 1 FROM project_migration_contracts x WHERE x.account_id=c.account_id AND x.attempt_id=c.attempt_id)
+   AND NOT EXISTS (SELECT 1 FROM project_migration_recoveries x WHERE x.account_id=c.account_id AND c.attempt_id IN (x.attempt_id, x.replacement_attempt_id))
+   AND NOT EXISTS (SELECT 1 FROM project_release_config_intents x WHERE x.account_id=c.account_id AND x.attempt_id=c.attempt_id)
+   AND NOT EXISTS (SELECT 1 FROM deployment_project_release_workers x WHERE x.account_id=c.account_id AND x.attempt_id=c.attempt_id)
+   AND NOT EXISTS (SELECT 1 FROM project_release_additions x WHERE x.account_id=c.account_id AND x.attempt_id=c.attempt_id)
+ ORDER BY c.updated_at
+ LIMIT $2::int
+ FOR UPDATE OF c SKIP LOCKED
+) expired
+WHERE s.account_id=expired.account_id AND s.attempt_id=expired.attempt_id
+`
+
+type PruneProjectSubmissionsParams struct {
+	Before     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+// Bounded receipt retention (ADR-20261021094500). A receipt stays while its
+// safe release may still change or any attempt-keyed release state names it.
+func (q *Queries) PruneProjectSubmissions(ctx context.Context, db DBTX, arg PruneProjectSubmissionsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneProjectSubmissions, arg.Before, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pruneReadinessNotifications = `-- name: PruneReadinessNotifications :exec
 DELETE FROM customer_workflow_readiness_notifications WHERE subscription_id = $1 AND sequence <= $2
 `
@@ -72477,7 +72527,7 @@ func (q *Queries) ReadDeploymentReleaseSecrets(ctx context.Context, db DBTX, dep
 }
 
 const readDeploymentSubmission = `-- name: ReadDeploymentSubmission :one
-SELECT r.attempt_id, r.deployment_id::text AS deployment_id, r.accepted_at
+SELECT r.attempt_id, r.deployment_id::text AS deployment_id, r.accepted_at, COALESCE(r.request_fingerprint, '')::text AS request_fingerprint
 FROM deployment_submission_receipts r JOIN apps a ON a.id=r.app_id
 WHERE r.app_id=$1::text::uuid AND r.attempt_id=$2 AND a.status <> 'deleted'
 `
@@ -72488,15 +72538,21 @@ type ReadDeploymentSubmissionParams struct {
 }
 
 type ReadDeploymentSubmissionRow struct {
-	AttemptID    string
-	DeploymentID string
-	AcceptedAt   pgtype.Timestamptz
+	AttemptID          string
+	DeploymentID       string
+	AcceptedAt         pgtype.Timestamptz
+	RequestFingerprint string
 }
 
 func (q *Queries) ReadDeploymentSubmission(ctx context.Context, db DBTX, arg ReadDeploymentSubmissionParams) (ReadDeploymentSubmissionRow, error) {
 	row := db.QueryRow(ctx, readDeploymentSubmission, arg.AppID, arg.AttemptID)
 	var i ReadDeploymentSubmissionRow
-	err := row.Scan(&i.AttemptID, &i.DeploymentID, &i.AcceptedAt)
+	err := row.Scan(
+		&i.AttemptID,
+		&i.DeploymentID,
+		&i.AcceptedAt,
+		&i.RequestFingerprint,
+	)
 	return i, err
 }
 

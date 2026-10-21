@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -111,6 +112,9 @@ func (s *server) getProjectSubmission(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	receipt, err := store.ProjectSubmission(r.Context(), acct.ID, attempt)
+	if err == nil {
+		err = s.projectSubmissionAddressed(r, acct, receipt)
+	}
 	if errors.Is(err, state.ErrNotFound) {
 		s.notFound(w, "project submission receipt not found")
 		return
@@ -124,6 +128,34 @@ func (s *server) getProjectSubmission(w http.ResponseWriter, r *http.Request, ac
 		safe.Verification.Actions = api.ProjectReleaseControlActions(safe)
 	}
 	writeJSON(w, http.StatusOK, receipt)
+}
+
+// projectSubmissionAddressed binds a receipt to the project this request may
+// use. Company receipts are reachable only through the organization's project
+// URL, which rechecks membership and role; the slug-less personal URL would
+// otherwise keep a departed creator's access to the shared namespace.
+func (s *server) projectSubmissionAddressed(r *http.Request, acct state.Account, receipt api.ProjectSubmissionReceipt) error {
+	if grant, shared := projectaccess.From(r.Context()); shared {
+		if receipt.ProjectSlug != grant.Project.Slug || receipt.Apply.ProjectID != "" && receipt.Apply.ProjectID != grant.Project.ID {
+			return state.ErrNotFound
+		}
+		return nil
+	}
+	project, err := s.store.ProjectBySlug(r.Context(), acct.ID, receipt.ProjectSlug)
+	if errors.Is(err, state.ErrNotFound) || err == nil && project.OrgID == "" {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	org, err := s.store.OrgByID(r.Context(), project.OrgID)
+	if err != nil {
+		return err
+	}
+	if !org.Personal {
+		return state.ErrNotFound
+	}
+	return nil
 }
 
 func (s *server) finishProjectSubmission(ctx context.Context, tracker *deploystaging.ProjectSubmission) {
