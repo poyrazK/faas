@@ -51,6 +51,7 @@ const (
 	RealtimeTickets      = "realtime_tickets"
 	RealtimeAccess       = "realtime_access"
 	RealtimeOccupancy    = "realtime_occupancy"
+	StrictBudgets        = "strict_budgets"
 )
 
 // RealtimePreviews are the flags apid decides per endpoint and sends to
@@ -270,6 +271,15 @@ var catalog = []Spec{
 		LegacyEnv:    []string{"FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED"},
 		RetireBy:     "2027-01-31",
 		HealthRoutes: []string{"GET /v1/apps/{slug}/realtime/endpoints/{id}/occupancy"},
+	},
+	{
+		Key:         StrictBudgets,
+		Label:       "Strict budgets",
+		Description: "Release strict (suspend_workloads) compute and egress budgets to accounts. Off by default until native acceptance passes. Strict budgets that are already enabled keep enforcing and stay editable while it is off; only creating or enabling one is refused.",
+		ADR:         "ADR-1750",
+		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan},
+		RetireBy:    "2027-01-31",
 	},
 }
 

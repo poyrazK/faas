@@ -51098,6 +51098,68 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/billing/budgets/{id}/channels:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Stable identity of a live account-owned budget policy.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [billing]
+      operationId: getFinancialBudgetChannels
+      summary: List the notification channels a budget's threshold alerts also go to.
+      description: |
+        Requires usage:read and session MFA (ADR-20261019193500). Each channel
+        reports its latest delivery outcome. Alerts always go to the account
+        email; channels are in addition to it. Deleted or foreign policies
+        return 404.
+      responses:
+        '200':
+          description: Bound channels in name order; empty when only the account email is used.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetChannelsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [billing]
+      operationId: setFinancialBudgetChannels
+      summary: Replace the notification channels a budget's threshold alerts also go to.
+      description: |
+        Requires admin scope, session MFA and Idempotency-Key (ADR-20261019193500).
+        Every id must be one of the account's notification channels, at most 5,
+        without duplicates. Each threshold alert is delivered once per channel
+        and retried with backoff for up to 12 attempts. A channel added later
+        receives a threshold already crossed this month when it is next
+        re-evaluated. Removing a channel holds its pending deliveries; deleting
+        the channel discards them. Does not change the policy revision.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry key for this replacement.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetFinancialBudgetChannelsRequest' }
+      responses:
+        '200':
+          description: The budget's channels after the replacement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetChannelsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/billing/budgets/preview:
     post:
       tags: [billing]
@@ -77019,12 +77081,15 @@ components:
         coverage_complete: { type: boolean }
         fresh: { type: boolean }
         reasons: { type: array, items: { type: string } }
+        projected_millicents: { type: integer, format: int64, minimum: 0, description: 'Month-end amount at the current run rate (ADR-20261019193500): an estimate, not an invoice. Absent, with projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale.' }
+        projection_reason: { type: string, description: 'Why no projection is available, for example compute:insufficient_history (less than a day of evidence) or incomplete_evidence.' }
     FinancialBudgetAlert:
       type: object
       description: One threshold event per policy revision and UTC month. Edits re-evaluate monthly spending. Delivery is at least once with a stable transport idempotency key; delivered means accepted by the configured transport, not confirmed inbox receipt.
       required: [id, policy_revision, threshold_millicents, evaluation, state, attempts, next_attempt_at]
       properties:
         id: { type: string, format: uuid }
+        kind: { type: string, enum: [projection], description: 'Absent for a crossed threshold. projection marks a projected-overrun alert (ADR-20261019193500), whose threshold_millicents is the limit.' }
         policy_revision: { type: integer, format: int64, minimum: 1 }
         threshold_millicents: { type: integer, format: int64, minimum: 0 }
         evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
@@ -77082,8 +77147,10 @@ components:
         initialized: { type: boolean }
         app_id: { type: string, format: uuid }
         job_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid, description: 'The capped project of a strict project budget (ADR-1750, amendment 1): one gross book shared by every app in the project. Jobs are not covered.' }
+        environment_id: { type: string, format: uuid, description: 'The capped environment of a strict environment budget (ADR-1750, amendment 2): one gross book shared by every deployment that runs in the environment. Capacity floors and jobs are not covered.' }
         account_id: { type: string, format: uuid }
-        scope_kind: { type: string, enum: [account, app, job] }
+        scope_kind: { type: string, enum: [account, app, job, project, environment] }
         basis: { type: string, enum: [net_usage, gross_usage] }
         allowance_granted_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         allowance_committed_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
@@ -77105,6 +77172,7 @@ components:
         compute: { $ref: '#/components/schemas/FinancialComputeBalance' }
         evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
         alerts: { type: array, maxItems: 9, items: { $ref: '#/components/schemas/FinancialBudgetAlert' } }
+        projection: { $ref: '#/components/schemas/FinancialBudgetAlert' }
         stops: { type: array, maxItems: 1, items: { $ref: '#/components/schemas/FinancialBudgetStop' } }
     FinancialBudgetListResponse:
       type: object
@@ -77131,6 +77199,19 @@ components:
       required: [expected_revision]
       properties:
         expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+    SetFinancialBudgetChannelsRequest:
+      type: object
+      description: The full replacement set of notification channels for a budget's alerts (ADR-20261019193500).
+      required: [channel_ids]
+      properties:
+        channel_ids: { type: array, maxItems: 5, uniqueItems: true, description: Account-owned notification channel ids; empty leaves only the account email., items: { type: string, format: uuid } }
+    FinancialBudgetChannelsResponse:
+      type: object
+      description: The notification channels a budget's threshold alerts also go to, with each channel's latest delivery outcome.
+      required: [policy_id, channels]
+      properties:
+        policy_id: { type: string, format: uuid }
+        channels: { type: array, maxItems: 5, items: { $ref: '#/components/schemas/NotificationChannelResponse' } }
     FinancialBudgetRevisionResponse:
       type: object
       description: Immutable intent audit written in the same transaction as the policy.
@@ -77164,7 +77245,7 @@ components:
         name: { type: string, minLength: 1, maxLength: 128, description: Nonblank name bounded to 128 UTF-8 bytes. }
         scope: { $ref: '#/components/schemas/FinancialBudgetScope' }
         currency: { type: string, enum: [USD, EUR], description: New writes require USD; EUR is retained only for historical policy responses. }
-        meters: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, description: Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only., items: { type: string, enum: [compute, egress] } }
+        meters: { type: array, minItems: 1, maxItems: 3, uniqueItems: true, description: Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only. object_storage (ADR-20261020160000) is priced from the live object-storage estimate and only monitored account budgets may select it., items: { type: string, enum: [compute, egress, object_storage] } }
         basis: { type: string, enum: [net_usage, gross_usage], description: Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross usage. }
         limit_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit. Strict compute requires an empty array; configure a separate monitored policy for alerts., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }
@@ -77290,6 +77371,7 @@ components:
         currency: { type: string, enum: [USD] }
         projected_quantity: { type: integer, format: int64 }
         projected_net_millicents: { type: integer, format: int64 }
+        projected_gross_millicents: { type: integer, format: int64, description: 'Set only for account-level meters priced by more than one rate, such as object_storage (ADR-20261020160000).' }
     FinancialMeterCoverage:
       type: object
       description: Completeness and freshness of authoritative retained meter evidence.

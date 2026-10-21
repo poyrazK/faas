@@ -12366,8 +12366,26 @@ CREATE FUNCTION public.financial_app_command_held(target_app uuid, target_deploy
  JOIN financial_compute_holds h ON h.account_id=p.account_id AND h.policy_id=p.id AND h.revision=p.revision
  WHERE a.id=target_app AND p.deleted_at IS NULL AND p.spec->>'enabled'='true'
   AND p.spec->>'mode'='strict' AND (p.spec->'scope'->>'kind'='account'
-    OR p.spec->'scope'->>'kind'='app' AND p.spec->'scope'->>'id'=a.id::text)
+    OR p.spec->'scope'->>'kind'='app' AND p.spec->'scope'->>'id'=a.id::text
+    OR p.spec->'scope'->>'kind'='project' AND p.spec->'scope'->>'id'=a.project_id::text
+    OR p.spec->'scope'->>'kind'='environment' AND p.spec->'scope'->>'id'=financial_compute_deployment_environment(target_deployment)::text)
   AND (p.spec->>'resume_rule'='manual' OR h.period_start=date_trunc('month',observed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))
+$$;
+
+
+--
+-- Name: financial_compute_deployment_environment(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_compute_deployment_environment(target_deployment uuid) RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT COALESCE(owner.environment_id, named.id)
+ FROM deployments d JOIN apps a ON a.id=d.app_id
+ LEFT JOIN deployment_runtime_environment_owners owner ON owner.deployment_id=d.id
+ LEFT JOIN project_environments named ON owner.deployment_id IS NULL AND named.project_id=a.project_id
+  AND named.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
+ WHERE d.id=target_deployment
 $$;
 
 
@@ -36354,6 +36372,31 @@ CREATE TABLE public.feature_flag_versions (
 
 
 --
+-- Name: financial_budget_alert_channel_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_alert_channel_deliveries (
+    alert_id uuid NOT NULL,
+    kind text NOT NULL,
+    channel_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    lease_token uuid,
+    delivered_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT financial_budget_alert_channel_deliveries_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT financial_budget_alert_channel_deliveries_check CHECK (((state = 'sending'::text) = (lease_token IS NOT NULL))),
+    CONSTRAINT financial_budget_alert_channel_deliveries_check1 CHECK (((state = 'delivered'::text) = (delivered_at IS NOT NULL))),
+    CONSTRAINT financial_budget_alert_channel_deliveries_kind_check CHECK ((kind = ANY (ARRAY['threshold'::text, 'projection'::text]))),
+    CONSTRAINT financial_budget_alert_channel_deliveries_last_error_check CHECK ((last_error = ANY (ARRAY[''::text, 'channel_delivery_failed'::text, 'channel_unavailable'::text]))),
+    CONSTRAINT financial_budget_alert_channel_deliveries_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sending'::text, 'retrying'::text, 'delivered'::text, 'abandoned'::text])))
+);
+
+
+--
 -- Name: financial_budget_alerts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -36381,6 +36424,17 @@ CREATE TABLE public.financial_budget_alerts (
     CONSTRAINT financial_budget_alerts_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
     CONSTRAINT financial_budget_alerts_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sending'::text, 'retrying'::text, 'delivered'::text]))),
     CONSTRAINT financial_budget_alerts_threshold_millicents_check CHECK (((threshold_millicents >= 0) AND (threshold_millicents <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: financial_budget_channels; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_channels (
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    channel_id uuid NOT NULL
 );
 
 
@@ -36419,7 +36473,38 @@ CREATE TABLE public.financial_budget_policies (
     CONSTRAINT financial_budget_policies_check CHECK ((updated_at >= created_at)),
     CONSTRAINT financial_budget_policies_check1 CHECK (((deleted_at IS NULL) OR (deleted_at >= created_at))),
     CONSTRAINT financial_budget_policies_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
-    CONSTRAINT financial_budget_policies_spec_check CHECK (((jsonb_typeof(spec) = 'object'::text) AND (spec ?& ARRAY['name'::text, 'scope'::text, 'currency'::text, 'meters'::text, 'basis'::text, 'limit_millicents'::text, 'notify_millicents'::text, 'mode'::text, 'action'::text, 'drain_seconds'::text, 'resume_rule'::text, 'enabled'::text]) AND (jsonb_typeof((spec -> 'name'::text)) = 'string'::text) AND ((length((spec ->> 'name'::text)) >= 1) AND (length((spec ->> 'name'::text)) <= 128)) AND (jsonb_typeof((spec -> 'scope'::text)) = 'object'::text) AND (((spec -> 'scope'::text) ->> 'kind'::text) = ANY (ARRAY['account'::text, 'project'::text, 'environment'::text, 'app'::text, 'job'::text])) AND ((spec ->> 'currency'::text) = ANY (ARRAY['EUR'::text, 'USD'::text])) AND (jsonb_typeof((spec -> 'meters'::text)) = 'array'::text) AND ((jsonb_array_length((spec -> 'meters'::text)) >= 1) AND (jsonb_array_length((spec -> 'meters'::text)) <= 2)) AND ((spec -> 'meters'::text) <@ '["compute", "egress"]'::jsonb) AND ((spec ->> 'basis'::text) = ANY (ARRAY['net_usage'::text, 'gross_usage'::text])) AND (jsonb_typeof((spec -> 'limit_millicents'::text)) = 'number'::text) AND ((((spec ->> 'limit_millicents'::text))::bigint >= 0) AND (((spec ->> 'limit_millicents'::text))::bigint <= '9007199254740991'::bigint)) AND (jsonb_typeof((spec -> 'notify_millicents'::text)) = 'array'::text) AND (jsonb_array_length((spec -> 'notify_millicents'::text)) <= 8) AND ((spec ->> 'mode'::text) = ANY (ARRAY['monitored'::text, 'strict'::text])) AND ((spec ->> 'action'::text) = ANY (ARRAY['notify'::text, 'reject_traffic'::text, 'suspend_background'::text, 'stop_previews'::text, 'suspend_workloads'::text])) AND (jsonb_typeof((spec -> 'drain_seconds'::text)) = 'number'::text) AND ((((spec ->> 'drain_seconds'::text))::integer >= 0) AND (((spec ->> 'drain_seconds'::text))::integer <= 300)) AND ((spec ->> 'resume_rule'::text) = ANY (ARRAY['manual'::text, 'next_period'::text])) AND (jsonb_typeof((spec -> 'enabled'::text)) = 'boolean'::text)))
+    CONSTRAINT financial_budget_policies_spec_v2_check CHECK (((jsonb_typeof(spec) = 'object'::text) AND (spec ?& ARRAY['name'::text, 'scope'::text, 'currency'::text, 'meters'::text, 'basis'::text, 'limit_millicents'::text, 'notify_millicents'::text, 'mode'::text, 'action'::text, 'drain_seconds'::text, 'resume_rule'::text, 'enabled'::text]) AND (jsonb_typeof((spec -> 'name'::text)) = 'string'::text) AND ((length((spec ->> 'name'::text)) >= 1) AND (length((spec ->> 'name'::text)) <= 128)) AND (jsonb_typeof((spec -> 'scope'::text)) = 'object'::text) AND (((spec -> 'scope'::text) ->> 'kind'::text) = ANY (ARRAY['account'::text, 'project'::text, 'environment'::text, 'app'::text, 'job'::text])) AND ((spec ->> 'currency'::text) = ANY (ARRAY['EUR'::text, 'USD'::text])) AND (jsonb_typeof((spec -> 'meters'::text)) = 'array'::text) AND ((jsonb_array_length((spec -> 'meters'::text)) >= 1) AND (jsonb_array_length((spec -> 'meters'::text)) <= 3)) AND ((spec -> 'meters'::text) <@ '["compute", "egress", "object_storage"]'::jsonb) AND ((spec ->> 'basis'::text) = ANY (ARRAY['net_usage'::text, 'gross_usage'::text])) AND (jsonb_typeof((spec -> 'limit_millicents'::text)) = 'number'::text) AND ((((spec ->> 'limit_millicents'::text))::bigint >= 0) AND (((spec ->> 'limit_millicents'::text))::bigint <= '9007199254740991'::bigint)) AND (jsonb_typeof((spec -> 'notify_millicents'::text)) = 'array'::text) AND (jsonb_array_length((spec -> 'notify_millicents'::text)) <= 8) AND ((spec ->> 'mode'::text) = ANY (ARRAY['monitored'::text, 'strict'::text])) AND ((spec ->> 'action'::text) = ANY (ARRAY['notify'::text, 'reject_traffic'::text, 'suspend_background'::text, 'stop_previews'::text, 'suspend_workloads'::text])) AND (jsonb_typeof((spec -> 'drain_seconds'::text)) = 'number'::text) AND ((((spec ->> 'drain_seconds'::text))::integer >= 0) AND (((spec ->> 'drain_seconds'::text))::integer <= 300)) AND ((spec ->> 'resume_rule'::text) = ANY (ARRAY['manual'::text, 'next_period'::text])) AND (jsonb_typeof((spec -> 'enabled'::text)) = 'boolean'::text)))
+);
+
+
+--
+-- Name: financial_budget_projection_alerts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_projection_alerts (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    limit_millicents bigint NOT NULL,
+    payload jsonb NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    lease_token uuid,
+    delivered_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT financial_budget_projection_alerts_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT financial_budget_projection_alerts_check CHECK ((next_attempt_at >= period_start)),
+    CONSTRAINT financial_budget_projection_alerts_check1 CHECK (((state = 'sending'::text) = (lease_token IS NOT NULL))),
+    CONSTRAINT financial_budget_projection_alerts_check2 CHECK (((state = 'delivered'::text) = (delivered_at IS NOT NULL))),
+    CONSTRAINT financial_budget_projection_alerts_last_error_check CHECK ((last_error = ANY (ARRAY[''::text, 'mail_delivery_failed'::text]))),
+    CONSTRAINT financial_budget_projection_alerts_limit_millicents_check CHECK (((limit_millicents >= 1) AND (limit_millicents <= '9007199254740991'::bigint))),
+    CONSTRAINT financial_budget_projection_alerts_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_budget_projection_alerts_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT financial_budget_projection_alerts_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT financial_budget_projection_alerts_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sending'::text, 'retrying'::text, 'delivered'::text])))
 );
 
 
@@ -36610,10 +36695,29 @@ CREATE TABLE public.financial_compute_owners (
     account_compute_incarnation uuid,
     job_compute_incarnation uuid,
     egress_budget_incarnation uuid,
+    scope_compute_incarnation uuid,
     CONSTRAINT financial_compute_job_owner_incarnation CHECK (((job_compute_incarnation IS NULL) OR (job_compute_incarnation = incarnation))),
     CONSTRAINT financial_compute_owner_account_incarnation_check CHECK (((account_compute_incarnation IS NULL) OR (account_compute_incarnation = incarnation))),
     CONSTRAINT financial_compute_owners_protocol_check CHECK ((protocol = 1)),
     CONSTRAINT financial_egress_owner_incarnation CHECK (((egress_budget_incarnation IS NULL) OR (egress_budget_incarnation = incarnation)))
+);
+
+
+--
+-- Name: financial_compute_scope_books; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_scope_books (
+    account_id uuid NOT NULL,
+    scope_kind text NOT NULL,
+    scope_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT financial_compute_scope_books_check CHECK ((period_end > period_start)),
+    CONSTRAINT financial_compute_scope_books_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_compute_scope_books_payload_check1 CHECK (COALESCE(((((payload ->> 'committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'committed'::text))::numeric + ((payload ->> 'reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric)), false)),
+    CONSTRAINT financial_compute_scope_books_scope_kind_check CHECK ((scope_kind = ANY (ARRAY['project'::text, 'environment'::text])))
 );
 
 
@@ -36637,6 +36741,42 @@ CREATE TABLE public.financial_funding_currency (
     currency text NOT NULL,
     CONSTRAINT financial_funding_currency_currency_check CHECK ((currency = 'USD'::text)),
     CONSTRAINT financial_funding_currency_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: financial_object_storage_estimates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_object_storage_estimates (
+    account_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    usage_through timestamp with time zone NOT NULL,
+    fresh boolean NOT NULL,
+    stored_byte_hours bigint NOT NULL,
+    request_count bigint NOT NULL,
+    egress_bytes bigint NOT NULL,
+    currency text NOT NULL,
+    storage_millicents_per_gib_month bigint NOT NULL,
+    requests_millicents_per_million bigint NOT NULL,
+    egress_millicents_per_gib bigint NOT NULL,
+    included_byte_hours bigint NOT NULL,
+    included_requests bigint NOT NULL,
+    included_egress_bytes bigint NOT NULL,
+    CONSTRAINT financial_object_storage_est_requests_millicents_per_mill_check CHECK ((requests_millicents_per_million >= 0)),
+    CONSTRAINT financial_object_storage_est_storage_millicents_per_gib_m_check CHECK ((storage_millicents_per_gib_month >= 0)),
+    CONSTRAINT financial_object_storage_estima_egress_millicents_per_gib_check CHECK ((egress_millicents_per_gib >= 0)),
+    CONSTRAINT financial_object_storage_estimates_check CHECK ((observed_at >= period_start)),
+    CONSTRAINT financial_object_storage_estimates_check1 CHECK (((usage_through >= period_start) AND (usage_through <= observed_at))),
+    CONSTRAINT financial_object_storage_estimates_currency_check CHECK ((currency = 'USD'::text)),
+    CONSTRAINT financial_object_storage_estimates_egress_bytes_check CHECK ((egress_bytes >= 0)),
+    CONSTRAINT financial_object_storage_estimates_included_byte_hours_check CHECK ((included_byte_hours >= 0)),
+    CONSTRAINT financial_object_storage_estimates_included_egress_bytes_check CHECK ((included_egress_bytes >= 0)),
+    CONSTRAINT financial_object_storage_estimates_included_requests_check CHECK ((included_requests >= 0)),
+    CONSTRAINT financial_object_storage_estimates_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT financial_object_storage_estimates_request_count_check CHECK ((request_count >= 0)),
+    CONSTRAINT financial_object_storage_estimates_stored_byte_hours_check CHECK ((stored_byte_hours >= 0))
 );
 
 
@@ -57444,6 +57584,14 @@ ALTER TABLE ONLY public.feature_flag_versions
 
 
 --
+-- Name: financial_budget_alert_channel_deliveries financial_budget_alert_channel_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_alert_channel_deliveries
+    ADD CONSTRAINT financial_budget_alert_channel_deliveries_pkey PRIMARY KEY (alert_id, channel_id);
+
+
+--
 -- Name: financial_budget_alerts financial_budget_alerts_account_id_policy_id_revision_perio_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -57457,6 +57605,14 @@ ALTER TABLE ONLY public.financial_budget_alerts
 
 ALTER TABLE ONLY public.financial_budget_alerts
     ADD CONSTRAINT financial_budget_alerts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: financial_budget_channels financial_budget_channels_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_channels
+    ADD CONSTRAINT financial_budget_channels_pkey PRIMARY KEY (account_id, policy_id, channel_id);
 
 
 --
@@ -57481,6 +57637,22 @@ ALTER TABLE ONLY public.financial_budget_policies
 
 ALTER TABLE ONLY public.financial_budget_policies
     ADD CONSTRAINT financial_budget_policies_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: financial_budget_projection_alerts financial_budget_projection_a_account_id_policy_id_revision_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_projection_alerts
+    ADD CONSTRAINT financial_budget_projection_a_account_id_policy_id_revision_key UNIQUE (account_id, policy_id, revision, period_start);
+
+
+--
+-- Name: financial_budget_projection_alerts financial_budget_projection_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_projection_alerts
+    ADD CONSTRAINT financial_budget_projection_alerts_pkey PRIMARY KEY (id);
 
 
 --
@@ -57580,6 +57752,22 @@ ALTER TABLE ONLY public.financial_compute_owners
 
 
 --
+-- Name: financial_compute_scope_books financial_compute_scope_books_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_scope_books
+    ADD CONSTRAINT financial_compute_scope_books_pkey PRIMARY KEY (account_id, scope_kind, scope_id, period_start);
+
+
+--
+-- Name: financial_compute_owners financial_compute_scope_owner_incarnation; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.financial_compute_owners
+    ADD CONSTRAINT financial_compute_scope_owner_incarnation CHECK (((scope_compute_incarnation IS NULL) OR (scope_compute_incarnation = incarnation))) NOT VALID;
+
+
+--
 -- Name: financial_evidence_coverage financial_evidence_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -57593,6 +57781,14 @@ ALTER TABLE ONLY public.financial_evidence_coverage
 
 ALTER TABLE ONLY public.financial_funding_currency
     ADD CONSTRAINT financial_funding_currency_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: financial_object_storage_estimates financial_object_storage_estimates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_object_storage_estimates
+    ADD CONSTRAINT financial_object_storage_estimates_pkey PRIMARY KEY (account_id, period_start);
 
 
 --
@@ -68602,6 +68798,13 @@ CREATE INDEX feature_flag_versions_scope ON public.feature_flag_versions USING b
 
 
 --
+-- Name: financial_budget_alert_channel_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_budget_alert_channel_due_idx ON public.financial_budget_alert_channel_deliveries USING btree (next_attempt_at, alert_id, channel_id) WHERE (state = ANY (ARRAY['pending'::text, 'sending'::text, 'retrying'::text]));
+
+
+--
 -- Name: financial_budget_alert_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -68609,10 +68812,24 @@ CREATE INDEX financial_budget_alert_due_idx ON public.financial_budget_alerts US
 
 
 --
+-- Name: financial_budget_channels_channel_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_budget_channels_channel_idx ON public.financial_budget_channels USING btree (channel_id);
+
+
+--
 -- Name: financial_budget_policies_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX financial_budget_policies_account_idx ON public.financial_budget_policies USING btree (account_id, id) WHERE (deleted_at IS NULL);
+
+
+--
+-- Name: financial_budget_projection_alert_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_budget_projection_alert_due_idx ON public.financial_budget_projection_alerts USING btree (next_attempt_at, id) WHERE (state <> 'delivered'::text);
 
 
 --
@@ -86676,11 +86893,43 @@ ALTER TABLE ONLY public.feature_flag_versions
 
 
 --
+-- Name: financial_budget_alert_channel_deliveries financial_budget_alert_channel_delive_account_id_policy_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_alert_channel_deliveries
+    ADD CONSTRAINT financial_budget_alert_channel_delive_account_id_policy_id_fkey FOREIGN KEY (account_id, policy_id) REFERENCES public.financial_budget_policies(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_alert_channel_deliveries financial_budget_alert_channel_deliveries_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_alert_channel_deliveries
+    ADD CONSTRAINT financial_budget_alert_channel_deliveries_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.notification_channels(id) ON DELETE CASCADE;
+
+
+--
 -- Name: financial_budget_alerts financial_budget_alerts_account_id_policy_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.financial_budget_alerts
     ADD CONSTRAINT financial_budget_alerts_account_id_policy_id_revision_fkey FOREIGN KEY (account_id, policy_id, revision) REFERENCES public.financial_budget_revisions(account_id, policy_id, revision) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_channels financial_budget_channels_account_id_policy_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_channels
+    ADD CONSTRAINT financial_budget_channels_account_id_policy_id_fkey FOREIGN KEY (account_id, policy_id) REFERENCES public.financial_budget_policies(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_channels financial_budget_channels_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_channels
+    ADD CONSTRAINT financial_budget_channels_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.notification_channels(id) ON DELETE CASCADE;
 
 
 --
@@ -86697,6 +86946,14 @@ ALTER TABLE ONLY public.financial_budget_evaluations
 
 ALTER TABLE ONLY public.financial_budget_policies
     ADD CONSTRAINT financial_budget_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_projection_alerts financial_budget_projection_a_account_id_policy_id_revisio_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_projection_alerts
+    ADD CONSTRAINT financial_budget_projection_a_account_id_policy_id_revisio_fkey FOREIGN KEY (account_id, policy_id, revision) REFERENCES public.financial_budget_revisions(account_id, policy_id, revision) ON DELETE CASCADE;
 
 
 --
@@ -86793,6 +87050,22 @@ ALTER TABLE ONLY public.financial_compute_leases
 
 ALTER TABLE ONLY public.financial_compute_owners
     ADD CONSTRAINT financial_compute_owners_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_compute_scope_books financial_compute_scope_books_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_scope_books
+    ADD CONSTRAINT financial_compute_scope_books_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_object_storage_estimates financial_object_storage_estimates_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_object_storage_estimates
+    ADD CONSTRAINT financial_object_storage_estimates_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

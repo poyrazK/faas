@@ -35,6 +35,10 @@ type FinancialComputeStore interface {
 	FinancialComputeBalance(context.Context, FinancialBudget, time.Time) (financial.ComputeBalance, error)
 	FinancialComputeReady(context.Context, string, string) (bool, error)
 	FinancialComputePolicies(context.Context, string, string) ([]FinancialBudget, error)
+	// FinancialComputeDeploymentEnvironment narrows the environment policies
+	// FinancialComputePolicies reports to one deployment's (ADR-1750,
+	// amendment 2). ErrNotFound means the deployment is not the app's.
+	FinancialComputeDeploymentEnvironment(context.Context, string, string, string) (string, error)
 	FinancialComputeBillingSeconds(context.Context, string, string, string, time.Time, int64) (int64, error)
 	FinancialComputeFloorCovered(context.Context, string, string, time.Time) (bool, error)
 	FinancialComputeAppManaged(context.Context, string, string) (bool, error)
@@ -56,6 +60,8 @@ type financialComputeTxn interface {
 	putLease(financial.ComputeLease) error
 	active(string) ([]financial.ComputeLease, error)
 	policies(string) ([]FinancialBudget, error)
+	// allPolicies lists every live policy of the account once.
+	allPolicies() ([]FinancialBudget, error)
 	holds() ([]financialComputeHold, error)
 	putHold(financialComputeHold) error
 	owner(string, string) (bool, error)
@@ -63,6 +69,12 @@ type financialComputeTxn interface {
 	allowance(time.Time) (int64, error)
 	egressPrices(time.Time) ([]FinancialPriceSnapshot, error)
 	egressOwner(string, string) (bool, error)
+	// workloadScopes is an app attempt's current project and the environment
+	// its deployment runs in (zero for jobs; ADR-1750, amendments 1 and 2).
+	// The instance's recorded deployment wins over the given one.
+	workloadScopes(key, instance, deployment string) (computeScopes, error)
+	// projectEnvironments lists the environments of one project.
+	projectEnvironments(string) ([]string, error)
 }
 
 func validateComputeRequest(r financial.ComputeRequest, mutate bool) bool {
@@ -144,11 +156,10 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 			return financial.ComputeLease{}, ErrConflict
 		}
 	}
-	policies, err := tx.policies(r.WorkloadKey())
+	scopes, policies, err := computeAttemptPolicies(tx, r.WorkloadKey(), r.InstanceID, r.DeploymentID)
 	if err != nil {
 		return financial.ComputeLease{}, err
 	}
-	policies = strictComputePolicies(policies, r.WorkloadKey())
 	if len(policies) > 0 {
 		for _, old := range active {
 			if old.InstanceID == r.InstanceID {
@@ -160,6 +171,7 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 	l := financial.ComputeLease{ID: r.LeaseID, Fence: r.Fence, RequestID: r.RequestID, Revision: 1, RequestOperation: "acquire", RateMillicents: api.OverageMillicentsPerGBHour, RateQuantity: api.SecondsPerGBHour, AccountID: r.AccountID, AppID: r.AppID, JobID: r.JobID, JobRunID: r.JobRunID, JobTaskIndex: r.JobTaskIndex, InstanceID: r.InstanceID, NodeID: r.NodeID, Incarnation: r.Incarnation, BillableMB: r.BillableMB, PeriodStart: financial.ComputeMonth(now), StartedAt: now, GrantedAt: tx.clock(), RunUntil: now.Add(api.FinancialComputeLeaseDuration), FundedUntil: now.Add(api.FinancialComputeLeaseDuration + api.FinancialComputeTeardownReserve), Strict: len(policies) > 0}
 	l.AttemptID = r.AttemptID
 	l.Fenced = r.Fenced
+	l.DeploymentID = scopes.Deployment
 	// Only funding needs a persisted attempt identity. An unbudgeted boot is
 	// still registered for activation, but a legacy path without a wake ID
 	// must not fail for customers who never set a strict cap.
@@ -187,11 +199,18 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 	if err != nil {
 		return financial.ComputeLease{}, errors.Join(financial.ErrComputeUnavailable, err)
 	}
+	if computeFloorWaiving(policies) {
+		b.EnvironmentOnly = false
+	}
 	account, err := computeAccountFundingBook(tx, &l, policies)
 	if err != nil {
 		return financial.ComputeLease{}, err
 	}
-	if err = computeFund(tx, &b, account, &l, policies, true); err != nil {
+	scopeBooks, err := computeScopeFundingBooks(tx, &l, scopes, policies)
+	if err != nil {
+		return financial.ComputeLease{}, err
+	}
+	if err = computeFund(tx, &b, account, scopeBooks, &l, policies, true); err != nil {
 		if errors.Is(err, financial.ErrComputeBudget) {
 			// This committed negative receipt authorizes a fresh native
 			// absence audit after a lost reply or daemon restart. It grants
@@ -199,6 +218,7 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 			l.Denied = true
 			l.QuantityCommitted, l.QuantityReserved = 0, 0
 			l.EgressGranted, l.EgressGrant, l.EgressSequence = 0, 0, 0
+			l.ProjectID, l.EnvironmentID = "", ""
 			l.RunUntil = l.StartedAt
 			l.FundedUntil = l.StartedAt
 			l.SettledAt = &l.StartedAt
@@ -215,6 +235,11 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 	}
 	if account != nil {
 		if err = tx.putBook(*account); err != nil {
+			return financial.ComputeLease{}, err
+		}
+	}
+	for _, book := range scopeBooks {
+		if err = tx.putBook(*book); err != nil {
 			return financial.ComputeLease{}, err
 		}
 	}
@@ -252,7 +277,7 @@ func computeCancel(tx financialComputeTxn, r financial.ComputeRequest) (financia
 	return l, tx.putLease(l)
 }
 
-func computeFund(tx financialComputeTxn, b, account *financial.ComputeBook, l *financial.ComputeLease, policies []FinancialBudget, refill bool) error {
+func computeFund(tx financialComputeTxn, b, account *financial.ComputeBook, scopes []*financial.ComputeBook, l *financial.ComputeLease, policies []FinancialBudget, refill bool) error {
 	if l.FundedUntil.After(b.PeriodEnd) {
 		l.FundedUntil = b.PeriodEnd
 		l.RunUntil = b.PeriodEnd.Add(-api.FinancialComputeTeardownReserve)
@@ -276,11 +301,14 @@ func computeFund(tx financialComputeTxn, b, account *financial.ComputeBook, l *f
 	}
 	b.Reserved = without + wanted
 	appErr := computeCheckPolicies(tx, *b, policies)
-	var accountErr error
+	var accountErr, scopeErr error
 	if account != nil {
 		accountErr = computeFundAccount(tx, account, l, policies, refill)
 	}
-	if err := errors.Join(appErr, accountErr); err != nil {
+	for _, book := range scopes {
+		scopeErr = errors.Join(scopeErr, computeFundScope(tx, book, l, wanted, policies))
+	}
+	if err := errors.Join(appErr, accountErr, scopeErr); err != nil {
 		return err
 	}
 	l.Reserved = wanted
@@ -345,21 +373,45 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 		if delta < 0 || delta > l.Reserved || b.Reserved < delta {
 			return l, financial.ErrComputeUnavailable
 		}
+		// Shared books move by the same gross amounts as the workload book.
+		scopeBooks, err := computeLeaseScopeBooks(tx, l)
+		if err != nil {
+			return l, err
+		}
+		for _, book := range scopeBooks {
+			if book.Reserved < delta {
+				return l, financial.ErrComputeUnavailable
+			}
+			book.Committed += delta
+			book.Reserved -= delta
+		}
 		b.Committed += delta
 		b.Reserved -= delta
 		l.Committed = spent
 		l.Reserved -= delta
 		if settle {
 			b.Reserved -= l.Reserved
+			for _, book := range scopeBooks {
+				if book.Reserved < l.Reserved {
+					return l, financial.ErrComputeUnavailable
+				}
+				book.Reserved -= l.Reserved
+			}
 			l.Reserved = 0
 		} else {
-			policies, err := tx.policies(l.WorkloadKey())
+			scopes, policies, err := computeAttemptPolicies(tx, l.WorkloadKey(), l.InstanceID, l.DeploymentID)
 			if err != nil {
 				return l, err
 			}
+			if policies, err = computeRenewalScopePolicies(tx, l, scopes, policies); err != nil {
+				return financial.ComputeLease{}, err
+			}
+			if computeFloorWaiving(policies) {
+				b.EnvironmentOnly = false
+			}
 			l.RunUntil = now.Add(api.FinancialComputeLeaseDuration).Truncate(time.Second)
 			l.FundedUntil = l.RunUntil.Add(api.FinancialComputeTeardownReserve)
-			if err = computeFund(tx, &b, account, &l, strictComputePolicies(policies, l.WorkloadKey()), r.EgressRefill); err != nil {
+			if err = computeFund(tx, &b, account, scopeBooks, &l, policies, r.EgressRefill); err != nil {
 				return financial.ComputeLease{}, err
 			}
 		}
@@ -371,12 +423,17 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 				return l, err
 			}
 		}
+		for _, book := range scopeBooks {
+			if err = tx.putBook(*book); err != nil {
+				return l, err
+			}
+		}
 	} else if !settle {
-		policies, err := tx.policies(l.WorkloadKey())
+		_, policies, err := computeAttemptPolicies(tx, l.WorkloadKey(), l.InstanceID, l.DeploymentID)
 		if err != nil {
 			return l, err
 		}
-		if len(strictComputePolicies(policies, l.WorkloadKey())) > 0 {
+		if len(policies) > 0 {
 			return financial.ComputeLease{}, financial.ErrComputeUnavailable
 		}
 		l.RunUntil = now.Add(api.FinancialComputeLeaseDuration)
@@ -404,8 +461,13 @@ func minComputeTime(a, b time.Time) time.Time {
 func computeBalance(tx financialComputeTxn, p FinancialBudget, now time.Time) (financial.ComputeBalance, error) {
 	month := financial.ComputeMonth(now)
 	out := financial.ComputeBalance{AccountID: p.AccountID, ScopeKind: p.Spec.Scope.Kind, Basis: p.Spec.Basis, AppID: p.Spec.Scope.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), ObservedAt: tx.clock()}
-	if p.Spec.Scope.Kind == "job" {
+	switch p.Spec.Scope.Kind {
+	case "job":
 		out.JobID, out.AppID = p.Spec.Scope.ID, ""
+	case "project":
+		out.ProjectID, out.AppID = p.Spec.Scope.ID, ""
+	case "environment":
+		out.EnvironmentID, out.AppID = p.Spec.Scope.ID, ""
 	}
 	key := financial.ComputeScopeKey(p.Spec.Scope)
 	b, err := tx.book(key, month)
