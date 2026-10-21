@@ -161,11 +161,14 @@ WITH eligible AS MATERIALIZED (
 ), candidate AS (
     -- Repeating the due test here re-checks a row another worker claimed
     -- after this statement's snapshot, before SKIP LOCKED could skip it.
+    -- Only the first ranks can be claimed, so only they are looked up; a
+    -- batch short of rows that other workers hold is topped up next scan.
     SELECT r.outbox_id, r.subscription_id, k.position
     FROM event_fanout_recipients r
     JOIN ordered k ON k.outbox_id=r.outbox_id AND k.subscription_id=r.subscription_id
-    WHERE (r.state = 'pending' AND (r.available_at <= sqlc.arg(now_at)::timestamptz OR r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz OR k.schema_mismatch))
-       OR (r.state = 'processing' AND r.lease_until <= sqlc.arg(now_at)::timestamptz)
+    WHERE k.position <= 2 * sqlc.arg(batch_limit)::integer
+      AND ((r.state = 'pending' AND (r.available_at <= sqlc.arg(now_at)::timestamptz OR r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz OR k.schema_mismatch))
+       OR (r.state = 'processing' AND r.lease_until <= sqlc.arg(now_at)::timestamptz))
     ORDER BY k.position
     FOR UPDATE OF r SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
 ), claimed AS (
@@ -414,8 +417,10 @@ WITH eligible AS MATERIALIZED (
 ), candidate AS (
  -- Repeating the due test here re-checks a receipt another worker claimed
  -- after this statement's snapshot, before SKIP LOCKED could skip it.
+ -- Only the first ranks can be claimed, so only they are looked up.
  SELECT o.id, k.position FROM event_fanout_outbox o JOIN ordered k ON k.id=o.id
- WHERE NOT o.recipient_claims AND ((o.state='pending' AND o.available_at<=sqlc.arg(now_at)::timestamptz)
+ WHERE k.position <= 2 * sqlc.arg(batch_limit)::integer
+   AND NOT o.recipient_claims AND ((o.state='pending' AND o.available_at<=sqlc.arg(now_at)::timestamptz)
    OR (o.state='processing' AND o.lease_until<=sqlc.arg(now_at)::timestamptz))
  ORDER BY k.position
  FOR UPDATE OF o SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer

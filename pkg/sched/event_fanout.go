@@ -23,9 +23,11 @@ const eventFanoutRecoveryBatch = 100
 const eventFanoutSubscriptionBatch = 256
 const eventFanoutRecipientMaxAttempts = api.EventRoutingRetryDefaultAttempts
 
-// eventFanoutClaimBatch bounds one claim scan. Each claim in a batch holds
-// its lease until the sweep routes it, and a stopping sweep releases the rest
-// within eventFanoutReleaseTimeout.
+// eventFanoutClaimBatch bounds one recipient claim scan; adoption claims the
+// sweep's whole receipt budget in one scan, since adopting a receipt is one
+// short transaction. Each claim in a batch holds its lease until the sweep
+// routes it, and a stopping sweep releases the rest within
+// eventFanoutReleaseTimeout.
 const eventFanoutClaimBatch = 20
 const eventFanoutReleaseTimeout = 5 * time.Second
 
@@ -515,7 +517,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		var works []*state.PublishedEventWork
 		var err error
 		if adopting && batched {
-			works, err = batches.ClaimDuePublishedEventsForRecipientAdoption(ctx, l.eventFanoutNow(), min(eventFanoutClaimBatch, eventFanoutRecoveryBatch-claimed))
+			works, err = batches.ClaimDuePublishedEventsForRecipientAdoption(ctx, l.eventFanoutNow(), eventFanoutRecoveryBatch-claimed)
 		} else {
 			var work *state.PublishedEventWork
 			if adopting {
