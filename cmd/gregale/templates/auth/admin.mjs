@@ -1,12 +1,13 @@
 import { createHash, createPrivateKey, randomBytes, sign, timingSafeEqual } from 'node:crypto'
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
-import { auditColumns, auditPage, auditReply, HTTPError, readJSON } from './authz.mjs'
+import { auditColumns, auditPage, auditReply, HTTPError, readJSON, sqlError } from './authz.mjs'
 import { ssoRoute } from './sso.mjs'
 import { oauthRoute } from './oauth.mjs'
 import { emailRoute } from './emails.mjs'
 import { signupsRoute } from './signups.mjs'
 import { impersonationsRoute, startImpersonation } from './impersonation.mjs'
+import { adminRoute as serviceAccountsRoute } from './serviceaccounts.mjs'
 
 // /admin/v1: owner administration of an application Auth app (ADR-1190
 // phase 6). The owner holds the key; the app stores only its SHA-256 as
@@ -265,7 +266,7 @@ async function activity(query, params) {
 }
 
 // adminRoute returns [status, body] for one authorized request.
-export async function adminRoute({ pool, admin, external, emails = {}, impersonation = null, keyId = null }, method, url, body) {
+export async function adminRoute({ pool, admin, external, emails = {}, impersonation = null, serviceAccounts = false, keyId = null }, method, url, body) {
   const path = url.pathname.replace(/^\/admin\/v1/, '')
   const parts = path.split('/').filter(Boolean)
   const query = async (sql, args) => (await pool.query(sql, args)).rows
@@ -273,6 +274,12 @@ export async function adminRoute({ pool, admin, external, emails = {}, impersona
   if (parts[0] === 'oauth') return oauthRoute({ admin, goTrueError }, method, parts, body)
   if (parts[0] === 'emails') return emailRoute({ pool, external, ...emails }, method, parts, body)
   if (parts[0] === 'signups') return signupsRoute({ pool, mailer: emails.mailer, external, app: emails.app, pageParams, likePattern }, method, parts, url, body)
+  if (parts[0] === 'service-accounts') {
+    if (!serviceAccounts) throw new HTTPError(404, 'service_accounts_disabled')
+    // The SQL functions' stable errors become their HTTP statuses.
+    const rows = async (sql, args) => { try { return (await pool.query(sql, args)).rows } catch (err) { throw sqlError(err) } }
+    return serviceAccountsRoute(rows, method, parts.slice(1), url.searchParams, body)
+  }
   if (parts[0] === 'impersonations') {
     if (!impersonation) throw new HTTPError(404, 'impersonation_disabled')
     return impersonationsRoute({ pool }, method, parts, url)
@@ -366,7 +373,7 @@ export async function adminRoute({ pool, admin, external, emails = {}, impersona
 }
 
 // createAdminHandler serves /admin/v1. Without a key it does not exist.
-export function createAdminHandler({ pool, admin, keys, origins = [], external, emails = {}, impersonation = null }) {
+export function createAdminHandler({ pool, admin, keys, origins = [], external, emails = {}, impersonation = null, serviceAccounts = false }) {
   const allowed = new Set(origins)
   return async (req, res) => {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
@@ -384,7 +391,7 @@ export function createAdminHandler({ pool, admin, keys, origins = [], external, 
       if (!keyId) { req.resume(); throw new HTTPError(401, 'invalid_admin_key') }
       const url = new URL(req.url, 'http://admin.invalid')
       const body = await readJSON(req, limits.adminBodyBytes)
-      const [status, payload] = await adminRoute({ pool, admin, external, emails, impersonation, keyId }, req.method, url, body)
+      const [status, payload] = await adminRoute({ pool, admin, external, emails, impersonation, serviceAccounts, keyId }, req.method, url, body)
       reply(status, payload)
     } catch (err) {
       const failure = err instanceof HTTPError ? err : new HTTPError(500, 'internal_error')

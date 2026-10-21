@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // EdgeRuleChallengeResolved is the compiled kind=challenge matcher payload.
@@ -229,13 +231,7 @@ func validPass(key []byte, r *http.Request, appID string, now time.Time) bool {
 // GET or HEAD, with Sec-Fetch-Mode navigate when the browser sends it, or an
 // Accept header naming text/html otherwise.
 func isBrowserNavigation(r *http.Request) bool {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		return false
-	}
-	if mode := r.Header.Get("Sec-Fetch-Mode"); mode != "" {
-		return strings.EqualFold(mode, "navigate")
-	}
-	return strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/html")
+	return api.EdgeChallengeNavigation(r.Method, r.Header)
 }
 
 // safeReturnPath returns p when it is a path on this host (no scheme, no

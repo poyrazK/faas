@@ -175,6 +175,7 @@ sql:
     queries:
       - "pkg/state/audit_outbox_delivery_queries.sql"
       - "pkg/state/automation_live_queries.sql"
+      - "pkg/state/billing_run_product_queries.sql"
       - "pkg/state/binding_verification_run_queries.sql"
       - "pkg/state/build_dependency_queries.sql"
       - "pkg/state/config_revision_queries.sql"
@@ -275,6 +276,7 @@ sql:
       - "pkg/state/product_help_queries.sql"
       - "pkg/state/product_notification_queries.sql"
       - "pkg/state/product_onboarding_queries.sql"
+      - "pkg/state/product_overdue_queries.sql"
       - "pkg/state/product_owner_queries.sql"
       - "pkg/state/product_plans_queries.sql"
       - "pkg/state/product_run_details_queries.sql"

@@ -420,7 +420,16 @@ func (p paddleProvider) collect(ctx context.Context, conn connection, export *st
 	if err != nil {
 		return paddleCallProblem(err)
 	}
-	if err := p.client.BillTransaction(ctx, conn.key, export.ProviderInvoiceID, address); err != nil {
+	// The customer's business, when it has one, carries its tax identifier
+	// onto the invoice (ADR-20261020120000).
+	business, hasBusiness, err := p.client.ActiveBusiness(ctx, conn.key, export.Customer)
+	if err != nil {
+		return paddleCallProblem(err)
+	}
+	if !hasBusiness {
+		business.ID = ""
+	}
+	if err := p.client.BillTransaction(ctx, conn.key, export.ProviderInvoiceID, address, business.ID); err != nil {
 		return paddleCallProblem(err)
 	}
 	return nil

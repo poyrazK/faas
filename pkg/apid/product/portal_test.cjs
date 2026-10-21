@@ -343,6 +343,90 @@ test('billing displays immutable statements and signed credit notes with explici
   assert.ok(b.calls.filter(c => c.path.includes('/billing?')).every(c => c.options.method === undefined));
 });
 
+// adr: 20261018212918 — exported statements show the provider's payment status and only its own https invoice page.
+test('billing shows exported statement invoices and links only to the provider https page', async () => {
+  const statement = (id, invoice) => ({ id, kind: 'statement', currency: 'EUR', amount_millicents: 50000, invoice });
+  const b = browser(async path => {
+    if (!path.includes('/billing?')) return;
+    return { ok: true, status: 200, json: async () => ({
+      review: { period: '2026-09', currency: 'EUR', finalized: { amount_millicents: 50000 } },
+      documents: { documents: [
+        statement(randomUUID(), { payment_status: 'open', overdue: true, currency: 'EUR', amount_minor: 1250, amount_remaining_minor: 1250, amount_remaining_millicents: 1250000, due_at: '2026-10-15T00:00:00Z', hosted_invoice_url: 'https://invoice.stripe.com/i/acct_1/in_2' }),
+        statement(randomUUID(), { payment_status: 'paid', overdue: false, currency: 'EUR', amount_minor: 50, amount_remaining_minor: 0, amount_remaining_millicents: 0, hosted_invoice_url: 'javascript:alert(1)' }),
+        statement(randomUUID(), { overdue: false, currency: 'EUR', amount_minor: 50 }),
+      ], next_cursor: '' },
+    }) };
+  });
+  await b.signIn(); b.get('billing-period').value = '2026-09';
+  await b.get('billing-form').onsubmit({ preventDefault() {} });
+  const [overdue, paid, unsynced] = b.get('billing-documents').children;
+  assert.equal(overdue.children[0].textContent, 'Invoice overdue · due 2026-10-15 · EUR 12.50 remaining');
+  const pay = overdue.children[1];
+  assert.equal(pay.tag, 'a'); assert.equal(pay.textContent, 'View and pay invoice'); assert.equal(pay.href, 'https://invoice.stripe.com/i/acct_1/in_2');
+  assert.equal(pay.target, '_blank'); assert.equal(pay.rel, 'noopener noreferrer');
+  assert.equal(paid.children[0].textContent, 'Invoice paid');
+  assert.equal(paid.children.length, 1, 'a non-https invoice link must not render');
+  assert.equal(unsynced.children[0].textContent, 'Invoice issued; payment status not available yet');
+  assert.equal(unsynced.children.length, 1);
+});
+
+test('an overdue invoice hold pauses new runs and links only to the provider https page', async () => {
+  const held = hosted_invoice_url => async path => {
+    if (!path.endsWith('/product')) return;
+    const view = fixture(); view.overdue_hold = { due_at: '2026-10-15T00:00:00Z', hosted_invoice_url };
+    return { ok: true, status: 200, json: async () => view };
+  };
+  const b = browser(held('https://invoice.stripe.com/i/acct_1/in_2'));
+  await b.signIn();
+  const status = b.get('overdue-status');
+  assert.equal(status.hidden, false);
+  assert.equal(status.children[0].textContent, 'New runs are paused until your invoice due 2026-10-15 is paid. Work already running continues.');
+  const pay = status.children[1];
+  assert.equal(pay.tag, 'a'); assert.equal(pay.textContent, 'View and pay invoice'); assert.equal(pay.href, 'https://invoice.stripe.com/i/acct_1/in_2');
+  assert.equal(pay.target, '_blank'); assert.equal(pay.rel, 'noopener noreferrer');
+  assert.equal(b.get('account-status').textContent, 'Your workspace is active.', 'a hold is not the product team pausing the workspace');
+  const run = b.get('features').children[0].children.find(el => el.tag === 'form').children.at(-1);
+  assert.equal(run.disabled, true);
+
+  const unsafe = browser(held('javascript:alert(1)'));
+  await unsafe.signIn();
+  assert.equal(unsafe.get('overdue-status').children.length, 1, 'a non-https invoice link must not render');
+
+  const clear = browser();
+  await clear.signIn();
+  assert.equal(clear.get('overdue-status').hidden, true);
+});
+
+test('billing details load and save through the product team billing provider for roles that manage billing', async () => {
+  let saved;
+  const withManageBilling = manage => async (path, options) => {
+    if (path.endsWith('/product')) { const view = fixture(); view.access.permissions.manage_billing = manage; return { ok: true, status: 200, json: async () => view }; }
+    if (!path.endsWith('/billing-details')) return;
+    if (options?.method === 'PUT') { saved = JSON.parse(options.body); return { ok: true, status: 200, json: async () => ({ provider: 'paddle', ...saved }) }; }
+    return { ok: true, status: 200, json: async () => ({ provider: 'paddle', address: { country_code: 'DE', postal_code: '10115', city: 'Berlin', first_line: 'Unter den Linden 1' } }) };
+  };
+  const denied = browser(withManageBilling(false));
+  await denied.signIn();
+  assert.equal(denied.get('billing-details-section').hidden, true);
+
+  const b = browser(withManageBilling(true));
+  await b.signIn();
+  assert.equal(b.get('billing-details-section').hidden, false);
+  await b.get('billing-details-load').onclick();
+  assert.equal(b.get('billing-details-form').hidden, false);
+  assert.equal(b.get('billing-country').value, 'DE'); assert.equal(b.get('billing-city').value, 'Berlin'); assert.equal(b.get('billing-business').value, '');
+  assert.equal(b.get('billing-details-status').textContent, 'Invoices are addressed to these details.');
+  b.get('billing-country').value = ' gb '; b.get('billing-postal').value = 'SW1A 1AA'; b.get('billing-city').value = 'London'; b.get('billing-line1').value = '10 Downing St';
+  await b.get('billing-details-form').onsubmit({ preventDefault() {} });
+  assert.deepEqual(saved, { address: { country_code: 'GB', postal_code: 'SW1A 1AA', region: '', city: 'London', first_line: '10 Downing St', second_line: '' } }, 'an empty business name keeps the current business');
+  assert.equal(b.get('billing-details-status').textContent, 'Billing details saved. New invoices use them.');
+  b.get('billing-business').value = 'Acme Ltd'; b.get('billing-tax-id').value = 'GB123';
+  await b.get('billing-details-form').onsubmit({ preventDefault() {} });
+  assert.deepEqual(saved.business, { name: 'Acme Ltd', tax_identifier: 'GB123' });
+  const put = b.calls.filter(call => call.path.endsWith('/billing-details') && call.options?.method === 'PUT');
+  assert.equal(put.length, 2); assert.equal(put[0].path, '/v1/product-control/customer/exports/billing-details');
+});
+
 test('billing responses cannot restore another workspace after logout', async () => {
   let resolveBilling;
   const b = browser(path => path.includes('/billing?') ? new Promise(resolve => { resolveBilling = resolve; }) : undefined);

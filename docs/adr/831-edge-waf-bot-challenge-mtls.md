@@ -682,3 +682,24 @@ stands; this amendment fixes the details and changes one rule.
 - **Not in this step.** Security events (ADR-964) for challenge outcomes, a
   challenge section in the edge-protection summary, raising the difficulty
   under attack, and an alternative for clients without JavaScript.
+
+### Amendment 7 follow-up (2026-10-21): visibility and adoption
+
+- **Summary.** The edge-protection summary (`GET .../edge-protection`,
+  dashboard, `gregale edge-rules summary`) gains a `challenge` section from
+  `gateway_edge_challenge_total`: pages issued, solved, non-browser requests
+  rejected, requests passed on an earlier solve, verified clients bypassed,
+  and invalid or expired solutions. `challenge` joins the rejection gates.
+- **Events.** Matches of challenge rules already record hit counts and
+  sampled security events (ADR-960/964) through the shared match path, in
+  both modes; outcomes beyond the match live in the summary.
+- **Simulator.** The edge-rule trace evaluates `challenge` after `validate`
+  and before `respond`, as the gateway does: a browser navigation shows the
+  challenge page, anything else 403 `challenge_required`, both marked
+  incomplete because a pass or verified credential is not collected. The
+  navigation test is shared (`api.EdgeChallengeNavigation`).
+- **Adoption.** Protection recipe `challenge-path` (ADR-986) and a
+  challenge alternative on sign-in and `/admin` suggestions
+  (ADR-20261020105000).
+- **Still not in this step:** raising the difficulty under attack, and an
+  alternative for clients without JavaScript.

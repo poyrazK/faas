@@ -1,10 +1,11 @@
 from typing import Literal
 
-BillingRunItemResponseSourceKind = Literal["app_consumer", "platform_tenant"]
+BillingRunItemResponseSourceKind = Literal["app_consumer", "platform_tenant", "product_control"]
 
 BILLING_RUN_ITEM_RESPONSE_SOURCE_KIND_VALUES: set[BillingRunItemResponseSourceKind] = {
     "app_consumer",
     "platform_tenant",
+    "product_control",
 }
 
 
