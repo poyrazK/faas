@@ -78,6 +78,7 @@ const (
 	secretSessionIdle     = "AUTH_SESSION_IDLE_MINUTES"
 	secretSingleSession   = "AUTH_SINGLE_SESSION"
 	secretOrgDomains      = "AUTH_ORG_DOMAINS"
+	secretServiceAccounts = "AUTH_SERVICE_ACCOUNTS"
 )
 
 // SignupAccessModes are who may sign up: anyone, invited or approved
@@ -193,6 +194,9 @@ type Change struct {
 	// them join. Joining needs confirmed addresses, so the Auth app keeps it
 	// off while Autoconfirm is on.
 	OrgDomains *bool
+	// ServiceAccounts lets organizations make machine principals that get
+	// tokens with the client-credentials grant.
+	ServiceAccounts *bool
 }
 
 var sessionLimit = regexp.MustCompile(`^([1-9][0-9]{0,5})([mhd])$`)
@@ -420,6 +424,9 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	}
 	if c.OrgDomains != nil {
 		set[secretOrgDomains] = flag(*c.OrgDomains)
+	}
+	if c.ServiceAccounts != nil {
+		set[secretServiceAccounts] = flag(*c.ServiceAccounts)
 	}
 	if c.AnonymousRetentionDays != nil {
 		days := *c.AnonymousRetentionDays

@@ -7,6 +7,7 @@ import { WorkflowError } from './workflows.mjs'
 import { routeTeam, TeamError } from './team.mjs'
 import { emailPath, emailConsent, resolveEmailRecipient, ProductEmailError } from './product-email.mjs'
 import { domainJoinRoute, orgSSORoute } from './orgsso.mjs'
+import { organizationRoute as serviceAccountsRoute } from './serviceaccounts.mjs'
 
 // /authz/v1: organizations, members, invitations and authorization checks
 // (ADR-1190). Every operation is a gregale_auth SQL function that enforces
@@ -21,7 +22,7 @@ const codes = new Map([
 const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit', 'anonymous_user',
   'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner',
   'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit', 'team_limit', 'current_session', 'mfa_required',
-  'invalid_join_mode'])
+  'invalid_join_mode', 'service_account_limit', 'secret_limit', 'invalid_service_account', 'invalid_expires_in_days'])
 
 export class HTTPError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code }
@@ -116,7 +117,7 @@ export async function inSession(pool, claims, work) {
   }
 }
 
-function sqlError(err) {
+export function sqlError(err) {
   if (err instanceof HTTPError) return err
   if (err instanceof ProductEmailError) return new HTTPError(err.status, err.code)
   if (err instanceof TeamError) return new HTTPError(err.status, err.code)
@@ -165,6 +166,10 @@ export function auditReply(rows, limit) {
 // routeOrganization serves /orgs/<id>/..., or returns null for a path it
 // does not know.
 async function routeOrganization({ run, rows, services, invitations }, org, method, parts, body) {
+  if (parts[2] === 'service-accounts') {
+    if (services.serviceAccounts !== true) throw new HTTPError(404, 'not_found')
+    return serviceAccountsRoute(rows, org, method, parts.slice(3), body)
+  }
   if (parts.length === 2 && method === 'PATCH') {
     if (typeof body?.mfa_required !== 'boolean') throw new HTTPError(400, 'invalid_mfa_required')
     const [updated] = await rows('SELECT id, slug, name, mfa_required FROM gregale_auth.set_organization_mfa($1, $2)', [org, body.mfa_required])
@@ -232,6 +237,8 @@ export async function route(pool, claims, method, path, body, services = {}) {
   const parts = path.split('/').filter(Boolean)
   // A third-party OAuth client may only check its user's permissions.
   if (claims.client_id && !(path === '/authorize' && method === 'POST')) throw new HTTPError(403, 'oauth_client_token')
+  // A service account may check its permissions and sign storage URLs.
+  if (claims.service_account === true && !(method === 'POST' && (path === '/authorize' || path === '/storage/sign'))) throw new HTTPError(403, 'service_account_token')
   const run = work => inSession(pool, claims, work)
   const rows = async (sql, args) => (await run(c => c.query(sql, args))).rows
   if (parts.length === 1 && parts[0] === 'orgs') {
@@ -334,7 +341,7 @@ export function readJSON(req, maxBytes) {
   })
 }
 
-export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, orgDomains = false, teamEnabled = false, emailEnabled = false, deleteAccount = null, orgClaims = false, sessions = null }) {
+export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, orgDomains = false, teamEnabled = false, emailEnabled = false, deleteAccount = null, orgClaims = false, sessions = null, serviceAccounts = false }) {
   const allowed = new Set(origins)
   return async (req, res, path) => {
     const origin = req.headers.origin
@@ -360,7 +367,7 @@ export function createAuthzHandler({ pool, authenticate, origins = [], invitatio
       if (!token) throw new HTTPError(401, 'not_authenticated')
       const body = await readJSON(req, limits.authzBodyBytes)
       const claims = await authenticate(token)
-      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, orgDomains, teamEnabled, emailEnabled, deleteAccount, orgClaims, sessions, query: new URL(req.url, 'http://auth.local').searchParams })
+      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, orgDomains, teamEnabled, emailEnabled, deleteAccount, orgClaims, sessions, serviceAccounts, query: new URL(req.url, 'http://auth.local').searchParams })
       res.writeHead(status, headers)
       res.end(payload === null ? undefined : JSON.stringify(payload))
     } catch (err) {
