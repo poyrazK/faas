@@ -12,6 +12,12 @@
 //
 // Opt-in: FAAS_WAKE_PLATFORM_BENCH_CYCLES=N (skips when unset).
 //
+// FAAS_WAKE_PLATFORM_BENCH_STRICT=app activates an app-scoped strict compute
+// budget before the loop, so every wake acquires, renews and settles funding
+// (ADR-1750). It starts meterd for the real owner and sampling readiness;
+// FAAS_WAKE_PLATFORM_BENCH_METERD=1 starts meterd without a budget, as the
+// matching baseline.
+//
 //	FAAS_WAKE_PLATFORM_BENCH_CYCLES=40 make test-metal PKGS=./cmd/e2e \
 //	  RUN_REGEX=TestWakePlatformBenchMetal RUN_ARGS=-v
 
@@ -29,11 +35,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/financial"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWakePlatformBenchMetal(t *testing.T) {
@@ -75,7 +84,15 @@ func TestWakePlatformBenchMetal(t *testing.T) {
 		benchEnv = strings.Split(raw, ",")
 		t.Logf("platform wake benchmark daemon env: %v", benchEnv)
 	}
-	h := e2etest.Start(t, pool, e2etest.DeployWake, benchEnv...)
+	strict := os.Getenv("FAAS_WAKE_PLATFORM_BENCH_STRICT")
+	if strict != "" && strict != "app" {
+		t.Fatalf("FAAS_WAKE_PLATFORM_BENCH_STRICT=%q must be app or unset", strict)
+	}
+	daemons := e2etest.DeployWake
+	if strict != "" || os.Getenv("FAAS_WAKE_PLATFORM_BENCH_METERD") == "1" {
+		daemons |= e2etest.Meterd
+	}
+	h := e2etest.Start(t, pool, daemons, benchEnv...)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 	img, _ := e2etest.HelloImageAboveBase("library/hello", helloBody)
 	ref := registry.AddImage("library/hello", img)
@@ -102,6 +119,9 @@ func TestWakePlatformBenchMetal(t *testing.T) {
 		t.Fatalf("not parked after deploy: %v", err)
 	}
 
+	if strict == "app" {
+		activateWakeBenchStrictBudget(t, h, pool, key, appID)
+	}
 	url := gatewayAppURL(h, "hello")
 	client := h.HTTPClient()
 	if err := e2etest.WaitForHTTPReady(context.Background(), t, client, url, 5*time.Second); err != nil {
@@ -175,6 +195,33 @@ func TestWakePlatformBenchMetal(t *testing.T) {
 	if _, err := e2etest.WaitForAppParked(pctx, t, pool, appID, 40*time.Second); err != nil {
 		t.Logf("final park did not complete: %v", err)
 	}
+}
+
+// activateWakeBenchStrictBudget enables an app-scoped strict gross compute
+// budget on the parked app through the customer API, after the real native
+// owner and meterd sampling make it ready. The limit is far above the loop's
+// spend, so no wake is denied: the bench measures funding overhead only.
+func activateWakeBenchStrictBudget(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, appID string) {
+	t.Helper()
+	s := state.NewPgStore(pool)
+	account := accountIDFromKey(t, t.Context(), pool, key)
+	month := financial.ComputeMonth(time.Now())
+	price := financial.Price{Version: "wake-bench-compute", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour}
+	if _, err := s.PutFinancialPriceSnapshot(t.Context(), state.FinancialPriceSnapshot{AccountID: account, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), EffectiveFrom: month, Plan: api.PlanHobby, DeliveryMode: "live", Price: price}); err != nil {
+		t.Fatal(err)
+	}
+	financialSystemWait(t, 4*time.Minute, "strict app compute readiness", func() bool {
+		ok, err := s.FinancialComputeReady(t.Context(), account, appID)
+		return err == nil && ok
+	})
+	releaseStrictBudgetsForSystem(t, s)
+	spec := financial.BudgetSpec{Name: "wake bench app cap", Scope: financial.BudgetScope{Kind: "app", ID: appID}, Currency: "USD", Meters: []string{"compute"}, Basis: "gross_usage", LimitMillicents: 100_000_000, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
+	raw, status := doReq(t, h, key, http.MethodPost, "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": uuid.NewString()})
+	var budget api.FinancialBudgetResponse
+	if status != http.StatusCreated || json.Unmarshal(raw, &budget) != nil || !budget.EnforcementReady {
+		t.Fatalf("strict app activation: %d %s", status, raw)
+	}
+	t.Logf("wake bench: strict app compute budget %s active", budget.ID)
 }
 
 type wakeBenchRow map[string]float64
