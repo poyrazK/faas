@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -21,11 +22,35 @@ func promotionSnapshotWorkload(w *promotionReleaseWorkload, p ProjectEnvironment
 		artifact projectCloneArtifact
 	}{{w.SourceSettings, w.Source}, {w.TargetSettings, w.Previous}} {
 		s, a := pair.settings, pair.artifact
-		if s.WorkloadClass != WorkloadClassWorker || s.Manifest.ExecutionMode != api.ExecutionModeWorker || s.WorkPolicies != nil || len(a.ReleaseCommand) != 0 || a.ReleaseCommandShell || nonemptySecretJSON(a.Sidecars) || nonemptySecretJSON(a.OverrideEnvSecrets) || a.SecretReloadSignal != "" {
+		if s.WorkloadClass != WorkloadClassWorker || s.Manifest.ExecutionMode != api.ExecutionModeWorker || len(a.ReleaseCommand) != 0 || a.ReleaseCommandShell || nonemptySecretJSON(a.Sidecars) || nonemptySecretJSON(a.OverrideEnvSecrets) || a.SecretReloadSignal != "" {
 			return false
 		}
 	}
-	return true
+	// Work policies stay destination-owned. A worker moves only when both
+	// environments define the same lanes, so promoted code never runs under
+	// ordering or concurrency rules it was not tested with (ADR-20261021130000).
+	return samePromotionWorkPolicies(w.SourceSettings.WorkPolicies, w.TargetSettings.WorkPolicies)
+}
+
+// samePromotionWorkPolicies compares normalized definitions; revisions are
+// per-environment bookkeeping and do not change lane behavior.
+func samePromotionWorkPolicies(a, b *ProjectEnvironmentWorkPolicySettings) bool {
+	definitions := func(s *ProjectEnvironmentWorkPolicySettings) ([]ProjectEnvironmentCloneWorkPolicy, bool) {
+		if s == nil || len(s.Policies) == 0 {
+			return nil, true
+		}
+		policies, err := normalizeEnvironmentWorkPolicies(append([]ProjectEnvironmentCloneWorkPolicy(nil), s.Policies...))
+		if err != nil {
+			return nil, false
+		}
+		for i := range policies {
+			policies[i].Revision = 0
+		}
+		return policies, true
+	}
+	left, okA := definitions(a)
+	right, okB := definitions(b)
+	return okA && okB && slices.Equal(left, right)
 }
 
 func (c *promotionReleaseConfiguration) prepareWorker(p ProjectEnvironmentPromotion) error {
