@@ -19,6 +19,10 @@ export type OperatorPlatformFlag = {
   capability?: string;
   adr: string;
   consumers: Array<string>;
+  /**
+   * Subject attributes every consumer can supply, so rules may constrain them; a write using any other is refused (ADR 20261021080640).
+   */
+  attributes: Array<'account' | 'plan' | 'org'>;
   legacy_env: Array<string>;
   retire_by?: string;
   definition: PlatformFlagDefinition;

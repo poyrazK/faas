@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Platform flags: company targeting, full coverage, scheduled and automatic rollouts, self-serve previews](20261021080640-platform-flag-extensions.md)
 - [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
 - [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)

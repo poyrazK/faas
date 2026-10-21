@@ -24,14 +24,17 @@ type Definition struct {
 	Rules   []Rule `json:"rules,omitempty"`
 }
 
-// Rule targets accounts. Accounts, Group, Plans and Rollout combine with AND;
-// a rule must set at least one of them. Rollout is in basis points of the
-// accounts the other constraints admit (1000 = 10%, 10000 = all) and uses the
-// same stable hash as customer Flags, so raising it keeps the earlier cohort.
-// Value is required so a rule can never enable a feature by omission.
+// Rule targets accounts. Accounts, Orgs, Group, Plans and Rollout combine with
+// AND; a rule must set at least one of them. Orgs matches the organization a
+// request acts under (ADR 20261021080640), never an account's other
+// memberships. Rollout is in basis points of the accounts the other
+// constraints admit (1000 = 10%, 10000 = all) and uses the same stable hash as
+// customer Flags, so raising it keeps the earlier cohort. Value is required so
+// a rule can never enable a feature by omission.
 type Rule struct {
 	ID       string   `json:"id"`
 	Accounts []string `json:"accounts,omitempty"`
+	Orgs     []string `json:"orgs,omitempty"`
 	Group    string   `json:"group,omitempty"`
 	Plans    []string `json:"plans,omitempty"`
 	Rollout  *int     `json:"rollout,omitempty"`
@@ -108,6 +111,7 @@ func NormalizeDefinition(def Definition) Definition {
 			next.Value = &value
 		}
 		next.Accounts = normalizeAccounts(rule.Accounts)
+		next.Orgs = normalizeAccounts(rule.Orgs)
 		for _, plan := range rule.Plans {
 			next.Plans = append(next.Plans, strings.ToLower(strings.TrimSpace(plan)))
 		}
@@ -159,10 +163,13 @@ func ValidateDefinition(def Definition, groups Groups) error {
 		if rule.Value == nil {
 			return fmt.Errorf("rule %q requires an explicit boolean value", rule.ID)
 		}
-		if len(rule.Accounts) == 0 && rule.Group == "" && len(rule.Plans) == 0 && rule.Rollout == nil {
-			return fmt.Errorf("rule %q requires accounts, group, plans or rollout targeting", rule.ID)
+		if len(rule.Accounts) == 0 && len(rule.Orgs) == 0 && rule.Group == "" && len(rule.Plans) == 0 && rule.Rollout == nil {
+			return fmt.Errorf("rule %q requires accounts, orgs, group, plans or rollout targeting", rule.ID)
 		}
 		if err := validateAccounts(rule.Accounts, api.PlatformFlagsMaxAccountsPerRule); err != nil {
+			return fmt.Errorf("rule %q: %w", rule.ID, err)
+		}
+		if err := validateIDs(rule.Orgs, api.PlatformFlagsMaxOrgsPerRule, "organization"); err != nil {
 			return fmt.Errorf("rule %q: %w", rule.ID, err)
 		}
 		if rule.Group != "" {
@@ -206,19 +213,25 @@ func ValidateGroups(groups Groups) error {
 }
 
 func validateAccounts(accounts []string, limit int) error {
-	if len(accounts) > limit {
-		return fmt.Errorf("at most %d accounts are allowed", limit)
+	return validateIDs(accounts, limit, "account")
+}
+
+// validateIDs bounds a list of canonical UUIDs naming accounts or
+// organizations.
+func validateIDs(ids []string, limit int, noun string) error {
+	if len(ids) > limit {
+		return fmt.Errorf("at most %d %ss are allowed", limit, noun)
 	}
-	seen := make(map[string]bool, len(accounts))
-	for _, account := range accounts {
-		id, err := uuid.Parse(account)
-		if err != nil || id.String() != account {
-			return fmt.Errorf("account %q is not a canonical account UUID", account)
+	seen := make(map[string]bool, len(ids))
+	for _, raw := range ids {
+		id, err := uuid.Parse(raw)
+		if err != nil || id.String() != raw {
+			return fmt.Errorf("%s %q is not a canonical %s UUID", noun, raw, noun)
 		}
-		if seen[account] {
-			return fmt.Errorf("duplicate account %q", account)
+		if seen[raw] {
+			return fmt.Errorf("duplicate %s %q", noun, raw)
 		}
-		seen[account] = true
+		seen[raw] = true
 	}
 	return nil
 }

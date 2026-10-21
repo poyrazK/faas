@@ -3821,6 +3821,7 @@ from .operator_park_execution_response_action import OperatorParkExecutionRespon
 from .operator_park_execution_response_phase import OperatorParkExecutionResponsePhase
 from .operator_park_execution_response_terminal_state import OperatorParkExecutionResponseTerminalState
 from .operator_platform_flag import OperatorPlatformFlag
+from .operator_platform_flag_attributes_item import OperatorPlatformFlagAttributesItem
 from .operator_platform_flag_convergence import OperatorPlatformFlagConvergence
 from .operator_platform_flag_decision import OperatorPlatformFlagDecision
 from .operator_platform_flag_decision_reason import OperatorPlatformFlagDecisionReason
@@ -9541,6 +9542,7 @@ __all__ = (
     "OperatorParkExecutionResponsePhase",
     "OperatorParkExecutionResponseTerminalState",
     "OperatorPlatformFlag",
+    "OperatorPlatformFlagAttributesItem",
     "OperatorPlatformFlagConvergence",
     "OperatorPlatformFlagDecision",
     "OperatorPlatformFlagDecisionReason",

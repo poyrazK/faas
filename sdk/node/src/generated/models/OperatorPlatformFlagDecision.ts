@@ -8,6 +8,10 @@
 export type OperatorPlatformFlagDecision = {
   flag: string;
   account_id: string;
+  /**
+   * Organization the decision was made under, when the inspector was given one.
+   */
+  org_id?: string;
   plan: string;
   enabled: boolean;
   reason: 'unknown_flag' | 'flag_disabled' | 'account_missing' | 'rule_match' | 'default';

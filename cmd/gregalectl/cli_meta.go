@@ -674,15 +674,16 @@ var cliCommands = []cliCommand{
 			{Name: "inspect", Short: "Explain one flag's decision for an account", Flags: []cliFlag{
 				{Name: "key", Short: "platform flag key", Req: true},
 				{Name: "account-id", Short: "account UUID", Req: true},
+				{Name: "org-id", Short: "organization UUID the request would act under"},
 			}},
 			{Name: "account", Short: "Show every flag decided for an account", Flags: []cliFlag{
 				{Name: "account-id", Short: "account UUID", Req: true},
 			}},
 			{Name: "enable", Short: "Turn a flag's kill switch on", Flags: flagsMutationCLIFlags(true)},
 			{Name: "disable", Short: "Turn a flag off for every account", Flags: flagsMutationCLIFlags(true)},
-			{Name: "allow", Short: "Enable a flag for one account", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
-			{Name: "deny", Short: "Exclude one account from a flag", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
-			{Name: "revoke", Short: "Remove an account's explicit allow or deny", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "allow", Short: "Enable a flag for one account or organization", Flags: append(flagsMutationCLIFlags(true), flagsSubjectCLIFlags()...)},
+			{Name: "deny", Short: "Exclude one account or organization from a flag", Flags: append(flagsMutationCLIFlags(true), flagsSubjectCLIFlags()...)},
+			{Name: "revoke", Short: "Remove an account's or organization's explicit allow or deny", Flags: append(flagsMutationCLIFlags(true), flagsSubjectCLIFlags()...)},
 			{Name: "rollout", Short: "Release a flag to a stable share of accounts", Flags: append(flagsMutationCLIFlags(true),
 				cliFlag{Name: "percent", Short: "share of eligible accounts, 0..100", Req: true},
 				cliFlag{Name: "plans", Short: "comma-separated plans the rollout is limited to"})},
@@ -1260,6 +1261,15 @@ func flagsMutationCLIFlags(withKey bool) []cliFlag {
 		flags = append([]cliFlag{{Name: "key", Short: "platform flag key", Req: true}}, flags...)
 	}
 	return flags
+}
+
+// flagsSubjectCLIFlags is who allow, deny and revoke act on: exactly one
+// account or one organization (ADR 20261021080640).
+func flagsSubjectCLIFlags() []cliFlag {
+	return []cliFlag{
+		{Name: "account-id", Short: "account UUID (or --org-id)"},
+		{Name: "org-id", Short: "organization UUID: everyone acting under the company (or --account-id)"},
+	}
 }
 
 func configMutationCLIFlags(set bool) []cliFlag {

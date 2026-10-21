@@ -252,6 +252,67 @@ func TestFromAccountList(t *testing.T) {
 	}
 }
 
+// adr: 20261021080640 — company targeting: org rules match the organization a
+// request acts under and fail closed without one.
+func TestOrgRulesMatchTheRequestOrganization(t *testing.T) {
+	const orgX, orgY = "44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555"
+	snap := compileOne(Definition{Enabled: true, Rules: []Rule{
+		{ID: "x-pro", Orgs: []string{orgX}, Plans: []string{"pro"}, Value: boolPtr(true)},
+	}}, nil)
+	cases := []struct {
+		name    string
+		subject Subject
+		enabled bool
+	}{
+		{"member of x on pro", Subject{AccountID: acctA, Plan: "pro", OrgID: orgX}, true},
+		{"org id in another spelling", Subject{AccountID: acctA, Plan: "pro", OrgID: strings.ToUpper(orgX)}, true},
+		{"other organization", Subject{AccountID: acctA, Plan: "pro", OrgID: orgY}, false},
+		{"no organization", Subject{AccountID: acctA, Plan: "pro"}, false},
+		{"x but plan mismatch", Subject{AccountID: acctA, Plan: "hobby", OrgID: orgX}, false},
+	}
+	for _, tc := range cases {
+		if got := snap.Enabled(AIGateway, tc.subject); got != tc.enabled {
+			t.Errorf("%s: enabled = %v, want %v", tc.name, got, tc.enabled)
+		}
+	}
+}
+
+func TestOrgRulesValidateAndRespectTargetingSupport(t *testing.T) {
+	const org = "44444444-4444-4444-8444-444444444444"
+	def, err := ParseDefinition(json.RawMessage(`{"enabled":true,"rules":[{"id":"acme","orgs":["` + strings.ToUpper(org) + `"],"value":true}]}`))
+	if err != nil {
+		t.Fatalf("an org-only rule must be valid: %v", err)
+	}
+	if got := def.Rules[0].Orgs; len(got) != 1 || got[0] != org {
+		t.Fatalf("orgs = %v, want the canonical UUID", got)
+	}
+	for name, raw := range map[string]string{
+		"not a uuid": `{"enabled":true,"rules":[{"id":"acme","orgs":["acme-inc"],"value":true}]}`,
+		"duplicate":  `{"enabled":true,"rules":[{"id":"acme","orgs":["` + org + `","` + org + `"],"value":true}]}`,
+	} {
+		if _, err := ParseDefinition(json.RawMessage(raw)); err == nil {
+			t.Errorf("%s: want a validation error", name)
+		}
+	}
+	orgRule := Definition{Enabled: true, Rules: []Rule{{ID: "acme", Orgs: []string{org}, Value: boolPtr(true)}}}
+	planRule := Definition{Enabled: true, Rules: []Rule{{ID: "pro", Plans: []string{"pro"}, Value: boolPtr(true)}}}
+	for _, tc := range []struct {
+		flag string
+		def  Definition
+		ok   bool
+	}{
+		{AIGateway, orgRule, false},      // outboundd does not know the organization
+		{AIGateway, planRule, true},      // every consumer knows the plan
+		{LiveQueries, planRule, false},   // the realtime path knows only the account
+		{ApplicationAuth, orgRule, true}, // apid knows both
+	} {
+		spec, _ := Lookup(tc.flag)
+		if err := ValidateTargeting(spec, tc.def); (err == nil) != tc.ok {
+			t.Errorf("%s %+v: err = %v, want ok=%v", tc.flag, tc.def.Rules[0], err, tc.ok)
+		}
+	}
+}
+
 func TestCatalogIsWellFormed(t *testing.T) {
 	seen := map[string]bool{}
 	for _, spec := range Catalog() {

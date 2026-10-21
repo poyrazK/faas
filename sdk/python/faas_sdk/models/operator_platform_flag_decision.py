@@ -30,6 +30,8 @@ class OperatorPlatformFlagDecision:
     reason: OperatorPlatformFlagDecisionReason
     version: int
     available: bool
+    org_id: UUID | Unset = UNSET
+    """Organization the decision was made under, when the inspector was given one."""
     rule_id: str | Unset = UNSET
     bucket: int | Unset = UNSET
     entitled: bool | Unset = UNSET
@@ -50,6 +52,10 @@ class OperatorPlatformFlagDecision:
 
         available = self.available
 
+        org_id: str | Unset = UNSET
+        if not isinstance(self.org_id, Unset):
+            org_id = str(self.org_id)
+
         rule_id = self.rule_id
 
         bucket = self.bucket
@@ -69,6 +75,8 @@ class OperatorPlatformFlagDecision:
                 "available": available,
             }
         )
+        if org_id is not UNSET:
+            field_dict["org_id"] = org_id
         if rule_id is not UNSET:
             field_dict["rule_id"] = rule_id
         if bucket is not UNSET:
@@ -95,6 +103,13 @@ class OperatorPlatformFlagDecision:
 
         available = d.pop("available")
 
+        _org_id = d.pop("org_id", UNSET)
+        org_id: UUID | Unset
+        if isinstance(_org_id, Unset):
+            org_id = UNSET
+        else:
+            org_id = UUID(_org_id)
+
         rule_id = d.pop("rule_id", UNSET)
 
         bucket = d.pop("bucket", UNSET)
@@ -109,6 +124,7 @@ class OperatorPlatformFlagDecision:
             reason=reason,
             version=version,
             available=available,
+            org_id=org_id,
             rule_id=rule_id,
             bucket=bucket,
             entitled=entitled,

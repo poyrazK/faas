@@ -29,9 +29,12 @@ const (
 
 // Subject is the account a decision is made for. Plan may be empty when the
 // caller does not know it; a rule that constrains plans then does not match.
+// OrgID is the organization the request acts under (ADR 20261021080640), empty
+// outside a company context; a rule that constrains orgs then does not match.
 type Subject struct {
 	AccountID string
 	Plan      string
+	OrgID     string
 }
 
 // Decision explains one evaluation.
@@ -47,6 +50,7 @@ type Decision struct {
 type compiledRule struct {
 	id       string
 	accounts map[string]struct{}
+	orgs     map[string]struct{}
 	group    string
 	plans    map[string]struct{}
 	rollout  int // -1 when the rule has no rollout constraint
@@ -85,7 +89,7 @@ func Compile(defs map[string]Definition, versions map[string]int64, groups Group
 	for key, def := range defs {
 		flag := compiledFlag{key: key, def: def, version: versions[key]}
 		for _, rule := range def.Rules {
-			compiled := compiledRule{id: rule.ID, accounts: toSet(rule.Accounts), group: rule.Group, plans: toSet(rule.Plans), rollout: -1}
+			compiled := compiledRule{id: rule.ID, accounts: toSet(rule.Accounts), orgs: toSet(rule.Orgs), group: rule.Group, plans: toSet(rule.Plans), rollout: -1}
 			if rule.Rollout != nil {
 				compiled.rollout = *rule.Rollout
 			}
@@ -130,9 +134,15 @@ func (s *Snapshot) Evaluate(key string, subject Subject) Decision {
 		d.Reason = ReasonAccountMissing
 		return d
 	}
+	org := canonicalAccount(subject.OrgID)
 	for _, rule := range flag.rules {
 		if rule.accounts != nil {
 			if _, ok := rule.accounts[account]; !ok {
+				continue
+			}
+		}
+		if rule.orgs != nil {
+			if _, ok := rule.orgs[org]; !ok || org == "" {
 				continue
 			}
 		}

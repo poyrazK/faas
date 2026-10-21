@@ -7,6 +7,10 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.operator_platform_flag_attributes_item import (
+    OperatorPlatformFlagAttributesItem,
+    check_operator_platform_flag_attributes_item,
+)
 from ..models.operator_platform_flag_source import OperatorPlatformFlagSource, check_operator_platform_flag_source
 from ..models.operator_platform_flag_status import OperatorPlatformFlagStatus, check_operator_platform_flag_status
 from ..types import UNSET, Unset
@@ -31,6 +35,9 @@ class OperatorPlatformFlag:
     description: str
     adr: str
     consumers: list[str]
+    attributes: list[OperatorPlatformFlagAttributesItem]
+    """Subject attributes every consumer can supply, so rules may constrain them; a write using any other is
+    refused (ADR 20261021080640)."""
     legacy_env: list[str]
     definition: PlatformFlagDefinition
     """Stored value of a platform flag. Enabled is the kill switch; default applies to accounts no rule matches."""
@@ -58,6 +65,11 @@ class OperatorPlatformFlag:
         adr = self.adr
 
         consumers = self.consumers
+
+        attributes = []
+        for attributes_item_data in self.attributes:
+            attributes_item: str = attributes_item_data
+            attributes.append(attributes_item)
 
         legacy_env = self.legacy_env
 
@@ -98,6 +110,7 @@ class OperatorPlatformFlag:
                 "description": description,
                 "adr": adr,
                 "consumers": consumers,
+                "attributes": attributes,
                 "legacy_env": legacy_env,
                 "definition": definition,
                 "source": source,
@@ -136,6 +149,13 @@ class OperatorPlatformFlag:
         adr = d.pop("adr")
 
         consumers = cast(list[str], d.pop("consumers"))
+
+        attributes = []
+        _attributes = d.pop("attributes")
+        for attributes_item_data in _attributes:
+            attributes_item = check_operator_platform_flag_attributes_item(attributes_item_data)
+
+            attributes.append(attributes_item)
 
         legacy_env = cast(list[str], d.pop("legacy_env"))
 
@@ -181,6 +201,7 @@ class OperatorPlatformFlag:
             description=description,
             adr=adr,
             consumers=consumers,
+            attributes=attributes,
             legacy_env=legacy_env,
             definition=definition,
             source=source,

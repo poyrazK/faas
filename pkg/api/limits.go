@@ -1369,9 +1369,11 @@ const (
 
 // Platform flag (ADR-1700) structural bounds. They keep every daemon's
 // compiled snapshot small; larger audiences belong in a group or a rollout.
+// Organizations per rule: ADR 20261021080640.
 const (
 	PlatformFlagsMaxRules            = 32
 	PlatformFlagsMaxAccountsPerRule  = 1000
+	PlatformFlagsMaxOrgsPerRule      = 1000
 	PlatformFlagsMaxGroups           = 100
 	PlatformFlagsMaxAccountsPerGroup = 5000
 	PlatformFlagsMaxDefinitionBytes  = 64 << 10

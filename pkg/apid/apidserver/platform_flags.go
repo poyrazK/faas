@@ -8,6 +8,11 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/authz"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -37,11 +42,57 @@ func (s *server) platformFlags() *platformflags.Set {
 	return s.runtimeConfig.PlatformFlags()
 }
 
-// platformFlagEnabled decides a platform flag for an account. It does not
-// check the plan; callers that release a paid capability also check
-// entitlement.
+// platformFlagEnabled decides a platform flag for an account outside any
+// organization context. It does not check the plan; callers that release a
+// paid capability also check entitlement.
 func (s *server) platformFlagEnabled(flagKey string, acct state.Account) bool {
-	return s.platformFlags().Enabled(flagKey, platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan)})
+	return s.platformFlagFor(flagKey, platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan)})
+}
+
+// platformFlagFor decides a platform flag for a full subject.
+func (s *server) platformFlagFor(flagKey string, subject platformflags.Subject) bool {
+	return s.platformFlags().Enabled(flagKey, subject)
+}
+
+// flagSubject is who a request decides platform flags for (ADR
+// 20261021080640): the account, its plan, and the organization the request
+// acts under, read from request context with no I/O.
+func flagSubject(r *http.Request, acct state.Account) platformflags.Subject {
+	return platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: requestOrgID(r)}
+}
+
+// appFlagSubject decides for work on a loaded app: the app's organization.
+func appFlagSubject(acct state.Account, app state.App) platformflags.Subject {
+	return platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: app.OrgID}
+}
+
+// requestOrgID is the organization a request acts under. In order:
+//  1. the active-org principal (/v1/orgs/{slug}/…, X-Active-Org);
+//  2. the project, app or managed Postgres scope of a company resource;
+//  3. the organization the API key was minted for.
+//
+// It is empty outside a company context, where org rules never match and
+// account rules already target the person.
+func requestOrgID(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if id, ok := authz.ActiveOrgID(r); ok && id != "" {
+		return id
+	}
+	if id := projectaccess.OrganizationID(r.Context()); id != "" {
+		return id
+	}
+	if grant, ok := appaccess.From(r); ok && grant.App.OrgID != "" {
+		return grant.App.OrgID
+	}
+	if id := managedpostgres.Organization(r.Context()); id != "" {
+		return id
+	}
+	if _, key, ok := middleware.AccountFromContext(r); ok && key != nil {
+		return key.OrgID
+	}
+	return ""
 }
 
 // platformFlagOn reports a platform flag's kill switch, for paths that are
@@ -64,6 +115,13 @@ func (s *server) checkRuntimeConfigChange(def runtimeConfigDefinition, value jso
 		groups, _ := s.platformFlags().Snapshot().Groups()
 		if err := platformflags.ValidateDefinition(flag, groups); err != nil {
 			return nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Unknown platform flag group", err.Error())
+		}
+		if key, ok := platformflags.FlagKeyFromConfigKey(def.Key); ok {
+			if spec, ok := platformflags.Lookup(key); ok {
+				if err := platformflags.ValidateTargeting(spec, flag); err != nil {
+					return nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Rule targets an attribute this flag cannot evaluate", err.Error())
+				}
+			}
 		}
 		return flag.Marshal(), nil
 	case runtimeConfigKindPlatformFlagGroups:
@@ -102,21 +160,21 @@ func (s *server) missingReferencedGroups(proposed platformflags.Groups) []string
 // account; until then legacy, the existing gate, decides as before. The
 // environment value is also seeded as version 0 so the operator surfaces show
 // what is in effect.
-func (s *server) platformFlagOr(flagKey string, acct state.Account, legacy bool) bool {
+func (s *server) platformFlagOr(flagKey string, subject platformflags.Subject, legacy bool) bool {
 	if _, version, ok := s.platformFlags().Snapshot().Definition(flagKey); ok && version > 0 {
-		return s.platformFlagEnabled(flagKey, acct)
+		return s.platformFlagFor(flagKey, subject)
 	}
 	return legacy
 }
 
 // applicationAuthEnabled is the application_auth release gate (ADR-1190).
-func (s *server) applicationAuthEnabled(acct state.Account) bool {
-	return s.platformFlagOr(platformflags.ApplicationAuth, acct, api.ApplicationAuthEnabled(acct.ID))
+func (s *server) applicationAuthEnabled(subject platformflags.Subject) bool {
+	return s.platformFlagOr(platformflags.ApplicationAuth, subject, api.ApplicationAuthEnabled(subject.AccountID))
 }
 
 // changeTimelineFor is the change_timeline release gate (ADR-751).
-func (s *server) changeTimelineFor(acct state.Account) bool {
-	return s.platformFlagOr(platformflags.ChangeTimeline, acct, s.changeTimelineEnabled)
+func (s *server) changeTimelineFor(subject platformflags.Subject) bool {
+	return s.platformFlagOr(platformflags.ChangeTimeline, subject, s.changeTimelineEnabled)
 }
 
 // seedEnvPlatformFlags records the environment gates that predate their

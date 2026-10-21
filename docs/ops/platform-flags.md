@@ -29,9 +29,24 @@ runtime-configuration row, `platform_flag.<key>`. Its value is a definition:
 
 - `enabled` is the **kill switch**. `false` turns the feature off for every
   account, whatever the rules or default say.
-- Rules run in order; the **first match decides**. `accounts`, `group`,
-  `plans` and `rollout` combine with AND. A rule needs at least one of them
-  and an explicit `value`, so a rule can deny as well as allow.
+- Rules run in order; the **first match decides**. `accounts`, `orgs`,
+  `group`, `plans` and `rollout` combine with AND. A rule needs at least one
+  of them and an explicit `value`, so a rule can deny as well as allow.
+- `orgs` targets companies (ADR 20261021080640). It matches the organization
+  a request acts under:
+  - the active organization (`/v1/orgs/{slug}/…`, `X-Active-Org`);
+  - the company project, app or managed Postgres database being used;
+  - the organization an API key belongs to.
+
+  The same person acting outside the company doesn't match. Use `accounts`
+  to target a person.
+- Not every flag can use every attribute. `gregalectl flags show` prints the
+  flag's `attributes`. A write that uses any other attribute is refused with
+  `409`, because that rule would never match where the flag is decided.
+  - `ai_gateway` refuses `orgs`, because outboundd doesn't know the calling
+    app's organization.
+  - `live_queries` refuses `plans` and `orgs`, because the realtime path
+    knows only the account.
 - `rollout` is in basis points of the accounts the rule's other constraints
   admit: `1000` is 10%, `10000` is all. The bucket is a stable hash of the
   flag key and account, so widening a rollout keeps every account already in
@@ -88,11 +103,13 @@ gregalectl flags list                                   # every flag, groups, co
 gregalectl flags show --key ai_gateway                  # definition + per-daemon receipts
 gregalectl flags account --account-id <uuid>            # every flag decided for one account
 gregalectl flags inspect --key ai_gateway --account-id <uuid>   # why on/off
+gregalectl flags inspect --key application_auth --account-id <uuid> --org-id <uuid>   # ... acting under a company
 
 gregalectl flags enable  --key ai_gateway --reason "open preview" --yes
 gregalectl flags allow   --key ai_gateway --account-id <uuid> --reason "design partner" --yes
 gregalectl flags deny    --key ai_gateway --account-id <uuid> --reason "abuse hold" --yes
 gregalectl flags revoke  --key ai_gateway --account-id <uuid> --reason "back to rollout" --yes
+gregalectl flags allow   --key application_auth --org-id <uuid> --reason "company pilot" --yes   # a whole company
 gregalectl flags rollout --key ai_gateway --percent 10 --plans pro,scale --reason "widen" --yes
 gregalectl flags default --key ai_gateway --value true --reason "general availability" --yes
 gregalectl flags disable --key ai_gateway --reason "incident 123" --yes   # kill switch
@@ -165,6 +182,11 @@ that removes a group a flag still uses, with `409`.
 
 ## Limits
 
-At most 32 rules per flag, 1,000 accounts per rule, 100 groups and 5,000
-accounts per group (`pkg/api/limits.go`). Larger audiences belong in a group,
-a plan constraint or a rollout.
+At most 32 rules per flag, 1,000 accounts and 1,000 organizations per rule,
+100 groups and 5,000 accounts per group (`pkg/api/limits.go`). Larger
+audiences belong in a group, a plan constraint or a rollout.
+
+`allow`, `deny` and `revoke` take exactly one of `--account-id` or
+`--org-id`. Their rules sit first, in this order: a person's deny, a person's
+allow, a company's deny, then a company's allow. A decision about a person
+therefore overrides one about their company.

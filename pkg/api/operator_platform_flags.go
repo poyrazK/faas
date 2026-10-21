@@ -4,11 +4,13 @@ package api
 // the read shapes of /v1/admin/flags and /v1/admin/accounts/{id}/flags;
 // writes go through PATCH /v1/admin/config/{config_key}.
 
-// PlatformFlagRule targets accounts. Accounts, group, plans and rollout
-// combine with AND; the first matching rule decides.
+// PlatformFlagRule targets accounts. Accounts, orgs, group, plans and rollout
+// combine with AND; the first matching rule decides. Orgs matches the
+// organization a request acts under (ADR 20261021080640).
 type PlatformFlagRule struct {
 	ID       string   `json:"id"`
 	Accounts []string `json:"accounts,omitempty"`
+	Orgs     []string `json:"orgs,omitempty"`
 	Group    string   `json:"group,omitempty"`
 	Plans    []string `json:"plans,omitempty"`
 	Rollout  *int     `json:"rollout,omitempty"`
@@ -53,6 +55,7 @@ type OperatorPlatformFlag struct {
 	Capability  string                              `json:"capability,omitempty"`
 	ADR         string                              `json:"adr"`
 	Consumers   []string                            `json:"consumers"`
+	Attributes  []string                            `json:"attributes"`
 	LegacyEnv   []string                            `json:"legacy_env"`
 	RetireBy    string                              `json:"retire_by,omitempty"`
 	Definition  PlatformFlagDefinition              `json:"definition"`
@@ -87,6 +90,7 @@ type OperatorPlatformFlagList struct {
 type OperatorPlatformFlagDecision struct {
 	Flag      string `json:"flag"`
 	AccountID string `json:"account_id"`
+	OrgID     string `json:"org_id,omitempty"`
 	Plan      string `json:"plan"`
 	Enabled   bool   `json:"enabled"`
 	Reason    string `json:"reason"`

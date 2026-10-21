@@ -90,7 +90,16 @@ func (s *Service) Decision(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
-	httpkit.WriteJSON(w, http.StatusOK, decide(s.Host.PlatformFlags().Snapshot(), spec, target))
+	orgID := strings.TrimSpace(r.URL.Query().Get("org_id"))
+	if orgID != "" {
+		id, err := uuid.Parse(orgID)
+		if err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid organization ID", "org_id must be an organization UUID"))
+			return
+		}
+		orgID = id.String()
+	}
+	httpkit.WriteJSON(w, http.StatusOK, decide(s.Host.PlatformFlags().Snapshot(), spec, target, orgID))
 }
 
 // AccountFlags handles GET /v1/admin/accounts/{id}/flags: every platform
@@ -107,7 +116,7 @@ func (s *Service) AccountFlags(w http.ResponseWriter, r *http.Request, acct stat
 	specs := platformflags.Catalog()
 	items := make([]api.OperatorPlatformFlagDecision, 0, len(specs))
 	for _, spec := range specs {
-		items = append(items, decide(snapshot, spec, target))
+		items = append(items, decide(snapshot, spec, target, ""))
 	}
 	httpkit.WriteJSON(w, http.StatusOK, api.OperatorAccountPlatformFlags{AccountID: target.ID, Plan: string(target.Plan), Items: items})
 }
@@ -148,10 +157,12 @@ func (s *Service) loadAccount(w http.ResponseWriter, r *http.Request, rawID stri
 
 // decide evaluates one flag for an account and adds the plan entitlement of
 // the capability it releases.
-func decide(snapshot *platformflags.Snapshot, spec platformflags.Spec, target state.Account) api.OperatorPlatformFlagDecision {
-	d := snapshot.Evaluate(spec.Key, platformflags.Subject{AccountID: target.ID, Plan: string(target.Plan)})
+// decide explains one flag for an account, acting under orgID when it is set
+// (the organization a request would carry; ADR 20261021080640).
+func decide(snapshot *platformflags.Snapshot, spec platformflags.Spec, target state.Account, orgID string) api.OperatorPlatformFlagDecision {
+	d := snapshot.Evaluate(spec.Key, platformflags.Subject{AccountID: target.ID, Plan: string(target.Plan), OrgID: orgID})
 	out := api.OperatorPlatformFlagDecision{
-		Flag: spec.Key, AccountID: target.ID, Plan: string(target.Plan), Enabled: d.Enabled,
+		Flag: spec.Key, AccountID: target.ID, OrgID: orgID, Plan: string(target.Plan), Enabled: d.Enabled,
 		Reason: d.Reason, RuleID: d.RuleID, Bucket: d.Bucket, Version: d.Version, Available: d.Enabled,
 	}
 	if spec.Capability != "" {
@@ -199,7 +210,7 @@ func (v view) flag(spec platformflags.Spec) api.OperatorPlatformFlag {
 	def, version, _ := v.snapshot.Definition(spec.Key)
 	out := api.OperatorPlatformFlag{
 		Key: spec.Key, ConfigKey: configKey, Label: spec.Label, Description: spec.Description,
-		Capability: spec.Capability, ADR: spec.ADR, Consumers: spec.Consumers, LegacyEnv: spec.LegacyEnv,
+		Capability: spec.Capability, ADR: spec.ADR, Consumers: spec.Consumers, Attributes: attributeNames(spec), LegacyEnv: spec.LegacyEnv,
 		RetireBy: spec.RetireBy, Definition: toAPIDefinition(def), Source: "default_or_environment",
 		Version: version, Status: string(state.RuntimeConfigApplied),
 	}
@@ -264,11 +275,21 @@ func convergence(consumers []string, receipts []state.RuntimeConfigApplyReceipt,
 	return out
 }
 
+// attributeNames lists the subject attributes a flag's rules may use; the
+// account is always one of them.
+func attributeNames(spec platformflags.Spec) []string {
+	out := []string{"account"}
+	for _, attr := range spec.Attributes {
+		out = append(out, string(attr))
+	}
+	return out
+}
+
 func toAPIDefinition(def platformflags.Definition) api.PlatformFlagDefinition {
 	out := api.PlatformFlagDefinition{Enabled: def.Enabled, Default: def.Default}
 	for _, rule := range def.Rules {
 		out.Rules = append(out.Rules, api.PlatformFlagRule{
-			ID: rule.ID, Accounts: slices.Clone(rule.Accounts), Group: rule.Group,
+			ID: rule.ID, Accounts: slices.Clone(rule.Accounts), Orgs: slices.Clone(rule.Orgs), Group: rule.Group,
 			Plans: slices.Clone(rule.Plans), Rollout: rule.Rollout, Value: rule.Value,
 		})
 	}

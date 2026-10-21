@@ -30,7 +30,7 @@ func (s *server) getManagedPostgresCapabilities(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresCapabilitiesView(discovery, limits, s.applicationAuthEnabled(acct)))
+	writeJSON(w, http.StatusOK, managedPostgresCapabilitiesView(discovery, limits, s.applicationAuthEnabled(flagSubject(r, acct))))
 }
 
 // managedPostgresCapabilitiesView lists the `auth` credential mode only

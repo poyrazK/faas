@@ -15,14 +15,15 @@ T = TypeVar("T", bound="PlatformFlagRule")
 
 @_attrs_define
 class PlatformFlagRule:
-    """One targeting rule of a platform flag. Accounts, group, plans and rollout combine with AND; the first matching rule
-    decides.
+    """One targeting rule of a platform flag. Accounts, orgs, group, plans and rollout combine with AND; the first matching
+    rule decides. Orgs match the organization a request acts under (ADR 20261021080640).
 
     """
 
     id: str
     value: bool
     accounts: list[UUID] | Unset = UNSET
+    orgs: list[UUID] | Unset = UNSET
     group: str | Unset = UNSET
     plans: list[PlatformFlagRulePlansItem] | Unset = UNSET
     rollout: int | Unset = UNSET
@@ -40,6 +41,13 @@ class PlatformFlagRule:
             for accounts_item_data in self.accounts:
                 accounts_item = str(accounts_item_data)
                 accounts.append(accounts_item)
+
+        orgs: list[str] | Unset = UNSET
+        if not isinstance(self.orgs, Unset):
+            orgs = []
+            for orgs_item_data in self.orgs:
+                orgs_item = str(orgs_item_data)
+                orgs.append(orgs_item)
 
         group = self.group
 
@@ -62,6 +70,8 @@ class PlatformFlagRule:
         )
         if accounts is not UNSET:
             field_dict["accounts"] = accounts
+        if orgs is not UNSET:
+            field_dict["orgs"] = orgs
         if group is not UNSET:
             field_dict["group"] = group
         if plans is not UNSET:
@@ -87,6 +97,15 @@ class PlatformFlagRule:
 
                 accounts.append(accounts_item)
 
+        _orgs = d.pop("orgs", UNSET)
+        orgs: list[UUID] | Unset = UNSET
+        if _orgs is not UNSET:
+            orgs = []
+            for orgs_item_data in _orgs:
+                orgs_item = UUID(orgs_item_data)
+
+                orgs.append(orgs_item)
+
         group = d.pop("group", UNSET)
 
         _plans = d.pop("plans", UNSET)
@@ -104,6 +123,7 @@ class PlatformFlagRule:
             id=id,
             value=value,
             accounts=accounts,
+            orgs=orgs,
             group=group,
             plans=plans,
             rollout=rollout,

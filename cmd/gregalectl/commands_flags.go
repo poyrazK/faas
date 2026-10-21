@@ -29,10 +29,17 @@ import (
 const dispatchFlags = "flags"
 
 const (
-	flagsAllowRuleID   = "accounts"
-	flagsDenyRuleID    = "denied-accounts"
-	flagsRolloutRuleID = "rollout"
+	flagsAllowRuleID    = "accounts"
+	flagsDenyRuleID     = "denied-accounts"
+	flagsOrgAllowRuleID = "orgs"
+	flagsOrgDenyRuleID  = "denied-orgs"
+	flagsRolloutRuleID  = "rollout"
 )
+
+// flagsExplicitRuleOrder is where `allow` and `deny` put their rules, ahead
+// of every other rule: a person's decision beats their company's, and a deny
+// beats an allow.
+var flagsExplicitRuleOrder = []string{flagsDenyRuleID, flagsAllowRuleID, flagsOrgDenyRuleID, flagsOrgAllowRuleID}
 
 // flagsMutation is one write. reason, traceID and yes point at the parsed
 // command-line values; edit (or editGrps for the groups row) changes the
@@ -108,8 +115,8 @@ func cmdFlagsShow(args []string) int {
 	}
 	printPlatformFlagSummary(item)
 	definition, _ := json.Marshal(item.Definition)
-	_, _ = fmt.Fprintf(osStdout, "label=%s\ncapability=%s\nadr=%s\nconsumers=%s\nlegacy_env=%s\ndefinition=%s\n",
-		item.Label, item.Capability, item.ADR, strings.Join(item.Consumers, ","), strings.Join(item.LegacyEnv, ","), definition)
+	_, _ = fmt.Fprintf(osStdout, "label=%s\ncapability=%s\nadr=%s\nconsumers=%s\nattributes=%s\nlegacy_env=%s\ndefinition=%s\n",
+		item.Label, item.Capability, item.ADR, strings.Join(item.Consumers, ","), strings.Join(item.Attributes, ","), strings.Join(item.LegacyEnv, ","), definition)
 	for _, receipt := range item.Receipts {
 		_, _ = fmt.Fprintf(osStdout, "receipt daemon=%s instance=%s version=%d status=%s reported_at=%s error=%q\n",
 			receipt.Daemon, receipt.Instance, receipt.Version, receipt.Status, receipt.ReportedAt, receipt.Error)
@@ -121,6 +128,7 @@ func cmdFlagsInspect(args []string) int {
 	fs := flagsFlagSet("inspect")
 	key := fs.String("key", "", "platform flag key")
 	accountID := fs.String("account-id", "", "account UUID")
+	orgID := fs.String("org-id", "", "organization UUID the request would act under (optional)")
 	if err := fs.Parse(args); err != nil || !flagsNoPositional(fs, "inspect") {
 		return 2
 	}
@@ -130,6 +138,9 @@ func cmdFlagsInspect(args []string) int {
 	}
 	var decision api.OperatorPlatformFlagDecision
 	path := "/v1/admin/flags/" + url.PathEscape(cleanKey) + "/decision?account_id=" + url.QueryEscape(strings.TrimSpace(*accountID))
+	if org := strings.TrimSpace(*orgID); org != "" {
+		path += "&org_id=" + url.QueryEscape(org)
+	}
 	if code := flagsGet("inspect", path, &decision); code != 0 {
 		return code
 	}
@@ -185,19 +196,24 @@ func cmdFlagsAccountRule(name string) func([]string) int {
 		fs := flagsFlagSet(name)
 		key, mutation := flagsMutationFlags(fs)
 		accountID := fs.String("account-id", "", "account UUID")
-		if err := fs.Parse(args); err != nil || !flagsNoPositional(fs, name) || !flagsRequireAccount(name, *accountID) {
+		orgID := fs.String("org-id", "", "organization UUID: everyone acting under the company")
+		if err := fs.Parse(args); err != nil || !flagsNoPositional(fs, name) || !flagsRequireSubject(name, *accountID, *orgID) {
 			return 2
 		}
-		account := strings.ToLower(strings.TrimSpace(*accountID))
+		orgs := strings.TrimSpace(*orgID) != ""
+		id, allowID, denyID := strings.ToLower(strings.TrimSpace(*accountID)), flagsAllowRuleID, flagsDenyRuleID
+		if orgs {
+			id, allowID, denyID = strings.ToLower(strings.TrimSpace(*orgID)), flagsOrgAllowRuleID, flagsOrgDenyRuleID
+		}
 		mutation.name = name
 		mutation.edit = func(def *platformflags.Definition) error {
-			removeAccountFromRule(def, flagsAllowRuleID, account)
-			removeAccountFromRule(def, flagsDenyRuleID, account)
+			removeSubjectFromRule(def, allowID, id, orgs)
+			removeSubjectFromRule(def, denyID, id, orgs)
 			switch name {
 			case "allow":
-				addAccountToRule(def, flagsAllowRuleID, account, true)
+				addSubjectToRule(def, allowID, id, orgs, true)
 			case "deny":
-				addAccountToRule(def, flagsDenyRuleID, account, false)
+				addSubjectToRule(def, denyID, id, orgs, false)
 			}
 			return nil
 		}
@@ -459,36 +475,58 @@ func fromAPIDefinition(in api.PlatformFlagDefinition) platformflags.Definition {
 	out := platformflags.Definition{Enabled: in.Enabled, Default: in.Default}
 	for _, rule := range in.Rules {
 		out.Rules = append(out.Rules, platformflags.Rule{
-			ID: rule.ID, Accounts: slices.Clone(rule.Accounts), Group: rule.Group,
+			ID: rule.ID, Accounts: slices.Clone(rule.Accounts), Orgs: slices.Clone(rule.Orgs), Group: rule.Group,
 			Plans: slices.Clone(rule.Plans), Rollout: rule.Rollout, Value: rule.Value,
 		})
 	}
 	return out
 }
 
-func addAccountToRule(def *platformflags.Definition, ruleID, account string, value bool) {
+// ruleTargets is the rule's organization list when orgs, else its accounts.
+func ruleTargets(rule *platformflags.Rule, orgs bool) *[]string {
+	if orgs {
+		return &rule.Orgs
+	}
+	return &rule.Accounts
+}
+
+func addSubjectToRule(def *platformflags.Definition, ruleID, id string, orgs, value bool) {
 	for i := range def.Rules {
 		if def.Rules[i].ID == ruleID {
-			def.Rules[i].Accounts = append(def.Rules[i].Accounts, account)
+			targets := ruleTargets(&def.Rules[i], orgs)
+			*targets = append(*targets, id)
 			return
 		}
 	}
-	rule := platformflags.Rule{ID: ruleID, Accounts: []string{account}, Value: &value}
-	// Explicit decisions run before every other rule; deny before allow.
-	position := 0
-	if ruleID == flagsAllowRuleID && len(def.Rules) > 0 && def.Rules[0].ID == flagsDenyRuleID {
-		position = 1
-	}
-	def.Rules = slices.Insert(def.Rules, position, rule)
+	rule := platformflags.Rule{ID: ruleID, Value: &value}
+	*ruleTargets(&rule, orgs) = []string{id}
+	def.Rules = slices.Insert(def.Rules, explicitRulePosition(def.Rules, ruleID), rule)
 }
 
-func removeAccountFromRule(def *platformflags.Definition, ruleID, account string) {
+// explicitRulePosition is just after the explicit rules that come before
+// ruleID in flagsExplicitRuleOrder.
+func explicitRulePosition(rules []platformflags.Rule, ruleID string) int {
+	rank := slices.Index(flagsExplicitRuleOrder, ruleID)
+	position := 0
+	for position < len(rules) {
+		existing := slices.Index(flagsExplicitRuleOrder, rules[position].ID)
+		if existing < 0 || existing > rank {
+			break
+		}
+		position++
+	}
+	return position
+}
+
+func removeSubjectFromRule(def *platformflags.Definition, ruleID, id string, orgs bool) {
 	for i := range def.Rules {
 		if def.Rules[i].ID != ruleID {
 			continue
 		}
-		def.Rules[i].Accounts = slices.DeleteFunc(def.Rules[i].Accounts, func(id string) bool { return id == account })
-		if len(def.Rules[i].Accounts) == 0 && def.Rules[i].Group == "" && len(def.Rules[i].Plans) == 0 && def.Rules[i].Rollout == nil {
+		targets := ruleTargets(&def.Rules[i], orgs)
+		*targets = slices.DeleteFunc(*targets, func(v string) bool { return v == id })
+		rule := def.Rules[i]
+		if len(rule.Accounts) == 0 && len(rule.Orgs) == 0 && rule.Group == "" && len(rule.Plans) == 0 && rule.Rollout == nil {
 			def.Rules = slices.Delete(def.Rules, i, i+1)
 		}
 		return
@@ -592,6 +630,15 @@ func flagsConfigKey(action, raw string) (string, bool) {
 	return platformflags.ConfigKey(key), ok
 }
 
+// flagsRequireSubject wants exactly one of --account-id and --org-id.
+func flagsRequireSubject(action, account, org string) bool {
+	if (strings.TrimSpace(account) == "") == (strings.TrimSpace(org) == "") {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl flags %s: exactly one of --account-id or --org-id required\n", action)
+		return false
+	}
+	return true
+}
+
 func flagsRequireAccount(action, raw string) bool {
 	if strings.TrimSpace(raw) == "" {
 		_, _ = fmt.Fprintf(osStderr, "gregalectl flags %s: --account-id required\n", action)
@@ -649,6 +696,10 @@ func printPlatformFlagDecision(d api.OperatorPlatformFlagDecision) {
 	if d.Entitled != nil {
 		entitled = strconv.FormatBool(*d.Entitled)
 	}
-	_, _ = fmt.Fprintf(osStdout, "flag=%s account=%s plan=%s enabled=%t reason=%s rule=%s entitled=%s available=%t version=%d\n",
-		d.Flag, d.AccountID, d.Plan, d.Enabled, d.Reason, d.RuleID, entitled, d.Available, d.Version)
+	org := ""
+	if d.OrgID != "" {
+		org = " org=" + d.OrgID
+	}
+	_, _ = fmt.Fprintf(osStdout, "flag=%s account=%s%s plan=%s enabled=%t reason=%s rule=%s entitled=%s available=%t version=%d\n",
+		d.Flag, d.AccountID, org, d.Plan, d.Enabled, d.Reason, d.RuleID, entitled, d.Available, d.Version)
 }

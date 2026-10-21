@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"encoding/json"
+	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
@@ -24,31 +25,36 @@ func (r *server) SeedPlatformFlag(flagKey string, def platformflags.Definition) 
 func (r *server) SeedEnvPlatformFlags(getenv func(string) string) { r.seedEnvPlatformFlags(getenv) }
 
 // ApplicationAuthEnabledFor is the application_auth release gate.
-func (r *server) ApplicationAuthEnabledFor(acct state.Account) bool {
-	return r.applicationAuthEnabled(acct)
+func (r *server) ApplicationAuthEnabledFor(subject platformflags.Subject) bool {
+	return r.applicationAuthEnabled(subject)
 }
 
 // ChangeTimelineEnabledFor is the change_timeline release gate; legacy sets
 // FAAS_CHANGE_TIMELINE_ENABLED's parsed value first.
-func (r *server) ChangeTimelineEnabledFor(acct state.Account, legacy bool) bool {
+func (r *server) ChangeTimelineEnabledFor(subject platformflags.Subject, legacy bool) bool {
 	r.changeTimelineEnabled = legacy
-	return r.changeTimelineFor(acct)
+	return r.changeTimelineFor(subject)
 }
 
 // AnomalyAlertsAllowedFor reports whether a baseline comparison is admitted
 // for acct; legacy sets FAAS_ANOMALY_ALERTS_ENABLED's parsed value first.
-func (r *server) AnomalyAlertsAllowedFor(acct state.Account, legacy bool) bool {
+func (r *server) AnomalyAlertsAllowedFor(subject platformflags.Subject, legacy bool) bool {
 	r.anomalyAlertsEnabled = legacy
-	return r.anomalyAlertsGate(acct, "above_baseline") == nil
+	return r.anomalyAlertsGate(subject, "above_baseline") == nil
 }
 
 // TriggerBatchDeliveryAllowedFor reports whether `delivery: batch` is
 // admitted for acct; legacy sets the environment gate's parsed value first.
-func (r *server) TriggerBatchDeliveryAllowedFor(acct state.Account, legacy bool) bool {
+func (r *server) TriggerBatchDeliveryAllowedFor(subject platformflags.Subject, legacy bool) bool {
 	r.triggerBatchDeliveryEnabled = legacy
 	batch := api.TriggerDeliveryBatch
-	_, problem := r.requestedTriggerDelivery(acct, api.TriggerKindKafka, &batch)
+	_, problem := r.requestedTriggerDelivery(subject, api.TriggerKindKafka, &batch)
 	return problem == nil
+}
+
+// FlagSubject is the subject a request decides platform flags for.
+func FlagSubject(r *http.Request, acct state.Account) platformflags.Subject {
+	return flagSubject(r, acct)
 }
 
 // LiveGate is the live-query gate currently in effect.

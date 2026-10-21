@@ -9839,6 +9839,11 @@ paths:
           required: true
           schema: { type: string, format: uuid }
           description: Account to evaluate.
+        - name: org_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+          description: Organization the request would act under (ADR 20261021080640); omit to evaluate outside any organization.
       responses:
         '200':
           description: Decision
@@ -80499,12 +80504,16 @@ components:
     # ─── Platform flags (ADR-1700) ───────────────────────────────────────
 
     PlatformFlagRule:
-      description: "One targeting rule of a platform flag. Accounts, group, plans and rollout combine with AND; the first matching rule decides."
+      description: "One targeting rule of a platform flag. Accounts, orgs, group, plans and rollout combine with AND; the first matching rule decides. Orgs match the organization a request acts under (ADR 20261021080640)."
       type: object
       required: [id, value]
       properties:
         id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
         accounts:
+          type: array
+          maxItems: 1000
+          items: { type: string, format: uuid }
+        orgs:
           type: array
           maxItems: 1000
           items: { type: string, format: uuid }
@@ -80552,7 +80561,7 @@ components:
     OperatorPlatformFlag:
       description: "One catalogued platform flag with its live definition, apply receipts and convergence."
       type: object
-      required: [key, config_key, label, description, adr, consumers, legacy_env, definition,
+      required: [key, config_key, label, description, adr, consumers, attributes, legacy_env, definition,
                  source, version, status, receipts, convergence]
       properties:
         key: { type: string }
@@ -80562,6 +80571,10 @@ components:
         capability: { type: string }
         adr: { type: string }
         consumers: { type: array, items: { type: string } }
+        attributes:
+          type: array
+          description: "Subject attributes every consumer can supply, so rules may constrain them; a write using any other is refused (ADR 20261021080640)."
+          items: { type: string, enum: [account, plan, org] }
         legacy_env: { type: array, items: { type: string } }
         retire_by: { type: string, format: date }
         definition: { $ref: '#/components/schemas/PlatformFlagDefinition' }
@@ -80607,6 +80620,7 @@ components:
       properties:
         flag: { type: string }
         account_id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid, description: "Organization the decision was made under, when the inspector was given one." }
         plan: { type: string }
         enabled: { type: boolean }
         reason: { type: string, enum: [unknown_flag, flag_disabled, account_missing, rule_match, default] }

@@ -15,6 +15,7 @@
 package platformflags
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 )
@@ -40,6 +41,18 @@ const (
 	TriggerBatchDelivery = "trigger_batch_delivery"
 )
 
+// Attribute is a subject attribute a rule can constrain beyond the account,
+// which every consumer always knows (ADR 20261021080640).
+type Attribute string
+
+const (
+	// AttributePlan means every consumer knows the account's plan.
+	AttributePlan Attribute = "plan"
+	// AttributeOrg means every consumer knows the organization the request
+	// acts under.
+	AttributeOrg Attribute = "org"
+)
+
 // Spec declares one platform flag. Adding a flag is a code change: the
 // catalog is the contract between the operator surface and the daemons that
 // evaluate it.
@@ -53,6 +66,10 @@ type Spec struct {
 	ADR string
 	// Consumers are the daemons that evaluate the flag.
 	Consumers []string
+	// Attributes are the subject attributes every consumer can supply. A
+	// rule that constrains any other attribute is refused when written, so it
+	// can never silently match nobody.
+	Attributes []Attribute
 	// RetireBy is the date (YYYY-MM-DD) by which a preview flag should be
 	// removed or folded into general availability; empty for a kill switch
 	// with no planned end.
@@ -73,6 +90,7 @@ var catalog = []Spec{
 		Capability:  "ai-gateway",
 		ADR:         "ADR-998",
 		Consumers:   []string{"apid", "outboundd"},
+		Attributes:  []Attribute{AttributePlan},
 		LegacyEnv:   []string{"FAAS_AI_GATEWAY_ENABLED", "FAAS_AI_GATEWAY_ACCOUNTS"},
 	},
 	{
@@ -82,6 +100,7 @@ var catalog = []Spec{
 		Capability:  "feature-flags",
 		ADR:         "ADR-377",
 		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		LegacyEnv:   []string{"FAAS_FLAGS_ENABLED"},
 	},
 	{
@@ -90,12 +109,13 @@ var catalog = []Spec{
 		Description: "Release application Auth (the Auth screens and the auth credential mode) to accounts. Apps already using Auth keep running while it is off.",
 		ADR:         "ADR-1190",
 		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		LegacyEnv:   []string{"FAAS_APPLICATION_AUTH_ENABLED", "FAAS_APPLICATION_AUTH_ACCOUNTS"},
 	},
 	{
 		Key:         LiveQueries,
 		Label:       "Live queries",
-		Description: "Release live queries (incremental SQL results over realtime) to accounts. Decided by account only: plan rules never match. Unless every account is included, the live-query routes stay hidden from accounts outside it.",
+		Description: "Release live queries (incremental SQL results over realtime) to accounts. Decided by account only, because the realtime path knows nothing else, so plan and org rules are refused. Unless every account is included, the live-query routes stay hidden from accounts outside it.",
 		ADR:         "ADR-20261016151947",
 		Consumers:   []string{"apid"},
 		LegacyEnv:   []string{"FAAS_LIVE_QUERIES_ACCOUNTS"},
@@ -106,6 +126,7 @@ var catalog = []Spec{
 		Description: "Release the app change timeline preview (GET /v1/apps/{slug}/changes and its dashboard page) to accounts.",
 		ADR:         "ADR-751",
 		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		LegacyEnv:   []string{"FAAS_CHANGE_TIMELINE_ENABLED"},
 	},
 	{
@@ -114,6 +135,7 @@ var catalog = []Spec{
 		Description: "Release baseline alert comparisons (above_baseline, below_baseline) to accounts. Existing rules keep evaluating while it is off; only creating or changing one is refused.",
 		ADR:         "ADR-744",
 		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		LegacyEnv:   []string{"FAAS_ANOMALY_ALERTS_ENABLED"},
 	},
 	{
@@ -122,6 +144,7 @@ var catalog = []Spec{
 		Description: "Release batch delivery (delivery: batch) on triggers to accounts. Triggers that already deliver in batches keep doing so while it is off; only creating one or switching one to batch is refused.",
 		ADR:         "ADR-1321",
 		Consumers:   []string{"apid"},
+		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		LegacyEnv:   []string{"FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED"},
 	},
 }
@@ -131,6 +154,7 @@ func Catalog() []Spec {
 	out := make([]Spec, len(catalog))
 	for i, spec := range catalog {
 		spec.Consumers = slices.Clone(spec.Consumers)
+		spec.Attributes = slices.Clone(spec.Attributes)
 		spec.LegacyEnv = slices.Clone(spec.LegacyEnv)
 		spec.Default = NormalizeDefinition(spec.Default)
 		out[i] = spec
@@ -157,6 +181,24 @@ func FlagForCapability(capability string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// Supports reports whether every consumer of the flag can supply attr.
+func (s Spec) Supports(attr Attribute) bool { return slices.Contains(s.Attributes, attr) }
+
+// ValidateTargeting refuses rules that constrain an attribute some consumer
+// of the flag cannot supply: such a rule would match nobody wherever that
+// consumer decides, without telling the operator.
+func ValidateTargeting(spec Spec, def Definition) error {
+	for _, rule := range def.Rules {
+		if len(rule.Plans) > 0 && !spec.Supports(AttributePlan) {
+			return fmt.Errorf("rule %q targets plans, but %s is decided where the plan is unknown (%s)", rule.ID, spec.Key, strings.Join(spec.Consumers, ", "))
+		}
+		if len(rule.Orgs) > 0 && !spec.Supports(AttributeOrg) {
+			return fmt.Errorf("rule %q targets organizations, but %s is decided where the organization is unknown (%s)", rule.ID, spec.Key, strings.Join(spec.Consumers, ", "))
+		}
+	}
+	return nil
 }
 
 // ConfigKey is the runtime-configuration key that stores a flag.

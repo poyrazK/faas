@@ -115,6 +115,39 @@ func TestFlagsAllowDenyAndRevokeKeepExplicitRulesFirst(t *testing.T) {
 	}
 }
 
+// adr: 20261021080640 — a person's explicit decision outranks their
+// company's, and a deny outranks an allow at each level.
+func TestFlagsOrgDecisionsSitAfterAccountDecisions(t *testing.T) {
+	const org = "44444444-4444-4444-8444-444444444444"
+	def := platformflags.Definition{Enabled: true, Rules: []platformflags.Rule{
+		{ID: flagsRolloutRuleID, Rollout: new(int), Value: new(bool)},
+	}}
+	addSubjectToRule(&def, flagsOrgAllowRuleID, org, true, true)
+	addSubjectToRule(&def, flagsAllowRuleID, testFlagsAccount, false, true)
+	addSubjectToRule(&def, flagsOrgDenyRuleID, org, true, false)
+	addSubjectToRule(&def, flagsDenyRuleID, testFlagsOther, false, false)
+	var order []string
+	for _, rule := range def.Rules {
+		order = append(order, rule.ID)
+	}
+	want := []string{flagsDenyRuleID, flagsAllowRuleID, flagsOrgDenyRuleID, flagsOrgAllowRuleID, flagsRolloutRuleID}
+	if strings.Join(order, ",") != strings.Join(want, ",") {
+		t.Fatalf("rule order = %v, want %v", order, want)
+	}
+	if got := def.Rules[3].Orgs; len(got) != 1 || got[0] != org || len(def.Rules[3].Accounts) != 0 {
+		t.Fatalf("org allow rule = %+v, want only the organization", def.Rules[3])
+	}
+	removeSubjectFromRule(&def, flagsOrgAllowRuleID, org, true)
+	for _, rule := range def.Rules {
+		if rule.ID == flagsOrgAllowRuleID {
+			t.Fatal("revoking the last organization must drop its now-empty rule")
+		}
+	}
+	if flagsRequireSubject("allow", testFlagsAccount, org) || flagsRequireSubject("allow", "", "") || !flagsRequireSubject("allow", "", org) {
+		t.Fatal("allow needs exactly one of --account-id or --org-id")
+	}
+}
+
 func TestFlagsFirstWriteCreatesTheRowAndRolloutTargetsPlans(t *testing.T) {
 	var enable operatorConfigPatchRequest
 	server := flagsServer(t, testFlagsList(api.PlatformFlagDefinition{}, "default_or_environment", 0), "/v1/admin/config/platform_flag.ai_gateway", &enable)

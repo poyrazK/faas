@@ -3,11 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One targeting rule of a platform flag. Accounts, group, plans and rollout combine with AND; the first matching rule decides.
+ * One targeting rule of a platform flag. Accounts, orgs, group, plans and rollout combine with AND; the first matching rule decides. Orgs match the organization a request acts under (ADR 20261021080640).
  */
 export type PlatformFlagRule = {
   id: string;
   accounts?: Array<string>;
+  orgs?: Array<string>;
   group?: string;
   plans?: Array<'free' | 'hobby' | 'pro' | 'scale'>;
   /**
