@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS financial_object_storage_estimates (
 -- financial_budget_policies_spec_check in three steps: added NOT VALID here,
 -- validated by 20261020160600104, and the old check dropped by
 -- 20261020160738991. The previous release writes only compute and egress,
--- which both checks accept.
+-- which both checks accept. A replay finds the constraint and keeps it.
+DO $budget_meters_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='financial_budget_policies'::regclass AND conname='financial_budget_policies_spec_v2_check') THEN
 ALTER TABLE financial_budget_policies ADD CONSTRAINT financial_budget_policies_spec_v2_check CHECK (
     jsonb_typeof(spec) = 'object'
     AND spec ?& ARRAY['name','scope','currency','meters','basis','limit_millicents','notify_millicents','mode','action','drain_seconds','resume_rule','enabled']
@@ -52,6 +54,8 @@ ALTER TABLE financial_budget_policies ADD CONSTRAINT financial_budget_policies_s
     AND spec->>'resume_rule' IN ('manual','next_period')
     AND jsonb_typeof(spec->'enabled') = 'boolean'
 ) NOT VALID;
+ END IF;
+END $budget_meters_replay$;
 -- +goose StatementEnd
 
 -- +goose Down
