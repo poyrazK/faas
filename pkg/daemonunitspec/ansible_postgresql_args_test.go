@@ -32,11 +32,12 @@ func TestAnsiblePostgresqlModulesUseCurrentArguments(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		var doc any
-		if yaml.Unmarshal(body, &doc) != nil {
-			return nil // TestAnsibleConditionsAreBoolean reports parse errors
-		}
 		rel, _ := filepath.Rel(repoRoot(t), path)
+		var doc any
+		if err := yaml.Unmarshal(body, &doc); err != nil {
+			t.Errorf("%s: parse: %v", rel, err)
+			return nil
+		}
 		for _, call := range postgresqlModuleCalls(doc) {
 			for arg := range call.args {
 				if want, removed := removedPostgresqlAliases[arg]; removed {
