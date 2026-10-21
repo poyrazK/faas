@@ -50,6 +50,11 @@ func (*fakeVmmdClient) ResolveServiceCaller(context.Context, *vmmdpb.ResolveServ
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not authenticate service callers")
 }
 
+// ADR-1138: forwarding fixtures name no in-flight request trace.
+func (*fakeVmmdClient) InflightRequestTrace(context.Context, *vmmdpb.InflightRequestTraceRequest, ...grpc.CallOption) (*vmmdpb.InflightRequestTraceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not track request traces")
+}
+
 func (*fakeVmmdClient) RestoreManagedServiceProbe(context.Context, *vmmdpb.RestoreAppTaskRequest, ...grpc.CallOption) (*vmmdpb.RestoreAppTaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding fake does not launch managed service probes")
 }

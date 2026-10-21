@@ -4043,7 +4043,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveServiceCallersByHostIP
 			if cfg.NodeName != "" {
-				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, newLocalNodeID(pgStore, cfg.NodeName))
+				localNode := newLocalNodeID(pgStore, cfg.NodeName)
+				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, localNode)
+				// ADR-1138: guest calls without trace context join the trace of
+				// the one request their instance is serving.
+				serviceProxyConfig.InferCallerTrace = newServiceTraceInference(deps.nodeCache.cache, localNode, api.ServiceTraceInferenceTimeout)
 			}
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {

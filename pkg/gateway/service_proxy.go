@@ -319,6 +319,10 @@ type ServiceProxyConfig struct {
 	// ObserveRequest receives only an actual vmmd response from the selected
 	// target, never a platform rejection or synthetic chaos response (ADR-429).
 	ObserveRequest func(*http.Request, ServiceRequestObservation)
+	// InferCallerTrace returns the traceparent of the one request the calling
+	// instance (identified by remoteAddr) is serving, for a call that arrived
+	// without trace context, or "" (ADR-1138). Nil disables linking.
+	InferCallerTrace func(ctx context.Context, remoteAddr string) string
 	// Metrics observes internal call outcomes, cold-path wake latency, and
 	// ADR-201 §2 breaker transitions. nil is allowed and every observation
 	// is a no-op — the breaker keeps working and simply publishes nothing.
@@ -378,6 +382,7 @@ type ServiceProxy struct {
 	observeRequestAttempt     ServiceProxyRequestAttemptObserver
 	observeTCPAttempt         ServiceProxyChaosObserver
 	observeRequest            func(*http.Request, ServiceRequestObservation)
+	inferCallerTrace          func(context.Context, string) string
 	metrics                   *Metrics
 	endpointTTL               time.Duration
 	now                       func() time.Time
@@ -488,6 +493,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		observeRequestAttempt:     cfg.ObserveRequestAttempt,
 		observeTCPAttempt:         cfg.ObserveTCPAttempt,
 		observeRequest:            cfg.ObserveRequest,
+		inferCallerTrace:          cfg.InferCallerTrace,
 		metrics:                   cfg.Metrics,
 		endpointTTL:               ttl,
 		now:                       now,
@@ -518,6 +524,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// requests so target flag decisions can be attached to this dependency span.
 	r = withGuestExecutionEvidence(r, p.apiMonetization != nil && p.apiMonetization())
 	r = withServiceWakeRecorder(r)
+	// A caller that forwarded no trace context joins the trace of the one
+	// request its instance is serving, marked as inferred (ADR-1138).
+	r = p.withInferredCallerTrace(r)
 	// The guest-facing service-proxy listener is a standalone http.Server, not
 	// wrapped by otelhttp. Extract W3C context here so a caller that forwards
 	// its inbound traceparent joins the original request instead of always
@@ -528,6 +537,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		attribute.String("gregale.dependency.kind", "service_proxy"),
 		attribute.String("http.request.method", r.Method),
 	)
+	if traceInferredOf(r) {
+		dependencySpan.SetAttributes(attribute.Bool("gregale.trace.inferred", true))
+	}
 	if validServiceDNSLabel(service) {
 		dependencySpan.SetAttributes(attribute.String("gregale.service.name", service))
 	}
