@@ -15,12 +15,12 @@ func objectBucketFromSQL(b sqlc.ObjectBucket) ObjectBucket {
 	return ObjectBucket{ID: pgUUIDString(b.ID), OrgID: pgUUIDString(b.OrgID), AccountID: pgUUIDString(b.AccountID), AppID: pgUUIDString(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, State: b.State, PublicRead: b.PublicRead, ServeAt: b.ServeAt.String, EnvironmentCloneSourceBucketID: pgUUIDString(b.EnvironmentCloneSourceBucketID), EnvironmentCloneOperationID: pgUUIDString(b.EnvironmentCloneOperationID), CreatedAt: b.CreatedAt.Time, UpdatedAt: b.UpdatedAt.Time, LeaseToken: b.LeaseToken.String, LeaseUntil: b.LeaseUntil.Time, AttemptCount: b.AttemptCount, RetryAt: b.RetryAt.Time, LastErrorCode: b.LastErrorCode}
 }
 
-func (s *PgStore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limit int) (ObjectBucket, error) {
+func (s *pgCore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limit int) (ObjectBucket, error) {
 	reserved, _, err := s.ReserveObjectBucketWithResult(ctx, b, limit)
 	return reserved, err
 }
 
-func (s *PgStore) ReserveObjectBucketWithResult(ctx context.Context, b ObjectBucket, limit int) (ObjectBucket, bool, error) {
+func (s *pgCore) ReserveObjectBucketWithResult(ctx context.Context, b ObjectBucket, limit int) (ObjectBucket, bool, error) {
 	if b.EnvironmentCloneOperationID != "" {
 		return ObjectBucket{}, false, ErrConflict
 	}
@@ -107,15 +107,15 @@ func (s *pgCore) GetObjectBucket(ctx context.Context, accountID, appID, id strin
 	return objectBucketFromSQL(b), mapErr(err)
 }
 
-func (s *PgStore) ClaimObjectBucket(ctx context.Context, accountID, appID, id, token, next string) (ObjectBucket, error) {
+func (s *pgCore) ClaimObjectBucket(ctx context.Context, accountID, appID, id, token, next string) (ObjectBucket, error) {
 	return s.claimObjectBucket(ctx, accountID, appID, id, token, next, false)
 }
 
-func (s *PgStore) ClaimObjectBucketRecovery(ctx context.Context, accountID, appID, id, token, next string) (ObjectBucket, error) {
+func (s *pgCore) ClaimObjectBucketRecovery(ctx context.Context, accountID, appID, id, token, next string) (ObjectBucket, error) {
 	return s.claimObjectBucket(ctx, accountID, appID, id, token, next, true)
 }
 
-func (s *PgStore) claimObjectBucket(ctx context.Context, accountID, appID, id, token, next string, recovery bool) (ObjectBucket, error) {
+func (s *pgCore) claimObjectBucket(ctx context.Context, accountID, appID, id, token, next string, recovery bool) (ObjectBucket, error) {
 	if token == "" || (next != "provisioning" && next != "deleting") {
 		return ObjectBucket{}, ErrConflict
 	}
@@ -148,7 +148,7 @@ func (s *PgStore) claimObjectBucket(ctx context.Context, accountID, appID, id, t
 	return objectBucketFromSQL(b), mapErr(tx.Commit(ctx))
 }
 
-func (s *PgStore) RetryObjectBucket(ctx context.Context, id, token, code string, delay time.Duration) error {
+func (s *pgCore) RetryObjectBucket(ctx context.Context, id, token, code string, delay time.Duration) error {
 	if token == "" || !validObjectBucketRetry(code, delay) {
 		return ErrConflict
 	}
@@ -162,7 +162,7 @@ func (s *PgStore) RetryObjectBucket(ctx context.Context, id, token, code string,
 	return nil
 }
 
-func (s *PgStore) DueObjectBuckets(ctx context.Context, provision bool, limit int32) ([]ObjectBucket, error) {
+func (s *pgCore) DueObjectBuckets(ctx context.Context, provision bool, limit int32) ([]ObjectBucket, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrConflict
 	}
@@ -177,7 +177,7 @@ func (s *PgStore) DueObjectBuckets(ctx context.Context, provision bool, limit in
 	return out, nil
 }
 
-func (s *PgStore) FinishObjectBucket(ctx context.Context, id, token, next string) error {
+func (s *pgCore) FinishObjectBucket(ctx context.Context, id, token, next string) error {
 	if token == "" || (next != "provisioning" && next != "ready" && next != "deleting" && next != "deleted") {
 		return ErrConflict
 	}
