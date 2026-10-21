@@ -76,6 +76,8 @@ func TestDashboardEdgeRuleSuggestions(t *testing.T) {
 		"Suggested for this app", "Block unverified bots", "in the last 3 days",
 		`name="recipe" value="rate-limit-path"`, `name="path" value="/login"`, `name="methods" value="POST"`,
 		`name="recipe" value="allow-ips-only"`, `name="path" value="/admin/**"`, `name="cidrs"`, "Add in log mode",
+		// adr: 831 — amendment 7: a challenge as the softer alternative.
+		`name="recipe" value="challenge-path"`, "Or: Challenge visitors on a path (log mode)",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("suggestions missing %q:\n%s", want, section)

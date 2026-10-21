@@ -20,7 +20,8 @@ func TestEdgeRulesSuggestCommand(t *testing.T) {
 	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
 	f := main.AuthedFakeAPI(t, `{"window":"7d","since":"2026-10-07T00:00:00Z","suggestions":[
-		{"recipe":"rate-limit-path","title":"Rate-limit a path","reason":"POST /login received 900 requests in the last 7 days.","params":{"path":"/login","methods":"POST"}},
+		{"recipe":"rate-limit-path","title":"Rate-limit a path","reason":"POST /login received 900 requests in the last 7 days.","params":{"path":"/login","methods":"POST"},
+		 "alternative":{"recipe":"challenge-path","title":"Challenge visitors on a path","params":{"path":"/login"}}},
 		{"recipe":"allow-ips-only","title":"Allow only my IPs","reason":"/admin received 30 requests.","params":{"path":"/admin/**"}}
 	]}`, http.StatusOK)
 	if code := main.CmdEdgeRules([]string{"suggest", "--app", "demo"}); code != 0 {
@@ -33,6 +34,7 @@ func TestEdgeRulesSuggestCommand(t *testing.T) {
 	for _, want := range []string{
 		"POST /login received 900 requests",
 		"gregale edge-rules recipe rate-limit-path --app demo --set methods=POST --set path=/login",
+		"Or challenge visitors on a path: gregale edge-rules recipe challenge-path --app demo --set path=/login",
 		"gregale edge-rules recipe allow-ips-only --app demo --set 'path=/admin/**' --set cidrs=<cidrs>",
 	} {
 		if !strings.Contains(out, want) {
