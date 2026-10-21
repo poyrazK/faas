@@ -33499,7 +33499,7 @@ CREATE TABLE public.edge_rules (
     match_expr jsonb,
     mode text DEFAULT 'enforce'::text NOT NULL,
     CONSTRAINT edge_rules_description_chk CHECK (((description IS NULL) OR (length(description) <= 1000))),
-    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text, 'waf'::text]))),
+    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text, 'waf'::text, 'challenge'::text]))),
     CONSTRAINT edge_rules_match_expr_shape_chk CHECK (((match_expr IS NULL) OR ((jsonb_typeof(match_expr) = 'object'::text) AND (octet_length((match_expr)::text) <= 65536)))),
     CONSTRAINT edge_rules_match_headers_shape_chk CHECK (((jsonb_typeof(match_headers) = 'object'::text) AND (jsonb_array_length(jsonb_path_query_array(match_headers, '$.keyvalue()'::jsonpath)) <= 10))),
     CONSTRAINT edge_rules_mode_chk CHECK ((mode = ANY (ARRAY['enforce'::text, 'log'::text]))),
