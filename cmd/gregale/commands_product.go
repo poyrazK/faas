@@ -425,16 +425,17 @@ func runProductCommand(ctx context.Context, client *Client, c productCommand) (a
 		if !ok || view.Customer.Suspended {
 			return nil, errors.New("feature is unavailable in the assigned plan")
 		}
-		remaining := grant.MonthlyStarts
+		var used int64
 		for _, line := range view.Usage.Lines {
 			if line.Feature == c.feature {
-				remaining -= line.Starts
+				used += line.Starts
 			}
 		}
-		if remaining < 0 {
-			remaining = 0
-		}
-		return map[string]any{"quote": view.Quotes[c.feature], "feature": c.feature, "plan": view.Customer.Plan, "currency": view.Catalog.Spec.Currency, "unit_price_millicents": grant.UnitPriceMillicents, "monthly_starts": grant.MonthlyStarts, "remaining_starts": remaining, "period": view.Usage.Period, "revision": view.Catalog.Revision}, nil
+		// The next start is free while included starts remain
+		// (ADR-20261021154511).
+		return map[string]any{"quote": view.Quotes[c.feature], "feature": c.feature, "plan": view.Customer.Plan, "currency": view.Catalog.Spec.Currency, "unit_price_millicents": grant.UnitPriceMillicents,
+			"monthly_starts": grant.MonthlyStarts, "remaining_starts": max(0, grant.MonthlyStarts-used), "included_starts": grant.IncludedStarts,
+			"next_start_price_millicents": grant.StartPriceMillicents(used), "period": view.Usage.Period, "revision": view.Catalog.Revision}, nil
 	case "start":
 		return startProductFeature(ctx, client, c)
 	case "explain":

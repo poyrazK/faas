@@ -77760,7 +77760,14 @@ SELECT (SELECT values_json FROM deployment_release_secret_snapshots WHERE deploy
         FROM project_environment_config_versions c
         WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
-        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config,
+    owner.project_id,
+    -- ADR-1139: the project environment secrets the deployment inherits.
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('key',p.key,'ciphertext',encode(p.ciphertext,'base64'),'kid',p.kid,
+        'value_hash',p.value_hash,'secret_version',p.secret_version,'created_at',p.created_at,'updated_at',p.updated_at) ORDER BY p.key)
+        FROM project_environment_secrets p
+        WHERE owner.project_id IS NOT NULL AND p.account_id=owner.account_id AND p.project_id=owner.project_id
+            AND p.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END),'[]'::jsonb)::jsonb AS project_secrets
 FROM owner
 `
 
@@ -77787,6 +77794,8 @@ type ReadRuntimeAppValuesForDeploymentRow struct {
 	Secrets                    []byte
 	ReloadSignals              []byte
 	ProjectConfig              []byte
+	ProjectID                  pgtype.UUID
+	ProjectSecrets             []byte
 }
 
 func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeAppValuesForDeploymentParams) (ReadRuntimeAppValuesForDeploymentRow, error) {
@@ -77809,6 +77818,8 @@ func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX
 		&i.Secrets,
 		&i.ReloadSignals,
 		&i.ProjectConfig,
+		&i.ProjectID,
+		&i.ProjectSecrets,
 	)
 	return i, err
 }

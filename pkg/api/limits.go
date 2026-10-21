@@ -201,6 +201,12 @@ const (
 	ProductControlOnboardingExternalRefMaxBytes           = 256
 	ProductControlMaxMonthlyStarts                  int64 = 1000000
 	ProductControlMaxUnitPriceMillicents            int64 = 1000000000
+	// ProductControlMaxMonthlyFeeMillicents bounds a plan's monthly fee
+	// (ADR-20261021154511): 100,000 in the catalog currency's major unit.
+	ProductControlMaxMonthlyFeeMillicents int64 = 10000000000
+	// ProductControlPlanHistoryMonthMaxPlans bounds the distinct plans one
+	// customer month is read with for its fee.
+	ProductControlPlanHistoryMonthMaxPlans = 1000
 )
 
 // Operator restart execution and persistence budgets (ADR-1522).

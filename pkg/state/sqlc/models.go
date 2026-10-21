@@ -10779,6 +10779,18 @@ type ProductControlPlanChange struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+// Each Product Control customer assignment to a catalog revision and plan, from effective_at; prices monthly plan fees (ADR-20261021154511).
+type ProductControlPlanHistory struct {
+	ID              int64
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	TenantID        pgtype.UUID
+	Revision        string
+	Plan            string
+	FirstAssignment bool
+	EffectiveAt     pgtype.Timestamptz
+}
+
 type ProductControlReceipt struct {
 	OperationID         pgtype.UUID
 	AccountID           pgtype.UUID
@@ -12789,6 +12801,8 @@ type RouteInsight struct {
 	FirstDetectedAt pgtype.Timestamptz
 	LastDetectedAt  pgtype.Timestamptz
 	ResolvedAt      pgtype.Timestamptz
+	FixedAt         pgtype.Timestamptz
+	FixAction       pgtype.Text
 }
 
 type RouteLifecycleApproval struct {

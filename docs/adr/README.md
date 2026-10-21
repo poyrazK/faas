@@ -11,6 +11,7 @@
 - [ADR-20261020090000: Rehearsal event capture](20261020090000-rehearsal-event-capture.md)
 - [ADR-20261019180000: Rehearsal side effects stay inside the run](20261019180000-rehearsal-side-effects-stay-inside-the-run.md)
 - [ADR-20261019120000: Rehearsal runtime hooks stay off ordinary hot paths](20261019120000-rehearsal-runtime-hot-path-isolation.md)
+- [Product Control plan fees, included starts and overage](20261021154511-product-control-plan-fees-and-overage.md)
 - [Data API file storage](20261021101510-data-api-file-storage.md)
 - [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)
 - [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)
@@ -1806,3 +1807,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1139: Project environment secrets reach every service of the environment](1139-project-environment-secrets.md) — sealed secrets set once per project environment, below each app's own values, covered by rekey and key retirement (amends ADR-1136)
 
 - [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)
+
+- [ADR-20261020161310: Route insight fixes, dashboard panel and alerts](20261020161310-route-insight-fixes-and-alerts.md)

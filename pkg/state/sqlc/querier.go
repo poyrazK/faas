@@ -196,6 +196,10 @@ type Querier interface {
 	BeginProjectEnvironmentClonePostgresSnapshotCleanup(ctx context.Context, db DBTX, arg BeginProjectEnvironmentClonePostgresSnapshotCleanupParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ctx context.Context, db DBTX, arg BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	BeginProjectWorkerJobEvidence(ctx context.Context, db DBTX, arg BeginProjectWorkerJobEvidenceParams) (int64, error)
+	// Each customer who held a plan with a monthly fee in the run's month, with
+	// or without runs (ADR-20261021154511): the assignment in force when the
+	// month starts, or one made during it.
+	BillingRunDiscoverProductFeeItems(ctx context.Context, db DBTX, arg BillingRunDiscoverProductFeeItemsParams) error
 	// Product Control customers of billing runs (ADR-20261018212918 §4).
 	// Each assigned customer of an app with a published catalog that has receipts
 	// in the run's month.
@@ -1714,6 +1718,8 @@ type Querier interface {
 	// the app_id tenant boundary. Prefer an exact row-id match if a future trace
 	// value happens to equal another row's UUID text.
 	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIdentifierParams) (GetRequestTelemetryByAppAndIdentifierRow, error)
+	// One insight of an app, for applying its fix.
+	GetRouteInsight(ctx context.Context, db DBTX, arg GetRouteInsightParams) (GetRouteInsightRow, error)
 	// Route priorities (ADR-978). apid owns the rows; gatewayd-internal reads them.
 	GetRoutePriorities(ctx context.Context, db DBTX, arg GetRoutePrioritiesParams) (GetRoutePrioritiesRow, error)
 	GetRuntimeRelease(ctx context.Context, db DBTX, id string) (RuntimeRelease, error)
@@ -3669,6 +3675,10 @@ type Querier interface {
 	MarkManagedPostgresCreationCleanup(ctx context.Context, db DBTX, arg MarkManagedPostgresCreationCleanupParams) (ManagedPostgresCreationReceipt, error)
 	MarkProjectEnvironmentCloneObjectManifestEntryCopied(ctx context.Context, db DBTX, arg MarkProjectEnvironmentCloneObjectManifestEntryCopiedParams) (int64, error)
 	MarkPromotionMigrationDestroyed(ctx context.Context, db DBTX, promotionID string) error
+	// Resolve a route's active insights of the given kinds with the fix that
+	// resolved them (ADR-20261020161310). The webhook trigger reports each as
+	// resolved.
+	MarkRouteInsightsFixed(ctx context.Context, db DBTX, arg MarkRouteInsightsFixedParams) (int64, error)
 	MarkTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkTriggerRecordDeadLetterParams) error
 	MarkTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkTriggerRecordRetryParams) error
 	MarkTriggerRecordSucceeded(ctx context.Context, db DBTX, id pgtype.UUID) error
@@ -4246,8 +4256,14 @@ type Querier interface {
 	ProductControlListCustomers(ctx context.Context, db DBTX, arg ProductControlListCustomersParams) ([]ProductControlListCustomersRow, error)
 	ProductControlLiveDefinition(ctx context.Context, db DBTX, arg ProductControlLiveDefinitionParams) (string, error)
 	ProductControlManagedApp(ctx context.Context, db DBTX, arg ProductControlManagedAppParams) (bool, error)
+	// The plans a customer held in a month: the one in force when it starts and
+	// those assigned during it, each with when it was first held and whether it
+	// includes their first assignment ever (ADR-20261021154511).
+	ProductControlMonthPlans(ctx context.Context, db DBTX, arg ProductControlMonthPlansParams) ([]ProductControlMonthPlansRow, error)
 	ProductControlOwnedApp(ctx context.Context, db DBTX, arg ProductControlOwnedAppParams) (pgtype.UUID, error)
 	ProductControlPutRevision(ctx context.Context, db DBTX, arg ProductControlPutRevisionParams) error
+	// A change of revision or plan is appended to the plan history in the same
+	// statement, so every writer records it (ADR-20261021154511).
 	ProductControlSetCustomer(ctx context.Context, db DBTX, arg ProductControlSetCustomerParams) error
 	ProductControlSetHead(ctx context.Context, db DBTX, arg ProductControlSetHeadParams) error
 	ProductControlSettleReceipt(ctx context.Context, db DBTX, arg ProductControlSettleReceiptParams) error
@@ -5403,6 +5419,10 @@ type Querier interface {
 	// Apps that ran in the window, with their account; an app that stayed parked
 	// has nothing to report.
 	RouteInsightCandidateApps(ctx context.Context, db DBTX, arg RouteInsightCandidateAppsParams) ([]RouteInsightCandidateAppsRow, error)
+	// An app's active insights that became active at or after since, newest
+	// first, for the route_insights_detected alert metric. total counts every
+	// match, not only the rows returned.
+	RouteInsightsDetectedSince(ctx context.Context, db DBTX, arg RouteInsightsDetectedSinceParams) ([]RouteInsightsDetectedSinceRow, error)
 	// Evaluate the full request-time identity population in bounded route windows.
 	// Only five cohorts and one hundred recovery identities per route are returned;
 	// full verdict and distinct counts are computed before either output cap.
@@ -5960,7 +5980,10 @@ type Querier interface {
 	// DO UPDATE, debug_regression_observations.* is the row before this update.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
 	// Record an observed insight. A new or resolved insight (re)opens with this
-	// observation as its first detection; an active one only refreshes.
+	// observation as its first detection; an active one only refreshes. An
+	// insight a fix resolved after refix_before stays resolved: its evidence
+	// window still holds observations from before the fix
+	// (ADR-20261020161310).
 	UpsertRouteInsight(ctx context.Context, db DBTX, arg UpsertRouteInsightParams) error
 	UpsertSLOHour(ctx context.Context, db DBTX, arg UpsertSLOHourParams) error
 	UpsertTenantWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertTenantWorkflowScheduleCursorParams) (PlatformTenantWorkflowScheduleCursor, error)

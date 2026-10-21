@@ -10893,15 +10893,20 @@ gregale routes awake my-api --since 24h --json
 
 ### routes insights
 
-List findings about routes that keep the app awake or are safe to cache, evaluated every six hours
+List findings about routes that keep the app awake or are safe to cache, with a fix for each, evaluated every six hours
 
-`gregale routes insights <slug>`
+`gregale routes insights [--fix <INSIGHT_ID>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--fix <INSIGHT_ID>` | apply the fix the insight lists now |  |
 
 Examples:
 
 ```sh
 gregale routes insights my-api
 gregale routes insights my-api --json
+gregale routes insights my-api --fix 6c1e0b9a-3f7d-4a51-9c2e-8d4b5f0a1e27
 ```
 
 ### routes priority
@@ -16190,6 +16195,47 @@ Alias for config set
 | `--dry-run` | preview the change without writing it |  |
 | `--if-hash <HASH>` | apply only if the current config hash matches |  |
 | `--yes` | confirm the configuration update |  |
+
+#### projects environments secrets
+
+List or change secrets shared by every service of the environment (values are write-only)
+
+`gregale projects environments secrets <set|rotate|unset> <project-slug> <environment-slug>`
+
+Examples:
+
+```sh
+gregale projects environments secrets shop production
+printf 'DATABASE_PASSWORD=%s\n' "$PW" | gregale projects environments secrets set shop production --from-stdin
+```
+
+##### projects environments secrets set
+
+Set shared secrets; services receive them at their next boot unless they set the key themselves
+
+`gregale projects environments secrets set [--from-stdin] [--file <PATH>] <project-slug> <environment-slug> [KEY=VALUE...]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-stdin` | read KEY=VALUE pairs from stdin (one per line) |  |
+| `--file <PATH>` | read KEY=VALUE pairs from a private file |  |
+
+##### projects environments secrets rotate
+
+Replace the values of existing shared secrets
+
+`gregale projects environments secrets rotate [--from-stdin] [--file <PATH>] <project-slug> <environment-slug> [KEY=VALUE...]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from-stdin` | read KEY=VALUE pairs from stdin (one per line) |  |
+| `--file <PATH>` | read KEY=VALUE pairs from a private file |  |
+
+##### projects environments secrets unset
+
+Remove shared secrets
+
+`gregale projects environments secrets unset <project-slug> <environment-slug> <KEY...>`
 
 #### projects environments routes
 
