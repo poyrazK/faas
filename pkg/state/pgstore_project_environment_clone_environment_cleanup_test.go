@@ -359,6 +359,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"project_environment_qualifications.environment_slug",
 		"project_environment_queue_runtime_sets.environment_id",
 		"project_environment_route_policies.environment_slug",
+		"project_environment_secrets.environment_slug", // ADR-1139: a trigger deletes them with the environment row.
 		"project_environment_workload_heads.environment_id",
 		"project_environment_workload_specs.environment_id",
 		"project_release_sets.environment_slug",

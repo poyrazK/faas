@@ -24,6 +24,9 @@ func (m *MemStore) secretRekeyDocumentsLocked() []SecretRekeyDocument {
 	for _, b := range m.releaseSecretBundles {
 		add("bundle", b.AccountID+"/"+b.RequestID, b.Values)
 	}
+	for _, p := range m.projectEnvironmentSecrets {
+		add("project", p.AccountID+"/"+p.ProjectID+"/"+p.EnvironmentSlug+"/"+p.Key, []projectSecretRekeyRow{projectSecretRekeyRowOf(p)})
+	}
 	for id, rows := range m.releaseSecretPins {
 		add("deployment", id, rows)
 	}
@@ -95,6 +98,15 @@ func (m *MemStore) CompareAndSwapSecretRekeyDocument(_ context.Context, before S
 		s := m.secrets[key]
 		s.Kid, s.Ciphertext = rows[0].Kid, append([]byte(nil), rows[0].Ciphertext...)
 		m.secrets[key] = s
+	case "project":
+		var rows []projectSecretRekeyRow
+		if len(parts) != 4 || json.Unmarshal(after, &rows) != nil || len(rows) != 1 {
+			return ErrInvalidArgument
+		}
+		id := projectEnvironmentSecretKey(parts[1], parts[2], parts[3])
+		p := m.projectEnvironmentSecrets[id]
+		p.Kid, p.Ciphertext = rows[0].Kid, append([]byte(nil), rows[0].Ciphertext...)
+		m.projectEnvironmentSecrets[id] = p
 	case "bundle":
 		if len(parts) != 2 {
 			return ErrInvalidArgument
@@ -142,7 +154,7 @@ func (m *MemStore) secretEncryptionKeyUsageLocked(kid string) (SecretEncryptionK
 			continue
 		}
 		switch d.Kind {
-		case "app":
+		case "app", "project":
 			usage.LiveSecrets++
 		case "bundle":
 			usage.StagedBundles++

@@ -221,11 +221,15 @@ public class AuthClient(
 
     public suspend fun user(): User = User.from(parse(call("GET", "/auth/v1/user", token = accessToken())))
 
-    /** Changes the email address (confirmed by email), the password or user metadata. */
-    public suspend fun updateUser(email: String? = null, password: String? = null, data: JsonObject? = null): User {
+    /**
+     * Changes the email address (confirmed by email), the password or user metadata. A new
+     * password needs currentPassword, except in a password reset or for a user who has none yet.
+     */
+    public suspend fun updateUser(email: String? = null, password: String? = null, data: JsonObject? = null, currentPassword: String? = null): User {
         val fields = body {
             if (email != null) put("email", email)
             if (password != null) put("password", password)
+            if (currentPassword != null) put("current_password", currentPassword)
             if (data != null) put("data", data)
         }
         return User.from(parse(call("PUT", "/auth/v1/user", body = fields, token = accessToken())))

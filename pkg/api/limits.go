@@ -2762,6 +2762,9 @@ type Limits struct {
 	// with 413 CodeSecretValueTooLarge before sealing.
 	SecretCountMax      int // max secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100)
 	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
+	// ProjectSecretCountMax bounds the secrets one project environment shares
+	// with its services (ADR-1139); each value uses SecretValueMaxBytes.
+	ProjectSecretCountMax int // (Free 8, Hobby 25, Pro 50, Scale 100)
 
 	// Customer env vars (issue #395 / ADR-045). Plaintext per-app store
 	// for non-sensitive runtime config (LOG_LEVEL, FEATURE_X, etc.). The
@@ -4132,6 +4135,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            0,
 		ServiceTCPSessionsPerAccount:   16,
 		SecretCountMax:                 8,
+		ProjectSecretCountMax:          8,
 		SecretValueMaxBytes:            4 * 1024,
 		EnvVarsMax:                     16,
 		EnvValueMaxBytes:               4 * 1024,
@@ -4533,6 +4537,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            0,
 		ServiceTCPSessionsPerAccount:   64,
 		SecretCountMax:                 25,
+		ProjectSecretCountMax:          25,
 		SecretValueMaxBytes:            8 * 1024,
 		EnvVarsMax:                     32,
 		EnvValueMaxBytes:               8 * 1024,
@@ -4960,6 +4965,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            8,
 		ServiceTCPSessionsPerAccount:   256,
 		SecretCountMax:                 50,
+		ProjectSecretCountMax:          50,
 		SecretValueMaxBytes:            16 * 1024,
 		EnvVarsMax:                     64,
 		EnvValueMaxBytes:               16 * 1024,
@@ -5349,6 +5355,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            32,
 		ServiceTCPSessionsPerAccount:   1024,
 		SecretCountMax:                 100,
+		ProjectSecretCountMax:          100,
 		SecretValueMaxBytes:            32 * 1024,
 		EnvVarsMax:                     256,
 		EnvValueMaxBytes:               32 * 1024,
@@ -12015,6 +12022,15 @@ const (
 	// The user-token audience a runtime reports, so live reads verify
 	// tokens as the Data API does.
 	DataAPIAudienceMaxBytes = 256
+	// File storage (ADR-20261021101510), mirrored in the runtime's limits:
+	// the default and largest object an owner may allow, the transfers one
+	// instance streams at once, how long one transfer may take, and how long
+	// a signed download link works.
+	DataAPIStorageObjectDefaultBytes = 25 << 20
+	DataAPIStorageObjectMaxBytes     = 100 << 20
+	DataAPIStorageTransfers          = 4
+	DataAPIStorageTransferTimeout    = 120 * time.Second
+	DataAPIStorageSignedURLTTL       = 60 * time.Second
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour
@@ -12164,6 +12180,11 @@ const (
 	// what one end user can create in the customer's database.
 	AuthMaxOrganizationsPerUser     = 100
 	AuthMaxPendingInvitationsPerOrg = 500
+	// AuthInvitationsPerInviterPerHour and AuthInvitationsPerAddressPerDay
+	// bound the invitation emails any signed-in member can make the app send,
+	// through the customer's own email provider.
+	AuthInvitationsPerInviterPerHour = 50
+	AuthInvitationsPerAddressPerDay  = 10
 	// AuthEmailTimeoutMs bounds one provider request; AuthHookBodyBytes
 	// bounds GoTrue's send-email hook payload; AuthEmailAPIKeyMaxBytes
 	// bounds the sealed provider key.
