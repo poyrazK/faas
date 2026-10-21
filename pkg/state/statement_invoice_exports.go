@@ -128,6 +128,10 @@ type StatementInvoiceExport struct {
 	// outcome (ADR-20261019180000).
 	Attempt    int
 	RejectedAt *time.Time
+	// HandoffReserved is set once the export reserved its statement's
+	// handoff, before calling the provider: an overlapping statement then
+	// cannot be handed off or exported (ADR-20261020211500).
+	HandoffReserved bool
 
 	// claimToken and claimedUntil hold the MemStore's claim.
 	claimToken   string
@@ -169,8 +173,14 @@ type StatementInvoiceExportStore interface {
 	// ReleaseStatementInvoiceExport ends the attempt's claim.
 	ReleaseStatementInvoiceExport(ctx context.Context, accountID, exportID, token string) error
 	// RejectStatementInvoiceExport records that the provider refused the
-	// attempt before creating anything and ends its claim.
+	// attempt before creating anything, ends its claim and releases its
+	// handoff reservation.
 	RejectStatementInvoiceExport(ctx context.Context, accountID, exportID, token string) error
+	// ReserveStatementHandoff reserves the export's statement handoff under
+	// ADR-238's overlap rules, as creating the handoff would; ErrConflict
+	// when another statement's handoff or reservation overlaps it
+	// (ADR-20261020211500).
+	ReserveStatementHandoff(ctx context.Context, accountID, exportID string) error
 	// SetStatementInvoiceExportInvoice records the provider invoice once;
 	// recording a different invoice is ErrConflict.
 	SetStatementInvoiceExportInvoice(ctx context.Context, accountID, exportID, invoiceID string) error
@@ -375,7 +385,40 @@ func (m *MemStore) RejectStatementInvoiceExport(_ context.Context, accountID, ex
 		return ErrConflict
 	}
 	now := time.Now().UTC()
-	e.RejectedAt, e.claimToken, e.claimedUntil = &now, "", time.Time{}
+	e.RejectedAt, e.claimToken, e.claimedUntil, e.HandoffReserved = &now, "", time.Time{}, false
+	m.statementInvoiceExports[exportID] = e
+	return nil
+}
+
+func (m *MemStore) ReserveStatementHandoff(_ context.Context, accountID, exportID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.statementInvoiceExports[exportID]
+	if !ok || e.AccountID != accountID {
+		return ErrNotFound
+	}
+	if e.HandoffReserved {
+		return nil
+	}
+	var blocked bool
+	switch e.SourceKind {
+	case StatementSourceAppConsumer:
+		statement, ok := m.apiConsumerUsageStatements[e.StatementID]
+		if !ok || statement.AccountID != accountID {
+			return ErrNotFound
+		}
+		blocked = m.apiConsumerHandoffOverlapLocked(statement)
+	case StatementSourcePlatformTenant:
+		statement, ok := m.platformTenantStatements[e.StatementID]
+		if !ok || statement.AccountID != accountID {
+			return ErrNotFound
+		}
+		blocked = m.tenantHandoffOverlapLocked(statement)
+	}
+	if blocked {
+		return ErrConflict
+	}
+	e.HandoffReserved = true
 	m.statementInvoiceExports[exportID] = e
 	return nil
 }
@@ -446,7 +489,7 @@ const statementInvoiceExportCols = `id, account_id, source_kind, statement_id, p
 	coalesce(provider_invoice_id, ''), currency, amount_minor, livemode, created_at, completed_at,
 	coalesce(payment_status, ''), amount_paid_minor, amount_remaining_minor, due_at, paid_at,
 	coalesce(hosted_invoice_url, ''), status_synced_at, next_status_sync_at, overdue_notified_at, collection, days_until_due, automatic_tax,
-	attempt, rejected_at`
+	attempt, rejected_at, handoff_reserved`
 
 func scanStatementInvoiceExport(row pgx.Row) (StatementInvoiceExport, error) {
 	var e StatementInvoiceExport
@@ -454,7 +497,7 @@ func scanStatementInvoiceExport(row pgx.Row) (StatementInvoiceExport, error) {
 		&e.ProviderInvoiceID, &e.Currency, &e.AmountMinor, &e.Livemode, &e.CreatedAt, &e.CompletedAt,
 		&e.PaymentStatus, &e.AmountPaidMinor, &e.AmountRemainingMinor, &e.DueAt, &e.PaidAt,
 		&e.HostedInvoiceURL, &e.StatusSyncedAt, &e.NextStatusSyncAt, &e.OverdueNotifiedAt, &e.Collection, &e.DaysUntilDue, &e.AutomaticTax,
-		&e.Attempt, &e.RejectedAt)
+		&e.Attempt, &e.RejectedAt, &e.HandoffReserved)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StatementInvoiceExport{}, ErrNotFound
 	}
@@ -582,7 +625,7 @@ func (s *PgStore) ReleaseStatementInvoiceExport(ctx context.Context, accountID, 
 
 func (s *PgStore) RejectStatementInvoiceExport(ctx context.Context, accountID, exportID, token string) error {
 	tag, err := s.pool.Exec(ctx, `update usage_statement_invoice_exports
-		   set rejected_at = now(), claim_token = null, claimed_until = null
+		   set rejected_at = now(), claim_token = null, claimed_until = null, handoff_reserved = false
 		 where id = $1::uuid and account_id = $2::uuid and claim_token = $3::uuid and provider_invoice_id is null`,
 		exportID, accountID, token)
 	if err != nil {
@@ -590,6 +633,47 @@ func (s *PgStore) RejectStatementInvoiceExport(ctx context.Context, accountID, e
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PgStore) ReserveStatementHandoff(ctx context.Context, accountID, exportID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin handoff reservation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// Handoff creation takes the same account lock, so a reservation and a
+	// handoff of overlapping statements cannot both pass the overlap check.
+	var locked string
+	if err := tx.QueryRow(ctx, `select id from accounts where id = $1::uuid for update`, accountID).Scan(&locked); err != nil {
+		return fmt.Errorf("lock account for handoff reservation: %w", err)
+	}
+	var kind, statementID string
+	var reserved bool
+	err = tx.QueryRow(ctx, `select source_kind, statement_id::text, handoff_reserved from usage_statement_invoice_exports
+		where id = $1::uuid and account_id = $2::uuid for update`, exportID, accountID).Scan(&kind, &statementID, &reserved)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("read export for handoff reservation: %w", err)
+	}
+	if reserved {
+		return nil
+	}
+	blocked, err := statementHandoffBlocked(ctx, tx, accountID, kind, statementID)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return ErrConflict
+	}
+	if _, err := tx.Exec(ctx, `update usage_statement_invoice_exports set handoff_reserved = true where id = $1::uuid`, exportID); err != nil {
+		return fmt.Errorf("reserve handoff: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit handoff reservation: %w", err)
 	}
 	return nil
 }

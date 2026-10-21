@@ -17,15 +17,26 @@ type StatementHandoffChecker interface {
 	StatementHandoffBlocked(ctx context.Context, accountID, sourceKind, statementID string) (bool, error)
 }
 
+// Statements counted as handed off: those with a handoff, and those whose
+// invoice export reserved one before calling its provider
+// (ADR-20261020211500), so two overlapping statements cannot both reach the
+// provider.
+const (
+	consumerHandedOffSQL = `(select statement_id from api_consumer_usage_statement_handoffs
+		union select statement_id from usage_statement_invoice_exports where source_kind = 'app_consumer' and handoff_reserved)`
+	tenantHandedOffSQL = `(select statement_id from platform_tenant_statement_handoffs
+		union select statement_id from usage_statement_invoice_exports where source_kind = 'platform_tenant' and handoff_reserved)`
+)
+
 // apiConsumerHandoffOverlapSQL is true when a handoff of another statement
 // already covers part of an app consumer statement's usage. Parameters: $1
 // app, $2 consumer, $3 period start, $4 period end.
-const apiConsumerHandoffOverlapSQL = `exists (select 1 from platform_tenant_statement_handoffs h
+const apiConsumerHandoffOverlapSQL = `exists (select 1 from ` + tenantHandedOffSQL + ` h
 		  join platform_tenant_statements p on p.id = h.statement_id
 		  join platform_tenant_statement_consumers c on c.statement_id = p.id
 		 where c.app_id = $1::uuid and c.consumer_id = $2::uuid
 		   and p.period_start < $4 and p.period_end > $3)
-		or exists (select 1 from api_consumer_usage_statement_handoffs h
+		or exists (select 1 from ` + consumerHandedOffSQL + ` h
 		  join api_consumer_usage_statements a on a.id = h.statement_id
 		 where a.app_id = $1::uuid and a.consumer_id = $2::uuid
 		   and a.period_start < $4 and a.period_end > $3
@@ -37,25 +48,25 @@ const apiConsumerHandoffOverlapSQL = `exists (select 1 from platform_tenant_stat
 // already covers a consumer, surface or JWT rule of a tenant statement in an
 // overlapping window. Parameters: $1 statement, $2 period start, $3 period
 // end, $4 tenant.
-const tenantHandoffOverlapSQL = `exists (select 1 from api_consumer_usage_statement_handoffs h
+const tenantHandoffOverlapSQL = `exists (select 1 from ` + consumerHandedOffSQL + ` h
 		  join api_consumer_usage_statements a on a.id = h.statement_id
 		  join platform_tenant_statement_consumers c on c.app_id = a.app_id and c.consumer_id = a.consumer_id
 		 where c.statement_id = $1::uuid and a.period_start < $3 and a.period_end > $2)
-		or exists (select 1 from platform_tenant_statement_handoffs h
+		or exists (select 1 from ` + tenantHandedOffSQL + ` h
 		  join platform_tenant_statements p on p.id = h.statement_id
 		  join platform_tenant_statement_consumers mine on mine.statement_id = $1::uuid
 		  join platform_tenant_statement_consumers theirs on theirs.statement_id = p.id
 		    and theirs.app_id = mine.app_id and theirs.consumer_id = mine.consumer_id
 		 where p.period_start < $3 and p.period_end > $2
 		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
-		or exists (select 1 from platform_tenant_statement_handoffs h
+		or exists (select 1 from ` + tenantHandedOffSQL + ` h
 		  join platform_tenant_statements p on p.id = h.statement_id
 		  join platform_tenant_statement_surfaces mine on mine.statement_id = $1::uuid
 		  join platform_tenant_statement_surfaces theirs on theirs.statement_id = p.id
 		    and theirs.app_id = mine.app_id and theirs.surface_id = mine.surface_id
 		 where p.period_start < $3 and p.period_end > $2
 		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
-		or exists (select 1 from platform_tenant_statement_handoffs h
+		or exists (select 1 from ` + tenantHandedOffSQL + ` h
 		  join platform_tenant_statements p on p.id = h.statement_id
 		  join platform_tenant_statement_jwt_rules mine on mine.statement_id = $1::uuid
 		  join platform_tenant_statement_jwt_rules theirs on theirs.statement_id = p.id
@@ -64,12 +75,21 @@ const tenantHandoffOverlapSQL = `exists (select 1 from api_consumer_usage_statem
 		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))`
 
 func (s *PgStore) StatementHandoffBlocked(ctx context.Context, accountID, sourceKind, statementID string) (bool, error) {
+	return statementHandoffBlocked(ctx, s.pool, accountID, sourceKind, statementID)
+}
+
+// rowQuerier is a pool or a transaction.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func statementHandoffBlocked(ctx context.Context, q rowQuerier, accountID, sourceKind, statementID string) (bool, error) {
 	var start, end time.Time
 	var blocked bool
 	switch sourceKind {
 	case StatementSourceAppConsumer:
 		var appID, consumerID string
-		err := s.pool.QueryRow(ctx, `select app_id::text, consumer_id::text, period_start, period_end
+		err := q.QueryRow(ctx, `select app_id::text, consumer_id::text, period_start, period_end
 			from api_consumer_usage_statements where id = $1::uuid and account_id = $2::uuid`, statementID, accountID).
 			Scan(&appID, &consumerID, &start, &end)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -78,13 +98,13 @@ func (s *PgStore) StatementHandoffBlocked(ctx context.Context, accountID, source
 		if err != nil {
 			return false, fmt.Errorf("load app consumer statement: %w", err)
 		}
-		err = s.pool.QueryRow(ctx, `select `+apiConsumerHandoffOverlapSQL, appID, consumerID, start, end).Scan(&blocked)
+		err = q.QueryRow(ctx, `select `+apiConsumerHandoffOverlapSQL, appID, consumerID, start, end).Scan(&blocked)
 		if err != nil {
 			return false, fmt.Errorf("check app consumer handoff overlap: %w", err)
 		}
 	case StatementSourcePlatformTenant:
 		var tenantID string
-		err := s.pool.QueryRow(ctx, `select platform_tenant_id::text, period_start, period_end
+		err := q.QueryRow(ctx, `select platform_tenant_id::text, period_start, period_end
 			from platform_tenant_statements where id = $1::uuid and account_id = $2::uuid`, statementID, accountID).
 			Scan(&tenantID, &start, &end)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -93,7 +113,7 @@ func (s *PgStore) StatementHandoffBlocked(ctx context.Context, accountID, source
 		if err != nil {
 			return false, fmt.Errorf("load platform tenant statement: %w", err)
 		}
-		err = s.pool.QueryRow(ctx, `select `+tenantHandoffOverlapSQL, statementID, start, end, tenantID).Scan(&blocked)
+		err = q.QueryRow(ctx, `select `+tenantHandoffOverlapSQL, statementID, start, end, tenantID).Scan(&blocked)
 		if err != nil {
 			return false, fmt.Errorf("check platform tenant handoff overlap: %w", err)
 		}
@@ -139,19 +159,40 @@ func (m *MemStore) externalInvoiceHandedOffLocked(accountID, invoiceID string) b
 	return false
 }
 
+// handedOffStatementsLocked mirrors consumerHandedOffSQL and
+// tenantHandedOffSQL: statements with a handoff or a reserved export.
+func (m *MemStore) handedOffStatementsLocked(kind string) []string {
+	var ids []string
+	if kind == StatementSourceAppConsumer {
+		for _, h := range m.apiConsumerUsageStatementHandoffs {
+			ids = append(ids, h.StatementID)
+		}
+	} else {
+		for _, h := range m.platformTenantStatementHandoffs {
+			ids = append(ids, h.StatementID)
+		}
+	}
+	for _, e := range m.statementInvoiceExports {
+		if e.SourceKind == kind && e.HandoffReserved {
+			ids = append(ids, e.StatementID)
+		}
+	}
+	return ids
+}
+
 // apiConsumerHandoffOverlapLocked mirrors apiConsumerHandoffOverlapSQL.
 func (m *MemStore) apiConsumerHandoffOverlapLocked(statement APIConsumerUsageStatement) bool {
-	for _, h := range m.apiConsumerUsageStatementHandoffs {
-		other := m.apiConsumerUsageStatements[h.StatementID]
+	for _, id := range m.handedOffStatementsLocked(StatementSourceAppConsumer) {
+		other := m.apiConsumerUsageStatements[id]
 		samePeriod := other.PeriodStart.Equal(statement.PeriodStart) && other.PeriodEnd.Equal(statement.PeriodEnd)
 		if other.AppID == statement.AppID && other.ConsumerID == statement.ConsumerID && !samePeriod &&
 			windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) {
 			return true
 		}
 	}
-	for _, h := range m.platformTenantStatementHandoffs {
-		other := m.platformTenantStatements[h.StatementID]
-		if h.AccountID == statement.AccountID &&
+	for _, id := range m.handedOffStatementsLocked(StatementSourcePlatformTenant) {
+		other := m.platformTenantStatements[id]
+		if other.AccountID == statement.AccountID &&
 			windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) &&
 			tenantStatementIncludesConsumer(other, statement.AppID, statement.ConsumerID) {
 			return true
@@ -162,17 +203,17 @@ func (m *MemStore) apiConsumerHandoffOverlapLocked(statement APIConsumerUsageSta
 
 // tenantHandoffOverlapLocked mirrors tenantHandoffOverlapSQL.
 func (m *MemStore) tenantHandoffOverlapLocked(statement PlatformTenantStatement) bool {
-	for _, h := range m.apiConsumerUsageStatementHandoffs {
-		other := m.apiConsumerUsageStatements[h.StatementID]
-		if h.AccountID == statement.AccountID &&
+	for _, id := range m.handedOffStatementsLocked(StatementSourceAppConsumer) {
+		other := m.apiConsumerUsageStatements[id]
+		if other.AccountID == statement.AccountID &&
 			windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) &&
 			tenantStatementIncludesConsumer(statement, other.AppID, other.ConsumerID) {
 			return true
 		}
 	}
-	for _, h := range m.platformTenantStatementHandoffs {
-		other := m.platformTenantStatements[h.StatementID]
-		if h.AccountID != statement.AccountID ||
+	for _, id := range m.handedOffStatementsLocked(StatementSourcePlatformTenant) {
+		other := m.platformTenantStatements[id]
+		if other.AccountID != statement.AccountID ||
 			(other.TenantID == statement.TenantID && other.PeriodStart.Equal(statement.PeriodStart) && other.PeriodEnd.Equal(statement.PeriodEnd)) ||
 			!windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) {
 			continue

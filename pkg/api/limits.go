@@ -600,6 +600,14 @@ const (
 	ConsumerSpendCapCheckInterval = time.Minute
 	ConsumerSpendCapCheckLease    = 2 * time.Minute
 	ConsumerSpendCapBatchSize     = 500
+	// A check reuses the last price of the month when no usage was
+	// recorded since, but reprices at least this often, so changes that
+	// are not usage (a card, a trial, credit expiring or applied) apply
+	// within it (ADR-20261020211500).
+	ConsumerSpendCapRepriceInterval = 15 * time.Minute
+	// Usage minutes this far before the last check are not looked at for
+	// changes; a later write to an older minute waits for the reprice.
+	ConsumerSpendCapUsageLookback = time.Hour
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,

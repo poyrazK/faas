@@ -1049,6 +1049,11 @@ type MemStore struct {
 	// committed gRPC batch after a response loss.
 	apiConsumerUsage      map[string]APIConsumerUsageBucket
 	apiConsumerRouteUsage map[string]APIConsumerRouteUsageBucket
+	// apiConsumerUsageRecordedAt and platformTenantUsageRecordedAt are
+	// when usage was last recorded per consumer and per tenant, as the
+	// usage minutes' updated_at (ADR-20261020211500).
+	apiConsumerUsageRecordedAt    map[string]time.Time
+	platformTenantUsageRecordedAt map[string]time.Time
 	// serviceWakeAhead holds ADR-977 opt-ins keyed by app ID.
 	serviceWakeAhead map[string]memServiceWakeAhead
 	// routePriorities holds ADR-978 saved route priorities keyed by app ID.
@@ -1756,6 +1761,8 @@ func NewMemStore() *MemStore {
 		usage:                             []usageMinute{},
 		usageByMonth:                      []Usage{},
 		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
+		apiConsumerUsageRecordedAt:        map[string]time.Time{},
+		platformTenantUsageRecordedAt:     map[string]time.Time{},
 		apiConsumerRouteUsage:             map[string]APIConsumerRouteUsageBucket{},
 		platformTenantUsage:               map[string]APIConsumerUsageBucket{},
 		apiConsumerPlans:                  map[string]APIConsumerPlan{},

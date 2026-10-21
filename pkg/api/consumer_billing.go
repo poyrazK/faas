@@ -77,15 +77,20 @@ type ConsumerBillingInvoice struct {
 
 // ConsumerBillingStatement is one finalized statement.
 type ConsumerBillingStatement struct {
-	ID               string                  `json:"id"`
-	PeriodStart      time.Time               `json:"period_start"`
-	PeriodEnd        time.Time               `json:"period_end"`
-	Revision         int                     `json:"revision"`
-	Currency         string                  `json:"currency"`
-	BillableUnits    int64                   `json:"billable_units"`
-	AmountMillicents int64                   `json:"amount_millicents"`
-	FinalizedAt      *time.Time              `json:"finalized_at,omitempty"`
-	Invoice          *ConsumerBillingInvoice `json:"invoice,omitempty"`
+	ID               string    `json:"id"`
+	PeriodStart      time.Time `json:"period_start"`
+	PeriodEnd        time.Time `json:"period_end"`
+	Revision         int       `json:"revision"`
+	Currency         string    `json:"currency"`
+	BillableUnits    int64     `json:"billable_units"`
+	AmountMillicents int64     `json:"amount_millicents"`
+	// CreditAppliedMillicents is prepaid credit drawn when the statement
+	// was finalized; AmountDueMillicents is what is left to pay
+	// (ADR-20261020211500).
+	CreditAppliedMillicents int64                   `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64                   `json:"amount_due_millicents"`
+	FinalizedAt             *time.Time              `json:"finalized_at,omitempty"`
+	Invoice                 *ConsumerBillingInvoice `json:"invoice,omitempty"`
 }
 
 // ConsumerBillingStatementsResponse lists a consumer's latest finalized

@@ -49511,6 +49511,7 @@ CREATE TABLE public.usage_statement_invoice_exports (
     rejected_at timestamp with time zone,
     claim_token uuid,
     claimed_until timestamp with time zone,
+    handoff_reserved boolean DEFAULT false NOT NULL,
     CONSTRAINT usage_statement_invoice_exports_attempt_chk CHECK ((attempt >= 0)),
     CONSTRAINT usage_statement_invoice_exports_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
     CONSTRAINT usage_statement_invoice_exports_claim_chk CHECK (((claim_token IS NULL) = (claimed_until IS NULL))),

@@ -15721,6 +15721,7 @@
       "customer",
       "days_until_due",
       "due_at",
+      "handoff_reserved",
       "hosted_invoice_url",
       "id",
       "livemode",
