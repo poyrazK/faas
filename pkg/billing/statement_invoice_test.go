@@ -2,6 +2,7 @@ package billing
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -135,5 +136,44 @@ func TestProductControlStatementInvoiceLinesAndRounding(t *testing.T) {
 	doc.Currency = "CLF"
 	if _, err := ProductControlStatementInvoice(doc); !errors.Is(err, ErrInvoiceCurrencyUnsupported) {
 		t.Fatalf("four-decimal CLF err = %v", err)
+	}
+}
+
+// adr: 20261021154511 — included starts are admitted at price 0, so their
+// successes get a no-charge line beside the paid overage of the same
+// feature; the plan fee is its own base fee item naming the plan and any
+// proration; a month that charges nothing is not invoiced.
+func TestProductControlStatementInvoiceFeesAndIncludedStarts(t *testing.T) {
+	included := api.ProductBillingLine{Feature: "export", Plan: "starter", Starts: 100, Succeeded: 96, Failed: 4}
+	overage := api.ProductBillingLine{Feature: "export", Plan: "starter", UnitPriceMillicents: 20000, Starts: 12, Succeeded: 10, Failed: 2, AmountMillicents: 200000}
+	joined := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	fee := api.ProductBillingFee{Plan: "starter", Revision: "r1", MonthlyFeeMillicents: 2900000, AmountMillicents: 1029032, ProratedFrom: &joined}
+	doc := api.ProductBillingDocument{Kind: "statement", Currency: "EUR", AmountMillicents: 200000 + 1029032,
+		Snapshot: &api.ProductBillingReview{Lines: []api.ProductBillingLine{included, overage}, Fees: []api.ProductBillingFee{fee}}}
+	inv, err := ProductControlStatementInvoice(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []StatementInvoiceLine{
+		{Label: "successful export runs on plan starter", Units: 96},
+		{Label: "successful export runs on plan starter", Units: 10, PriceMillicentsPerUnit: 20000, AmountMillicents: 200000, AmountMinor: 200},
+		{Label: "Monthly fee for plan starter, prorated from 2026-10-21", Fee: state.StatementFeeBase, AmountMillicents: 1029032, AmountMinor: 1029},
+	}
+	if len(inv.Lines) != len(want) || inv.TotalMinor != 1229 || inv.RoundingMinor != 0 {
+		t.Fatalf("invoice = %+v", inv)
+	}
+	for _, line := range want {
+		if !slices.Contains(inv.Lines, line) {
+			t.Fatalf("invoice %+v misses %+v", inv.Lines, line)
+		}
+	}
+	doc.AmountMillicents, doc.Snapshot.Lines, doc.Snapshot.Fees = 0, []api.ProductBillingLine{included}, nil
+	if _, err := ProductControlStatementInvoice(doc); !errors.Is(err, ErrStatementNotInvoiceable) {
+		t.Fatalf("statement charging nothing err = %v", err)
+	}
+	fee.ProratedFrom, fee.AmountMillicents = nil, 2900000
+	doc.AmountMillicents, doc.Snapshot.Fees = 2900000, []api.ProductBillingFee{fee}
+	if inv, err := ProductControlStatementInvoice(doc); err != nil || len(inv.Lines) != 2 || inv.TotalMinor != 2900 {
+		t.Fatalf("fee-only month = %+v %v", inv, err)
 	}
 }

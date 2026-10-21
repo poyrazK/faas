@@ -46457,6 +46457,45 @@ CREATE TABLE public.product_control_plan_changes (
 
 
 --
+-- Name: product_control_plan_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_plan_history (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    revision text NOT NULL,
+    plan text NOT NULL,
+    first_assignment boolean NOT NULL,
+    effective_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT product_control_plan_history_plan_chk CHECK ((plan ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT product_control_plan_history_revision_chk CHECK ((revision ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: TABLE product_control_plan_history; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.product_control_plan_history IS 'Each Product Control customer assignment to a catalog revision and plan, from effective_at; prices monthly plan fees (ADR-20261021154511).';
+
+
+--
+-- Name: product_control_plan_history_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.product_control_plan_history ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.product_control_plan_history_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: product_control_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -61728,6 +61767,14 @@ ALTER TABLE ONLY public.product_control_plan_changes
 
 
 --
+-- Name: product_control_plan_history product_control_plan_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_plan_history
+    ADD CONSTRAINT product_control_plan_history_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: product_control_receipts product_control_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72030,6 +72077,13 @@ CREATE INDEX product_control_overdue_holds_app_idx ON public.product_control_ove
 --
 
 CREATE INDEX product_control_plan_changes_history ON public.product_control_plan_changes USING btree (account_id, app_id, tenant_id, created_at DESC, id DESC);
+
+
+--
+-- Name: product_control_plan_history_customer_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_plan_history_customer_idx ON public.product_control_plan_history USING btree (app_id, tenant_id, effective_at);
 
 
 --
@@ -91487,6 +91541,22 @@ ALTER TABLE ONLY public.product_control_plan_changes
 
 ALTER TABLE ONLY public.product_control_plan_changes
     ADD CONSTRAINT product_control_plan_changes_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_plan_history product_control_plan_history_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_plan_history
+    ADD CONSTRAINT product_control_plan_history_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_plan_history product_control_plan_history_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_plan_history
+    ADD CONSTRAINT product_control_plan_history_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
 
 
 --
