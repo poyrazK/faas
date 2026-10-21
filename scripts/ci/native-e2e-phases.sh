@@ -103,8 +103,10 @@ native_e2e_phase_files() {
       managed_operation_workflow_metal_test.go \
       customer_workflow_operations_metal_test.go \
       customer_workflow_operations_v1_metal_test.go \
+      customer_workflow_operations_features_metal_test.go \
       customer_http_operations_metal_test.go \
       customer_http_operations_v1_metal_test.go \
+      customer_http_operations_features_metal_test.go \
       feature_flags_native_restore_metal_test.go \
       before_checkpoint_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
