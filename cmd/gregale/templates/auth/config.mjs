@@ -276,6 +276,10 @@ export function runtimeConfig(env) {
     GOTRUE_MAILER_AUTOCONFIRM: env.AUTH_AUTOCONFIRM === '1' ? 'true' : 'false',
     GOTRUE_DISABLE_SIGNUP: env.AUTH_DISABLE_SIGNUP === '1' ? 'true' : 'false',
     GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: 'true',
+    // A new password needs the current one, except in a password reset or
+    // for a user who has none yet, so a stolen access token cannot take over
+    // an account by setting one.
+    GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD: 'true',
     // Signed-in users may link and unlink sign-in methods (and anonymous
     // users keep their data by linking one).
     GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: env.AUTH_IDENTITY_LINKING === '1' ? 'true' : 'false',

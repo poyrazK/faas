@@ -70,7 +70,7 @@ func prepareOperationWorkflow(op *Operation, inv Invocation, spec api.WorkflowSp
 	}
 	run := WorkflowRun{ID: newOperationID(), AppID: op.AppID, PlatformTenantID: op.PlatformTenantID,
 		WorkflowName: spec.Name, Status: WorkflowRunStatusPending, Input: cloneWorkflowJSON(inv.Payload),
-		DefinitionSnapshot: snapshot, ScheduledFor: op.CreatedAt, CreatedAt: op.CreatedAt, UpdatedAt: op.CreatedAt}
+		DefinitionSnapshot: snapshot, ScheduledFor: operationDispatchAt(op), CreatedAt: op.CreatedAt, UpdatedAt: op.CreatedAt}
 	op.CurrentInvocationID, op.WorkflowRunID = "", run.ID
 	steps := make([]*WorkflowStep, 0, len(spec.Steps))
 	for _, step := range spec.Steps {
