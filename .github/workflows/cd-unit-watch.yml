@@ -109,8 +109,12 @@ jobs:
 
       # The verifier comes from the workflow's own ref; the deployctl that
       # rolls hosts back is used only once the release's signature verified.
+      # A directory of its own: a sparse checkout in the default workspace
+      # of this self-hosted runner leaves core.sparseCheckout set, and the
+      # next job's full checkout there keeps only these paths.
       - uses: actions/checkout@v7
         with:
+          path: watch-src
           sparse-checkout: |
             scripts/ci
             scripts/unit-release-verify.sh
@@ -119,7 +123,7 @@ jobs:
       - name: Verify unit release
         run: |
           set -euo pipefail
-          scripts/ci/verify_unit_release.sh "$RUNNER_TEMP/gregale-units" > /dev/null
+          watch-src/scripts/ci/verify_unit_release.sh "$RUNNER_TEMP/gregale-units" > /dev/null
           echo "UNITS_DIR=$RUNNER_TEMP/gregale-units/unpacked" >> "$GITHUB_ENV"
 
       - name: Set up SSH
@@ -167,4 +171,4 @@ jobs:
           set -euo pipefail
           args=(--deployctl "$UNITS_DIR/tools/deployctl" --compute-key "$COMPUTE_KEY" --deploy-results "$DEPLOY_RESULTS")
           [[ "$ADOPT" != true ]] || args+=(--adopt)
-          python3 scripts/ci/unit_watch.py "${args[@]}"
+          python3 watch-src/scripts/ci/unit_watch.py "${args[@]}"

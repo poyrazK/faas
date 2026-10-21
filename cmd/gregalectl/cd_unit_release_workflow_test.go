@@ -439,7 +439,7 @@ func TestUnitDeployWaitsForAdmission(t *testing.T) {
 		"(inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))",
 		"issues: read",
 		"go: ${{ steps.preflight.outputs.go }}",
-		"python3 scripts/ci/deploy_preflight.py --wait 40m --interval 60s",
+		"python3 preflight-src/scripts/ci/deploy_preflight.py --wait 40m --interval 60s",
 	} {
 		if !strings.Contains(preflight, required) {
 			t.Errorf("release-units preflight is missing %q", required)
@@ -513,9 +513,9 @@ func TestUnitDeploysAreWatchedAndPauseAfterARollback(t *testing.T) {
 	unitWatch := readWorkflow(t, "cd-unit-watch.yml")
 	orderedIn(t, "cd-unit-watch", unitWatch,
 		"name: gregale-unit-release",
-		"scripts/ci/verify_unit_release.sh",
+		"watch-src/scripts/ci/verify_unit_release.sh",
 		"COMPUTE_KNOWN_HOSTS",
-		`python3 scripts/ci/unit_watch.py "${args[@]}"`,
+		`python3 watch-src/scripts/ci/unit_watch.py "${args[@]}"`,
 	)
 	for _, required := range []string{`--deployctl "$UNITS_DIR/tools/deployctl"`, "--deploy-results", "args+=(--adopt)"} {
 		if !strings.Contains(unitWatch, required) {

@@ -271,8 +271,12 @@ jobs:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
     steps:
+      # A directory of its own: a sparse checkout in the default workspace
+      # of this self-hosted runner leaves core.sparseCheckout set, and the
+      # next job's full checkout there keeps only scripts/ci.
       - uses: actions/checkout@v7
         with:
+          path: preflight-src
           sparse-checkout: scripts/ci
           sparse-checkout-cone-mode: false
 
@@ -313,7 +317,7 @@ jobs:
           # lock and Prometheus's active alerts over this SSH connection.
           export UNIT_SSH_TARGET="root@${CP_HOST}" UNIT_SSH_KEY="$HOME/.ssh/deploy_key" \
             UNIT_SSH_KNOWN_HOSTS="$HOME/.ssh/known_hosts"
-          python3 scripts/ci/deploy_preflight.py --wait 40m --interval 60s
+          python3 preflight-src/scripts/ci/deploy_preflight.py --wait 40m --interval 60s
 
   # Deploy order (docs/release-compatibility.md): the control-plane lane,
   # held on its SLO gate, then the edge lane host by host. Automatic deploys
