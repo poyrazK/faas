@@ -9,11 +9,16 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	managedpostgresapi "github.com/onebox-faas/faas/pkg/apid/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func managedPostgresProblem(w http.ResponseWriter, err error) {
+	if managedpostgresapi.WriteCapacityProblem(w, err) {
+		return
+	}
 	status, code, title := http.StatusInternalServerError, "managed_postgres_error", "Managed PostgreSQL error"
 	detail := err.Error()
 	switch {
@@ -211,7 +216,7 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL usage is not available for this plan")
 		return
 	}
-	summary, err := s.managedPostgres.UsageSummary(r.Context(), acct.ID, time.Now().UTC(), managedPostgresUsageCeilings(limits))
+	summary, err := s.managedPostgres.UsageSummary(r.Context(), acct.ResourceOwnerID(), time.Now().UTC(), managedPostgresUsageCeilings(limits))
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
@@ -269,7 +274,7 @@ func (s *server) getManagedPostgresUsageOperator(w http.ResponseWriter, r *http.
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid account_id", "account_id must be a UUID"))
 		return
 	}
-	target, err := s.store.AccountByID(r.Context(), targetID)
+	target, err := state.BillingResourceAccount(r.Context(), s.store, targetID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Account not found", "the target account does not exist"))
@@ -430,16 +435,16 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		return
 	}
 	app, err := s.store.AppByID(r.Context(), req.AppID)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !postgresaccess.CanBind(r.Context(), app, acct) {
 		s.notFound(w, "app not found")
 		return
 	}
 	// Application Auth is a dark launch: without it the mode is unknown.
-	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !api.ApplicationAuthEnabled(acct.ID) {
+	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(acct) {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}
-	binding, err := s.managedPostgresBindings.Create(r.Context(), managedpostgres.CreateBindingRequest{AccountID: acct.ID, DatabaseID: r.PathValue("id"), AppID: req.AppID, Scope: req.Scope, EnvironmentKey: req.EnvironmentKey, Access: managedpostgres.CredentialAccess(req.Access)})
+	binding, err := s.managedPostgresBindings.Create(r.Context(), managedpostgres.CreateBindingRequest{AccountID: app.AccountID, DatabaseAccountID: acct.ID, DatabaseID: r.PathValue("id"), AppID: req.AppID, Scope: req.Scope, EnvironmentKey: req.EnvironmentKey, Access: managedpostgres.CredentialAccess(req.Access)})
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return

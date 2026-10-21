@@ -25,5 +25,33 @@ export type OutboundAIPriceEntry = {
    * Charged per million characters of speech input.
    */
   millicents_per_million_characters?: number;
+  /**
+   * Charged per second of generated video (ADR-1432). A model_prefix of <model>@<resolution>, such as veo-3.1-generate-001@4k, prices that resolution apart.
+   */
+  millicents_per_video_second?: number;
+  /**
+   * Charged per web search as the provider bills it: per call, query or grounded prompt (ADR-1433).
+   */
+  millicents_per_web_search?: number;
+  /**
+   * Charged per file search call (ADR-1433).
+   */
+  millicents_per_file_search?: number;
+  /**
+   * Charged per GB of code-interpreter container memory per session (ADR-1433).
+   */
+  millicents_per_code_session_gb?: number;
+  /**
+   * Charged per million uncached audio input tokens (ADR 20261019072722); the input price when absent.
+   */
+  input_audio_millicents_per_mtok?: number;
+  /**
+   * Charged per million cached audio input tokens; the cached input price when absent.
+   */
+  cached_input_audio_millicents_per_mtok?: number;
+  /**
+   * Charged per million audio output tokens; the output price when absent.
+   */
+  output_audio_millicents_per_mtok?: number;
 };
 

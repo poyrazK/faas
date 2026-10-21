@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"testing"
@@ -64,7 +65,7 @@ func TestAutomationInitialReviewCommands(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			captureAutomationStdout(t)
+			main.CaptureAutomationStdout(t)
 			args := []string{"failure-recovery-review", "--app", "consumer"}
 			switch action {
 			case "prepare":
@@ -85,7 +86,7 @@ func TestAutomationInitialReviewCommands(t *testing.T) {
 			if action == "stale" {
 				want = 1
 			}
-			if code := cmdAutomations(args); code != want || calls != 1 {
+			if code := main.CmdAutomations(args); code != want || calls != 1 {
 				t.Fatalf("exit %d calls %d", code, calls)
 			}
 		})
@@ -103,7 +104,7 @@ func TestAutomationInitialReviewValidation(t *testing.T) {
 		eventRecoveryAPI(t, func(w http.ResponseWriter, r *http.Request) {
 			t.Errorf("invalid arguments made HTTP request %s", r.URL)
 		})
-		if code := cmdAutomations(args); code == 0 {
+		if code := main.CmdAutomations(args); code == 0 {
 			t.Fatalf("accepted %v", args)
 		}
 	}

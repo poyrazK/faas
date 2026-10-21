@@ -29,7 +29,7 @@ func (s *BindingService) PrepareReservedCredential(ctx context.Context, requeste
 		binding.CredentialGeneration != 1 || binding.State != BindingStateProvisioning || binding.LeaseToken != "" || binding.ProviderIdentityID != "" || binding.CredentialRef != "" || binding.RotationPreviousGeneration != 0 || binding.RotationWakeID != "" {
 		return "", "", ErrConflict
 	}
-	database, err := s.databases.Get(ctx, binding.AccountID, binding.DatabaseID)
+	database, err := s.databases.Get(ctx, binding.DatabaseNamespace(), binding.DatabaseID)
 	if err != nil {
 		return "", "", err
 	}
@@ -44,7 +44,7 @@ func (s *BindingService) PrepareReservedCredential(ctx context.Context, requeste
 		return "", "", err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
-	material, err := backend.Provider.IssueCredentials(callCtx, bindingCredentialRequest(binding, databaseDataResource(database)))
+	material, err := issueAdmittedCredentials(callCtx, backend.Provider, bindingCredentialRequest(binding, databaseDataResource(database)))
 	cancel()
 	defer clearCredentialMaterial(&material)
 	if err != nil {

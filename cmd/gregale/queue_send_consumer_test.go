@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -47,7 +48,7 @@ func TestUnconsumedQueueWarning(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := unconsumedQueueWarning(context.Background(), tc.client, "h3-rollout", tc.queue)
+			got := main.UnconsumedQueueWarning(context.Background(), tc.client, "h3-rollout", tc.queue)
 			if (got != "") != tc.warn {
 				t.Fatalf("warning = %q, want warn=%v", got, tc.warn)
 			}

@@ -25,7 +25,8 @@ import (
 // Version is stamped at build time via -ldflags "-X .../pkg/wire.Version=...".
 var Version = "dev"
 
-// GitSHA is the abbreviated commit SHA the binary was built from.
+// GitSHA is the full source revision the binary was built from. Promotion
+// rollout approvals require the exact revision; abbreviated SHAs cannot qualify.
 // Stamped at build time via -ldflags "-X .../pkg/wire.GitSHA=...";
 // default "unknown" for dev builds. Used by the daemon_build_info
 // metric (issue #586 / ADR-129) so the operator can answer "what
@@ -276,7 +277,7 @@ type RunFunc func(ctx context.Context, log *slog.Logger) error
 func Daemon(name string, fn RunFunc) {
 	configPath := flag.String("config", "/etc/faas/"+name+".toml", "path to the daemon's TOML config")
 	showVersion := flag.Bool("version", false, "print version and exit")
-	handoffProbe := flag.Bool("handoff-capable", false, "exit 0 if this daemon hands off to a second generation on systemctl reload (ADR-1580), 3 if not")
+	handoffProbe := flag.Bool("handoff-capable", false, "exit 0 if this daemon hands off to a second generation on systemctl reload (ADR-1736), 3 if not")
 	showHelp := flag.Bool("help", false, "print usage and exit")
 	flag.Bool("h", false, "alias for --help")
 	flag.Parse()
@@ -614,7 +615,7 @@ func WatchTLSReload(ctx context.Context, log *slog.Logger, hupCh <-chan os.Signa
 }
 
 // HandoffDaemon is Daemon for a daemon whose run function hands off to a
-// second generation on SIGUSR2 (docs/adr/1580-zero-downtime-daemon-restarts.md).
+// second generation on SIGUSR2 (docs/adr/1736-zero-downtime-daemon-restarts.md).
 // `-handoff-capable` reports it, so a deploy reloads the daemon only when
 // both the running and the next release can hand off.
 func HandoffDaemon(name string, fn RunFunc) {

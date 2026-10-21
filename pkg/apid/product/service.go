@@ -40,6 +40,20 @@ type Service struct {
 	OwnerSessions      func() *session.Manager
 	OwnerRender        func(http.ResponseWriter, *http.Request, state.Account, dashboard.ProductControlData)
 	OperationDoctor    func(context.Context, state.Account, state.OperationDefinition, state.PlatformTenant) (api.OperationDoctorResponse, error)
+	// ExportInvoice and InvoiceExport reach statement invoice exports
+	// (ADR-20261018212918): document, provider and customer, or document.
+	ExportInvoice func(context.Context, state.Account, state.ProductBillingScope, string, string, string) (api.StatementInvoiceExportResponse, *api.Problem)
+	InvoiceExport func(context.Context, state.Account, state.ProductBillingScope, string) (api.StatementInvoiceExportResponse, *api.Problem)
+	// DocumentInvoice reads a scoped statement's export by account and
+	// document, nil before one starts.
+	DocumentInvoice func(context.Context, string, string) (*api.StatementInvoiceExportResponse, error)
+	// Now pins the overdue recomputation clock in tests.
+	Now func() time.Time
+	// BillingDetails and PutBillingDetails reach a customer's billing details
+	// in the owner's Paddle by provider customer ID (ADR-20261020120000);
+	// the put also returns the parts it changed.
+	BillingDetails    func(context.Context, state.Account, string) (api.ProductBillingDetails, *api.Problem)
+	PutBillingDetails func(context.Context, state.Account, string, api.PutProductBillingDetailsRequest) (api.ProductBillingDetails, []string, *api.Problem)
 }
 
 func (s *Service) Start(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -275,6 +289,11 @@ func populateCustomerView(ctx context.Context, store state.ProductControlStore, 
 				}
 			}
 			view.Allowances[name] = max(0, remaining)
+		}
+	}
+	if permissions.RunWork || permissions.ViewBilling {
+		if view.OverdueHold, err = customerOverdueHold(ctx, store, view.AccountID, view.AppID, view.Customer.TenantID); err != nil {
+			return err
 		}
 	}
 	if permissions.RunWork {

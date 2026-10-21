@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -7,22 +7,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestDevPhaseTrackerRendersMappedTimings(t *testing.T) {
-	tracker := newDevPhaseTracker()
-	tracker.setDeploymentID("dep-123")
-	tracker.sourceSync(1250_000_000, nil)
-	tracker.observeStage("dependency_restore", stageStatusInProgress, 0, "")
-	tracker.observeStage("dependency_restore", stageStatusCompleted, 250, "")
-	tracker.observeStage("image_build", stageStatusCompleted, 1500, "")
-	tracker.observeStage("snapshot_prepare", stageStatusCompleted, 2100, "")
-	tracker.observeStage("readiness", stageStatusCompleted, 700, "")
-	tracker.finishRouteSwitch()
+	tracker := main.NewDevPhaseTracker()
+	tracker.SetDeploymentID("dep-123")
+	tracker.SourceSync(1250_000_000, nil)
+	tracker.ObserveStage("dependency_restore", main.StageStatusInProgress, 0, "")
+	tracker.ObserveStage("dependency_restore", main.StageStatusCompleted, 250, "")
+	tracker.ObserveStage("image_build", main.StageStatusCompleted, 1500, "")
+	tracker.ObserveStage("snapshot_prepare", main.StageStatusCompleted, 2100, "")
+	tracker.ObserveStage("readiness", main.StageStatusCompleted, 700, "")
+	tracker.FinishRouteSwitch()
 
 	var out bytes.Buffer
-	tracker.render(&out)
+	tracker.Render(&out)
 	got := out.String()
 	for _, want := range []string{
 		"dev phases (dep-123):",
@@ -40,29 +41,29 @@ func TestDevPhaseTrackerRendersMappedTimings(t *testing.T) {
 }
 
 func TestDevPhaseTrackerPreservesFailureReason(t *testing.T) {
-	tracker := newDevPhaseTracker()
-	tracker.observeStage("image_build", stageStatusFailed, 42, "missing lockfile")
+	tracker := main.NewDevPhaseTracker()
+	tracker.ObserveStage("image_build", main.StageStatusFailed, 42, "missing lockfile")
 
 	var out bytes.Buffer
-	tracker.render(&out)
+	tracker.Render(&out)
 	if got, want := out.String(), "build=failed (missing lockfile)"; !strings.Contains(got, want) {
 		t.Fatalf("rendered failure = %q, want substring %q", got, want)
 	}
 }
 
 func TestDevPhaseTrackerReconcilesFinalStageState(t *testing.T) {
-	tracker := newDevPhaseTracker()
-	tracker.observeStage("image_build", stageStatusInProgress, 0, "")
-	tracker.observeStageState(json.RawMessage(`{
+	tracker := main.NewDevPhaseTracker()
+	tracker.ObserveStage("image_build", main.StageStatusInProgress, 0, "")
+	tracker.ObserveStageState(json.RawMessage(`{
 		"current":"",
 		"history":[{"name":"image_build","status":"completed","duration_ms":42000}]
 	}`))
 
-	receipt := tracker.receipt("live")
+	receipt := tracker.Receipt("live")
 	if len(receipt.Phases) != 1 {
 		t.Fatalf("phases = %#v, want one build phase", receipt.Phases)
 	}
-	if got := receipt.Phases[0]; got.Phase != devPhaseBuild || got.Status != stageStatusCompleted || got.DurationMS != 42000 {
+	if got := receipt.Phases[0]; got.Phase != main.DevPhaseBuild || got.Status != main.StageStatusCompleted || got.DurationMS != 42000 {
 		t.Fatalf("build phase = %#v, want completed 42000ms", got)
 	}
 }
@@ -74,21 +75,21 @@ func TestFormatDevPhaseDurationRoundsToReadableUnits(t *testing.T) {
 		1250: "1.3s",
 	}
 	for durationMS, want := range tests {
-		if got := formatDevPhaseDuration(durationMS); got != want {
+		if got := main.FormatDevPhaseDuration(durationMS); got != want {
 			t.Errorf("formatDevPhaseDuration(%d) = %q, want %q", durationMS, got, want)
 		}
 	}
 }
 
 func TestDevPhaseTrackerReceiptCarriesDevPatchPreview(t *testing.T) {
-	tracker := newDevPhaseTracker()
-	if receipt := tracker.receipt("live"); receipt.DevPatch != nil {
+	tracker := main.NewDevPhaseTracker()
+	if receipt := tracker.Receipt("live"); receipt.DevPatch != nil {
 		t.Fatalf("receipt without a server preview = %+v, want no dev_patch", receipt.DevPatch)
 	}
 	preview := &api.DevPatchPreview{Eligible: true, ChangedPaths: 2, PatchBytes: 90}
-	tracker.setDevPatch(preview)
+	tracker.SetDevPatch(preview)
 	preview.ChangedPaths = 99 // the tracker keeps its own copy
-	body, err := json.Marshal(tracker.receipt("live"))
+	body, err := json.Marshal(tracker.Receipt("live"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,27 +99,27 @@ func TestDevPhaseTrackerReceiptCarriesDevPatchPreview(t *testing.T) {
 }
 
 func TestDevPhaseTrackerReceiptIncludesEditToLiveSLO(t *testing.T) {
-	tracker := newDevPhaseTracker()
-	tracker.mu.Lock()
-	tracker.startedAt = time.Now().Add(-2 * time.Second)
-	tracker.mu.Unlock()
-	tracker.setDeploymentID("dep-slo")
-	tracker.sourceSync(100*time.Millisecond, nil)
+	tracker := main.NewDevPhaseTracker()
+	(*tracker.Mu()).Lock()
+	(*tracker.StartedAt()) = time.Now().Add(-2 * time.Second)
+	(*tracker.Mu()).Unlock()
+	tracker.SetDeploymentID("dep-slo")
+	tracker.SourceSync(100*time.Millisecond, nil)
 
-	receipt := tracker.receipt("live")
+	receipt := tracker.Receipt("live")
 	if receipt.SchemaVersion != 1 || receipt.Type != "developer_sync" {
 		t.Fatalf("receipt identity = %#v", receipt)
 	}
 	if receipt.DeploymentID != "dep-slo" || receipt.Status != "live" {
 		t.Fatalf("receipt deployment/status = %q/%q", receipt.DeploymentID, receipt.Status)
 	}
-	if receipt.SLOTargetMS != devEditToLiveTarget.Milliseconds() {
-		t.Fatalf("slo target = %d, want %d", receipt.SLOTargetMS, devEditToLiveTarget.Milliseconds())
+	if receipt.SLOTargetMS != main.DevEditToLiveTarget.Milliseconds() {
+		t.Fatalf("slo target = %d, want %d", receipt.SLOTargetMS, main.DevEditToLiveTarget.Milliseconds())
 	}
 	if !receipt.WithinSLO {
 		t.Fatal("two-second sync should be within the fifteen-second SLO")
 	}
-	if len(receipt.Phases) != 1 || receipt.Phases[0].Phase != devPhaseSync {
+	if len(receipt.Phases) != 1 || receipt.Phases[0].Phase != main.DevPhaseSync {
 		t.Fatalf("receipt phases = %#v, want sync phase", receipt.Phases)
 	}
 }

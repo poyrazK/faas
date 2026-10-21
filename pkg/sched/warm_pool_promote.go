@@ -20,9 +20,20 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 	if app.Status != state.AppActive || app.WarmPoolSize <= 0 || !instanceModeUsesSnapshots(mode) || !api.Plan(acct.Plan).WarmPoolAllowed() {
 		return WakeResult{}, false, nil
 	}
-	values, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
+	var (
+		values   runtimeDeploymentValues
+		err      error
+		ownerErr error
+	)
+	concurrently(
+		func() { values, err = e.loadRuntimeDeploymentValues(ctx, app, dep) },
+		func() { ownerErr = e.ownerGenerationHolds(ctx) },
+	)
 	if err != nil {
 		return WakeResult{}, false, fmt.Errorf("sched: warm pool: owned promotion inputs: %w", err)
+	}
+	if ownerErr != nil {
+		return WakeResult{}, false, fmt.Errorf("sched: warm pool: %w", ownerErr)
 	}
 	environmentKey := runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID)
 	production := reaperProductionScope(values.Snapshot.Scope)
@@ -105,17 +116,16 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 		if !e.ledger.ResidentFor(warm.ID) {
-			ceiling, vcpuBudget, ceilingErr := e.resolveNodeCeiling(ctx, warm.NodeID)
-			cpuBudgetMillicores := e.resolveNodeCPUBudgetMillicores(ctx, warm.NodeID)
-			if ceilingErr != nil {
-				e.log.Warn("sched: warm pool: repair missing ledger reservation", "instance", warm.ID, "err", ceilingErr)
+			node, nodeErr := e.resolveNodeAdmission(ctx, warm.NodeID)
+			if nodeErr != nil {
+				e.log.Warn("sched: warm pool: repair missing ledger reservation", "instance", warm.ID, "err", nodeErr)
 			}
 			if admitErr := e.ledger.Admit(Request{
 				Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 				EnvironmentKey:        runtimeEnvironmentAdmissionKey(values.Snapshot.Scope, values.Snapshot.EnvironmentID),
 				ProductionEnvironment: production,
 				RAMMB:                 app.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
-				NodeID: warm.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget, CPUBudgetMillicores: cpuBudgetMillicores, Kind: KindWarmPool,
+				NodeID: warm.NodeID, NodeCeilingMB: node.ceilingMB, VCPUBudget: node.vcpuBudget, CPUBudgetMillicores: node.cpuBudgetMillicores, Kind: KindWarmPool,
 			}); admitErr != nil {
 				if e.discardWarmPromotion(ctx, warm, "ledger_repair_failed") {
 					warmCount--
@@ -150,12 +160,16 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 
+		bookkeeping := e.publicationBookkeeping(warm.ID, app.ID, warm.WakeID, state.StateWarm, state.StateRunning, "warm_pool_resume")
 		fresh, publishErr := e.publishOwnedWarmWithStandards(ctx, receipt, state.RuntimeInstancePublication{
 			AccountID: acct.ID, AppID: app.ID, InstanceID: warm.ID, NodeID: warm.NodeID, WakeID: warm.WakeID,
 			ExpectedState: string(state.StateWarm), Fence: captured.SecretFence, ConfigFence: captured,
-			Netns: warm.Netns, HostIP: warm.HostIP, GuestUID: warm.GuestUID,
+			Netns: warm.Netns, HostIP: warm.HostIP, GuestUID: warm.GuestUID, Bookkeeping: bookkeeping,
 		})
 		if publishErr != nil {
+			if errors.Is(publishErr, state.ErrFinancialBudgetHeld) {
+				return WakeResult{}, true, errors.Join(publishErr, e.retireFinancialBudgetRuntime(ctx, warm))
+			}
 			e.ledger.Release(warm.ID)
 			if !errors.Is(publishErr, state.ErrConflict) {
 				if e.discardWarmPromotion(ctx, warm, "record_runtime_failed") {
@@ -170,8 +184,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 
-		e.recordCommittedInstanceTransition(ctx, fresh, state.StateWarm, state.StateRunning, app.ID, "warm_pool_resume", "")
-		e.clearSnapshotBackoffAfterWake(ctx, dep.ID)
+		e.recordPublishedInstanceTransition(ctx, fresh, state.StateRunning, app.ID, dep.ID, bookkeeping)
 		e.observeWarmResumeDuration(app.ID, warm.WakeID, time.Since(resumeStartedAt))
 		warmCount--
 		e.observeWarmResume("success")

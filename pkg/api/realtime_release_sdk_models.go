@@ -455,6 +455,7 @@ type RealtimeConsumerGroup struct {
 	ActiveWorkers              int                         `json:"active_workers"`
 	HistoryUnavailable         bool                        `json:"history_unavailable"`
 	CapacityBlocked            bool                        `json:"capacity_blocked"`
+	TriggerID                  *string                     `json:"trigger_id,omitempty"`
 	LeaseSeconds               int                         `json:"lease_seconds"`
 	MaxAttempts                int                         `json:"max_attempts"`
 	CreatedAt                  time.Time                   `json:"created_at"`

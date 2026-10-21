@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -429,5 +430,43 @@ func TestVerifyWithAudienceAcceptsAnOAuthClientsToken(t *testing.T) {
 	}
 	if _, err := New(app.server.URL, WithAudience("")); err == nil {
 		t.Fatal("accepted an empty audience")
+	}
+}
+
+func TestVerifyReadsTheImpersonatingActor(t *testing.T) {
+	key := newKey(t, "0A1B2C3D")
+	app := newAuthApp(t, key)
+	c, clk := newClient(t, app)
+	payload := userClaims(c, clk)
+	payload["act"] = map[string]any{"sub": "admin:0A1B2C3D"}
+	claims, err := c.Verify(context.Background(), key.sign(t, header(key.kid), payload))
+	if err != nil || claims.Actor != "admin:0A1B2C3D" {
+		t.Fatalf("actor = %q, %v", claims.Actor, err)
+	}
+	plain, err := c.Verify(context.Background(), key.sign(t, header(key.kid), userClaims(c, clk)))
+	if err != nil || plain.Actor != "" {
+		t.Fatalf("without act: %q, %v", plain.Actor, err)
+	}
+}
+
+func TestVerifyReadsTheActiveOrganization(t *testing.T) {
+	key := newKey(t, "0A1B2C3D")
+	app := newAuthApp(t, key)
+	c, clk := newClient(t, app)
+	payload := userClaims(c, clk)
+	for name, value := range map[string]any{"org_id": "o1", "org_slug": "acme", "org_role": "admin", "org_permissions": []string{"org:read", "members:manage"}} {
+		payload[name] = value
+	}
+	claims, err := c.Verify(context.Background(), key.sign(t, header(key.kid), payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &Organization{ID: "o1", Slug: "acme", Role: "admin", Permissions: []string{"org:read", "members:manage"}}
+	if !reflect.DeepEqual(claims.Organization, want) {
+		t.Fatalf("organization = %+v", claims.Organization)
+	}
+	plain, err := c.Verify(context.Background(), key.sign(t, header(key.kid), userClaims(c, clk)))
+	if err != nil || plain.Organization != nil {
+		t.Fatalf("without org claims: %+v, %v", plain.Organization, err)
 	}
 }

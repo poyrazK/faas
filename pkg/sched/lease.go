@@ -25,95 +25,40 @@ package sched
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/leaser"
 )
 
-// LeaseToken is the opaque, comparable identity of an active lease.
-// Persisted as a uuid column (job_tasks.lease_token, 00574). The
-// underlying type is string to match the codebase convention (Cron.ID,
-// App.ID) — uuid.UUID is reserved for the few places where the v7
-// generation logic actually matters.
-type LeaseToken string
+// The lease contract (token, policy, errors and the generic Leaser) lives
+// in pkg/leaser, a leaf vmmd implements without linking the scheduler;
+// these names keep sched's callers unchanged.
 
-// LeasePolicy describes the lifetime knobs the caller hands to
-// Acquire. The sched engine only ever sets TTL; MaxAttempts and
-// MaxDuration are surfaced for the future cron-DLQ replay path
-// (issue #1184 Workstream E) which loops a lease across retries.
-type LeasePolicy struct {
-	// TTL is the lease duration. The caller MUST set TTL > 0; Acquire
-	// rejects a zero value with ErrInvalidLeasePolicy.
-	TTL time.Duration
+// LeaseToken is the opaque identity of an active lease (leaser.Token).
+type LeaseToken = leaser.Token
 
-	// MaxAttempts is the upper bound on Renew calls before the lease
-	// is forcibly expired. 0 means "no upper bound". The dispatch
-	// tick (M5) does not use MaxAttempts; the cron-DLQ path will.
-	MaxAttempts int
+// LeasePolicy describes the lifetime knobs the caller hands to Acquire
+// (leaser.Policy).
+type LeasePolicy = leaser.Policy
 
-	// MaxDuration is the wall-clock cap from the initial Acquire
-	// timestamp. 0 means "no upper bound".
-	MaxDuration time.Duration
-}
+// ErrInvalidLeasePolicy is leaser.ErrInvalidPolicy.
+var ErrInvalidLeasePolicy = leaser.ErrInvalidPolicy
 
-// Validate rejects zero-TTL + obviously-broken inputs. Called by
-// Acquire so callers can't construct a lease that immediately expires.
-func (p LeasePolicy) Validate() error {
-	if p.TTL <= 0 {
-		return fmt.Errorf("%w: TTL must be > 0", ErrInvalidLeasePolicy)
-	}
-	if p.MaxAttempts < 0 {
-		return fmt.Errorf("%w: MaxAttempts must be >= 0", ErrInvalidLeasePolicy)
-	}
-	if p.MaxDuration < 0 {
-		return fmt.Errorf("%w: MaxDuration must be >= 0", ErrInvalidLeasePolicy)
-	}
-	if p.MaxDuration > 0 && p.MaxDuration < p.TTL {
-		return fmt.Errorf("%w: MaxDuration (%s) < TTL (%s)", ErrInvalidLeasePolicy, p.MaxDuration, p.TTL)
-	}
-	return nil
-}
+// ErrLeaseNotFound is leaser.ErrNotFound.
+var ErrLeaseNotFound = leaser.ErrNotFound
 
-// ErrInvalidLeasePolicy marks a LeasePolicy that Acquire refuses.
-var ErrInvalidLeasePolicy = errors.New("sched: invalid lease policy")
+// ErrLeaseExpired is leaser.ErrExpired.
+var ErrLeaseExpired = leaser.ErrExpired
 
-// ErrLeaseNotFound marks a Lookup / Renew / Release on a token
-// that does not exist (or already expired and was reaped).
-var ErrLeaseNotFound = errors.New("sched: lease not found")
-
-// ErrLeaseExpired marks a Lookup / Renew on a token whose
-// lease_expires_at < now(). The reaper has likely already taken over
-// the task; the caller should NOT retry — give up + audit.
-var ErrLeaseExpired = errors.New("sched: lease expired")
-
-// ErrLeaseHeldByOther marks a Renew / Release on a token whose
-// stored owner_id does not match the caller. Distinct from
-// ErrLeaseNotFound so the caller can tell "the lease was stolen"
-// from "the lease was never mine" in the audit log.
-var ErrLeaseHeldByOther = errors.New("sched: lease held by another owner")
+// ErrLeaseHeldByOther is leaser.ErrHeldByOther.
+var ErrLeaseHeldByOther = leaser.ErrHeldByOther
 
 // Leaser is the generic lease surface M5 (Engine.WakeJob /
-// HandleJobExit) consumes. The type parameter T is the
-// implementation-specific handle — the in-memory store uses
-// *memLeaseRecord, the Postgres store uses a row pointer. Callers
-// never construct T directly; they receive it back from Acquire.
-//
-// Acquire returns a fresh LeaseToken + the T handle. Renew extends
-// the lease in place. Release clears the lease (idempotent: a second
-// Release on the same token returns ErrLeaseNotFound, NOT a panic).
-// Lookup is a non-mutating read for the audit / idempotency check
-// path; HandleJobExit calls Lookup(token) before honouring the
-// incoming DGRAM.
-//
-// Implementations MUST be safe for concurrent use. The dispatch tick
-// (1s ticker, M5) and the DGRAM listener run on different goroutines.
-type Leaser[T any] interface {
-	Acquire(ctx context.Context, key string, policy LeasePolicy, ownerID string) (LeaseToken, T, error)
-	Renew(ctx context.Context, token LeaseToken, ownerID string, ttl time.Duration) error
-	Release(ctx context.Context, token LeaseToken, ownerID string) error
-	Lookup(ctx context.Context, token LeaseToken) (key string, expiresAt time.Time, ownerID string, ok bool, err error)
-}
+// HandleJobExit) consumes (leaser.Leaser). The in-memory store uses
+// *memLeaseRecord as T, the Postgres store a row pointer.
+type Leaser[T any] = leaser.Leaser[T]
 
 // JobLeaser is the type-erased lease surface used by Engine.WakeJob. The
 // generic Leaser retains implementation-specific handles for callers that

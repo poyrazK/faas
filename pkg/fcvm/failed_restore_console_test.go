@@ -10,14 +10,12 @@ import (
 // fallback cold boot of the same instance would truncate it.
 func TestPreserveFailedRestoreConsole(t *testing.T) {
 	dir := t.TempDir()
-	prev := consoleLogDir
-	consoleLogDir = dir
-	t.Cleanup(func() { consoleLogDir = prev })
-	src := instanceConsolePath("vm-a")
+	v := &JailerVMM{consoleLogDir: dir}
+	src := v.consoleLogPath("vm-a")
 	if err := os.WriteFile(src, []byte("restore reseed: 1 of 1 processes did not reseed\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	kept, err := (&JailerVMM{}).PreserveFailedRestoreConsole("vm-a")
+	kept, err := v.PreserveFailedRestoreConsole("vm-a")
 	if err != nil {
 		t.Fatalf("PreserveFailedRestoreConsole: %v", err)
 	}
@@ -30,7 +28,7 @@ func TestPreserveFailedRestoreConsole(t *testing.T) {
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
 		t.Fatalf("live console path still present: %v", err)
 	}
-	if _, err := (&JailerVMM{}).PreserveFailedRestoreConsole("missing"); err == nil {
+	if _, err := v.PreserveFailedRestoreConsole("missing"); err == nil {
 		t.Fatal("kept a console that does not exist")
 	}
 }

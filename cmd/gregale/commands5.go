@@ -260,10 +260,14 @@ func cmdStatus(args []string) int {
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale env <create|clone-status|pull|push|diff>", "env")
+		PrintUsage(os.Stderr, "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>", "env")
 		return 1
 	}
 	switch args[0] {
+	case "history":
+		return envHistory(args[1:])
+	case "rollback":
+		return envRollback(args[1:])
 	case "create":
 		return envCreate(args[1:])
 	case "clone-status":
@@ -431,6 +435,7 @@ func envPush(args []string) int {
 	// "SECRET_KEY", not "my live Stripe key". Override with
 	// --secret-scan=off for local-dev sandbox keys (e.g. sk_test_…).
 	secretScan := fs.String("secret-scan", "on", "scan pairs for known credential patterns before pushing (on|off|strict|source-tree; default on)")
+	noGuard := fs.Bool("no-guard", false, "do not open a config guard for these changes (ADR-1451)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -613,6 +618,9 @@ func envPush(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	if *noGuard {
+		client = client.WithoutConfigGuard()
+	}
 	printMutationTarget(*app, *scope, appSource, scopeSource)
 	receipt := envPushReceipt{
 		AppSlug: *app, Scope: scopeOrDefault(*scope), Result: "applied",
@@ -629,6 +637,7 @@ func envPush(args []string) int {
 			PrintOK(osStdout, "%s set (scope=%s)", p.k, scopeOrDefault(*scope))
 		}
 	}
+	printConfigGuardNotice(context.Background(), client, *app, *scope)
 	if *waitForAck {
 		return finishEnvPushWait(context.Background(), client, receipt, *restart, *timeout)
 	}

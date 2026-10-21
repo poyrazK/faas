@@ -16,9 +16,10 @@
 // pkg/state/pgtest via a separate test that exercises the
 // migrations/00385 CHECK constraint.
 
-package state
+package state_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
@@ -44,16 +45,16 @@ import (
 // contract — the legacy path is exercised by PgStore and
 // pgtest (PR-A3 follow-on / ADR-098).
 func TestMemStore_CreateInstanceWithMode_StampsMirror(t *testing.T) {
-	m := newMemStoreForTest()
+	m := state.NewMemStoreForTest()
 	ctx := t.Context()
 
 	ins, err := m.CreateInstanceWithMode(ctx, "app-1", "dep-mirror", "RUNNING", 256, "node-A", "wake-1",
-		string(InstanceModeMirror))
+		string(state.InstanceModeMirror))
 	if err != nil {
 		t.Fatalf("CreateInstanceWithMode(mirror): %v", err)
 	}
-	if ins.Mode != string(InstanceModeMirror) {
-		t.Errorf("Mode = %q, want %q", ins.Mode, InstanceModeMirror)
+	if ins.Mode != string(state.InstanceModeMirror) {
+		t.Errorf("Mode = %q, want %q", ins.Mode, state.InstanceModeMirror)
 	}
 }
 
@@ -64,14 +65,14 @@ func TestMemStore_CreateInstanceWithMode_StampsMirror(t *testing.T) {
 // at runtime; this test makes the MemStore-side behaviour
 // deterministic.
 func TestMemStore_CreateInstanceWithMode_DefaultsEmptyToNormal(t *testing.T) {
-	m := newMemStoreForTest()
+	m := state.NewMemStoreForTest()
 	ctx := t.Context()
 
 	ins, err := m.CreateInstanceWithMode(ctx, "app-2", "dep-2", "RUNNING", 256, "node-A", "wake-3", "")
 	if err != nil {
 		t.Fatalf("CreateInstanceWithMode(empty): %v", err)
 	}
-	if ins.Mode != string(InstanceModeNormal) {
-		t.Errorf("empty Mode = %q, want %q", ins.Mode, InstanceModeNormal)
+	if ins.Mode != string(state.InstanceModeNormal) {
+		t.Errorf("empty Mode = %q, want %q", ins.Mode, state.InstanceModeNormal)
 	}
 }

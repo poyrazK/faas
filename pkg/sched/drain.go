@@ -784,6 +784,12 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if !d.engine.ownsApp(app) {
 		return
 	}
+	if err := state.CheckFinancialBudgetAdmissionForScope(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
+		// Keep pending work and its attempt count intact. A held budget is
+		// an admission decision, not a failed customer execution.
+		d.log.Debug("drain: preview budget admission deferred", "inv", inv.ID, "app_id", app.ID)
+		return
+	}
 	// /invoke is an HTTP/request primitive. Worker and job apps have no
 	// request listener, so an async/webhook/replay row targeting one can never
 	// become deliverable. Terminalise legacy rows here as a defence-in-depth
@@ -1329,7 +1335,7 @@ func (d *Drain) isAccountActive(ctx context.Context, appID string) bool {
 	if cached, ok := d.accts.get(app.AccountID); ok {
 		return cached.active
 	}
-	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, d.engine.Store(), app)
 	if err != nil {
 		return true
 	}
@@ -1358,7 +1364,7 @@ func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocatio
 			"inv_id", inv.ID, "app_id", inv.AppID, "err", err)
 		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
-	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, d.engine.Store(), app)
 	if err != nil {
 		d.log.WarnContext(ctx, "invocationAttemptBudget: AccountByID failed; using finite safety ceiling",
 			"inv_id", inv.ID, "app_id", inv.AppID, "account_id", app.AccountID, "err", err)
@@ -1396,7 +1402,7 @@ func (d *Drain) accountAsyncCap(ctx context.Context, inv state.Invocation) int {
 			"inv_id", inv.ID, "app_id", inv.AppID, "err", err)
 		return 0
 	}
-	acct, err := d.engine.Store().AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, d.engine.Store(), app)
 	if err != nil {
 		d.log.WarnContext(ctx, "accountAsyncCap: AccountByID failed; falling back to 0 cap",
 			"inv_id", inv.ID, "app_id", inv.AppID, "account_id", app.AccountID, "err", err)

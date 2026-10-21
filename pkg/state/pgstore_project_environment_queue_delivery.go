@@ -7,22 +7,13 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ ProjectEnvironmentQueueDeliveryStore = (*PgStore)(nil)
 
-func readEnvironmentQueueDeliveryAccount(ctx context.Context, db sqlc.DBTX, id string) (Account, error) {
-	row, err := sqlc.New().ReadEnvironmentQueueDeliveryAccount(ctx, db, mustPgUUID(id))
-	if err != nil {
-		return Account{}, mapErr(err)
-	}
-	account := Account{ID: id, Plan: api.Plan(row.Plan), Status: AccountStatus(row.Status)}
-	if row.AbuseHoldAt.Valid {
-		account.AbuseHoldAt = &row.AbuseHoldAt.Time
-	}
-	return account, nil
+func readEnvironmentQueueDeliveryAccount(ctx context.Context, db sqlc.DBTX, id, appID string) (Account, error) {
+	return queuePolicyAccountDB(ctx, db, id, appID, true)
 }
 
 func (s *PgStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context, req ProjectEnvironmentQueueDeliveryRequest) (ProjectEnvironmentQueueDelivery, error) {
@@ -52,7 +43,7 @@ func (s *PgStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context, 
 	if consumer.Mode != req.Mode {
 		return ProjectEnvironmentQueueDelivery{}, ErrConflict
 	}
-	account, err := readEnvironmentQueueDeliveryAccount(ctx, tx, req.AccountID)
+	account, err := readEnvironmentQueueDeliveryAccount(ctx, tx, req.AccountID, set.AppID)
 	if err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
@@ -98,11 +89,16 @@ func (s *PgStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context, 
 		}
 		return ProjectEnvironmentQueueDelivery{}, ErrNotFound
 	}
+	if account.AsyncQuotaPooled {
+		if err := ensureQueueAsyncQuotaDB(ctx, tx, account); err != nil {
+			return ProjectEnvironmentQueueDelivery{}, err
+		}
+	}
 	if err := q.EnsureEnvironmentQueueDeliveryQuota(ctx, tx, sqlc.EnsureEnvironmentQueueDeliveryQuotaParams{
-		AccountID: mustPgUUID(req.AccountID), MaxInflight: int32(limits.MaxAsyncInvocationsPerAccount)}); err != nil {
+		AccountID: mustPgUUID(account.AsyncQuotaSubjectID()), MaxInflight: int32(limits.MaxAsyncInvocationsPerAccount)}); err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
-	if _, err := q.ReserveEnvironmentQueueDeliveryQuota(ctx, tx, mustPgUUID(req.AccountID)); err != nil {
+	if _, err := q.ReserveEnvironmentQueueDeliveryQuota(ctx, tx, mustPgUUID(account.AsyncQuotaSubjectID())); err != nil {
 		if errors.Is(mapErr(err), ErrNotFound) {
 			return ProjectEnvironmentQueueDelivery{}, ErrQuotaExceeded
 		}
@@ -216,7 +212,7 @@ func (s *PgStore) finishEnvironmentQueueDelivery(ctx context.Context, scope Proj
 		return err
 	}
 	if lastError != nil {
-		account, err := readEnvironmentQueueDeliveryAccount(ctx, tx, scope.AccountID)
+		account, err := readEnvironmentQueueDeliveryAccount(ctx, tx, scope.AccountID, set.AppID)
 		if err != nil {
 			return err
 		}
@@ -250,7 +246,7 @@ func (s *PgStore) finishEnvironmentQueueDelivery(ctx context.Context, scope Proj
 	if count != 1 {
 		return ErrNotFound
 	}
-	if err := q.ReleaseEnvironmentQueueDeliveryQuota(ctx, tx, mustPgUUID(scope.AccountID)); err != nil {
+	if err := q.ReleaseEnvironmentQueueDeliveryQuota(ctx, tx, row.AsyncQuotaSubjectID); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

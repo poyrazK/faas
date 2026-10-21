@@ -161,7 +161,7 @@ func slackRetryAfter(s string, now time.Time) time.Time {
 var safeApplicationValue = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func applicationMessage(c state.IssueSlackClaim, base *url.URL) ([]byte, error) {
-	labels := map[string]string{"application_escalation": "Unacknowledged issue escalated to backup team", "application_reminder": "Unacknowledged issue reminder", "created": "New issue", "regressed": "Issue regressed", "impact_threshold_reached": "Customer-impact threshold reached", "frequency_threshold_reached": "Event-frequency threshold reached"}
+	labels := map[string]string{"application_escalation": "Unacknowledged issue escalated to backup team", "application_reminder": "Unacknowledged issue reminder", "created": "New issue", "regressed": "Issue regressed", "impact_threshold_reached": "Customer-impact threshold reached", "frequency_threshold_reached": "Event-frequency threshold reached", "compound_threshold_reached": "Compound alert thresholds reached"}
 	label, ok := labels[c.Kind]
 	if !ok {
 		return nil, state.ErrInvalidArgument

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // Synthetic storage evidence only, never proof of a native acceptance run.
@@ -26,9 +27,9 @@ func imageQualificationFixture(target state.RuntimeRelease) state.RuntimeRelease
 }
 
 type imageQualificationReader struct {
-	*state.MemStore
-	proof state.RuntimeReleaseQualification
-	err   error
+	MemStore *state.MemStore
+	proof    state.RuntimeReleaseQualification
+	err      error
 }
 
 func (r imageQualificationReader) RuntimeReleaseQualification(context.Context, string) (state.RuntimeReleaseQualification, error) {
@@ -76,7 +77,7 @@ func TestRuntimeUpgradeImageRequiresNativeQualificationBeforeMaterialization(t *
 		{"wrong target", wrong, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := &Handler{store: imageQualificationReader{MemStore: s, proof: tc.proof, err: tc.err}}
+			h := &Handler{store: statetest.NewMem(imageQualificationReader{MemStore: s, proof: tc.proof, err: tc.err})}
 			// No storage/puller/builder is installed: refusal must precede them.
 			if _, err := h.prepareFunctionRuntimeRelease(t.Context(), app, dep, app.Runtime, "candidate.ext4"); err == nil {
 				t.Fatal("unqualified target reached imaging")

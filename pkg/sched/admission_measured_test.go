@@ -1,6 +1,6 @@
 // adr: 909
 
-package sched
+package sched_test
 
 import (
 	"errors"
@@ -11,14 +11,15 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // measuredCeilingMB is the n2 test node's admission ceiling, where 1 GiB
 // Node VMs measured ~260 MB each (ADR-909).
 const measuredCeilingMB = 8593
 
-func measuredScaleReq(i int) Request {
-	return Request{
+func measuredScaleReq(i int) sched.Request {
+	return sched.Request{
 		Instance: fmt.Sprintf("i%d", i), AppID: fmt.Sprintf("a%d", i), Plan: api.PlanScale,
 		RAMMB: 1024, VCPU: 1, MaxConcurrency: 20, NodeID: "n1", NodeCeilingMB: measuredCeilingMB,
 	}
@@ -42,10 +43,10 @@ type measuredClock struct{ t time.Time }
 func (c *measuredClock) now() time.Time { return c.t }
 func (c *measuredClock) tick()          { c.t = c.t.Add(time.Second) }
 
-func newMeasuredLedger(m *fakeMeasurement) (*NodeLedger, *measuredClock) {
+func newMeasuredLedger(m *fakeMeasurement) (*sched.NodeLedger, *measuredClock) {
 	clock := &measuredClock{t: time.Unix(1_800_000_000, 0)}
-	l := NewNodeLedger()
-	l.now = clock.now
+	l := sched.NewNodeLedger()
+	(*l.Now()) = clock.now
 	if m != nil {
 		l.EnableMeasuredAdmission(m.read)
 	}
@@ -54,7 +55,7 @@ func newMeasuredLedger(m *fakeMeasurement) (*NodeLedger, *measuredClock) {
 
 // admitUntilRefused admits Scale instances until the ledger refuses one. Before
 // each admission, refresh (when set) publishes a new measurement.
-func admitUntilRefused(t *testing.T, l *NodeLedger, clock *measuredClock, refresh func(admitted int)) (int, error) {
+func admitUntilRefused(t *testing.T, l *sched.NodeLedger, clock *measuredClock, refresh func(admitted int)) (int, error) {
 	t.Helper()
 	for i := 0; i < 100; i++ {
 		clock.tick()

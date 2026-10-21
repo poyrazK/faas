@@ -44,6 +44,9 @@ func (m *MemStore) CreateDeployToken(_ context.Context, accountID, appID string,
 	if !ok || app.AccountID != accountID {
 		return DeployToken{}, ErrNotFound
 	}
+	if err := m.checkOrgCredentialMemberLocked(app.OrgID, accountID); err != nil {
+		return DeployToken{}, err
+	}
 	hashKey := string(hash)
 	if _, ok := m.deployTokenByHash[hashKey]; ok {
 		return DeployToken{}, ErrConflict
@@ -118,6 +121,9 @@ func (m *MemStore) RotateDeployToken(_ context.Context, accountID, appID, tokenI
 	old, ok := m.deployTokens[tokenID]
 	if !ok || old.AccountID != accountID || old.AppID != appID {
 		return DeployToken{}, DeployToken{}, ErrNotFound
+	}
+	if err := m.checkOrgCredentialMemberLocked(m.apps[appID].OrgID, accountID); err != nil {
+		return DeployToken{}, DeployToken{}, err
 	}
 	if old.Status == string(APIKeyStatusRevoked) {
 		return DeployToken{}, DeployToken{}, ErrAPIKeyRevoked

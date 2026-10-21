@@ -409,6 +409,15 @@ func AppForDeployment(ctx context.Context, store interface {
 }
 
 func ResolveAppForDeployment(ctx context.Context, store any, app App, deployment Deployment) (App, error) {
+	if reader, ok := store.(ProjectMigrationFenceReader); ok {
+		retired, err := reader.ProjectMigrationDeploymentRetired(ctx, deployment.ID)
+		if err != nil {
+			return App{}, err
+		}
+		if retired {
+			return App{}, ErrConflict
+		}
+	}
 	if app.ID != deployment.AppID {
 		return App{}, ErrConflict
 	}

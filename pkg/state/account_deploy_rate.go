@@ -73,14 +73,17 @@ func currentDeployRateRow(row accountDeployRateRow, now time.Time) accountDeploy
 	return row
 }
 
-func (s *MemStore) ConsumeAccountDeployRate(_ context.Context, accountID string, limit int, now time.Time) (AccountDeployRateSnapshot, error) {
+func (s *MemStore) ConsumeAccountDeployRate(ctx context.Context, accountID string, limit int, now time.Time) (AccountDeployRateSnapshot, error) {
 	now, err := validateDeployRateInput(accountID, limit, now)
 	if err != nil {
 		return AccountDeployRateSnapshot{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.accounts[accountID]; !ok {
+	if err := s.checkOrgAccessLocked(ctx); err != nil {
+		return AccountDeployRateSnapshot{}, err
+	}
+	if _, ok := s.billingResourceAccountLocked(accountID); !ok {
 		return AccountDeployRateSnapshot{}, ErrNotFound
 	}
 	row := currentDeployRateRow(s.accountDeployRates[accountID], now)
@@ -100,7 +103,7 @@ func (s *MemStore) ReadAccountDeployRate(_ context.Context, accountID string, li
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.accounts[accountID]; !ok {
+	if _, ok := s.billingResourceAccountLocked(accountID); !ok {
 		return AccountDeployRateSnapshot{}, ErrNotFound
 	}
 	row := currentDeployRateRow(s.accountDeployRates[accountID], now)

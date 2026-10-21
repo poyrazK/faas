@@ -199,6 +199,11 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		}
 		PrintProgress(osStdout, "Rollout: %d%% traffic · step %d/%d · in progress", final.TrafficPercent, step, final.CanaryTotalSteps)
 		PrintProgress(osStdout, "follow: gregale deployment wait %s --rollout", final.ID)
+		// ADR-1446: a production release rolls out behind the health-gated
+		// canary by default, so name both ways out of it.
+		if appOK && app.ReleasePolicy != api.ReleasePolicyImmediate {
+			PrintProgress(osStdout, "A health-gated rollout is this app's default: skip it once with --rollout immediate, or always with gregale app %s --release-policy immediate", appSlug)
+		}
 	} else if darkDeploy {
 		if final.TrafficPercent != 0 {
 			PrintFail(osStderr, "Deployment %s became live with %d%% production traffic; expected 0%%. Inspect with: gregale traffic status %s", final.ID, final.TrafficPercent, appSlug)
@@ -235,6 +240,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	} else {
 		PrintOK(osStdout, "Deployed. %s", appURL)
 	}
+	renderCronActivation(ctx, final)
 	switch {
 	case darkDeploy:
 	case noHTTP:
@@ -422,6 +428,10 @@ func writeWaitedDeploymentReceiptUntil(ctx context.Context, c *Client, dep api.D
 }
 
 func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration, waitForRollout, darkDeploy bool, simplePlans ...*simpleapp.Plan) int {
+	return writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx, c, dep, prov, appURL, sourceSHA256, appSlug, deadline, waitForRollout, darkDeploy, nil, simplePlans...)
+}
+
+func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Client, dep api.DeploymentResponse, prov *zeroConfigProvenance, appURL, sourceSHA256, appSlug string, deadline time.Duration, waitForRollout, darkDeploy bool, sourceMaps *api.IssueSourceMapsMetadata, simplePlans ...*simpleapp.Plan) int {
 	if deadline <= 0 {
 		deadline = defaultDeployWaitTimeout
 	}
@@ -440,20 +450,26 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 			receiptDep = final
 		}
 		receipt := newDeployReceipt(receiptDep, prov, appURL, sourceSHA256, simplePlans...)
+		receipt.IssueSourceMaps = sourceMaps
 		receipt.Interrupted = errors.Is(ctx.Err(), context.Canceled)
 		receipt.TimedOut = !receipt.Interrupted
 		receipt.WaitStage = stage
 		receipt.ResumeCommand = resumeCommand
 		receipt.Recovery = newDeployRecovery(stage, appSlug, receiptDep.ID, "", deadline, waitForRollout)
-		if code := jsonOut(writeJSON(receipt)); code != 0 {
+		if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 			return code
 		}
 		if receipt.Interrupted {
-			return printDeploymentWaitRecovery(context.Canceled, receiptDep, appSlug, stage, deadline, waitForRollout, 130)
+			return printSessionWaitRecovery(ctx, context.Canceled, receiptDep, appSlug, stage, deadline, waitForRollout, 130)
 		}
-		return printDeploymentWaitRecovery(context.DeadlineExceeded, receiptDep, appSlug, stage, deadline, waitForRollout, 3)
+		return printSessionWaitRecovery(ctx, context.DeadlineExceeded, receiptDep, appSlug, stage, deadline, waitForRollout, 3)
+	}
+	var configurationErr error
+	if session := sessionFromContext(ctx); session != nil && final.Status == statusLive && (!waitForRollout || final.RolloutState != rolloutStateAborted) && (!darkDeploy || final.TrafficPercent == 0) {
+		configurationErr = session.applySettings(ctx, c)
 	}
 	receipt := newDeployReceipt(final, prov, appURL, sourceSHA256, simplePlans...)
+	receipt.IssueSourceMaps = sourceMaps
 	if final.Status == statusLive && darkDeploy && final.TrafficPercent == 0 {
 		receipt.PreviewURL = deploymentPreviewURL(ctx, c, final.ID)
 		receipt.PromotionCommand, _ = deploymentPromotionCommand(ctx, c, appSlug, final)
@@ -474,8 +490,15 @@ func writeWaitedDeploymentReceiptUntilWithOptions(ctx context.Context, c *Client
 		receipt.Recovery.NextCommand = failedDeploymentRecovery(appSlug, final).NextCommand
 		receipt.Recovery.Hint = "The deployment or rollout reached a failed terminal state. Inspect the deployment and its logs before submitting a corrected deployment."
 	}
-	if code := jsonOut(writeJSON(receipt)); code != 0 {
+	if configurationErr != nil {
+		receipt.WaitStage = "configuration"
+		receipt.Recovery = sessionFromContext(ctx).recovery("configuration")
+	}
+	if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 		return code
+	}
+	if configurationErr != nil {
+		return sessionFromContext(ctx).failure("Saved deploy settings remain pending", "configuration", configurationErr)
 	}
 	if waitForRollout && final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
 		return 1

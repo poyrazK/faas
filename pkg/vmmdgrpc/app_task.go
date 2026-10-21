@@ -34,6 +34,7 @@ func (s *Server) RestoreRehearsalAppTask(ctx context.Context, req *vmmdpb.Restor
 
 func (s *Server) restoreAppTask(ctx context.Context, req *vmmdpb.RestoreAppTaskRequest) (*vmmdpb.RestoreAppTaskResponse, error) {
 	const op = "RestoreAppTask"
+	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
 	restoreVMM, ok := s.vmm.(AppTaskRestoreVMMAPI)
 	if !ok {

@@ -14,7 +14,7 @@
 // union (8 vmmd-side + 2 schedd-side reasons) actually land on
 // the schedd-side OpsMetrics registry".
 
-package sched
+package sched_test
 
 import (
 	"strings"
@@ -22,6 +22,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -67,7 +68,7 @@ func TestSchedd_WakeFailure_EmittedOnBootFail(t *testing.T) {
 	// is pre-instantiated for {labelLocal, otherBoxLabel} ×
 	// {labelAppUnknown, otherAppLabel} × 10 reasons = 40 series on
 	// idle fleet, plus the one we just bumped to 2.
-	body := getMetricsBody(t, ops)
+	body := sched.GetMetricsBody(t, ops)
 	for _, want := range []string{
 		// Counter incremented to 2 lands in the scrape body.
 		`schedd_wake_failure_total{app="my-app",box="local",reason="vmm_boot_failed"} 2`,
@@ -133,7 +134,7 @@ func TestSchedd_WakeFailure_EmittedOnRuntimeFail(t *testing.T) {
 // panel would render "no data" gaps on an idle schedd.
 func TestSchedd_WakeFailure_ClosedVocabUnion(t *testing.T) {
 	ops := wire.NewOpsMetrics("schedd")
-	body := getMetricsBody(t, ops)
+	body := sched.GetMetricsBody(t, ops)
 	for _, reason := range []string{
 		// vmmd-side closed vocab — schedd never emits these,
 		// but the metric pre-instantiation is symmetric so a

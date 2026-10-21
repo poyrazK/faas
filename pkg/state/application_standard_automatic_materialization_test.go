@@ -17,10 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardAutomaticTestStore interface {
-	standardMaterializationTestStore
-	ApplicationStandardAutomaticMaterializationStore
-}
+type standardAutomaticTestStore = contractTestStore
 
 type standardAutomaticFixture struct {
 	owner        CreateAccountWithPersonalOrgResult
@@ -32,11 +29,19 @@ type standardAutomaticFixture struct {
 
 func standardAutomaticSetup(t *testing.T, s standardAutomaticTestStore, projectScope, defaultsOnly bool) standardAutomaticFixture {
 	t.Helper()
-	ctx := context.Background()
-	owner, err := s.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "automatic-owner@example.com", Plan: api.PlanPro})
+	owner, err := s.CreateAccountWithPersonalOrg(context.Background(), CreateAccountWithPersonalOrgParams{Email: "automatic-owner@example.com", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
+	return standardAutomaticSetupIn(t, s, owner, owner.PersonalOrg.ID, projectScope, defaultsOnly)
+}
+
+// standardAutomaticSetupIn installs the company standard org-wide in orgID,
+// which owner administers.
+func standardAutomaticSetupIn(t *testing.T, s standardAutomaticTestStore, owner CreateAccountWithPersonalOrgResult, orgID string, projectScope, defaultsOnly bool) standardAutomaticFixture {
+	t.Helper()
+	ctx := context.Background()
+	var err error
 	f := standardAutomaticFixture{owner: owner}
 	if projectScope {
 		f.project, err = s.CreateProject(ctx, Project{AccountID: owner.Account.ID, Slug: "automatic-production"})
@@ -46,7 +51,7 @@ func standardAutomaticSetup(t *testing.T, s standardAutomaticTestStore, projectS
 	}
 	definition := json.RawMessage(`{"security_policy":{"mode":"default","value":"warn"}}`)
 	if !defaultsOnly {
-		f.destination, err = s.CreateApplicationStandardLogDestination(ctx, ApplicationStandardLogDestinationCreate{OrgID: owner.PersonalOrg.ID, ActorID: owner.Account.ID, Name: "Company logs", Kind: "http_json", TargetURL: "https://automatic.example.com/logs", AuthHeaderSealed: []byte("automatic-sealed-credential")})
+		f.destination, err = s.CreateApplicationStandardLogDestination(ctx, ApplicationStandardLogDestinationCreate{OrgID: orgID, ActorID: owner.Account.ID, Name: "Company logs", Kind: "http_json", TargetURL: "https://automatic.example.com/logs", AuthHeaderSealed: []byte("automatic-sealed-credential")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,7 +64,7 @@ func standardAutomaticSetup(t *testing.T, s standardAutomaticTestStore, projectS
 		if err != nil {
 			t.Fatal(err)
 		}
-		publisher, err := s.CreateApplicationStandardPublisher(ctx, ApplicationStandardPublisherCreate{OrgID: owner.PersonalOrg.ID, ActorID: owner.Account.ID, Name: "Company CI", PublicKeyDER: der})
+		publisher, err := s.CreateApplicationStandardPublisher(ctx, ApplicationStandardPublisherCreate{OrgID: orgID, ActorID: owner.Account.ID, Name: "Company CI", PublicKeyDER: der})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,15 +77,15 @@ func standardAutomaticSetup(t *testing.T, s standardAutomaticTestStore, projectS
 			appstandards.EgressExtraPorts:  {Mode: appstandards.Mandatory, Value: json.RawMessage(`[8443]`)},
 		})
 	}
-	f.version, err = s.PublishApplicationStandardVersion(ctx, ApplicationStandardPublish{OrgID: owner.PersonalOrg.ID, ActorID: owner.Account.ID, Slug: "automatic-company", CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: definition}})
+	f.version, err = s.PublishApplicationStandardVersion(ctx, ApplicationStandardPublish{OrgID: orgID, ActorID: owner.Account.ID, Slug: "automatic-company", CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: definition}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := ApplicationStandardReviewRequest{Scope: "organization", ScopeID: owner.PersonalOrg.ID, StandardID: f.version.StandardID, AdmissionVersion: 1, Active: true, BatchSize: 1}
+	request := ApplicationStandardReviewRequest{Scope: "organization", ScopeID: orgID, StandardID: f.version.StandardID, AdmissionVersion: 1, Active: true, BatchSize: 1}
 	if projectScope {
 		request.Scope, request.ScopeID = "project", f.project.ID
 	}
-	p, err := s.PreviewApplicationStandardAssignment(ctx, owner.PersonalOrg.ID, owner.Account.ID, request)
+	p, err := s.PreviewApplicationStandardAssignment(ctx, orgID, owner.Account.ID, request)
 	if err != nil || len(p.Blockers) != 0 {
 		t.Fatalf("admission preview: %+v %v", p.Blockers, err)
 	}
@@ -240,12 +245,28 @@ func TestMemApplicationStandardAutomaticCreatorPlan(t *testing.T) {
 func standardAutomaticCreatorPlan(t *testing.T, s standardAutomaticTestStore) {
 	t.Helper()
 	ctx := context.Background()
-	f := standardAutomaticSetup(t, s, false, false)
+	// A member's app in a shared company organization: a personal
+	// organization's apps belong to its owner (#4882).
+	owner, err := s.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "automatic-owner@example.com", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := s.CreateOrg(ctx, Org{Slug: "automatic-company", Name: "Automatic company", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddOrgMember(ctx, org.ID, owner.Account.ID, OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	standardAutomaticSetupIn(t, s, owner, org.ID, false, false)
 	creator, err := s.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "automatic-free-creator@example.com", Plan: api.PlanFree})
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(ctx, App{AccountID: creator.Account.ID, OrgID: f.owner.PersonalOrg.ID, Slug: "automatic-plan-boundary", RAMMB: 128})
+	if err := s.AddOrgMember(ctx, org.ID, creator.Account.ID, OrgRoleDeveloper, &owner.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, App{AccountID: creator.Account.ID, OrgID: org.ID, Slug: "automatic-plan-boundary", RAMMB: 128})
 	if err != nil {
 		t.Fatal(err)
 	}

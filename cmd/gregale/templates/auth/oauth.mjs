@@ -1,4 +1,5 @@
-import { HTTPError } from './authz.mjs'
+import { HTTPError, organizationClaims } from './authz.mjs'
+import { actClaims } from './impersonation.mjs'
 import { consentPath, limits, oauthAudience } from './config.mjs'
 
 // OAuth 2.1 authorization server (ADR-1190). GoTrue v2.197.0 registers
@@ -53,14 +54,18 @@ export function wellKnownPath(url) {
 }
 
 // accessTokenClaims answers GoTrue's custom access token hook. The
-// application's own tokens pass unchanged.
-export async function accessTokenClaims(pool, payload) {
+// application's own tokens pass unchanged, or gain their session's
+// organization with AUTH_ORG_CLAIMS on; a client's token never does.
+export async function accessTokenClaims(pool, payload, { orgClaims = false, impersonation = false } = {}) {
   const claims = payload?.claims
   if (!claims || typeof claims !== 'object' || Array.isArray(claims)) throw new HTTPError(400, 'invalid_hook_payload')
   // GoTrue writes a single audience as a string, but only from its first
   // signature on: the first hook call after every start sends an array.
   const aud = Array.isArray(claims.aud) && claims.aud.length === 1 ? claims.aud[0] : claims.aud
-  if (!isClientToken(claims)) return { claims: { ...claims, aud } }
+  if (!isClientToken(claims)) {
+    const act = impersonation && typeof claims.session_id === 'string' ? await actClaims(pool, claims.session_id) : {}
+    return { claims: { ...claims, aud, ...(orgClaims ? await organizationClaims(pool, claims) : {}), ...act } }
+  }
   return { claims: { ...claims, aud: (await sessionResource(pool, claims)) ?? oauthAudience } }
 }
 

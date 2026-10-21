@@ -18,7 +18,7 @@ func TestMigrationInvocationAttemptHistoryUpgradeAndReplay(t *testing.T) {
 	pool := pgtest.Open(t)
 	migrateUpTo(t, ctx, pool, 20261004223934001)
 	store := state.NewPgStore(pool)
-	account, err := store.CreateAccount(ctx, "attempt-history-migration@example.test", api.PlanPro)
+	account, err := legacyAccount(ctx, pool, "attempt-history-migration@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,8 +26,11 @@ func TestMigrationInvocationAttemptHistoryUpgradeAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inv, err := store.EnqueueInvocation(ctx, state.Invocation{AccountID: account.ID, AppID: app.ID, Source: state.InvocationAsyncInvoke, DueAt: time.Now()})
-	if err != nil {
+	// Enqueue with the staged schema's own columns: today's EnqueueInvocation
+	// also reads later tables (scenario_test_action_policies, #4892).
+	var inv state.Invocation
+	if err := pool.QueryRow(ctx, `INSERT INTO invocations(account_id,app_id,source,due_at)
+		VALUES($1,$2,$3,now()) RETURNING id::text`, account.ID, app.ID, string(state.InvocationAsyncInvoke)).Scan(&inv.ID); err != nil {
 		t.Fatal(err)
 	}
 	// Take the legacy lease with the claim statement the pre-history release

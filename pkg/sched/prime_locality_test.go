@@ -1,10 +1,11 @@
-package sched
+package sched_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -23,8 +24,8 @@ func TestPrimePrefersAppNodeWithinCapacity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
-			owner, other := seedTwoNodes(t, store)
-			_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+			owner, other := sched.SeedTwoNodes(t, store)
+			_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 5)
 			if !tc.unplaced {
 				if err := store.SetAppNodeID(ctx, app.ID, owner); err != nil {
 					t.Fatal(err)
@@ -46,10 +47,10 @@ func TestPrimePrefersAppNodeWithinCapacity(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			vmm := &fakeVMM{}
-			e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			vmm := &sched.FakeVMM{}
+			e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 			if tc.full {
-				e.capacityTable.Replace(CapacityReport{NodeID: owner, UsedMB: 1024})
+				(*e.XCapacityTable()).Replace(sched.CapacityReport{NodeID: owner, UsedMB: 1024})
 			}
 			if err := e.Prime(ctx, app.ID, dep.ID); err != nil {
 				t.Fatal(err)
@@ -65,7 +66,7 @@ func TestPrimePrefersAppNodeWithinCapacity(t *testing.T) {
 			if rows[0].NodeID != want {
 				t.Fatalf("prime node=%s, want %s", rows[0].NodeID, want)
 			}
-			if vmm.coldBoots != 1 || vmm.snapshots != 1 || rows[0].State != string(state.StateParked) {
+			if (*vmm.ColdBoots()) != 1 || (*vmm.Snapshots()) != 1 || rows[0].State != string(state.StateParked) {
 				t.Fatalf("prime did not complete boot/capture/park: %+v", rows[0])
 			}
 		})

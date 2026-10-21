@@ -242,6 +242,16 @@ service Vmmd {
   // `vmmd_op_duration_seconds` dashboards (ADR-016).
   rpc Stats(StatsRequest) returns (StatsResponse);
 
+  // InflightRequestTrace returns the W3C traceparent of the one request the
+  // instance behind a service call's source address is serving, so the
+  // node's service proxy can link a call made without trace context to that
+  // request (ADR-1138). The caller is resolved from the same host-owned live
+  // identity as ResolveServiceCaller. It answers only when exactly one
+  // forward of any kind is in flight and it is an HTTP request that carried a
+  // valid traceparent; otherwise traceparent is empty. Older vmmds answer
+  // Unimplemented, which callers treat as empty.
+  rpc InflightRequestTrace(InflightRequestTraceRequest) returns (InflightRequestTraceResponse);
+
 // Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
   // PR #114). Returns the vmmd process's Firecracker version + the
   // server-side timestamp at the moment the handler ran; schedd's
@@ -584,6 +594,13 @@ service Vmmd {
   // Generic Destroy and process inventory cannot acknowledge this contract.
   rpc RetireManagedPostgresDrain(RetireManagedPostgresDrainRequest) returns (RetireManagedPostgresDrainResponse);
 
+  // Fresh host-owned identity for the tenant service listener. App-task VMs
+  // are deliberately absent from serving instances. No guest assertion or
+  // cached address mapping may substitute for this lookup.
+  rpc ResolveServiceCaller(ResolveServiceCallerRequest) returns (ResolveServiceCallerResponse);
+  // Command-free managed probe boot. A distinct method rejects older nodes
+  // before allocating resources or starting a guest.
+  rpc RestoreManagedServiceProbe(RestoreAppTaskRequest) returns (RestoreAppTaskResponse);
 }
 
 // AppSpec flattens what the caller knows about an app. vmmd stores none of
@@ -1250,6 +1267,12 @@ message JobColdBootRequest {
   // command until one client attaches through AttachAppTask with the token
   // whose digest is given here.
   JobInteractiveAttach interactive = 18;
+  // ADR-1790: an image run executes with the image's ENV, USER and WORKDIR,
+  // as Docker does. process_user and process_workdir override USER and
+  // WORKDIR (`gregale run -u/-w`) and are valid only with image_process.
+  bool image_process = 19;
+  string process_user = 20;
+  string process_workdir = 21;
 }
 
 // JobInteractiveAttach is ADR-1330's per-task attach contract.
@@ -1276,6 +1299,10 @@ message JobColdBootResponse {
   // leaves this false, and schedd fails the task instead of running the
   // command without stdin.
   bool interactive = 7;
+  // Echoes JobColdBootRequest.image_process (ADR-1790). A vmmd that predates
+  // it leaves this false, and schedd fails the task instead of running the
+  // command without the image's identity and environment.
+  bool image_process = 8;
 }
 
 message ReleaseJobStartRequest {
@@ -3063,6 +3090,20 @@ message RetireManagedPostgresDrainResponse {
   ManagedPostgresDrainProof proof = 2;
 }
 
+message ResolveServiceCallerRequest {
+  string source_ip = 1;
+}
+
+message ResolveServiceCallerResponse {
+  bool matched = 1;
+  string instance_id = 2;
+  string account_id = 3;
+  string app_id = 4;
+  string deployment_id = 5;
+  bool app_task = 6;
+  bool job_task = 7;
+}
+
 message DataRepairRehearsalIdentityRequest {}
 message DataRepairRehearsalIdentityResponse {
   string node_id = 1;
@@ -3088,4 +3129,16 @@ message RehearseSuspendResumeRequest {
 message RehearseSuspendResumeResponse {
   string instance = 1;
   string receipt_id = 2;
+}
+
+// InflightRequestTraceRequest carries the service call's source address on
+// the tenant bridge (ADR-1138).
+message InflightRequestTraceRequest {
+  string source_ip = 1;
+}
+
+// InflightRequestTraceResponse carries the lone in-flight request's
+// traceparent, or nothing.
+message InflightRequestTraceResponse {
+  string traceparent = 1;
 }

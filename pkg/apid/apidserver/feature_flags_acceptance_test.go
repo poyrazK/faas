@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -59,7 +60,7 @@ func TestFeatureFlagsThreeCustomerAcceptance(t *testing.T) {
 		t.Fatal("build sdk/node before Flags acceptance")
 	}
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
-	(*(*e.S()).FeatureFlagsEnabled()) = true
+	(*e.S()).EnablePlatformFlagForAll(platformflags.CustomerFlags)
 	ctx := context.Background()
 	slug := "flags-acceptance-api"
 	project, err := (*e.Store()).CreateProject(ctx, state.Project{AccountID: (*e.Acct()).ID, Slug: "flags-acceptance", ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose})

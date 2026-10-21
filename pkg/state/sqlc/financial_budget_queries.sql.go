@@ -12,7 +12,7 @@ import (
 )
 
 const financialBudgetAccountLock = `-- name: FinancialBudgetAccountLock :one
-SELECT id FROM accounts WHERE id = $1::uuid FOR UPDATE
+SELECT id FROM resource_namespaces WHERE id = $1::uuid FOR UPDATE
 `
 
 // ADR-566. Policy mutations serialize per account and publish an atomic audit.
@@ -255,7 +255,7 @@ func (q *Queries) FinancialBudgetRevisionList(ctx context.Context, db DBTX, arg 
 
 const financialBudgetScopeOwned = `-- name: FinancialBudgetScopeOwned :one
 SELECT CASE $1::text
-  WHEN 'account' THEN EXISTS(SELECT 1 FROM accounts WHERE id = $2::uuid)
+  WHEN 'account' THEN EXISTS(SELECT 1 FROM resource_namespaces WHERE id = $2::uuid)
   WHEN 'app' THEN EXISTS(SELECT 1 FROM apps WHERE id = $3::uuid AND account_id = $2::uuid AND status != 'deleted')
   WHEN 'job' THEN EXISTS(SELECT 1 FROM jobs WHERE id = $3::uuid AND account_id = $2::uuid AND status != 'deleted')
   WHEN 'project' THEN EXISTS(SELECT 1 FROM projects WHERE id = $3::uuid AND account_id = $2::uuid)

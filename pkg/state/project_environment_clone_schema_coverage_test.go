@@ -9,301 +9,378 @@
 // adr: 749 — notification channels and rule bindings are customer configuration.
 // adr: 747 — SLO definitions are configuration; hourly rollups are operational.
 // adr: 748 — synthetic check definitions are configuration; runs are operational.
-package state
+package state_test
 
 import (
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"reflect"
 	"testing"
 )
 
 func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.T) {
-	policies, err := ProjectEnvironmentCloneSchemaPolicies()
+	policies, err := state.ProjectEnvironmentCloneSchemaPolicies()
 	if err != nil {
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
-		// Rehearsal fixtures, leases and sealed run evidence remain with their source.
-		"scenario_cold_preparations":          CloneSchemaOperational,
-		"scenario_command_networks":           CloneSchemaOperational,
-		"scenario_managed_work":               CloneSchemaOperational,
-		"scenario_object_fixtures":            CloneSchemaOperational,
-		"scenario_postgres_fixtures":          CloneSchemaOperational,
-		"scenario_recorder_requests":          CloneSchemaOperational,
-		"scenario_recorder_sessions":          CloneSchemaOperational,
-		"scenario_simulation_attempts":        CloneSchemaOperational,
-		"scenario_suspend_resumes":            CloneSchemaOperational,
-		"scenario_test_action_policies":       CloneSchemaOperational,
-		"scenario_worker_faults":              CloneSchemaOperational,
-		"product_control_heads":               CloneSchemaConfiguration,
-		"product_control_revisions":           CloneSchemaConfiguration,
-		"product_control_customers":           CloneSchemaConfiguration,
-		"product_control_help_requests":       CloneSchemaData,
-		"product_control_email_subscriptions": CloneSchemaIdentity,
-		"product_control_receipts":            CloneSchemaOperational,
-		"product_control_billing_documents":   CloneSchemaOperational,
-		// CI configuration stays scoped; execution authority remains at its source.
-		"ci_automation_event_retries": CloneSchemaOperational,
-		"ci_automation_branches":      CloneSchemaOperational,
-		"ci_automation_pull_requests": CloneSchemaOperational,
-		"ci_automation_events":        CloneSchemaOperational,
-		"ci_automation_path_checks":   CloneSchemaOperational,
-		"ci_source_check_retries":     CloneSchemaOperational,
-		"ci_automation_policies":      CloneSchemaConfiguration,
-		"ci_dispatch_budget":          CloneSchemaOperational,
-		"ci_execution_archives":       CloneSchemaOperational,
-		"ci_execution_check_retries":  CloneSchemaOperational,
-		"ci_execution_checks":         CloneSchemaOperational,
-		"ci_execution_profiles":       CloneSchemaConfiguration,
-		"ci_executions":               CloneSchemaOperational,
-		"ci_github_bindings":          CloneSchemaConfiguration,
-		"ci_github_checks":            CloneSchemaOperational,
-		"ci_github_triggers":          CloneSchemaOperational,
-		"ci_job_attempts":             CloneSchemaOperational,
-		"ci_job_runtime":              CloneSchemaOperational,
-		"ci_job_runtime_objects":      CloneSchemaOperational,
-		"ci_managed_objects":          CloneSchemaOperational,
-		"ci_pipeline_revisions":       CloneSchemaConfiguration,
-		"ci_run_events":               CloneSchemaOperational,
-		"ci_runs":                     CloneSchemaOperational,
-		"ci_storage_budget":           CloneSchemaOperational,
-		"ci_worker_health":            CloneSchemaOperational,
-		// ADR-202610171453: inventory internal hosting without copying identity or serving state.
-		"hosting_sites":                                 CloneSchemaConfiguration,
-		"hosting_domains":                               CloneSchemaConfiguration,
-		"hosting_retention_policies":                    CloneSchemaConfiguration,
-		"hosting_releases":                              CloneSchemaData,
-		"hosting_automation_credentials":                CloneSchemaIdentity,
-		"hosting_oidc_trusts":                           CloneSchemaIdentity,
-		"hosting_domain_claims":                         CloneSchemaIdentity,
-		"hosting_ci_runs":                               CloneSchemaOperational,
-		"hosting_previews":                              CloneSchemaOperational,
-		"hosting_promotion_events":                      CloneSchemaOperational,
-		"hosting_route_publications":                    CloneSchemaOperational,
-		"app_issue_lifecycle_alert_policies":            CloneSchemaConfiguration,
-		"issue_lifecycle_alert_receipts":                CloneSchemaOperational,
-		"workflow_automation_live_baseline_promotions":  CloneSchemaOperational,
-		"workflow_automation_live_baseline_retirements": CloneSchemaOperational,
-		"workflow_automation_live_suites":               CloneSchemaOperational,
-		"workflow_automation_live_verifications":        CloneSchemaOperational,
+		// adr:1660,1662,1665,1666 — saved authority stays with its source;
+		// public compile inputs require an isolated configuration strategy.
+		"deployment_build_dependency_gates": state.CloneSchemaOperational,
+		"deployment_public_build_urls":      state.CloneSchemaConfiguration,
+		"migration_cutovers":                state.CloneSchemaOperational,
+		"data_repair_rehearsals":            state.CloneSchemaOperational,
+		"migration_verifications":           state.CloneSchemaOperational,
+		"project_migrations":                state.CloneSchemaOperational,
 
-		"app_issue_frequency_alert_policies":       CloneSchemaConfiguration,
-		"issue_application_escalation_policies":    CloneSchemaConfiguration,
-		"issue_application_reminder_policies":      CloneSchemaConfiguration,
-		"issue_application_reminders":              CloneSchemaOperational,
-		"issue_application_slack_policies":         CloneSchemaConfiguration,
-		"issue_application_triage":                 CloneSchemaOperational,
-		"issue_application_triage_activity":        CloneSchemaOperational,
-		"issue_frequency_alert_receipts":           CloneSchemaOperational,
-		"issue_slack_action_messages":              CloneSchemaOperational,
-		"issue_slack_identities":                   CloneSchemaIdentity,
-		"issue_slack_installations":                CloneSchemaConfiguration,
-		"issue_slack_interaction_policies":         CloneSchemaConfiguration,
-		"issue_slack_link_challenges":              CloneSchemaOperational,
-		"issue_slack_oauth_flows":                  CloneSchemaOperational,
-		"issue_slack_routing_policies":             CloneSchemaConfiguration,
-		"issue_team_slack_deliveries":              CloneSchemaOperational,
-		"issue_team_slack_destinations":            CloneSchemaConfiguration,
-		"issue_team_slack_threads":                 CloneSchemaOperational,
-		"issue_tracker_auto_sync":                  CloneSchemaConfiguration,
-		"issue_tracker_callback_diagnostics":       CloneSchemaOperational,
-		"issue_tracker_callbacks":                  CloneSchemaOperational,
-		"issue_tracker_inbound_guards":             CloneSchemaOperational,
-		"issue_tracker_linear_connections":         CloneSchemaConfiguration,
-		"issue_tracker_linear_oauth_flows":         CloneSchemaOperational,
-		"issue_tracker_source_guards":              CloneSchemaOperational,
-		"issue_tracker_sync_escalation_policies":   CloneSchemaConfiguration,
-		"issue_tracker_sync_history":               CloneSchemaOperational,
-		"issue_tracker_sync_incidents":             CloneSchemaOperational,
-		"issue_tracker_sync_notification_policies": CloneSchemaConfiguration,
-		"issue_tracker_sync_notifications":         CloneSchemaOperational,
-		"issue_tracker_sync_reminder_policies":     CloneSchemaConfiguration,
-		"issue_tracker_sync_triage":                CloneSchemaOperational,
-		"issue_tracker_sync_triage_activity":       CloneSchemaOperational,
-		"native_issue_ticket_receipts":             CloneSchemaOperational,
-		"workflow_initial_recovery_reviews":        CloneSchemaOperational,
-		"profile_deployment_policies":              CloneSchemaConfiguration,
-		"profile_investigations":                   CloneSchemaOperational,
-		"profile_deployment_checks":                CloneSchemaOperational,
-		"profile_route_alert_state":                CloneSchemaOperational,
-		"profile_canary_checks":                    CloneSchemaOperational,
-		"profile_periodic_monitors":                CloneSchemaOperational,
-		"app_binding_release_policies":             CloneSchemaConfiguration,
-		"app_binding_release_policy_history":       CloneSchemaConfiguration,
-		"alert_rollback_actions":                   CloneSchemaOperational,
-		"alert_historical_rollback_claims":         CloneSchemaOperational,
-		"deployment_recovery_lineage":              CloneSchemaOperational,
-		"deployment_rollback_operations":           CloneSchemaOperational,
-		"deployment_dependency_gates":              CloneSchemaOperational,
-		"app_environment_secret_refs":              CloneSchemaConfiguration,
-		"app_environment_secret_ref_suppressions":  CloneSchemaConfiguration,
-		"app_environment_workload_intents":         CloneSchemaConfiguration,
-		"environment_git_sources":                  CloneSchemaConfiguration,
-		"environment_external_field_owners":        CloneSchemaConfiguration,
-		"environment_desired_revisions":            CloneSchemaConfiguration,
-		"environment_managed_fields":               CloneSchemaConfiguration,
-		"environment_management_overrides":         CloneSchemaConfiguration,
-		"environment_workload_graphs":              CloneSchemaConfiguration,
-		"deployment_route_policy_snapshots":        CloneSchemaConfiguration,
-		"instance_runtime_config_receipts":         CloneSchemaOperational,
-		"snapshot_runtime_config_receipts":         CloneSchemaOperational,
-		"financial_budget_policies":                CloneSchemaConfiguration,
-		"financial_budget_revisions":               CloneSchemaConfiguration,
-		"financial_usage_evidence":                 CloneSchemaIdentity,
-		"financial_price_snapshots":                CloneSchemaIdentity,
-		"financial_evidence_coverage":              CloneSchemaOperational,
-		"financial_sampling_windows":               CloneSchemaOperational,
-		"notification_channels":                    CloneSchemaConfiguration,
-		"alert_rule_channels":                      CloneSchemaConfiguration,
-		"app_slos":                                 CloneSchemaConfiguration,
-		"app_slo_hourly":                           CloneSchemaOperational,
-		"synthetic_checks":                         CloneSchemaConfiguration,
-		"synthetic_check_runs":                     CloneSchemaOperational,
+		// MCP policies and notification credentials need an isolated strategy.
+		// Evidence, overrides, leases and incident delivery authority stay at source.
+		"app_mcp_readiness_policies":               state.CloneSchemaConfiguration,
+		"app_mcp_readiness_policy_history":         state.CloneSchemaConfiguration,
+		"deployment_mcp_readiness_evidence":        state.CloneSchemaOperational,
+		"deployment_mcp_readiness_monitors":        state.CloneSchemaOperational,
+		"deployment_mcp_readiness_overrides":       state.CloneSchemaOperational,
+		"mcp_readiness_attention_actions":          state.CloneSchemaOperational,
+		"mcp_readiness_fallback_policies":          state.CloneSchemaConfiguration,
+		"mcp_readiness_incident_attention":         state.CloneSchemaOperational,
+		"mcp_readiness_incident_cursors":           state.CloneSchemaOperational,
+		"mcp_readiness_incident_events":            state.CloneSchemaOperational,
+		"mcp_readiness_incidents":                  state.CloneSchemaOperational,
+		"mcp_readiness_maintenance_windows":        state.CloneSchemaConfiguration,
+		"mcp_readiness_notification_actions":       state.CloneSchemaOperational,
+		"mcp_readiness_pagerduty_ack_events":       state.CloneSchemaOperational,
+		"mcp_readiness_pagerduty_acknowledgements": state.CloneSchemaConfiguration,
+		"mcp_readiness_pagerduty_policies":         state.CloneSchemaConfiguration,
+		"mcp_readiness_reminder_defaults":          state.CloneSchemaConfiguration,
+
+		// Rehearsal authority, admission policies and evidence belong to the
+		// original run; cloning must never enroll or resume its execution.
+		"scenario_cold_preparations":          state.CloneSchemaOperational,
+		"scenario_command_networks":           state.CloneSchemaOperational,
+		"scenario_managed_work":               state.CloneSchemaOperational,
+		"scenario_object_fixtures":            state.CloneSchemaOperational,
+		"scenario_postgres_fixtures":          state.CloneSchemaOperational,
+		"scenario_postgres_faults":            state.CloneSchemaOperational,
+		"resource_namespaces":                 state.CloneSchemaIdentity,
+		"scenario_recorder_requests":          state.CloneSchemaOperational,
+		"scenario_recorder_sessions":          state.CloneSchemaOperational,
+		"scenario_simulation_attempts":        state.CloneSchemaOperational,
+		"scenario_suspend_resumes":            state.CloneSchemaOperational,
+		"scenario_test_action_policies":       state.CloneSchemaOperational,
+		"scenario_worker_faults":              state.CloneSchemaOperational,
+		"exclusive_work_effects":              state.CloneSchemaOperational,
+		"product_control_heads":               state.CloneSchemaConfiguration,
+		"product_control_revisions":           state.CloneSchemaConfiguration,
+		"product_control_customers":           state.CloneSchemaConfiguration,
+		"product_control_help_requests":       state.CloneSchemaData,
+		"product_control_email_subscriptions": state.CloneSchemaIdentity,
+		"product_control_receipts":            state.CloneSchemaOperational,
+		"product_control_billing_documents":   state.CloneSchemaOperational,
+		// CI configuration stays scoped; execution authority remains at its source.
+		"ci_automation_event_retries": state.CloneSchemaOperational,
+		"ci_automation_branches":      state.CloneSchemaOperational,
+		"ci_automation_pull_requests": state.CloneSchemaOperational,
+		"ci_automation_events":        state.CloneSchemaOperational,
+		"ci_automation_path_checks":   state.CloneSchemaOperational,
+		"ci_source_check_retries":     state.CloneSchemaOperational,
+		"ci_automation_policies":      state.CloneSchemaConfiguration,
+		"ci_dispatch_budget":          state.CloneSchemaOperational,
+		"ci_execution_archives":       state.CloneSchemaOperational,
+		"ci_execution_check_retries":  state.CloneSchemaOperational,
+		"ci_execution_checks":         state.CloneSchemaOperational,
+		"ci_execution_profiles":       state.CloneSchemaConfiguration,
+		"ci_executions":               state.CloneSchemaOperational,
+		"ci_github_bindings":          state.CloneSchemaConfiguration,
+		"ci_github_checks":            state.CloneSchemaOperational,
+		"ci_github_triggers":          state.CloneSchemaOperational,
+		"ci_job_attempts":             state.CloneSchemaOperational,
+		"ci_job_runtime":              state.CloneSchemaOperational,
+		"ci_job_runtime_objects":      state.CloneSchemaOperational,
+		"ci_managed_objects":          state.CloneSchemaOperational,
+		"ci_pipeline_revisions":       state.CloneSchemaConfiguration,
+		"ci_run_events":               state.CloneSchemaOperational,
+		"ci_runs":                     state.CloneSchemaOperational,
+		"ci_storage_budget":           state.CloneSchemaOperational,
+		"ci_worker_health":            state.CloneSchemaOperational,
+		// ADR-202610171453: inventory internal hosting without copying identity or serving state.
+		"hosting_sites":                                 state.CloneSchemaConfiguration,
+		"hosting_domains":                               state.CloneSchemaConfiguration,
+		"hosting_retention_policies":                    state.CloneSchemaConfiguration,
+		"hosting_releases":                              state.CloneSchemaData,
+		"hosting_automation_credentials":                state.CloneSchemaIdentity,
+		"hosting_oidc_trusts":                           state.CloneSchemaIdentity,
+		"hosting_domain_claims":                         state.CloneSchemaIdentity,
+		"hosting_ci_runs":                               state.CloneSchemaOperational,
+		"hosting_previews":                              state.CloneSchemaOperational,
+		"hosting_promotion_events":                      state.CloneSchemaOperational,
+		"hosting_route_publications":                    state.CloneSchemaOperational,
+		"app_issue_lifecycle_alert_policies":            state.CloneSchemaConfiguration,
+		"issue_lifecycle_alert_receipts":                state.CloneSchemaOperational,
+		"workflow_automation_live_baseline_promotions":  state.CloneSchemaOperational,
+		"workflow_automation_live_baseline_retirements": state.CloneSchemaOperational,
+		"workflow_automation_live_suites":               state.CloneSchemaOperational,
+		"workflow_automation_live_verifications":        state.CloneSchemaOperational,
+
+		"app_issue_frequency_alert_policies":       state.CloneSchemaConfiguration,
+		"issue_application_escalation_policies":    state.CloneSchemaConfiguration,
+		"issue_application_reminder_policies":      state.CloneSchemaConfiguration,
+		"issue_application_reminders":              state.CloneSchemaOperational,
+		"issue_application_slack_policies":         state.CloneSchemaConfiguration,
+		"issue_application_triage":                 state.CloneSchemaOperational,
+		"issue_application_triage_activity":        state.CloneSchemaOperational,
+		"issue_frequency_alert_receipts":           state.CloneSchemaOperational,
+		"issue_slack_action_messages":              state.CloneSchemaOperational,
+		"issue_slack_identities":                   state.CloneSchemaIdentity,
+		"issue_slack_installations":                state.CloneSchemaConfiguration,
+		"issue_slack_interaction_policies":         state.CloneSchemaConfiguration,
+		"issue_slack_link_challenges":              state.CloneSchemaOperational,
+		"issue_slack_oauth_flows":                  state.CloneSchemaOperational,
+		"issue_slack_routing_policies":             state.CloneSchemaConfiguration,
+		"issue_team_slack_deliveries":              state.CloneSchemaOperational,
+		"issue_team_slack_destinations":            state.CloneSchemaConfiguration,
+		"issue_team_slack_threads":                 state.CloneSchemaOperational,
+		"issue_tracker_auto_sync":                  state.CloneSchemaConfiguration,
+		"issue_tracker_callback_diagnostics":       state.CloneSchemaOperational,
+		"issue_tracker_callbacks":                  state.CloneSchemaOperational,
+		"issue_tracker_inbound_guards":             state.CloneSchemaOperational,
+		"issue_tracker_linear_connections":         state.CloneSchemaConfiguration,
+		"issue_tracker_linear_oauth_flows":         state.CloneSchemaOperational,
+		"issue_tracker_source_guards":              state.CloneSchemaOperational,
+		"issue_tracker_sync_escalation_policies":   state.CloneSchemaConfiguration,
+		"issue_tracker_sync_history":               state.CloneSchemaOperational,
+		"issue_tracker_sync_incidents":             state.CloneSchemaOperational,
+		"issue_tracker_sync_notification_policies": state.CloneSchemaConfiguration,
+		"issue_tracker_sync_notifications":         state.CloneSchemaOperational,
+		"issue_tracker_sync_reminder_policies":     state.CloneSchemaConfiguration,
+		"issue_tracker_sync_triage":                state.CloneSchemaOperational,
+		"issue_tracker_sync_triage_activity":       state.CloneSchemaOperational,
+		"native_issue_ticket_receipts":             state.CloneSchemaOperational,
+		"workflow_initial_recovery_reviews":        state.CloneSchemaOperational,
+		"profile_deployment_policies":              state.CloneSchemaConfiguration,
+		"profile_investigations":                   state.CloneSchemaOperational,
+		"profile_deployment_checks":                state.CloneSchemaOperational,
+		"profile_route_alert_state":                state.CloneSchemaOperational,
+		"profile_canary_checks":                    state.CloneSchemaOperational,
+		"profile_periodic_monitors":                state.CloneSchemaOperational,
+		"app_binding_release_policies":             state.CloneSchemaConfiguration,
+		"app_binding_release_policy_history":       state.CloneSchemaConfiguration,
+		"alert_rollback_actions":                   state.CloneSchemaOperational,
+		"alert_historical_rollback_claims":         state.CloneSchemaOperational,
+		"deployment_recovery_lineage":              state.CloneSchemaOperational,
+		"deployment_rollback_operations":           state.CloneSchemaOperational,
+		"deployment_dependency_gates":              state.CloneSchemaOperational,
+		"app_environment_secret_refs":              state.CloneSchemaConfiguration,
+		"app_environment_secret_ref_suppressions":  state.CloneSchemaConfiguration,
+		"app_environment_workload_intents":         state.CloneSchemaConfiguration,
+		"environment_git_sources":                  state.CloneSchemaConfiguration,
+		"environment_external_field_owners":        state.CloneSchemaConfiguration,
+		"environment_desired_revisions":            state.CloneSchemaConfiguration,
+		"environment_managed_fields":               state.CloneSchemaConfiguration,
+		"environment_management_overrides":         state.CloneSchemaConfiguration,
+		"environment_workload_graphs":              state.CloneSchemaConfiguration,
+		// GitOps artifact pins and first-serving history are retention
+		// evidence of the source environment, never copied configuration.
+		"environment_build_artifact_pins":      state.CloneSchemaOperational,
+		"environment_recovery_serving_history": state.CloneSchemaOperational,
+		"deployment_route_policy_snapshots":    state.CloneSchemaConfiguration,
+		"instance_runtime_config_receipts":     state.CloneSchemaOperational,
+		"snapshot_runtime_config_receipts":     state.CloneSchemaOperational,
+		"financial_budget_policies":            state.CloneSchemaConfiguration,
+		"financial_budget_revisions":           state.CloneSchemaConfiguration,
+		"financial_usage_evidence":             state.CloneSchemaIdentity,
+		"financial_price_snapshots":            state.CloneSchemaIdentity,
+		"financial_evidence_coverage":          state.CloneSchemaOperational,
+		"financial_sampling_windows":           state.CloneSchemaOperational,
+		// Retained funding and execution authority stay with their original owners.
+		"financial_budget_alerts":            state.CloneSchemaOperational,
+		"financial_budget_evaluations":       state.CloneSchemaOperational,
+		"financial_budget_stop_targets":      state.CloneSchemaOperational,
+		"financial_budget_stops":             state.CloneSchemaOperational,
+		"financial_compute_account_books":    state.CloneSchemaIdentity,
+		"financial_compute_books":            state.CloneSchemaIdentity,
+		"financial_compute_holds":            state.CloneSchemaOperational,
+		"financial_compute_job_attempts":     state.CloneSchemaOperational,
+		"financial_compute_job_books":        state.CloneSchemaIdentity,
+		"financial_compute_leases":           state.CloneSchemaOperational,
+		"financial_compute_owners":           state.CloneSchemaOperational,
+		"financial_funding_currency":         state.CloneSchemaPlatform,
+		"financial_preview_command_runtimes": state.CloneSchemaOperational,
+		"notification_channels":              state.CloneSchemaConfiguration,
+		"alert_rule_channels":                state.CloneSchemaConfiguration,
+		"app_slos":                           state.CloneSchemaConfiguration,
+		"app_slo_hourly":                     state.CloneSchemaOperational,
+		"synthetic_checks":                   state.CloneSchemaConfiguration,
+		"synthetic_check_runs":               state.CloneSchemaOperational,
 
 		// Capacity and runtime observations are source-bound, expiring evidence.
-		"managed_postgres_connection_capacity":     CloneSchemaOperational,
-		"data_api_runtime_connection_observations": CloneSchemaOperational,
+		"managed_postgres_connection_capacity":     state.CloneSchemaOperational,
+		"data_api_runtime_connection_observations": state.CloneSchemaOperational,
+		"project_environment_promotion_controls":   state.CloneSchemaOperational,
+		"project_release_additions":                state.CloneSchemaOperational,
 
-		"object_bucket_encryption":                           CloneSchemaConfiguration,
-		"object_bucket_lifecycle":                            CloneSchemaConfiguration,
-		"object_bucket_notifications":                        CloneSchemaConfiguration,
-		"object_bucket_object_lock":                          CloneSchemaConfiguration,
-		"object_version_protection":                          CloneSchemaConfiguration,
-		"managed_postgres_usage_imports":                     CloneSchemaIdentity,
-		"managed_postgres_creation_receipts":                 CloneSchemaIdentity,
-		"managed_postgres_restore_verifications":             CloneSchemaOperational,
-		"managed_postgres_accounting_reconciliations":        CloneSchemaIdentity,
-		"managed_postgres_resizes":                           CloneSchemaOperational,
-		"managed_postgres_cutover_drain_plans":               CloneSchemaOperational,
-		"managed_postgres_cutover_drain_plan_members":        CloneSchemaOperational,
-		"managed_postgres_cutover_drains":                    CloneSchemaOperational,
-		"object_bucket_versioning":                           CloneSchemaConfiguration,
-		"object_s3_copy_source_grants":                       CloneSchemaConfiguration,
-		"object_s3_copy_source_epochs":                       CloneSchemaConfiguration,
-		"object_version_references":                          CloneSchemaData,
-		"object_deletions":                                   CloneSchemaOperational,
-		"object_node_settlement_outbox":                      CloneSchemaOperational, // ADR-1562: source delivery authority.
-		"object_lifecycle_scans":                             CloneSchemaOperational,
-		"object_storage_capacity_reconciliations":            CloneSchemaOperational,
-		"object_storage_multipart_part_grants":               CloneSchemaOperational,
-		"object_storage_version_inventory_cursors":           CloneSchemaOperational,
-		"object_storage_version_inventory_entries":           CloneSchemaOperational,
-		"object_storage_write_admissions":                    CloneSchemaOperational,
-		"project_environment_clone_object_grant_revocations": CloneSchemaOperational,
+		"object_bucket_encryption":                           state.CloneSchemaConfiguration,
+		"object_bucket_lifecycle":                            state.CloneSchemaConfiguration,
+		"object_bucket_notifications":                        state.CloneSchemaConfiguration,
+		"object_bucket_object_lock":                          state.CloneSchemaConfiguration,
+		"object_version_protection":                          state.CloneSchemaConfiguration,
+		"managed_postgres_usage_imports":                     state.CloneSchemaIdentity,
+		"managed_postgres_creation_receipts":                 state.CloneSchemaIdentity,
+		"managed_postgres_restore_verifications":             state.CloneSchemaOperational,
+		"managed_postgres_accounting_reconciliations":        state.CloneSchemaIdentity,
+		"managed_postgres_resizes":                           state.CloneSchemaOperational,
+		"managed_postgres_cutover_drain_plans":               state.CloneSchemaOperational,
+		"managed_postgres_cutover_drain_plan_members":        state.CloneSchemaOperational,
+		"managed_postgres_cutover_drains":                    state.CloneSchemaOperational,
+		"object_bucket_versioning":                           state.CloneSchemaConfiguration,
+		"object_s3_copy_source_grants":                       state.CloneSchemaConfiguration,
+		"object_s3_copy_source_epochs":                       state.CloneSchemaConfiguration,
+		"object_version_references":                          state.CloneSchemaData,
+		"object_deletions":                                   state.CloneSchemaOperational,
+		"object_node_settlement_outbox":                      state.CloneSchemaOperational, // ADR-1562: source delivery authority.
+		"object_lifecycle_scans":                             state.CloneSchemaOperational,
+		"object_storage_capacity_reconciliations":            state.CloneSchemaOperational,
+		"object_storage_multipart_part_grants":               state.CloneSchemaOperational,
+		"object_storage_version_inventory_cursors":           state.CloneSchemaOperational,
+		"object_storage_version_inventory_entries":           state.CloneSchemaOperational,
+		"object_storage_write_admissions":                    state.CloneSchemaOperational,
+		"project_environment_clone_object_grant_revocations": state.CloneSchemaOperational,
 
-		"customer_operation_code_pins":              CloneSchemaOperational,
-		"entity_outbox_acceptances":                 CloneSchemaOperational,
-		"event_delivery_capacity":                   CloneSchemaOperational,
-		"event_delivery_slots":                      CloneSchemaOperational,
-		"event_fanout_history_summaries":            CloneSchemaOperational,
-		"event_fanout_recipients":                   CloneSchemaOperational,
-		"event_replay_job_items":                    CloneSchemaOperational,
-		"event_replay_jobs":                         CloneSchemaOperational,
-		"event_routing_backlog":                     CloneSchemaOperational,
-		"event_routing_fairness":                    CloneSchemaOperational,
-		"event_storage_admission":                   CloneSchemaOperational,
-		"invocation_attempt_history":                CloneSchemaOperational,
-		"invocation_keyed_replays":                  CloneSchemaOperational,
-		"invocation_plain_replays":                  CloneSchemaOperational,
-		"app_service_address_cursors":               CloneSchemaOperational,
-		"workflow_automation_definitions":           CloneSchemaConfiguration,
-		"workflow_automation_revisions":             CloneSchemaConfiguration,
-		"workflow_code_pins":                        CloneSchemaOperational,
-		"workflow_dispatch_cursors":                 CloneSchemaOperational,
-		"workflow_event_code_refs":                  CloneSchemaOperational,
-		"workflow_event_receipts":                   CloneSchemaOperational,
-		"workflow_operation_effects":                CloneSchemaOperational,
-		"workflow_run_resumes":                      CloneSchemaOperational,
-		"platform_tenant_workflow_schedule_cursors": CloneSchemaOperational,
-		"workflow_schedule_cursors":                 CloneSchemaOperational,
-		"workflow_schedule_occurrences":             CloneSchemaOperational,
-		"workflow_webhook_bindings":                 CloneSchemaConfiguration,
-		"workflow_webhook_receipts":                 CloneSchemaOperational,
-		"customer_operation_definitions":            CloneSchemaConfiguration,
-		"customer_operations":                       CloneSchemaOperational,
-		"customer_operation_milestones":             CloneSchemaOperational,
-		"customer_operation_events":                 CloneSchemaOperational,
-		"customer_operation_delivery_retries":       CloneSchemaOperational,
-		"customer_operation_attempt_instances":      CloneSchemaOperational,
-		"customer_operation_webhook_bindings":       CloneSchemaConfiguration,
-		"customer_operation_webhook_receipts":       CloneSchemaOperational,
-		"customer_operation_executions":             CloneSchemaOperational,
-		"customer_operation_idempotency":            CloneSchemaOperational,
-		"customer_operation_job_executions":         CloneSchemaOperational,
-		"customer_operation_recoveries":             CloneSchemaOperational,
-		"customer_operation_result_blobs":           CloneSchemaOperational,
-		"customer_operation_reports":                CloneSchemaOperational,
-		"customer_operation_stream_leases":          CloneSchemaOperational,
-		"customer_operation_workflow_executions":    CloneSchemaOperational,
-		"customer_operation_workflow_guest_claims":  CloneSchemaOperational,
-		"customer_operation_workflow_state_reports": CloneSchemaOperational,
-		"customer_operation_workflow_states":        CloneSchemaOperational,
-		"queue_bindings":                            CloneSchemaConfiguration, "crons": CloneSchemaConfiguration, "jobs": CloneSchemaConfiguration,
-		"app_webhooks": CloneSchemaConfiguration, "outbound_integration_credentials": CloneSchemaConfiguration,
-		"app_work_policies": CloneSchemaConfiguration, "event_subscription_work_bindings": CloneSchemaConfiguration,
-		"trigger_work_bindings": CloneSchemaConfiguration, "app_private_network_attachments": CloneSchemaConfiguration,
-		"runtime_config_entries":            CloneSchemaConfiguration,
-		"managed_realtime_channel_messages": CloneSchemaData, "managed_realtime_channel_heads": CloneSchemaData,
-		"instances": CloneSchemaOperational, "invocations": CloneSchemaOperational, "app_tasks": CloneSchemaOperational,
-		"invocation_environment_queue_admissions":    CloneSchemaOperational,
-		"invocation_environment_queue_receipts":      CloneSchemaOperational,
-		"deployment_runtime_environment_owners":      CloneSchemaOperational,
-		"app_health_collection_state":                CloneSchemaOperational,
-		"app_health_history":                         CloneSchemaOperational,
-		"runtime_releases":                           CloneSchemaPlatform,
-		"runtime_release_qualifications":             CloneSchemaPlatform,
-		"runtime_artifact_bindings":                  CloneSchemaOperational,
-		"deployment_runtime_upgrade_targets":         CloneSchemaOperational,
-		"deployment_runtime_upgrade_baselines":       CloneSchemaOperational,
-		"deployment_runtime_upgrade_acceptances":     CloneSchemaOperational,
-		"deployment_runtime_upgrade_cutovers":        CloneSchemaOperational,
-		"runtime_upgrade_operations":                 CloneSchemaOperational,
-		"runtime_upgrade_verifications":              CloneSchemaOperational,
-		"runtime_upgrade_gateway_rosters":            CloneSchemaPlatform,
-		"runtime_upgrade_gateway_roster_head":        CloneSchemaPlatform,
-		"runtime_upgrade_gateway_heartbeats":         CloneSchemaOperational,
-		"runtime_upgrade_external_fence_authorities": CloneSchemaPlatform,
-		"runtime_upgrade_external_fence_intents":     CloneSchemaPlatform,
-		"runtime_upgrade_external_fence_receipts":    CloneSchemaOperational,
-		"runtime_upgrade_native_public_startups":     CloneSchemaOperational,
-		"invocation_work_environment_domains":        CloneSchemaOperational, "invocation_work_environment_admissions": CloneSchemaOperational,
-		"project_environment_queue_runtime_sets": CloneSchemaOperational, "project_environment_queue_consumers": CloneSchemaOperational,
-		"feature_flag_versions":           CloneSchemaConfiguration,
-		"exclusive_work_policies":         CloneSchemaConfiguration,
-		"exclusive_work_trigger_bindings": CloneSchemaConfiguration,
-		"app_issue_impact_alert_policies": CloneSchemaConfiguration,
-		"issue_ingest_tokens":             CloneSchemaConfiguration,
-		"app_udp_listeners":               CloneSchemaConfiguration,
-		"exclusive_work_operations":       CloneSchemaOperational,
-		"exclusive_work_keys":             CloneSchemaOperational,
-		"schedule_occurrences":            CloneSchemaOperational,
-		"dev_bridge_sessions":             CloneSchemaOperational,
-		"execution_artifact_grants":       CloneSchemaOperational,
-		"execution_outbound_integrations": CloneSchemaOperational,
-		"mcp_catalog_monitors":            CloneSchemaOperational,
-		"mcp_oauth_retirements":           CloneSchemaOperational,
-		"service_recovery":                CloneSchemaOperational,
+		"customer_operation_code_pins":              state.CloneSchemaOperational,
+		"entity_outbox_acceptances":                 state.CloneSchemaOperational,
+		"event_delivery_capacity":                   state.CloneSchemaOperational,
+		"event_delivery_slots":                      state.CloneSchemaOperational,
+		"event_fanout_history_summaries":            state.CloneSchemaOperational,
+		"event_fanout_recipients":                   state.CloneSchemaOperational,
+		"event_replay_job_items":                    state.CloneSchemaOperational,
+		"event_replay_jobs":                         state.CloneSchemaOperational,
+		"event_routing_backlog":                     state.CloneSchemaOperational,
+		"event_routing_fairness":                    state.CloneSchemaOperational,
+		"event_storage_admission":                   state.CloneSchemaOperational,
+		"invocation_attempt_history":                state.CloneSchemaOperational,
+		"invocation_keyed_replays":                  state.CloneSchemaOperational,
+		"invocation_plain_replays":                  state.CloneSchemaOperational,
+		"app_service_address_cursors":               state.CloneSchemaOperational,
+		"workflow_automation_definitions":           state.CloneSchemaConfiguration,
+		"workflow_automation_revisions":             state.CloneSchemaConfiguration,
+		"workflow_code_pins":                        state.CloneSchemaOperational,
+		"workflow_dispatch_cursors":                 state.CloneSchemaOperational,
+		"workflow_event_code_refs":                  state.CloneSchemaOperational,
+		"workflow_event_receipts":                   state.CloneSchemaOperational,
+		"workflow_operation_effects":                state.CloneSchemaOperational,
+		"workflow_run_resumes":                      state.CloneSchemaOperational,
+		"platform_tenant_workflow_schedule_cursors": state.CloneSchemaOperational,
+		"workflow_schedule_cursors":                 state.CloneSchemaOperational,
+		"workflow_schedule_occurrences":             state.CloneSchemaOperational,
+		"workflow_webhook_bindings":                 state.CloneSchemaConfiguration,
+		"workflow_webhook_receipts":                 state.CloneSchemaOperational,
+		"customer_operation_definitions":            state.CloneSchemaConfiguration,
+		"customer_operations":                       state.CloneSchemaOperational,
+		"customer_operation_milestones":             state.CloneSchemaOperational,
+		"customer_operation_events":                 state.CloneSchemaOperational,
+		"customer_operation_delivery_retries":       state.CloneSchemaOperational,
+		"customer_operation_attempt_instances":      state.CloneSchemaOperational,
+		"customer_operation_webhook_bindings":       state.CloneSchemaConfiguration,
+		"customer_operation_webhook_receipts":       state.CloneSchemaOperational,
+		"customer_operation_executions":             state.CloneSchemaOperational,
+		"customer_operation_idempotency":            state.CloneSchemaOperational,
+		"customer_operation_job_executions":         state.CloneSchemaOperational,
+		"customer_operation_recoveries":             state.CloneSchemaOperational,
+		"customer_operation_result_blobs":           state.CloneSchemaOperational,
+		"customer_operation_reports":                state.CloneSchemaOperational,
+		"customer_operation_stream_leases":          state.CloneSchemaOperational,
+		"customer_operation_workflow_executions":    state.CloneSchemaOperational,
+		"customer_operation_workflow_guest_claims":  state.CloneSchemaOperational,
+		"customer_operation_workflow_state_reports": state.CloneSchemaOperational,
+		"customer_operation_workflow_states":        state.CloneSchemaOperational,
+		"queue_bindings":                            state.CloneSchemaConfiguration, "crons": state.CloneSchemaConfiguration, "jobs": state.CloneSchemaConfiguration,
+		"app_webhooks": state.CloneSchemaConfiguration, "outbound_integration_credentials": state.CloneSchemaConfiguration,
+		"app_work_policies": state.CloneSchemaConfiguration, "event_subscription_work_bindings": state.CloneSchemaConfiguration,
+		"trigger_work_bindings": state.CloneSchemaConfiguration, "app_private_network_attachments": state.CloneSchemaConfiguration,
+		"runtime_config_entries":            state.CloneSchemaConfiguration,
+		"managed_realtime_channel_messages": state.CloneSchemaData, "managed_realtime_channel_heads": state.CloneSchemaData,
+		"instances": state.CloneSchemaOperational, "invocations": state.CloneSchemaOperational, "app_tasks": state.CloneSchemaOperational,
+		"invocation_environment_queue_admissions":    state.CloneSchemaOperational,
+		"invocation_environment_queue_receipts":      state.CloneSchemaOperational,
+		"deployment_runtime_environment_owners":      state.CloneSchemaOperational,
+		"app_health_collection_state":                state.CloneSchemaOperational,
+		"app_health_history":                         state.CloneSchemaOperational,
+		"runtime_releases":                           state.CloneSchemaPlatform,
+		"runtime_release_qualifications":             state.CloneSchemaPlatform,
+		"runtime_artifact_bindings":                  state.CloneSchemaOperational,
+		"deployment_runtime_upgrade_targets":         state.CloneSchemaOperational,
+		"deployment_runtime_upgrade_baselines":       state.CloneSchemaOperational,
+		"deployment_runtime_upgrade_acceptances":     state.CloneSchemaOperational,
+		"deployment_runtime_upgrade_cutovers":        state.CloneSchemaOperational,
+		"runtime_upgrade_operations":                 state.CloneSchemaOperational,
+		"runtime_upgrade_verifications":              state.CloneSchemaOperational,
+		"runtime_upgrade_gateway_rosters":            state.CloneSchemaPlatform,
+		"runtime_upgrade_gateway_roster_head":        state.CloneSchemaPlatform,
+		"runtime_upgrade_gateway_heartbeats":         state.CloneSchemaOperational,
+		"runtime_upgrade_external_fence_authorities": state.CloneSchemaPlatform,
+		"runtime_upgrade_external_fence_intents":     state.CloneSchemaPlatform,
+		"runtime_upgrade_external_fence_receipts":    state.CloneSchemaOperational,
+		"runtime_upgrade_native_public_startups":     state.CloneSchemaOperational,
+		"invocation_work_environment_domains":        state.CloneSchemaOperational, "invocation_work_environment_admissions": state.CloneSchemaOperational,
+		"project_environment_queue_runtime_sets": state.CloneSchemaOperational, "project_environment_queue_consumers": state.CloneSchemaOperational,
+		"feature_flag_versions":           state.CloneSchemaConfiguration,
+		"exclusive_work_policies":         state.CloneSchemaConfiguration,
+		"exclusive_work_trigger_bindings": state.CloneSchemaConfiguration,
+		"app_issue_impact_alert_policies": state.CloneSchemaConfiguration,
+		"issue_ingest_tokens":             state.CloneSchemaConfiguration,
+		"app_udp_listeners":               state.CloneSchemaConfiguration,
+		"exclusive_work_operations":       state.CloneSchemaOperational,
+		"exclusive_work_keys":             state.CloneSchemaOperational,
+		"schedule_occurrences":            state.CloneSchemaOperational,
+		"dev_bridge_sessions":             state.CloneSchemaOperational,
+		"execution_artifact_grants":       state.CloneSchemaOperational,
+		"execution_outbound_integrations": state.CloneSchemaOperational,
+		"mcp_catalog_monitors":            state.CloneSchemaOperational,
+		"mcp_oauth_retirements":           state.CloneSchemaOperational,
+		"service_recovery":                state.CloneSchemaOperational,
 		// ADR-1522–1530: recovery fences and receipts remain with their source.
-		"instance_snapshot_recovery":    CloneSchemaOperational,
-		"migration_admissions":          CloneSchemaOperational,
-		"migration_sources":             CloneSchemaOperational,
-		"node_lifecycle_completions":    CloneSchemaOperational,
-		"operator_node_executions":      CloneSchemaOperational,
-		"operator_park_executions":      CloneSchemaOperational,
-		"operator_recovery_submissions": CloneSchemaOperational,
-		"operator_restart_executions":   CloneSchemaOperational,
-		"service_capacity_policy":       CloneSchemaPlatform,
-		"accounts":                      CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,
-		"egress_policy": CloneSchemaPlatform, "compute_nodes": CloneSchemaPlatform,
+		"instance_snapshot_recovery":    state.CloneSchemaOperational,
+		"migration_admissions":          state.CloneSchemaOperational,
+		"migration_sources":             state.CloneSchemaOperational,
+		"node_lifecycle_completions":    state.CloneSchemaOperational,
+		"operator_node_executions":      state.CloneSchemaOperational,
+		"operator_park_executions":      state.CloneSchemaOperational,
+		"operator_recovery_submissions": state.CloneSchemaOperational,
+		"operator_restart_executions":   state.CloneSchemaOperational,
+		"service_capacity_policy":       state.CloneSchemaPlatform,
+		"accounts":                      state.CloneSchemaIdentity, "orgs": state.CloneSchemaIdentity, "api_keys": state.CloneSchemaIdentity,
+		"egress_policy": state.CloneSchemaPlatform, "compute_nodes": state.CloneSchemaPlatform,
 
-		"project_release_sets": CloneSchemaConfiguration,
+		"project_release_sets": state.CloneSchemaConfiguration,
 
 		// Evidence and expiring execution plans belong to the source environment.
-		"binding_verification_runs":         CloneSchemaOperational,
-		"binding_verification_run_steps":    CloneSchemaOperational,
-		"project_binding_verification_runs": CloneSchemaOperational,
-		"project_release_stages":            CloneSchemaOperational,
-		"queue_binding_canaries":            CloneSchemaOperational,
+		"binding_verification_runs":         state.CloneSchemaOperational,
+		"binding_verification_run_steps":    state.CloneSchemaOperational,
+		"project_binding_verification_runs": state.CloneSchemaOperational,
+		"project_release_stages":            state.CloneSchemaOperational,
+		"queue_binding_canaries":            state.CloneSchemaOperational,
+		// Pipeline, readiness, lease, and rehearsal state remains explicitly source-owned.
+		"data_connection_checks":           state.CloneSchemaOperational,
+		"data_pipeline_alert_deliveries":   state.CloneSchemaOperational,
+		"data_pipeline_alerts":             state.CloneSchemaConfiguration,
+		"data_pipeline_connections":        state.CloneSchemaIdentity,
+		"data_pipeline_schema_refreshes":   state.CloneSchemaOperational,
+		"data_pipeline_setups":             state.CloneSchemaOperational,
+		"data_pipelines":                   state.CloneSchemaConfiguration,
+		"managed_postgres_live_keys":       state.CloneSchemaOperational,
+		"outbound_ai_access_tokens":        state.CloneSchemaIdentity,
+		"outbound_ai_batches":              state.CloneSchemaOperational,
+		"outbound_ai_evaluation_items":     state.CloneSchemaOperational,
+		"outbound_ai_evaluations":          state.CloneSchemaOperational,
+		"outbound_ai_log_exports":          state.CloneSchemaOperational,
+		"outbound_ai_route_canaries":       state.CloneSchemaOperational,
+		"outbound_ai_route_target_minutes": state.CloneSchemaOperational,
+		"outbound_ai_tag_limits":           state.CloneSchemaConfiguration,
+		"outbound_ai_tag_usage_daily":      state.CloneSchemaOperational,
+		"node_leases":                      state.CloneSchemaOperational,
+		"postgres_capacity_reservations":   state.CloneSchemaOperational,
+		"postgres_capacity_resources":      state.CloneSchemaOperational,
+		"postgres_capacity_sources":        state.CloneSchemaOperational,
+		"postgres_capacity_targets":        state.CloneSchemaOperational,
 	}
 	for _, policy := range policies {
 		if kind, ok := wanted[policy.TableName]; ok {
@@ -332,12 +409,12 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 	if !dispatchReceiptColumnRegistered {
 		t.Fatal("customer operation workflow guest claims clone policy must retain dispatch_started_at receipts")
 	}
-	report, err := cloneSchemaCoverage(policies)
+	report, err := state.CloneSchemaCoverage(policies)
 	if err != nil || !report.Known || len(report.Hash) != 64 || len(report.Blockers) == 0 {
 		t.Fatalf("registered does not mean fully copyable: %+v %v", report, err)
 	}
 	policies[0].Kind, policies[0].Columns[0] = "changed", "changed"
-	fresh, err := ProjectEnvironmentCloneSchemaPolicies()
+	fresh, err := state.ProjectEnvironmentCloneSchemaPolicies()
 	if err != nil || fresh[0].Kind == "changed" || fresh[0].Columns[0] == "changed" {
 		t.Fatalf("caller changed capture registry: %v", err)
 	}
@@ -345,11 +422,11 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 
 func TestHostingCloneInventoryRetainsCopyStrategyBlockers(t *testing.T) {
 	// adr: 202610171453 — known schema does not qualify hosting configuration or artifact cloning.
-	policies, err := ProjectEnvironmentCloneSchemaPolicies()
+	policies, err := state.ProjectEnvironmentCloneSchemaPolicies()
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := cloneSchemaCoverage(policies)
+	report, err := state.CloneSchemaCoverage(policies)
 	if err != nil || !report.Known {
 		t.Fatal("registered schema must be known", report, err)
 	}
@@ -369,39 +446,69 @@ func TestHostingCloneInventoryRetainsCopyStrategyBlockers(t *testing.T) {
 	}
 }
 
+func TestMCPReadinessCloneInventoryRetainsCopyStrategyBlockers(t *testing.T) {
+	policies, err := state.ProjectEnvironmentCloneSchemaPolicies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := state.CloneSchemaCoverage(policies)
+	if err != nil || !report.Known {
+		t.Fatal("registered schema must be known", report, err)
+	}
+	wanted := map[string]bool{
+		"app_mcp_readiness_policies":               true,
+		"app_mcp_readiness_policy_history":         true,
+		"mcp_readiness_fallback_policies":          true,
+		"mcp_readiness_maintenance_windows":        true,
+		"mcp_readiness_pagerduty_acknowledgements": true,
+		"mcp_readiness_pagerduty_policies":         true,
+		"mcp_readiness_reminder_defaults":          true,
+	}
+	for _, blocker := range report.Blockers {
+		if blocker.Code == "isolated_strategy_unavailable" {
+			delete(wanted, blocker.Table)
+		}
+	}
+	if len(wanted) != 0 {
+		t.Fatal("MCP readiness configuration became implicitly cloneable", wanted)
+	}
+}
+
 func TestCloneSchemaCoverageRejectsNewAndMissingTablesAndColumns(t *testing.T) {
 	for _, fault := range []struct {
 		name, table, column, code string
-		change                    func([]ProjectEnvironmentCloneSchemaPolicy) []ProjectEnvironmentCloneSchemaPolicy
+		change                    func([]state.ProjectEnvironmentCloneSchemaPolicy) []state.ProjectEnvironmentCloneSchemaPolicy
 	}{
-		{"new_table", "new_integration", "", "unregistered_table", func(p []ProjectEnvironmentCloneSchemaPolicy) []ProjectEnvironmentCloneSchemaPolicy {
-			return append(p, ProjectEnvironmentCloneSchemaPolicy{TableName: "new_integration", Kind: CloneSchemaOperational, Columns: []string{"app_id", "config"}})
+		{"new_table", "new_integration", "", "unregistered_table", func(p []state.ProjectEnvironmentCloneSchemaPolicy) []state.ProjectEnvironmentCloneSchemaPolicy {
+			return append(p, state.ProjectEnvironmentCloneSchemaPolicy{TableName: "new_integration", Kind: state.CloneSchemaOperational, Columns: []string{"app_id", "config"}})
 		}},
-		{"new_column", "account_async_quota", "new_setting", "unregistered_column", func(p []ProjectEnvironmentCloneSchemaPolicy) []ProjectEnvironmentCloneSchemaPolicy {
+		{"new_column", "account_async_quota", "new_setting", "unregistered_column", func(p []state.ProjectEnvironmentCloneSchemaPolicy) []state.ProjectEnvironmentCloneSchemaPolicy {
 			p[0].Columns = append(p[0].Columns, "new_setting")
 			return p
 		}},
-		{"missing_column", "account_async_quota", "account_id", "missing_column", func(p []ProjectEnvironmentCloneSchemaPolicy) []ProjectEnvironmentCloneSchemaPolicy {
+		{"missing_column", "account_async_quota", "account_id", "missing_column", func(p []state.ProjectEnvironmentCloneSchemaPolicy) []state.ProjectEnvironmentCloneSchemaPolicy {
 			p[0].Columns = p[0].Columns[1:]
 			return p
 		}},
-		{"missing_table", "account_async_quota", "", "missing_table", func(p []ProjectEnvironmentCloneSchemaPolicy) []ProjectEnvironmentCloneSchemaPolicy { return p[1:] }},
+		{"missing_table", "account_async_quota", "", "missing_table", func(p []state.ProjectEnvironmentCloneSchemaPolicy) []state.ProjectEnvironmentCloneSchemaPolicy {
+			return p[1:]
+		}},
 	} {
 		t.Run(fault.name, func(t *testing.T) {
-			policies, err := ProjectEnvironmentCloneSchemaPolicies()
+			policies, err := state.ProjectEnvironmentCloneSchemaPolicies()
 			if err != nil {
 				t.Fatal(err)
 			}
-			report, err := cloneSchemaCoverage(fault.change(policies))
+			report, err := state.CloneSchemaCoverage(fault.change(policies))
 			if err != nil || report.Known {
 				t.Fatalf("unregistered schema was accepted: %+v %v", report, err)
 			}
-			var coverageError *ProjectEnvironmentCloneSchemaCoverageError
-			if !errors.As(requireKnownCloneSchema(report), &coverageError) || !errors.Is(coverageError, ErrConflict) {
+			var coverageError *state.ProjectEnvironmentCloneSchemaCoverageError
+			if !errors.As(state.RequireKnownCloneSchema(report), &coverageError) || !errors.Is(coverageError, state.ErrConflict) {
 				t.Fatal("capture did not return a named coverage error")
 			}
-			want := ProjectEnvironmentCloneCoverageBlocker{Table: fault.table, Column: fault.column, Code: fault.code}
-			if !reflect.DeepEqual(coverageError.Blockers, []ProjectEnvironmentCloneCoverageBlocker{want}) {
+			want := state.ProjectEnvironmentCloneCoverageBlocker{Table: fault.table, Column: fault.column, Code: fault.code}
+			if !reflect.DeepEqual(coverageError.Blockers, []state.ProjectEnvironmentCloneCoverageBlocker{want}) {
 				t.Fatalf("schema blockers = %+v, want %+v", coverageError.Blockers, want)
 			}
 		})
@@ -409,11 +516,11 @@ func TestCloneSchemaCoverageRejectsNewAndMissingTablesAndColumns(t *testing.T) {
 }
 
 func TestCloneSchemaCoverageCanonicalOrderAndNoInputMutation(t *testing.T) {
-	policies, err := ProjectEnvironmentCloneSchemaPolicies()
+	policies, err := state.ProjectEnvironmentCloneSchemaPolicies()
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonical, err := cloneSchemaCoverage(policies)
+	canonical, err := state.CloneSchemaCoverage(policies)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,12 +535,12 @@ func TestCloneSchemaCoverageCanonicalOrderAndNoInputMutation(t *testing.T) {
 		policies[i].Kind = "caller-cannot-classify"
 	}
 	firstColumns := append([]string(nil), policies[0].Columns...)
-	reordered, err := cloneSchemaCoverage(policies)
+	reordered, err := state.CloneSchemaCoverage(policies)
 	if err != nil || !reflect.DeepEqual(reordered, canonical) || !reflect.DeepEqual(policies[0].Columns, firstColumns) {
 		t.Fatalf("coverage changed with input order/classification or mutated input: %v", err)
 	}
 	duplicate := append(policies, policies[0])
-	if _, err := cloneSchemaCoverage(duplicate); !errors.Is(err, ErrConflict) {
+	if _, err := state.CloneSchemaCoverage(duplicate); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate table accepted: %v", err)
 	}
 }

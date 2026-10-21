@@ -11,6 +11,11 @@ func (m *MemStore) ReadTrackedObjectUploadMutation(ctx context.Context, c Object
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketMutation
+		return zero0, err
+	}
+
 	old, exists := m.objectUploadCompletions[c.ID]
 	if !exists || !originalUploadMutationAuthority(old, c, m.clock()) {
 		return ObjectBucketMutation{}, ErrConflict

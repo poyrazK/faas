@@ -7,9 +7,12 @@ import (
 	"time"
 )
 
-func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(_ context.Context, accountID, projectID, operationID string, revision int64) ([]ProjectEnvironmentCloneWorkload, error) {
+func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, accountID, projectID, operationID string, revision int64) ([]ProjectEnvironmentCloneWorkload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return nil, err
+	}
 	op, ok := m.projectEnvironmentCloneOperations[operationID]
 	if !ok || op.AccountID != accountID || op.ProjectID != projectID {
 		return nil, ErrNotFound
@@ -79,6 +82,9 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(_ context.Context, ac
 			}
 			settings = spec.Settings
 		}
+		if _, pinned := m.releaseEnvironmentPins[source.ID]; pinned {
+			return nil, ErrReleaseConfigurationTransferUnsupported
+		}
 		snapshot := projectCloneWorkloadSnapshot{WorkloadSlug: app.Slug, Artifact: projectCloneArtifactFromDeployment(source), Settings: settings, SidecarSignals: map[string]string{}, ProjectConfig: &projectConfig}
 		variables, secrets := m.projectCloneValuesLocked(map[string]string{appID: scopes[appID]})
 		snapshot.Values = &projectCloneWorkloadValues{Variables: variables, Secrets: secrets}
@@ -141,9 +147,9 @@ func (m *MemStore) ProjectEnvironmentCloneWorkloads(_ context.Context, accountID
 	return cloneWorkloadViews(m.projectEnvironmentCloneWorkloads[operationID]), nil
 }
 
-func (m *MemStore) CreateDeploymentForEnvironmentClone(_ context.Context, accountID, projectID, operationID string, revision int64, appID, targetSettingsHash string) (Deployment, error) {
+func (m *MemStore) CreateDeploymentForEnvironmentClone(ctx context.Context, accountID, projectID, operationID string, revision int64, appID, targetSettingsHash string) (Deployment, error) {
 	input := projectEnvironmentCloneDeploymentInput{AccountID: accountID, ProjectID: projectID, OperationID: operationID, Revision: revision, AppID: appID, TargetSettingsHash: targetSettingsHash}
-	created, _, err := m.createDeployment(Deployment{AppID: appID}, nil, nil, &input)
+	created, _, err := m.createDeployment(ctx, Deployment{AppID: appID}, nil, nil, &input)
 	return created, err
 }
 

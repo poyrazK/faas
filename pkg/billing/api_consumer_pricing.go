@@ -45,14 +45,37 @@ type APIConsumerUsageChargeBucket struct {
 // QuotePlatformTenantUsage applies a tenant-wide customer tariff when one is
 // effective for a usage minute. Before the tenant's first effective card, it
 // falls back to the app-level price. The output records which pricing source
-// determined each immutable statement line.
-func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard, usage []state.APIConsumerUsageBucket) (APIConsumerUsageQuote, error) {
-	if len(tenantCards) == 0 {
+// determined each immutable statement line. Only the request stream prices
+// per minute; a minute another unit's stream has started re-prices whole
+// months (ADR-1310, ADR-1319). A trial (ADR-1322) prices its minutes at zero.
+func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard,
+	usage []state.APIConsumerUsageBucket, opts ...QuoteOptions) (APIConsumerUsageQuote, error) {
+	var options QuoteOptions
+	if len(opts) > 0 {
+		options = opts[0]
+	}
+	var requestCards []state.PlatformTenantRateCard
+	var otherStart time.Time
+	for _, card := range tenantCards {
+		if card.PricesRequests() {
+			requestCards = append(requestCards, card)
+		} else if otherStart.IsZero() || card.EffectiveFrom.Before(otherStart) {
+			otherStart = card.EffectiveFrom
+		}
+	}
+	for _, bucket := range usage {
+		if !otherStart.IsZero() && !otherStart.After(bucket.WindowStart.UTC()) {
+			return APIConsumerUsageQuote{}, ErrTenantMonthPeriodRequired
+		}
+	}
+	if len(requestCards) == 0 {
 		if err := requireFlatAppCards(appCards); err != nil {
 			return APIConsumerUsageQuote{}, err
 		}
-		return QuoteAPIConsumerUsage(appCards, usage)
+		quote, err := QuoteAPIConsumerUsage(appCards, usage)
+		return trialFreeTenantQuote(quote, options), err
 	}
+	tenantCards = requestCards
 	orderedTenantCards := append([]state.PlatformTenantRateCard(nil), tenantCards...)
 	sort.Slice(orderedTenantCards, func(i, j int) bool {
 		if orderedTenantCards[i].EffectiveFrom.Equal(orderedTenantCards[j].EffectiveFrom) {
@@ -134,6 +157,9 @@ func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards 
 			priced = fallbackQuote.Buckets[fallbackIndex]
 			fallbackIndex++
 		}
+		if options.inTrial(priced.WindowStart) && (priced.RateCardID != "" || priced.PlatformTenantRateCardID != "") {
+			priced = trialFreeBucket(priced)
+		}
 		if priced.RateCardID == "" && priced.PlatformTenantRateCardID == "" {
 			if quote.UnpricedUnits > maxInt64-bucket.BillableUnits {
 				return APIConsumerUsageQuote{}, fmt.Errorf("billing: platform tenant unpriced usage total overflow")
@@ -153,6 +179,28 @@ func QuotePlatformTenantUsage(appCards []state.APIConsumerRateCard, tenantCards 
 	}
 	quote.Priced = quote.BillableUnits > 0 && quote.UnpricedUnits == 0 && quote.Currency != ""
 	return quote, nil
+}
+
+// trialFreeBucket prices a priced minute inside a trial at zero, keeping its
+// price source (ADR-1314, ADR-1322).
+func trialFreeBucket(bucket APIConsumerUsageChargeBucket) APIConsumerUsageChargeBucket {
+	bucket.PriceMillicentsPerUnit, bucket.ChargedUnits, bucket.AmountMillicents = 0, 0, 0
+	bucket.TierUnits, bucket.Trial = nil, true
+	return bucket
+}
+
+// trialFreeTenantQuote zeroes a quote's priced minutes inside a trial.
+func trialFreeTenantQuote(quote APIConsumerUsageQuote, opts QuoteOptions) APIConsumerUsageQuote {
+	if opts.TrialEnd.IsZero() {
+		return quote
+	}
+	for i, bucket := range quote.Buckets {
+		if opts.inTrial(bucket.WindowStart) && (bucket.RateCardID != "" || bucket.PlatformTenantRateCardID != "") {
+			quote.AmountMillicents -= bucket.AmountMillicents
+			quote.Buckets[i] = trialFreeBucket(bucket)
+		}
+	}
+	return quote
 }
 
 // tenantCardUnit is a tenant card's unit; cards stored before ADR-1310
@@ -197,6 +245,9 @@ type APIConsumerUsageQuote struct {
 type QuoteOptions struct {
 	VolumeSteps          map[string]int
 	TrialStart, TrialEnd time.Time
+	// EndedAt is when the consumer was revoked; prorating cards stop
+	// charging monthly fees there (ADR-20261019100332).
+	EndedAt time.Time
 }
 
 // inTrial reports whether minute falls in the trial.

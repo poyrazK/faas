@@ -427,6 +427,7 @@
     - edge-rules.json
     - durable-entities.json
     - frozen-tier.json
+    - customer-operations.json
   notify:
     - restart grafana-server
     - reload grafana provisioning

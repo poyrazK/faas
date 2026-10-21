@@ -98,6 +98,7 @@ type resumeClientFrame struct {
 	Subscription   string            `json:"subscription,omitempty"`
 	PresenceScope  string            `json:"presence_scope,omitempty"`
 	DirectMessages bool              `json:"direct_messages,omitempty"`
+	Occupancy      bool              `json:"occupancy,omitempty"`
 	MessageID      string            `json:"message_id,omitempty"`
 	After          int64             `json:"after,omitempty"`
 	Sequence       int64             `json:"sequence,omitempty"`
@@ -135,6 +136,7 @@ type resumeServerFrame struct {
 	Data               json.RawMessage                      `json:"data,omitempty"`
 	ConnectionCount    int                                  `json:"connection_count,omitempty"`
 	Members            []resumePresenceMember               `json:"members,omitempty"`
+	Subscribers        *int                                 `json:"subscribers,omitempty"`
 	Complete           bool                                 `json:"complete,omitempty"`
 	UpdatedAt          time.Time                            `json:"updated_at,omitempty"`
 }
@@ -170,6 +172,7 @@ type resumeSubscription struct {
 }
 
 func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
+	defer c.closeLive()
 	for {
 		kind, data, err := c.ws.ReadMessage()
 		if err != nil {
@@ -182,6 +185,18 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 		if kind != websocket.TextMessage {
 			_ = c.close(websocket.CloseUnsupportedData, "v2 requires JSON text frames")
 			return
+		}
+		// An endpoint without live routes (its account is outside the
+		// FAAS_LIVE_QUERIES_ACCOUNTS rollout, or no live database is bound)
+		// answers live frames like any unknown frame, so the protocol is not
+		// discoverable; a session already open keeps receiving its frames.
+		if kind, subscription := liveFrameType(data); kind != "" && (c.live != nil || len(c.liveRoutes()) > 0) {
+			m.handleLive(ctx, c, data, subscription)
+			continue
+		}
+		if c.liveOnly {
+			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "live_only_connection"})
+			continue
 		}
 		var frame resumeClientFrame
 		if err := json.Unmarshal(data, &frame); err != nil {
@@ -435,7 +450,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 		return
 	}
 	c.resumeSubs[frame.Channel] = subscription
-	c.channels[frame.Channel] = struct{}{}
+	c.addChannelLocked(frame.Channel)
 	if frame.ReadReceipts {
 		c.readReceipts = true
 	}
@@ -564,7 +579,16 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 	}
 	m.syncFleetPresence(ctx, key)
 	release = false
+	m.watchSubscriptionOccupancy(ctx, c, frame)
 	go m.pumpResumeSubscription(subCtx, c, frame.Channel, subscription, page)
+}
+
+// watchSubscriptionOccupancy starts live occupancy frames when the subscribe
+// frame asked for them and the preview is on (ADR-1324).
+func (m *Manager) watchSubscriptionOccupancy(ctx context.Context, c *connection, frame resumeClientFrame) {
+	if frame.Occupancy && m.cfg.OccupancyPreview && !m.watchOccupancy(c.info.EndpointID, frame.Channel, c) {
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "occupancy_limit"})
+	}
 }
 
 func normalizeResumePresenceState(raw json.RawMessage) (json.RawMessage, bool) {
@@ -999,6 +1023,7 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 
 func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, channel string, subscription *resumeSubscription) {
 	var routeRemoved bool
+	var removed bool
 	var memberID string
 	var leaseDeleted bool
 	var fullPresenceQueues []*connection
@@ -1006,8 +1031,9 @@ func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, c
 	m.mu.Lock()
 	c.mu.Lock()
 	if c.resumeSubs[channel] == subscription {
+		removed = true
 		delete(c.resumeSubs, channel)
-		delete(c.channels, channel)
+		c.removeChannelLocked(channel)
 		if member := m.presenceMembers[key][c.info.ID]; member != nil {
 			leaseDeleted = true
 			if m.cfg.FleetClient == nil {
@@ -1048,6 +1074,9 @@ func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, c
 	c.mu.Unlock()
 	m.mu.Unlock()
 	subscription.cancel()
+	if removed {
+		m.unwatchOccupancy(c.info.EndpointID, channel, c)
+	}
 	for _, slow := range fullPresenceQueues {
 		m.closeResumeOnQueueFull(slow, ErrOutboundQueueFull)
 	}
@@ -1278,5 +1307,8 @@ func (m *Manager) queueResume(ctx context.Context, c *connection, frame resumeSe
 	}
 	m.sentMessages.Add(1)
 	m.sentBytes.Add(uint64(len(data)))
+	if usagePayloadFrames[frame.Type] {
+		c.state.usage.delivered(len(data))
+	}
 	return nil
 }

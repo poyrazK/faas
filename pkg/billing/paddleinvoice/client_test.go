@@ -81,3 +81,50 @@ func TestPaddleTransactions(t *testing.T) {
 		t.Fatal("Stripe key accepted as Paddle key")
 	}
 }
+
+// adr: 20261019100333 — sending bills the transaction with the customer's
+// newest active address; a customer without one is reported, not billed.
+func TestPaddleBillTransaction(t *testing.T) {
+	var billed map[string]any
+	var terms map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/transactions":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			terms = body["billing_details"].(map[string]any)["payment_terms"].(map[string]any)
+			_, _ = fmt.Fprint(w, `{"data":{"id":"txn_1","status":"draft"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/customers/ctm_1/addresses":
+			if r.URL.Query().Get("status") != "active" {
+				t.Errorf("address query = %v", r.URL.Query())
+			}
+			_, _ = fmt.Fprint(w, `{"data":[{"id":"add_1"}]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/customers/ctm_2/addresses":
+			_, _ = fmt.Fprint(w, `{"data":[]}`)
+		case r.Method == http.MethodPatch && r.URL.Path == "/transactions/txn_1":
+			_ = json.NewDecoder(r.Body).Decode(&billed)
+			_, _ = fmt.Fprint(w, `{"data":{"id":"txn_1","status":"billed"}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprint(w, `{"error":{"type":"request_error","code":"not_found","detail":"no such entity"}}`)
+		}
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	ctx := context.Background()
+	key := "pdl_sdbx_apikey_abc"
+	if _, err := c.CreateTransaction(ctx, key, TransactionParams{CustomerID: "ctm_1", Currency: "EUR", PaymentTermsDays: 14,
+		Items: []Item{{Description: "usage", AmountMinor: 100}}}); err != nil || terms["frequency"] != float64(14) {
+		t.Fatalf("payment terms = %v, %v", terms, err)
+	}
+	address, err := c.CustomerAddress(ctx, key, "ctm_1")
+	if err != nil || address != "add_1" {
+		t.Fatalf("CustomerAddress = %q, %v", address, err)
+	}
+	if err := c.BillTransaction(ctx, key, "txn_1", address, ""); err != nil || billed["status"] != "billed" || billed["address_id"] != "add_1" {
+		t.Fatalf("BillTransaction body = %v, %v", billed, err)
+	}
+	if _, err := c.CustomerAddress(ctx, key, "ctm_2"); !errors.Is(err, ErrNoAddress) {
+		t.Fatalf("no address err = %v", err)
+	}
+}

@@ -681,3 +681,9 @@ type (
 	PreviewIssueLifecycleAlertRequest      = api.PreviewIssueLifecycleAlertRequest
 	IssueLifecycleAlertPreview             = api.IssueLifecycleAlertPreview
 )
+
+type IssueCompoundAlertRule = api.IssueCompoundAlertRule
+type IssueCompoundAlertPolicy = api.IssueCompoundAlertPolicy
+type UpdateIssueCompoundAlertPolicyRequest = api.UpdateIssueCompoundAlertPolicyRequest
+type PreviewIssueCompoundAlertRequest = api.PreviewIssueCompoundAlertRequest
+type IssueCompoundAlertPreview = api.IssueCompoundAlertPreview

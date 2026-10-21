@@ -219,14 +219,14 @@ func (q *Queries) ReadBindingVerificationRun(ctx context.Context, db DBTX, arg R
 }
 
 const readBindingVerificationRunAuthority = `-- name: ReadBindingVerificationRunAuthority :one
-SELECT jsonb_build_object('rootfs',d.rootfs_key,'image',d.image_digest,'override',d.override_env)::jsonb AS artifact,
+SELECT to_jsonb(d)::jsonb AS artifact,
  c.changed_at, to_jsonb(p)::jsonb AS policy
 FROM apps a JOIN deployments d ON d.app_id=a.id
 JOIN app_runtime_config_changes c ON c.app_id=a.id
 JOIN app_binding_release_policies p ON p.app_id=a.id AND p.scope=$1
 WHERE a.id=$2 AND a.account_id=$3 AND a.status<>'deleted'
 AND d.id=$4 AND d.status='live' AND d.deleted_at IS NULL
-AND d.rootfs_key<>'' AND d.image_digest<>''
+AND d.rootfs_key<>''
 FOR SHARE OF d,c,p
 `
 

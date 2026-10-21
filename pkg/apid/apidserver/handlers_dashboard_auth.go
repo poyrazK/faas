@@ -24,7 +24,7 @@ func (s *server) renderDashboardAuth(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !api.ApplicationAuthEnabled(acct.ID) {
+	if !s.applicationAuthEnabled(acct) {
 		http.NotFound(w, r)
 		return
 	}

@@ -268,3 +268,57 @@ func TestPgOperationWebhookRoutingGuard(t *testing.T) {
 		t.Fatalf("operation binding over an automation: %v", err)
 	}
 }
+
+// ADR-20261016100929: a signal binding persists its subject pointer and event map, and
+// the two modes never mix.
+func testWebhookSignalBinding(t *testing.T, s webhookOperationFixtureStore) {
+	f := newWebhookOperationFixture(t, s)
+	signal := state.OperationWebhookBindingOptions{EndpointID: f.endpoint.ID, AccountID: f.acct.ID, AppID: f.app.ID, Scope: f.def.Scope, OperationName: f.def.Spec.Name,
+		PlatformTenantID: f.alice.ID, Mode: api.OperationWebhookModeSignal, Subject: &api.OperationSubjectSpec{Type: "invoice", IDFrom: "/data/object/id"},
+		Signals: []api.OperationWebhookSignal{{ProviderEvent: "invoice.paid", Event: "invoice.paid"}, {ProviderEvent: "invoice.voided", Event: "invoice.voided"}}}
+	for name, change := range map[string]func(*state.OperationWebhookBindingOptions){
+		"unknown mode": func(o *state.OperationWebhookBindingOptions) { o.Mode = "relay" },
+		"no subject":   func(o *state.OperationWebhookBindingOptions) { o.Subject = nil },
+		"bad subject pointer": func(o *state.OperationWebhookBindingOptions) {
+			o.Subject = &api.OperationSubjectSpec{Type: "invoice", IDFrom: "data"}
+		},
+		"no signals":        func(o *state.OperationWebhookBindingOptions) { o.Signals = nil },
+		"event type filter": func(o *state.OperationWebhookBindingOptions) { o.EventTypes = []string{"invoice.paid"} },
+		"duplicate provider event": func(o *state.OperationWebhookBindingOptions) {
+			o.Signals = []api.OperationWebhookSignal{{ProviderEvent: "invoice.paid", Event: "a"}, {ProviderEvent: "invoice.paid", Event: "b"}}
+		},
+		"bad event name": func(o *state.OperationWebhookBindingOptions) {
+			o.Signals = []api.OperationWebhookSignal{{ProviderEvent: "invoice.paid", Event: "Paid!"}}
+		},
+		"start with signals": func(o *state.OperationWebhookBindingOptions) { o.Mode = api.OperationWebhookModeStart },
+	} {
+		invalid := signal
+		change(&invalid)
+		if _, err := s.SaveOperationWebhookBinding(f.ctx, invalid); !errors.Is(err, state.ErrInvalidArgument) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	saved, err := s.SaveOperationWebhookBinding(f.ctx, signal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.OperationWebhookBinding(f.ctx, f.endpoint.ID)
+	if err != nil || got.Mode != api.OperationWebhookModeSignal || got.Subject == nil || *got.Subject != *signal.Subject || len(got.Signals) != 2 ||
+		got.SignalEvent("invoice.voided") != "invoice.voided" || got.SignalEvent("invoice.created") != "" || got.Version != saved.Version {
+		t.Fatalf("signal binding read back as %+v: %v", got, err)
+	}
+	start := state.OperationWebhookBindingOptions{EndpointID: f.endpoint.ID, AccountID: f.acct.ID, AppID: f.app.ID, ExpectedVersion: saved.Version, Scope: f.def.Scope,
+		OperationName: f.def.Spec.Name, PlatformTenantID: f.alice.ID}
+	back, err := s.SaveOperationWebhookBinding(f.ctx, start)
+	if err != nil || back.Mode != api.OperationWebhookModeStart || back.Subject != nil || len(back.Signals) != 0 {
+		t.Fatalf("rebinding to start kept signal fields: %+v %v", back, err)
+	}
+}
+
+func TestMemOperationWebhookSignalBinding(t *testing.T) {
+	testWebhookSignalBinding(t, state.NewMemStore())
+}
+func TestPgOperationWebhookSignalBinding(t *testing.T) {
+	s, _ := pgStore(t)
+	testWebhookSignalBinding(t, s)
+}

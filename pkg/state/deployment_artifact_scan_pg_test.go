@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435
 
@@ -13,29 +13,30 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgArtifactScanBaseBinding(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	artifactScanBaseBinding(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.ArtifactScanBaseBinding(t, s)
 }
 
 func TestPgArtifactScanLifecycle(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	artifactScanLifecycle(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.ArtifactScanLifecycle(t, s)
 }
 func TestPgArtifactScanRefusals(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	artifactScanRefusals(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.ArtifactScanRefusals(t, s)
 }
 func TestPgArtifactScanCurrentInputs(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	artifactScanCurrentInputs(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.ArtifactScanCurrentInputs(t, s)
 }
 
 func TestPgArtifactScanAtomicAndImmutable(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	in, _, _, _ := artifactScanFixture(t, s, false)
+	s, pool := state.RegistryVerificationPGStore(t)
+	in, _, _, _ := state.ArtifactScanFixture(t, s, false)
 	if _, err := pool.Exec(t.Context(), `CREATE FUNCTION reject_scan_selection() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected selection failure'; END; $$; CREATE TRIGGER reject_scan_selection BEFORE INSERT ON deployment_artifact_scan_current FOR EACH ROW EXECUTE FUNCTION reject_scan_selection()`); err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +71,8 @@ func TestPgArtifactScanAtomicAndImmutable(t *testing.T) {
 }
 
 func TestPgArtifactScanDoesNotWaitForInputs(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	in, _, _, _ := artifactScanFixture(t, s, false)
+	s, pool := state.RegistryVerificationPGStore(t)
+	in, _, _, _ := state.ArtifactScanFixture(t, s, false)
 	for _, key := range []string{"deployment", "publisher", "artifact"} {
 		t.Run(key, func(t *testing.T) {
 			tx, err := pool.Begin(t.Context())
@@ -93,26 +94,26 @@ func TestPgArtifactScanDoesNotWaitForInputs(t *testing.T) {
 			defer cancel()
 			candidate := in
 			candidate.ID = uuid.NewString()
-			if _, err := s.PublishDeploymentArtifactScan(bounded, candidate); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.PublishDeploymentArtifactScan(bounded, candidate); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatalf("scan waited or bypassed %s: %v", key, err)
 			}
 		})
 	}
-	if _, err := s.GetCurrentDeploymentArtifactScan(t.Context(), in.AccountID, in.AppID, in.DeploymentID, ""); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetCurrentDeploymentArtifactScan(t.Context(), in.AccountID, in.AppID, in.DeploymentID, ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("busy scan left selected evidence: %v", err)
 	}
 }
 
 func TestPgArtifactScanCustomerErasure(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	in, _, app, _ := artifactScanFixture(t, s, false)
+	s, pool := state.RegistryVerificationPGStore(t)
+	in, _, app, _ := state.ArtifactScanFixture(t, s, false)
 	if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SoftDeleteAppCascade(t.Context(), app.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetCurrentDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, in.DeploymentID, ""); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetCurrentDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, in.DeploymentID, ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted owner scan exposed: %v", err)
 	}
 	if _, err := s.RestoreApp(t.Context(), app.ID, api.MustLimitsFor(api.PlanPro)); err != nil {

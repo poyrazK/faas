@@ -14,19 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-type standardObservationTestStore interface {
-	Store
-	nativeArtifactTestStore
-	ApplicationStandardObservationStore
-	ApplicationStandardConsumerRosterStore
-	ApplicationStandardLogInventoryStore
-	ApplicationStandardEgressStore
-	ApplicationStandardSnapshotCaptureStore
-	ApplicationStandardOperationControlStore
-	ApplicationStandardResourceStore
-	ApplicationStandardLogHealthStore
-	ApplicationStandardLogDeliveryStore
-}
+type standardObservationTestStore = contractTestStore
 
 func standardObservationAttempt(t *testing.T, s standardObservationTestStore, app App, reason string) ApplicationStandardOperation {
 	t.Helper()

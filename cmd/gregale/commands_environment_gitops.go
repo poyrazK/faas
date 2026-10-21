@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const environmentGitOpsUsage = "usage: gregale projects environments gitops <status|bind|rebind|unbind|review|plan|approve|adoption-preview|adopt|controls|override|remove-override> <project> <environment> [flags]"
+const environmentGitOpsUsage = "usage: gregale projects environments gitops <status|explain|wait|releases|bind|rebind|unbind|review|plan|promotion-plan|promotion-pr|rollback-plan|rollback-pr|approve|adoption-preview|adopt|controls|override|remove-override> <project> <environment> [flags]"
 
 func cmdProjectsEnvironmentGitOps(args []string) int {
 	if len(args) == 0 {
@@ -22,6 +22,12 @@ func cmdProjectsEnvironmentGitOps(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "wait":
+		return cmdProjectsEnvironmentGitOpsWait(args[1:])
+	case "releases":
+		return cmdProjectsEnvironmentGitOpsReleases(args[1:])
+	case "explain":
+		return cmdProjectsEnvironmentGitOpsExplain(args[1:])
 	case "status", "adoption-preview":
 		return cmdEnvironmentGitOpsRead(args[0], args[1:])
 	case "bind":
@@ -32,6 +38,14 @@ func cmdProjectsEnvironmentGitOps(args []string) int {
 		return cmdEnvironmentGitOpsReview(args[1:])
 	case "plan":
 		return cmdEnvironmentGitOpsPlan(args[1:])
+	case "rollback-pr":
+		return cmdProjectsEnvironmentGitOpsRollbackPR(args[1:])
+	case "rollback-plan":
+		return cmdProjectsEnvironmentGitOpsRollbackPlan(args[1:])
+	case "promotion-plan":
+		return cmdProjectsEnvironmentGitOpsPromotionPlan(args[1:])
+	case "promotion-pr":
+		return cmdProjectsEnvironmentGitOpsPromotionPR(args[1:])
 	case "approve", "adopt":
 		return cmdEnvironmentGitOpsReviewedAction(args[0], args[1:])
 	case "controls":
@@ -70,7 +84,7 @@ func environmentGitOpsOutput(result any, err error) int {
 		return printErr("Environment GitOps request failed", err)
 	}
 	// Review and adoption receipts must preserve the hash and generation for
-	// a subsequent explicit action. All commands emit portable JSON.
+	// a subsequent explicit action. These responses emit portable JSON.
 	return jsonOut(writeJSON(result))
 }
 
@@ -85,7 +99,7 @@ func cmdEnvironmentGitOpsBind(args []string) int {
 	approval := fs.String("approval-policy", "manual", "manual or protected_branch")
 	prune := fs.Bool("prune", false, "allow removal of previously owned fields")
 	if fs.Parse(flags) != nil || len(positional) != 2 || !validEnvironmentGitOpsTarget(positional) || *manifest == "" || *mode != "report" || (*approval != "manual" && *approval != "protected_branch") ||
-		(*provider != "github" && *provider != "gitlab") || (*provider == "gitlab" && (*repository == "" || *ref == "" || *approval != "manual" || *prune)) || (*provider == "github" && *repository != "") {
+		(*provider != "github" && *provider != "gitlab") || (*provider == "gitlab" && (*repository == "" || *ref == "")) || (*provider == "github" && *repository != "") {
 		PrintUsage(os.Stderr, environmentGitOpsUsage+" --manifest-path PATH [--provider github|gitlab] [--repository GROUP/PROJECT] [--ref REF] [--mode report] [--approval-policy manual|protected_branch] [--prune]", "projects environments")
 		return 1
 	}

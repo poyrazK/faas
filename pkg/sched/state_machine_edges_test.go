@@ -23,7 +23,7 @@
 //     ceilingForNode_locked fallback for un-registered nodes.
 //   - vCPU headroom rejection on the per-node budget.
 
-package sched
+package sched_test
 
 import (
 	"strings"
@@ -31,6 +31,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // TestBeginSnapshot_Idempotent pins the second-call no-op: once
@@ -38,8 +39,8 @@ import (
 // BeginSnapshot MUST NOT decrement perApp twice (that would let
 // the reaper admit an extra instance during a stuck snapshot).
 func TestBeginSnapshot_Idempotent(t *testing.T) {
-	l := NewNodeLedger()
-	r := Request{Instance: "vm-1", AppID: "app-1", NodeID: "node-a",
+	l := sched.NewNodeLedger()
+	r := sched.Request{Instance: "vm-1", AppID: "app-1", NodeID: "node-a",
 		RAMMB: 256, VCPU: 1, Plan: api.PlanHobby}
 	if err := l.Admit(r); err != nil {
 		t.Fatalf("Admit: %v", err)
@@ -62,10 +63,10 @@ func TestBeginSnapshot_Idempotent(t *testing.T) {
 // BeginSnapshot on an instance that was never admitted is a no-op
 // (the ledger doesn't crash).
 func TestBeginSnapshot_UnknownInstance(t *testing.T) {
-	l := NewNodeLedger()
+	l := sched.NewNodeLedger()
 	// Should not panic.
 	l.BeginSnapshot("ghost")
-	if got := len(l.entries); got != 0 {
+	if got := len((*l.Entries())); got != 0 {
 		t.Errorf("BeginSnapshot(ghost): entries = %d, want 0", got)
 	}
 }
@@ -75,10 +76,10 @@ func TestBeginSnapshot_UnknownInstance(t *testing.T) {
 // the test seal "leak detection during tests" stays as a
 // future optimisation (current code logs nothing on this path).
 func TestRelease_UnknownInstance(t *testing.T) {
-	l := NewNodeLedger()
+	l := sched.NewNodeLedger()
 	// Should not panic, should not affect state.
 	l.Release("ghost")
-	if got := len(l.entries); got != 0 {
+	if got := len((*l.Entries())); got != 0 {
 		t.Errorf("Release(ghost): entries = %d, want 0", got)
 	}
 }
@@ -87,8 +88,8 @@ func TestRelease_UnknownInstance(t *testing.T) {
 // guard. The second Admit with the same instance id MUST error,
 // and the perApp counter MUST NOT be bumped twice.
 func TestAdmit_DuplicateInstanceRejected(t *testing.T) {
-	l := NewNodeLedger()
-	r := Request{Instance: "vm-dup", AppID: "app-1", NodeID: "node-a",
+	l := sched.NewNodeLedger()
+	r := sched.Request{Instance: "vm-dup", AppID: "app-1", NodeID: "node-a",
 		RAMMB: 256, VCPU: 1, Plan: api.PlanHobby}
 	if err := l.Admit(r); err != nil {
 		t.Fatalf("first Admit: %v", err)
@@ -110,8 +111,8 @@ func TestAdmit_DuplicateInstanceRejected(t *testing.T) {
 // (e.g. a typo from a custom caller) errors before any counters
 // are touched.
 func TestAdmit_UnknownPlanRejected(t *testing.T) {
-	l := NewNodeLedger()
-	err := l.Admit(Request{Instance: "vm-x", AppID: "app-1", NodeID: "node-a",
+	l := sched.NewNodeLedger()
+	err := l.Admit(sched.Request{Instance: "vm-x", AppID: "app-1", NodeID: "node-a",
 		RAMMB: 256, VCPU: 1, Plan: api.Plan("bogus")})
 	if err == nil {
 		t.Fatal("unknown plan: want error, got nil")
@@ -125,9 +126,9 @@ func TestAdmit_UnknownPlanRejected(t *testing.T) {
 // Hobby plan MaxConcurrency=2; admitting 2 succeeds; the 3rd
 // errors with ErrPlanLimitConcurrency.
 func TestAdmit_PerAppConcurrencyAtMax(t *testing.T) {
-	l := NewNodeLedger()
+	l := sched.NewNodeLedger()
 	for i := 0; i < 2; i++ {
-		err := l.Admit(Request{
+		err := l.Admit(sched.Request{
 			Instance: intStrPfx("vm-h", i), AppID: "app-hobby",
 			NodeID: "node-a", RAMMB: 256, VCPU: 1, Plan: api.PlanHobby,
 		})
@@ -136,7 +137,7 @@ func TestAdmit_PerAppConcurrencyAtMax(t *testing.T) {
 		}
 	}
 	// 3rd: rejected.
-	err := l.Admit(Request{Instance: "vm-h6", AppID: "app-hobby",
+	err := l.Admit(sched.Request{Instance: "vm-h6", AppID: "app-hobby",
 		NodeID: "node-a", RAMMB: 256, VCPU: 1, Plan: api.PlanHobby})
 	if err == nil {
 		t.Fatal("3rd Hobby admit: want ErrPlanLimitConcurrency, got nil")
@@ -151,19 +152,19 @@ func TestAdmit_PerAppConcurrencyAtMax(t *testing.T) {
 // per-node entry is removed from l.resident (no zombie keys
 // accumulating after a fleet cycle).
 func TestRelease_DropsPerNodeCounterWhenZero(t *testing.T) {
-	l := NewNodeLedger()
-	r := Request{Instance: "vm-1", AppID: "app-1", NodeID: "node-a",
+	l := sched.NewNodeLedger()
+	r := sched.Request{Instance: "vm-1", AppID: "app-1", NodeID: "node-a",
 		RAMMB: 256, VCPU: 1, Plan: api.PlanHobby}
 	if err := l.Admit(r); err != nil {
 		t.Fatalf("Admit: %v", err)
 	}
 	// The per-node counter must be present.
-	if _, ok := l.resident["node-a"]; !ok {
+	if _, ok := (*l.Resident())["node-a"]; !ok {
 		t.Fatal("after Admit: per-node counter missing")
 	}
 	l.Release("vm-1")
 	// After release, the per-node counter should be gone.
-	if _, ok := l.resident["node-a"]; ok {
+	if _, ok := (*l.Resident())["node-a"]; ok {
 		t.Errorf("after Release: per-node counter still present (memory leak)")
 	}
 }
@@ -172,8 +173,8 @@ func TestRelease_DropsPerNodeCounterWhenZero(t *testing.T) {
 // branch: when perApp[app] drops to 0, the entry is deleted
 // (the map doesn't accumulate zero-valued keys).
 func TestCleanupApp_ZeroCountDeleted(t *testing.T) {
-	l := NewNodeLedger()
-	r := Request{Instance: "vm-1", AppID: "app-tmp", NodeID: "node-a",
+	l := sched.NewNodeLedger()
+	r := sched.Request{Instance: "vm-1", AppID: "app-tmp", NodeID: "node-a",
 		RAMMB: 256, VCPU: 1, Plan: api.PlanHobby}
 	if err := l.Admit(r); err != nil {
 		t.Fatalf("Admit: %v", err)
@@ -185,7 +186,7 @@ func TestCleanupApp_ZeroCountDeleted(t *testing.T) {
 	if got := l.Concurrency("app-tmp"); got != 0 {
 		t.Errorf("after Release: Concurrency = %d, want 0 (deleted)", got)
 	}
-	if _, ok := l.perApp["app-tmp"]; ok {
+	if _, ok := (*l.PerApp())["app-tmp"]; ok {
 		t.Error("perApp[\"app-tmp\"] entry still present after Release")
 	}
 }
@@ -198,15 +199,15 @@ func TestCleanupApp_ZeroCountDeleted(t *testing.T) {
 // 512 MB ceiling and 256 MB apps: admit 1 (256 + 8 = 264 MB)
 // succeeds; admit 2 would push to 528 MB > 512 → rejected.
 func TestAdmit_PerNodeRAMCeilingEnforced(t *testing.T) {
-	l := NewNodeLedger()
-	r1 := Request{Instance: "vm-1", AppID: "app-1", NodeID: "node-a",
+	l := sched.NewNodeLedger()
+	r1 := sched.Request{Instance: "vm-1", AppID: "app-1", NodeID: "node-a",
 		RAMMB: 256, VCPU: 1, NodeCeilingMB: 512, Plan: api.PlanHobby}
 	if err := l.Admit(r1); err != nil {
 		t.Fatalf("Admit 1: %v", err)
 	}
 	// Second reservation pushes past the 512 MB ceiling
 	// (264 + 264 = 528 MB > 512).
-	r2 := Request{Instance: "vm-2", AppID: "app-2", NodeID: "node-a",
+	r2 := sched.Request{Instance: "vm-2", AppID: "app-2", NodeID: "node-a",
 		RAMMB: 256, VCPU: 1, NodeCeilingMB: 512, Plan: api.PlanHobby}
 	err := l.Admit(r2)
 	if err == nil {
@@ -222,14 +223,14 @@ func TestAdmit_PerNodeRAMCeilingEnforced(t *testing.T) {
 // NodeCeilingMB=0 (legacy seam) falls back to the global
 // api.RAMAdmissionCeilingMB on the per-node ledger entry.
 func TestAdmit_PerNodeFallbackCeiling(t *testing.T) {
-	l := NewNodeLedger()
-	r := Request{Instance: "vm-1", AppID: "app-1", NodeID: "unregistered-node",
+	l := sched.NewNodeLedger()
+	r := sched.Request{Instance: "vm-1", AppID: "app-1", NodeID: "unregistered-node",
 		RAMMB: 256, VCPU: 1, NodeCeilingMB: 0, Plan: api.PlanHobby}
 	if err := l.Admit(r); err != nil {
 		t.Fatalf("Admit on un-registered node: %v", err)
 	}
 	// Sanity: the fallback ceiling is the global constant.
-	if l.ceilingForNode_locked("unregistered-node", api.Limits{}) != api.RAMAdmissionCeilingMB {
+	if l.CeilingForNode_locked("unregistered-node", api.Limits{}) != api.RAMAdmissionCeilingMB {
 		t.Error("ceilingForNode_locked didn't return the global fallback")
 	}
 }
@@ -240,7 +241,7 @@ func TestAdmit_PerNodeFallbackCeiling(t *testing.T) {
 // min(100, plan_max). Pro plan MaxConcurrency=5 — accept up to
 // 5 successes, no double-counts.
 func TestAdmit_ConcurrentNoDoubleCount(t *testing.T) {
-	l := NewNodeLedger()
+	l := sched.NewNodeLedger()
 	const n = 100
 	var wg sync.WaitGroup
 	errs := make([]error, n)
@@ -248,7 +249,7 @@ func TestAdmit_ConcurrentNoDoubleCount(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errs[i] = l.Admit(Request{
+			errs[i] = l.Admit(sched.Request{
 				Instance: intStrPfx("vm-", i), AppID: "app-many",
 				NodeID: "node-a", RAMMB: 64, VCPU: 1, Plan: api.PlanPro,
 			})

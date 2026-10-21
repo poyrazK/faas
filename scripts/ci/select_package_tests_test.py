@@ -3,6 +3,7 @@
 import importlib.util
 import os
 import pathlib
+import re
 import tempfile
 import unittest
 
@@ -68,6 +69,28 @@ class SelectTest(unittest.TestCase):
         self.assertEqual(st.declared_identifiers(st.touched_source(source, {4})), {"ChargeInvoice"})
         self.assertEqual(st.declared_identifiers(st.touched_source(source, None)),
                          {"ChargeInvoice", "RenderUsageReport"})
+
+
+
+class TestPatternsTest(unittest.TestCase):
+    def test_batches_keep_every_selected_test_once_in_priority_order(self):
+        selected = [f"TestCase{i:03}" for i in range(150)]
+        patterns = st.test_patterns(selected, 50)
+        self.assertEqual(len(patterns), 3)
+        batches = [[name for name in selected if re.fullmatch(pattern, name)]
+                   for pattern in patterns]
+        self.assertEqual([len(batch) for batch in batches], [50, 50, 50])
+        self.assertEqual([name for batch in batches for name in batch], selected)
+
+    def test_default_keeps_the_existing_single_pattern(self):
+        self.assertEqual(st.test_patterns(["TestSecond", "TestFirst"]),
+                         ["^(TestSecond|TestFirst)$"])
+        self.assertEqual(st.test_patterns([], 50), [])
+
+    def test_invalid_batch_size_is_rejected(self):
+        for size in (0, -1):
+            with self.subTest(size=size), self.assertRaises(ValueError):
+                st.test_patterns(["TestOne"], size)
 
 
 if __name__ == "__main__":

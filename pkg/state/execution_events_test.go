@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreExecutionEventsAreOrderedAndAccountScoped(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account := executionTestAccount(t, store, "events")
 	other := executionTestAccount(t, store, "events-other")
 	createdAt := time.Now().UTC().Add(time.Second)
@@ -19,14 +20,14 @@ func TestMemStoreExecutionEventsAreOrderedAndAccountScoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateExecution: %v", err)
 	}
-	if _, err := store.AppendExecutionEvent(context.Background(), account.ID, row.ID, ExecutionEventStdout, json.RawMessage(`{"chunk":"hello"}`), createdAt.Add(time.Millisecond)); err != nil {
+	if _, err := store.AppendExecutionEvent(context.Background(), account.ID, row.ID, state.ExecutionEventStdout, json.RawMessage(`{"chunk":"hello"}`), createdAt.Add(time.Millisecond)); err != nil {
 		t.Fatalf("AppendExecutionEvent: %v", err)
 	}
 	events, err := store.ListExecutionEvents(context.Background(), account.ID, row.ID, 0, 10)
 	if err != nil {
 		t.Fatalf("ListExecutionEvents: %v", err)
 	}
-	if len(events) != 2 || events[0].Type != ExecutionEventStatus || events[1].Type != ExecutionEventStdout || events[0].Sequence >= events[1].Sequence {
+	if len(events) != 2 || events[0].Type != state.ExecutionEventStatus || events[1].Type != state.ExecutionEventStdout || events[0].Sequence >= events[1].Sequence {
 		t.Fatalf("events = %+v, want ordered queued/status + stdout", events)
 	}
 	resumed, err := store.ListExecutionEvents(context.Background(), account.ID, row.ID, events[0].Sequence, 10)
@@ -36,13 +37,13 @@ func TestMemStoreExecutionEventsAreOrderedAndAccountScoped(t *testing.T) {
 	if len(resumed) != 1 || resumed[0].Sequence != events[1].Sequence {
 		t.Fatalf("resumed = %+v, want only second event", resumed)
 	}
-	if _, err := store.ListExecutionEvents(context.Background(), other.ID, row.ID, 0, 10); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ListExecutionEvents(context.Background(), other.ID, row.ID, 0, 10); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account event read = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStoreExecutionTerminalEventIncludesBoundedOutput(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account := executionTestAccount(t, store, "events-terminal")
 	base := time.Now().UTC().Add(time.Second)
 	created, err := store.CreateExecution(context.Background(), executionTestParams(t, account.ID, base, 0, "sealed"))
@@ -56,7 +57,7 @@ func TestMemStoreExecutionTerminalEventIncludesBoundedOutput(t *testing.T) {
 	if _, err := store.MarkExecutionRunning(context.Background(), created.ID, *claim.LeaseToken, base.Add(2*time.Millisecond)); err != nil {
 		t.Fatalf("MarkExecutionRunning: %v", err)
 	}
-	if _, err := store.CompleteExecution(context.Background(), CompleteExecutionParams{
+	if _, err := store.CompleteExecution(context.Background(), state.CompleteExecutionParams{
 		ID: created.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusSucceeded,
 		Result: json.RawMessage(`{"ok":true}`), Stdout: "hello\n", FinishedAt: base.Add(3 * time.Millisecond),
 	}); err != nil {
@@ -66,11 +67,11 @@ func TestMemStoreExecutionTerminalEventIncludesBoundedOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListExecutionEvents: %v", err)
 	}
-	if events[len(events)-1].Type != ExecutionEventTerminal {
+	if events[len(events)-1].Type != state.ExecutionEventTerminal {
 		t.Fatalf("last event = %+v, want terminal", events[len(events)-1])
 	}
 	for _, event := range events {
-		if len(event.Payload) > ExecutionEventMaxBytes || !json.Valid(event.Payload) {
+		if len(event.Payload) > state.ExecutionEventMaxBytes || !json.Valid(event.Payload) {
 			t.Fatalf("invalid event payload: %+v", event)
 		}
 	}

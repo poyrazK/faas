@@ -1,13 +1,12 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -15,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgApplicationStandardEnrollment(t *testing.T) {
@@ -23,7 +23,7 @@ func TestPgApplicationStandardEnrollment(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	standardEnrollmentLifecycle(t, NewPgStore(pool), func(a appstandards.Assignment, actor string) {
+	state.StandardEnrollmentLifecycle(t, state.NewPgStore(pool), func(a appstandards.Assignment, actor string) {
 		_, err := pool.Exec(ctx, `INSERT INTO application_standard_assignments
             (id, org_id, scope, scope_id, standard_id, admission_version, active, created_by)
             VALUES ($1, $2, $3, $4, $5, $6, true, $7)
@@ -54,20 +54,20 @@ func TestPgApplicationStandardProjectScopeFence(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	s := NewPgStore(pool)
-	owner, err := s.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "scope-owner@example.com", Plan: api.PlanPro})
+	s := state.NewPgStore(pool)
+	owner, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{Email: "scope-owner@example.com", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, err := s.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "scope-foreign@example.com", Plan: api.PlanPro})
+	foreign, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{Email: "scope-foreign@example.com", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := s.CreateProject(ctx, Project{AccountID: owner.Account.ID, Slug: "scope-project"})
+	project, err := s.CreateProject(ctx, state.Project{AccountID: owner.Account.ID, Slug: "scope-project"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	version, err := s.PublishApplicationStandardVersion(ctx, ApplicationStandardPublish{OrgID: owner.PersonalOrg.ID, ActorID: owner.Account.ID, Slug: "project-baseline", CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: json.RawMessage(`{"require_signed":{"mode":"mandatory","value":true}}`)}})
+	version, err := s.PublishApplicationStandardVersion(ctx, state.ApplicationStandardPublish{OrgID: owner.PersonalOrg.ID, ActorID: owner.Account.ID, Slug: "project-baseline", CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: json.RawMessage(`{"require_signed":{"mode":"mandatory","value":true}}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,54 +76,28 @@ func TestPgApplicationStandardProjectScopeFence(t *testing.T) {
 	appID, assignmentID := uuid.NewString(), uuid.NewString()
 	appArgs := []any{appID, foreign.Account.ID, foreign.PersonalOrg.ID, project.ID}
 	assignmentArgs := []any{assignmentID, owner.PersonalOrg.ID, project.ID, version.StandardID, owner.Account.ID}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
+	// A project's workloads share its account and organization (#4882), so a
+	// foreign account cannot join the project at all, assigned or not; the
+	// assignment scope fence is left with no foreign member to refuse.
+	foreignMemberRefused := func(label string) {
+		t.Helper()
+		_, err := pool.Exec(ctx, insertApp, appArgs...)
+		var failure *pgconn.PgError
+		if !errors.As(err, &failure) || failure.Code != "23514" || failure.ConstraintName != "project_workload_owner" {
+			t.Fatalf("%s: foreign project member admitted: %v", label, err)
+		}
+	}
+	foreignMemberRefused("unassigned project")
+	if _, err := pool.Exec(ctx, insertAssignment, assignmentArgs...); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, insertApp, appArgs...); err != nil {
-		t.Fatal(err)
-	}
-	deadline, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
-	_, err = pool.Exec(deadline, insertAssignment, assignmentArgs...)
-	cancel()
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("assignment did not wait for uncommitted member: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	_, err = pool.Exec(ctx, insertAssignment, assignmentArgs...)
-	var failure *pgconn.PgError
-	if !errors.As(err, &failure) || failure.ConstraintName != "application_standard_scope_owner" {
-		t.Fatalf("foreign project membership missed: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `DELETE FROM apps WHERE id = $1`, appID); err != nil {
-		t.Fatal(err)
-	}
-	assigned, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = assigned.Rollback(ctx) }()
-	if _, err := assigned.Exec(ctx, insertAssignment, assignmentArgs...); err != nil {
-		t.Fatal(err)
-	}
-	deadline, cancel = context.WithTimeout(ctx, 150*time.Millisecond)
-	_, err = pool.Exec(deadline, insertApp, appArgs...)
-	cancel()
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("member did not wait for uncommitted assignment: %v", err)
-	}
-	if err := assigned.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	_, err = pool.Exec(ctx, insertApp, appArgs...)
-	if !errors.As(err, &failure) || failure.ConstraintName != "application_standard_scope_owner" {
-		t.Fatalf("foreign member bypassed assigned project: %v", err)
-	}
+	foreignMemberRefused("assigned project")
 	// Parent erasure remains the explicit retention boundary even though
-	// directly deleting the assignment is forbidden.
+	// directly deleting the assignment is forbidden. The organization's
+	// projects go first: they now belong to it (#4882).
+	if _, err := pool.Exec(ctx, `DELETE FROM projects WHERE id = $1`, project.ID); err != nil {
+		t.Fatalf("project erasure: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `DELETE FROM orgs WHERE id = $1`, owner.PersonalOrg.ID); err != nil {
 		t.Fatalf("assignment organization erasure: %v", err)
 	}

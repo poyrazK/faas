@@ -13,13 +13,19 @@ An alert instance that became true after --deployed-at breaches the gate
 once it has stayed true for the rule's `for:`, capped at --max-hold so a
 10-minute alert can still stop a 10-minute gate. Instances already true
 before the deploy are reported and ignored: rolling back would not fix them.
+That includes an instance that resolves and fires again during the gate: a
+restarted daemon's own gauges disappear for a scrape or two, which resets
+the alert's activeAt without any new condition.
 
 Selected rules:
   * the platform SLOs, for every unit: 5xx availability, wake latency,
     restore failures (cold-boot fallback), daemon liveness, readiness,
     restart loops and database pool starvation;
-  * every page or warn rule whose `component` label is the unit's;
-  * and the unit must still be scraped (up == 1 for one of its jobs).
+  * every page or warn rule whose `component` label is the unit's, except
+    the families that measure tenant behaviour rather than the unit's health
+    (TENANT_SIGNAL_FAMILIES);
+  * and the unit must still be scraped (up == 1 for one of its jobs) where
+    this Prometheus scrapes it at all.
 
 Exit codes, for the deploy workflow:
   0  pass: promote
@@ -27,6 +33,14 @@ Exit codes, for the deploy workflow:
   2  usage or configuration error
   3  inconclusive (Prometheus unreachable, a platform rule not loaded):
      no evidence is not a pass; treat as a failure
+  4  superseded (watch mode): another run owns the watch record
+
+Watch mode (--watch-record, docs/adr/20261020214632-automatic-unit-deploy-
+safety-rails.md): the post-deploy watch runs this gate for 30 minutes with
+--max-hold 30m, so each rule must stay true for its own `for:`. Every round
+it reads the control plane's watch record and stops (4) once another run
+owns it: a newer deploy took the watch over. --max-blind-rounds lets it ride
+out a short Prometheus outage over that longer window.
 
 Usage (from the control-plane runner, where Prometheus listens on loopback):
   scripts/ci/slo_gate.py --unit schedd --deployed-at "$(date +%s)" \\
@@ -47,7 +61,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime
 
-PASS, FAIL, USAGE, INCONCLUSIVE = 0, 1, 2, 3
+PASS, FAIL, USAGE, INCONCLUSIVE, SUPERSEDED = 0, 1, 2, 3, 4
 
 # Evaluated for every unit: a regression in any unit shows up here first.
 PLATFORM_ALERTS = (
@@ -83,6 +97,18 @@ UNITS = {
 }
 
 SEVERITIES = ("page", "warn")
+
+# Alert families driven by what tenants do, not by the unit's code: a deploy
+# cannot cause them and a rollback cannot fix them. The first production
+# unit release (2026-10-20, cd-controlplane run 39473046675) rolled back on
+# FaasTrafficSpikeAccount raised by an end-to-end test's traffic. Platform
+# availability and latency SLOs still judge every unit.
+TENANT_SIGNAL_FAMILIES = (
+    "traffic_anomaly",   # per-account traffic and error-rate anomaly scores
+    "tenant_abuse",      # abuse holds and blocks
+    "security_anomaly",  # failed-login spikes
+    "residency",         # resident GB per paying customer (economic density)
+)
 SCRAPE_HOLD_SECONDS = 60
 MAX_ERROR_ROUNDS = 4
 
@@ -153,7 +179,8 @@ def select_rules(loaded: list[dict], components: list[str], max_hold: float) -> 
     for r in loaded:
         labels = r.get("labels") or {}
         name = r.get("name", "")
-        own = labels.get("component") in components and labels.get("severity") in SEVERITIES
+        own = (labels.get("component") in components and labels.get("severity") in SEVERITIES
+               and labels.get("family") not in TENANT_SIGNAL_FAMILIES)
         if (name not in PLATFORM_ALERTS and not own) or (name, r.get("query")) in seen:
             continue
         seen.add((name, r.get("query")))
@@ -177,12 +204,21 @@ class Gate:
     sleep: object = time.sleep
     preexisting: set = field(default_factory=set)
     unscraped_since: float | None = None
+    unconfigured_logged: bool = False
     blind_rounds: int = 0
+    max_blind_rounds: int = MAX_ERROR_ROUNDS
+    # Watch mode: returns why this gate no longer owns the watch, or None.
+    superseded: object = None
 
     def run(self) -> int:
         start = self.now()
         names = {r.name for r in self.rules}
         while True:
+            if self.superseded is not None:
+                why = self.superseded()
+                if why:
+                    self.log(f"slo-gate: stopping: {why}")
+                    return SUPERSEDED
             verdict = self.judge_rules(names)
             if verdict is None and self.jobs:
                 verdict = self.judge_scrape()
@@ -221,11 +257,15 @@ class Gate:
         if alert.get("state") not in ("pending", "firing") or active is None:
             return None
         labels = alert.get("labels") or {}
+        key = (rule["name"], json.dumps(sorted(labels.items())))
         if active < self.deployed_at:
-            key = (rule["name"], json.dumps(sorted(labels.items())))
             if key not in self.preexisting:
                 self.preexisting.add(key)
                 self.log(f"slo-gate: true before the deploy, ignored: {rule['name']} {labels}")
+            return None
+        if key in self.preexisting:
+            # Seen true before the deploy; it resolved while the daemon
+            # restarted and fired again. The condition predates the deploy.
             return None
         hold = min(float(rule.get("duration") or 0), self.max_hold)
         if evaluated - active < hold:
@@ -238,9 +278,19 @@ class Gate:
 
     def judge_scrape(self) -> int | None:
         try:
-            up = self.prom.query(f'up{{job=~"{"|".join(self.jobs)}"}} == 1')
+            targets = self.prom.query(f'up{{job=~"{"|".join(self.jobs)}"}}')
         except (OSError, RuntimeError, ValueError) as err:
             return self.blind(f"scrape check failed: {err}")
+        if not targets:
+            # No up series at all: this Prometheus does not scrape the job
+            # (production-us runs s3-gatewayd without its scrape target).
+            # Liveness is left to the deploy's readiness checks; up == 0 on
+            # a configured target still fails below.
+            if not self.unconfigured_logged:
+                self.unconfigured_logged = True
+                self.log(f"slo-gate: {', '.join(self.jobs)} not scraped by this Prometheus; scrape check skipped")
+            return None
+        up = [t for t in targets if str((t.get("value") or [None, ""])[1]) == "1"]
         if up:
             self.unscraped_since = None
         elif self.unscraped_since is None:
@@ -253,8 +303,8 @@ class Gate:
     def blind(self, why: str) -> int | None:
         self.blind_rounds += 1
         self.log(f"slo-gate: {why}")
-        if self.blind_rounds >= MAX_ERROR_ROUNDS:
-            self.log(f"::error::slo-gate: blind for {MAX_ERROR_ROUNDS} rounds; inconclusive")
+        if self.blind_rounds >= self.max_blind_rounds:
+            self.log(f"::error::slo-gate: blind for {self.max_blind_rounds} rounds; inconclusive")
             return INCONCLUSIVE
         return None
 
@@ -279,6 +329,10 @@ def main(argv: list[str], prom_factory=Prometheus, now=time.time, sleep=time.sle
     parser.add_argument("--job", action="append", help="scrape job of the unit (repeatable; overrides the unit table)")
     parser.add_argument("--component", action="append", help="alert component label of the unit (repeatable)")
     parser.add_argument("--list", action="store_true", help="print the selected rules and exit")
+    parser.add_argument("--watch-record", help="watch mode: the control plane's unit watch record")
+    parser.add_argument("--owner", help="watch mode: the run that must own --watch-record")
+    parser.add_argument("--max-blind-rounds", type=int, default=MAX_ERROR_ROUNDS,
+                        help="consecutive rounds without evidence before the gate is inconclusive")
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -286,8 +340,11 @@ def main(argv: list[str], prom_factory=Prometheus, now=time.time, sleep=time.sle
     if args.unit not in UNITS and args.job is None and args.component is None:
         log(f"::error::slo-gate: unknown unit {args.unit!r}; known: {', '.join(UNITS)} (or pass --job/--component)")
         return USAGE
-    if args.interval <= 0 or args.duration <= 0:
-        log("::error::slo-gate: --interval and --duration must be positive")
+    if args.interval <= 0 or args.duration <= 0 or args.max_blind_rounds < 1:
+        log("::error::slo-gate: --interval, --duration and --max-blind-rounds must be positive")
+        return USAGE
+    if bool(args.watch_record) != bool(args.owner):
+        log("::error::slo-gate: --watch-record and --owner go together")
         return USAGE
 
     jobs, components = unit_scope(args)
@@ -309,8 +366,28 @@ def main(argv: list[str], prom_factory=Prometheus, now=time.time, sleep=time.sle
     if args.list:
         return PASS
     log(f"slo-gate: unit {args.unit}: {len(rules)} rules, jobs {jobs or '-'}, {args.duration:.0f}s at {args.interval:.0f}s intervals")
-    gate = Gate(prom, rules, jobs, args.duration, args.interval, args.deployed_at, args.max_hold, log=log, now=now, sleep=sleep)
+    gate = Gate(prom, rules, jobs, args.duration, args.interval, args.deployed_at, args.max_hold, log=log, now=now,
+                sleep=sleep, max_blind_rounds=args.max_blind_rounds)
+    if args.watch_record:
+        gate.superseded = lambda: watch_owner_changed(args.watch_record, args.owner)
     return gate.run()
+
+
+def watch_owner_changed(path: str, owner: str) -> str | None:
+    """Why the run `owner` no longer owns the watch record at path, or None
+    while it does. An unreadable record is not a reason to stop: the gate
+    keeps judging and the watch decides at its end."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            record = json.load(f)
+    except FileNotFoundError:
+        return "the watch record was closed"
+    except (OSError, ValueError):
+        return None
+    current = record.get("owner_run") if isinstance(record, dict) else None
+    if current != owner:
+        return f"run {current} now owns the watch"
+    return None
 
 
 if __name__ == "__main__":

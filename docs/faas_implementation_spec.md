@@ -1651,6 +1651,7 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `vmmd_snapshot_materialize_seconds{artifact,source}` p95 | `source="materialized"` rare; local sources ≪ 10 ms | `histogram_quantile(0.95, sum by (le) (rate(vmmd_snapshot_materialize_seconds_bucket{artifact="mem",source="materialized"}[5m]))) > 0.2` for 15 m warn — wakes are fetching the memory blob across the network. At the 130 MB fleet snapshot target one fetch can exceed the whole §6.3 wake budget, so a sustained rate means placement is landing away from snapshot replicas (ADR-063). Compare against the local-source quantile to price locality |
 | `vmmd_snapshot_materialize_bytes_total{artifact,source}` rate | n/a | none — diagnostic. Divided by the histogram it gives effective fetch throughput, which separates "the object is large" from "the fetch was slow". The `source="materialized"` series is the fleet's remote snapshot read volume |
 | `vmmd_restore_phase_duration_seconds{phase}` p50/p95 | quiet-node floor per phase (metal harness: stage_drives/stage_snapshot ≈ 0, resume_hook ≈ 33 ms) | none — diagnostic, operator-only. Splits the restore window, including the sub-phases the customer `wake.restore_breakdown` event omits (`stage_writable`, `pre_boot_join_wait`, `network_wait`), so a regression in one phase is attributable without Debug logs (hunt #9) |
+| `vmmd_resume_guest_stage_duration_seconds{stage}` p50/p95 | Go guest `total` ≪ `resume_hook`; Node/Python dominated by `userspace_reseed` | none — diagnostic, operator-only. The guest's own split of `resume_hook` from the ADR-022 timing frame: kernel reseed (`entropy`, `hwrng`), `clock`, `uuid_marker`, the ADR-687 `userspace_reseed` barrier, `after_restore`, the guest `total`, and `outside_guest` (the host's ack wait minus `total`: vsock transport plus the time before guest-init's handler ran). Guests captured before the frame shipped are not observed |
 | `vmmd_restore_pre_boot_files_total{outcome}` ratio | `skipped` dominates once captures are learned (#3490) | none — diagnostic. A `written` share near 100 % means the learned pre-boot skip is not firing |
 | `<daemon>_db_notify_hub_delivered_total{channel}` rate | n/a | none — diagnostic. `pg_notify` carries no routing, so one emit fans out to every interested subscriber on every daemon on every node. `sum by (channel) (rate(...))` divided by the channel's emit rate is the **broadcast amplification factor**; it grows linearly with fleet size while useful work stays flat |
 | `schedd_app_ownership_checks_total{outcome}` rate | `not_owned` ≈ (N-1)/N of the total on an N-node fleet | none — diagnostic, and the consumer-side half of the above. ADR-062 shards apps by `apps.node_id`; every schedd still receives every app-scoped notification and all but the owner discard it at `ownsApp`. A `not_owned` share materially **above** (N-1)/N means ownership is skewed, not merely broadcast. Read both series before deciding whether per-owner notify channels are worth building |
@@ -1947,6 +1948,25 @@ request therefore does not create an instance transition or resident usage.
 |---|---|---|---|
 | `gateway_cors_preflight_edge_total` | `app` | `pkg/gateway/metrics.go::ObserveCORSPreflightEdge` | Counter of matching CORS preflights answered by the gateway without waking the resolved app. |
 
+### 12.9 Customer Operations (ADR-20261016123221)
+
+schedd reads fleet-wide Operation state from Postgres in its 60-second
+retention tick and serves one snapshot per scrape. Every schedd reports the
+same values, so rules and panels aggregate with `max`. Alerts are `warn`
+(ADR-1235); dashboard `deploy/grafana/customer-operations.json`, runbook
+`docs/runbooks/FaasCustomerOperations.md`.
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `schedd_customer_operations` | `state` | `pkg/sched/operation_telemetry.go` | Operations `accepted`, `running`, `waiting` or `requires_reconciliation`. |
+| `schedd_customer_operations_waiting` | `kind` | same | Waiting Operations by `timer`, `approval`, `event`. |
+| `schedd_customer_operations_oldest_update_seconds` | `state` | same | Time since the least recently changed Operation in that state changed. |
+| `schedd_customer_operations_overdue` | — | same | Active Operations more than 180 s past their deadline. Alert `FaasCustomerOperationDeadlinesOverdue`: > 0 for 10m. |
+| `schedd_customer_operations_settled_recent` | `outcome`, `failure_code` | same | Outcomes in the last 900 s; `failure_code` is a closed set plus `none` and `other`. |
+| `schedd_customer_operations_outcome_unknown_accounts` | — | same | Accounts with an `execution_outcome_unknown` reconciliation in the last 900 s. Alert `FaasCustomerOperationOutcomesUnknown`: ≥ 3 for 5m. |
+| `schedd_customer_operations_telemetry_refreshed_timestamp_seconds` | — | same | When the snapshot was last read. |
+| `apid_customer_operation_webhook_events_total` | `mode`, `result` | `pkg/apid/operation/metrics.go` | Verified provider events on operation-bound endpoints; `result` is `accepted`, `duplicate`, `ignored`, `signaled`, `unmatched` or `refused` (non-2xx). |
+
 ---
 
 ## 13. RAM budget ledger (enforced as systemd slices)
@@ -1954,7 +1974,7 @@ request therefore does not create an instance transition or resident usage.
 | Slice | Budget | Contents |
 |---|---|---|
 | `system.slice` | 2,048 MB | OS, sshd, journald, node_exporter, chrony |
-| `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 256 · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,304 → **1 guaranteed builder VM (2,048 + 8) lives here** |
+| `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 384 (two generations during a reload, ADR 20261018132058) · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,176 → **1 guaranteed builder VM (2,048 + 8) lives here** |
 | `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits measured memory only to 47,600 MB** (85 % of the model's 56 GB budget; reservations up to twice that, ADR-909) |
 | headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 
@@ -2189,6 +2209,7 @@ Every row is an experiment with a pre-committed pass threshold. Run V1–V5 on a
 | V8 | 5 % churn, 55/40/5 mix, 4 free riders (C-grade) | Cohort curves from first 90 days; monthly sheet re-run with observed values | Documented monthly; sheet updated | beta+ |
 | V9 | Payment path & fees (provider fees) | Confirm Polar catalog and fee schedule for the incorporation country; retain provider-neutral fallback pricing in the sheet | Fee delta reflected in model before launch | pre-incorporation |
 | V10 | Server quote €44 + €39 | Re-quote a comparable bare-metal x86_64 host at order time (post-June-2026 price adjustment) | Within §9.9 sensitivity range (€39–50) | at order |
+| V12 | Event substrate keeps up with the plan event caps | `make bench-event-substrate` on the reference node: publish, fanout, drain and webhook stages plus offered end-to-end rates ([event-substrate-benchmark.md](ops/event-substrate-benchmark.md)) | Event storage, queue depth and workflow caps sit at ≤ 50 % of the highest offered rate the pipeline sustains (achieved ≥ 95 % of offered, nothing pending after the settle window, p95 publish-to-handler ≤ 5 s). 2026-10-20 on `gregale-internal-test-1`: sustains 5 events/s; fanout routing is O(backlog²) ([report](ops/evidence/20261020-event-substrate-bench/REPORT.md)) | before raising event caps |
 
 Standing rules: (1) no number graduates from "assumption" to "fact" without a row here; (2) the §6.2 invariants are enforced as property-based tests, not prose; (3) each ADR gets one adversarial review pass before acceptance.
 

@@ -52,13 +52,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/mcpprotocol"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/role"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/snapshothipd"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
@@ -93,7 +94,7 @@ func configuredRuntimeBaseGenerations(envLookup func(string) string) (map[string
 		if err != nil {
 			return nil, fmt.Errorf("vmmd: resolve runtime base generation %q: %w", row.runtime, err)
 		}
-		out[sched.BaseKeyForArch(row.runtime, runtime.GOARCH)] = ref
+		out[storagekey.BaseForArch(row.runtime, runtime.GOARCH)] = ref
 	}
 	return out, nil
 }
@@ -268,7 +269,7 @@ func loadNodeSigningKey(pathOverride string) (*ecdsa.PrivateKey, string, error) 
 		return nil, "", fmt.Errorf("vmmd: node key %q curve %s, want P-256",
 			path, priv.Curve.Params().Name)
 	}
-	keyID, err := sched.KeyIDForPublicKey(&priv.PublicKey)
+	keyID, err := nodereport.KeyID(&priv.PublicKey)
 	if err != nil {
 		return nil, "", fmt.Errorf("vmmd: compute key_id for %q: %w", path, err)
 	}
@@ -534,6 +535,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// replaces a valid provider-specific boot policy (for example ens4 on
 	// GCP), cutting every guest off from DNS and the public internet.
 	hostPolicy := runtimeHostPolicy(cfg.ComputeNode, parsedBridge, len(serviceProxyCAPEM) > 0)
+	hostPolicy.PublicForwarding = cfg.NativeProcessRecovery
 	netns.SwapActiveHostPolicy(hostPolicy)
 	log.Info("vmmd: runtime host policy configured",
 		"public_iface", hostPolicy.PublicIface,
@@ -651,7 +653,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// StorageBackend key for the kernel artifact from the detected
 	// FC version. Operators may pin a specific key via vmmd.toml
 	// (cfg.KernelKey); when unset we fall back to the version-keyed
-	// form sched.KernelKey(fcVersion). The deprecated cfg.KernelPath
+	// form storagekey.Kernel(fcVersion). The deprecated cfg.KernelPath
 	// still flows into the log line so an operator can spot drift
 	// between the two during the migration window.
 	//
@@ -661,7 +663,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// be marked stale and every wake will cold-boot, which is the
 	// correct cold-boot-always-works behaviour (ADR-005).
 	if cfg.KernelKey == "" && fcVersion != "" {
-		cfg.KernelKey = sched.KernelKey(fcVersion)
+		cfg.KernelKey = storagekey.Kernel(fcVersion)
 	}
 
 	// Host-key lifecycle (ADR-020 / spec §11 G2). Without this, the
@@ -762,6 +764,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return err
 		}
 		recordServiceAddressReadiness(ctx, store, nodeID, cfg.ComputeNode.ServiceTCPEnabled, log)
+	}
+	identityNodeID, err := physicalNodeID(ctx, store, nodeID)
+	if err != nil {
+		return err
 	}
 
 	cbm := fcvm.NewColdBootMetrics()
@@ -956,7 +962,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log,
 		cbm,
 	).WithFrameworkReady(frm).
-		WithRuntimeAdmissionNodeID(nodeID).
+		WithRuntimeAdmissionNodeID(identityNodeID).
 		WithCaptureRunner(wire.ExecRunner{}).
 		WithPrivateNetworkTransport(privateNetworkTransport).
 		WithDiskMetrics(dsm).
@@ -1029,14 +1035,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"interval", nativeArtifactRetirementRecoveryInterval.String())
 	}
 	// ADR-471: install durable failure delivery before accepting Wake RPCs.
-	failureNodeID := nodeID
-	if deps.scheddTarget != "" && failureNodeID == "" && store != nil {
-		localNode, lookupErr := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
-		if lookupErr != nil {
-			return fmt.Errorf("vmmd: resolve local failure-report node: %w", lookupErr)
-		}
-		failureNodeID = localNode.ID
-	}
+	failureNodeID := identityNodeID
 	// The native qualification journal and RPC envelope must agree on the
 	// physical node that owns an attempt. A named node uses its registered
 	// identity; the single-box path uses the already-resolved default-local
@@ -1064,6 +1063,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer func() { _ = failureReports.Close() }()
 	}
 	mgr.WithAppAdmissionGuard(managedPostgresAdmissionGuard(store))
+	if err := wireFinancialCompute(ctx, mgr, store, cfg.NativeProcessRecovery); err != nil {
+		return err
+	}
 	mgr.WithManagedPostgresDrainNodeID(nodeID)
 	// ADR-472: preserve restart-survivor identities before a prepared pool
 	// or any Wake RPC can consume the new allocator's initially free slots.
@@ -1650,7 +1652,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	)...)
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
-		WithNodeID(nodeID).
+		// The physical node identity: runtime admission and promotion grants,
+		// wake.boot_observed events and migration ownership all compare it
+		// with rows that a single box records on default-local.
+		WithNodeID(identityNodeID).
 		WithQualificationNodeID(qualificationNodeID).
 		WithExecutionIdentitySigner(identitySigner).
 		WithDivergedInstances(divergedInstances)

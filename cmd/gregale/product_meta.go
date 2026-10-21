@@ -53,6 +53,14 @@ func productCLIManifest() []cliSub {
 		{Name: "explain", Short: "Trace an accepted run's entitlement, binding, execution and charge", Positionals: []string{"<operation-id>"}, Flags: []cliFlag{app, {Name: "after", Value: "N", Short: "execution generation cursor (default 0)"}}},
 		{Name: "usage", Short: "Read outcome usage and start allowances", Flags: usage},
 		{Name: "statements", Short: "Review and finalize charges, issue credit notes, and record invoice handoffs", Subcommands: productBillingCLIManifest(app)},
+		{Name: "billing", Short: "Configure collection policy for exported statements", Subcommands: []cliSub{
+			{Name: "overdue-policy", Short: "Refuse new starts from customers whose exported invoice is overdue", Subcommands: []cliSub{
+				{Name: "inspect", Short: "Read the overdue policy and the customers it holds", Flags: []cliFlag{app}},
+				{Name: "set", Short: "Hold customers whose invoice is unpaid this many days after its due date", Flags: []cliFlag{app,
+					{Name: "block-overdue-after-days", Value: "N", Req: true, Short: "0 to 365; 0 holds as soon as an invoice is past due"}}},
+				{Name: "clear", Short: "Remove the overdue policy and lift its holds", Flags: []cliFlag{app}},
+			}},
+		}},
 	}
 }
 
@@ -86,5 +94,10 @@ func productBillingCLIManifest(app cliFlag) []cliSub {
 		{Name: "credit", Short: "Issue a credit note against a finalized successful run", Flags: []cliFlag{app, tenant, period, operation, reason, {Name: "id", Value: "UUID", Req: true, Short: "stable credit note ID; preserve for retries"}, {Name: "amount-millicents", Value: "N", Req: true, Short: "positive credit amount"}}},
 		{Name: "handoff", Short: "Record one invoice reference for a statement or credit note", Flags: []cliFlag{app, tenant, period, document, {Name: "invoice-id", Value: "REFERENCE", Req: true, Short: "stable external invoice or credit note reference"}}},
 		{Name: "handoff-status", Short: "Recover the retained invoice handoff after a lost response", Flags: []cliFlag{app, tenant, period, document}},
+		{Name: "export", Short: "Invoice a finalized statement in the account's Stripe, Paddle or Lago; the invoice becomes its handoff", Flags: []cliFlag{app, tenant, period,
+			{Name: "document", Value: "UUID", Req: true, Short: "finalized statement"},
+			{Name: "provider", Value: "NAME", Req: true, Short: "connected billing provider: stripe, paddle or lago"},
+			{Name: "customer", Value: "ID", Short: "provider customer ID (default the tenant's external reference)"}}},
+		{Name: "export-status", Short: "Read a statement's exported invoice and its payment status", Flags: []cliFlag{app, tenant, period, document}},
 	}
 }

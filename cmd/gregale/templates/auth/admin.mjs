@@ -1,9 +1,13 @@
 import { createHash, createPrivateKey, randomBytes, sign, timingSafeEqual } from 'node:crypto'
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
-import { HTTPError, readJSON } from './authz.mjs'
+import { auditColumns, auditPage, auditReply, HTTPError, readJSON, sqlError } from './authz.mjs'
 import { ssoRoute } from './sso.mjs'
 import { oauthRoute } from './oauth.mjs'
+import { emailRoute } from './emails.mjs'
+import { signupsRoute } from './signups.mjs'
+import { impersonationsRoute, startImpersonation } from './impersonation.mjs'
+import { adminRoute as serviceAccountsRoute } from './serviceaccounts.mjs'
 
 // /admin/v1: owner administration of an application Auth app (ADR-1190
 // phase 6). The owner holds the key; the app stores only its SHA-256 as
@@ -14,10 +18,12 @@ import { oauthRoute } from './oauth.mjs'
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+// adminKeyHashes lists each admin key's ID (the secret name's suffix) and
+// SHA-256, so actions such as impersonation record which key acted.
 export function adminKeyHashes(env) {
   return Object.entries(env)
     .filter(([k, v]) => /^AUTH_ADMIN_KEY_[0-9A-F]{8}$/.test(k) && typeof v === 'string' && /^[0-9a-f]{64}$/.test(v))
-    .map(([, v]) => Buffer.from(v, 'hex'))
+    .map(([k, v]) => ({ id: k.slice(-8), hash: Buffer.from(v, 'hex') }))
 }
 
 export function newAdminKey() {
@@ -25,12 +31,13 @@ export function newAdminKey() {
   return { key, hash: createHash('sha256').update(key).digest('hex') }
 }
 
-function keyMatches(hashes, header) {
+// keyMatches returns the ID of the admin key presented, or null.
+function keyMatches(keys, header) {
   const key = /^Bearer (gaak_[A-Za-z0-9_-]{43})$/.exec(header ?? '')?.[1]
-  if (!key) return false
+  if (!key) return null
   const presented = createHash('sha256').update(key).digest()
   // Compare against every hash so timing does not reveal which key matched.
-  return hashes.reduce((found, hash) => timingSafeEqual(hash, presented) || found, false)
+  return keys.reduce((found, { id, hash }) => timingSafeEqual(hash, presented) ? id : found, null)
 }
 
 // signingKey picks the one ES256 key in GOTRUE_JWT_KEYS that signs. GoTrue
@@ -81,6 +88,34 @@ export function goTrueError({ status, data }) {
 }
 
 // Only these fields leave the app; metadata stays in the database.
+// Custom claims are the keys of a user's app_metadata other than GoTrue's
+// own provider and providers. Only the admin API writes app_metadata, and
+// GoTrue puts it in every access token, so a backend or row-level security
+// reads them as app_metadata.<name> from the next token on.
+const goTrueMetadata = new Set(['provider', 'providers'])
+const claimName = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
+
+export function customClaims(appMetadata) {
+  return Object.fromEntries(Object.entries(appMetadata ?? {}).filter(([name]) => !goTrueMetadata.has(name)))
+}
+
+// claimsChange checks {set, unset} against the user's current claims and
+// returns GoTrue's merge patch (null removes a key) and the result.
+export function claimsChange(current, body) {
+  const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+  if (!plain(body) || Object.keys(body).some(key => key !== 'set' && key !== 'unset')) throw new HTTPError(400, 'invalid_claims')
+  const set = body.set ?? {}, unset = body.unset ?? []
+  if (!plain(set) || !Array.isArray(unset) || (Object.keys(set).length === 0 && unset.length === 0)) throw new HTTPError(400, 'invalid_claims')
+  for (const name of [...Object.keys(set), ...unset]) {
+    if (typeof name !== 'string' || !claimName.test(name) || goTrueMetadata.has(name)) throw new HTTPError(400, 'invalid_claim_name')
+  }
+  if (Object.values(set).some(value => value === null) || unset.some(name => Object.hasOwn(set, name))) throw new HTTPError(400, 'invalid_claims')
+  const next = { ...customClaims(current), ...set }
+  for (const name of unset) delete next[name]
+  if (Buffer.byteLength(JSON.stringify(next)) > limits.customClaimsBytes) throw new HTTPError(400, 'claims_too_large')
+  return { patch: { ...set, ...Object.fromEntries(unset.map(name => [name, null])) }, next }
+}
+
 function userView(u) {
   return {
     id: u.id, email: u.email ?? null, phone: u.phone || null,
@@ -88,6 +123,7 @@ function userView(u) {
     email_confirmed_at: u.email_confirmed_at ?? null, banned_until: u.banned_until ?? null,
     providers: Array.isArray(u.app_metadata?.providers) ? u.app_metadata.providers.filter(p => typeof p === 'string') : [],
     anonymous: u.is_anonymous === true,
+    claims: customClaims(u.app_metadata),
   }
 }
 
@@ -95,7 +131,7 @@ function pageParams(query) {
   const page = Number(query.get('page') ?? 1)
   const perPage = Number(query.get('per_page') ?? 50)
   if (!Number.isInteger(page) || page < 1 || page > 100000) throw new HTTPError(400, 'invalid_page')
-  if (!Number.isInteger(perPage) || perPage < 1 || perPage > 100) throw new HTTPError(400, 'invalid_per_page')
+  if (!Number.isInteger(perPage) || perPage < 1 || perPage > limits.adminPageSize) throw new HTTPError(400, 'invalid_per_page')
   const search = query.get('search') ?? ''
   if (search.length > 200 || /[\x00-\x1f\x7f]/.test(search)) throw new HTTPError(400, 'invalid_search')
   return { page, perPage, search }
@@ -112,6 +148,39 @@ const lastOwnerSQL = `SELECT o.slug FROM gregale_auth.memberships m JOIN gregale
   ORDER BY o.slug LIMIT 20`
 const soleMemberSQL = `SELECT m.org_id FROM gregale_auth.memberships m
   WHERE m.user_id = $1 AND NOT EXISTS (SELECT 1 FROM gregale_auth.memberships x WHERE x.org_id = m.org_id AND x.user_id <> $1)`
+
+// deleteUser removes a user through GoTrue's admin API and returns
+// [status, body]. The last owner of an organization with other members is
+// refused; organizations only this user belonged to would be unreachable,
+// so they go too.
+export async function deleteUser({ pool, admin }, user) {
+  const { rows: blocked } = await pool.query(lastOwnerSQL, [user])
+  if (blocked.length) return [409, { status: 409, code: 'last_owner', organizations: blocked.map(r => r.slug) }]
+  const sole = (await pool.query(soleMemberSQL, [user])).rows.map(r => r.org_id)
+  const response = await admin('DELETE', `/admin/users/${user}`)
+  if (response.status !== 200) throw goTrueError(response)
+  const { rowCount } = sole.length
+    ? await pool.query('DELETE FROM gregale_auth.organizations o WHERE o.id = ANY($1::uuid[]) AND NOT EXISTS (SELECT 1 FROM gregale_auth.memberships x WHERE x.org_id = o.id)', [sole])
+    : { rowCount: 0 }
+  return [200, { deleted: true, organizations_deleted: rowCount }]
+}
+
+// hasFactorSQL is true when the user has a verified second factor; recovery
+// codes only stand in for one.
+const hasFactorSQL = user => `EXISTS (SELECT 1 FROM auth.mfa_factors f WHERE f.user_id = ${user} AND f.status = 'verified' AND f.factor_type::text <> 'recovery_code')`
+
+// deleteOwnAccount lets a signed-in person delete themselves (AUTH_SELF_DELETION).
+// Their session must be recent and, if they have a second factor, have
+// passed it; an anonymous user cannot sign in again, so only holds the
+// session. claims come from a token GoTrue verified.
+export async function deleteOwnAccount({ pool, admin }, claims) {
+  const { rows: [session] } = await pool.query(`SELECT u.is_anonymous OR (s.created_at > now() - make_interval(secs => $3)
+      AND (s.aal = 'aal2' OR NOT ${hasFactorSQL('u.id')})) AS allowed
+    FROM auth.sessions s JOIN auth.users u ON u.id = s.user_id WHERE s.id = $2 AND s.user_id = $1`, [claims.sub, claims.session_id, limits.reauthenticationSeconds])
+  if (!session) throw new HTTPError(401, 'not_authenticated')
+  if (!session.allowed) throw new HTTPError(403, 'reauthentication_required')
+  return deleteUser({ pool, admin }, claims.sub)
+}
 
 const hashFormats = [/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/, /^\$argon2(id|i|d)\$v=(16|19)\$m=\d+,t=\d+,p=\d+(,[^$]*)?\$[^$]*\$[^$]+$/, /^\$fbscrypt\$v=\d+,n=\d+,r=\d+,p=\d+(,[^$]*)?\$[^$]+\$[^$]+$/]
 
@@ -197,12 +266,24 @@ async function activity(query, params) {
 }
 
 // adminRoute returns [status, body] for one authorized request.
-export async function adminRoute({ pool, admin, external }, method, url, body) {
+export async function adminRoute({ pool, admin, external, emails = {}, impersonation = null, serviceAccounts = false, keyId = null }, method, url, body) {
   const path = url.pathname.replace(/^\/admin\/v1/, '')
   const parts = path.split('/').filter(Boolean)
   const query = async (sql, args) => (await pool.query(sql, args)).rows
   if (parts[0] === 'sso') return ssoRoute({ query, admin, goTrueError, external }, method, parts, body)
   if (parts[0] === 'oauth') return oauthRoute({ admin, goTrueError }, method, parts, body)
+  if (parts[0] === 'emails') return emailRoute({ pool, external, ...emails }, method, parts, body)
+  if (parts[0] === 'signups') return signupsRoute({ pool, mailer: emails.mailer, external, app: emails.app, pageParams, likePattern }, method, parts, url, body)
+  if (parts[0] === 'service-accounts') {
+    if (!serviceAccounts) throw new HTTPError(404, 'service_accounts_disabled')
+    // The SQL functions' stable errors become their HTTP statuses.
+    const rows = async (sql, args) => { try { return (await pool.query(sql, args)).rows } catch (err) { throw sqlError(err) } }
+    return serviceAccountsRoute(rows, method, parts.slice(1), url.searchParams, body)
+  }
+  if (parts[0] === 'impersonations') {
+    if (!impersonation) throw new HTTPError(404, 'impersonation_disabled')
+    return impersonationsRoute({ pool }, method, parts, url)
+  }
   const user = parts[0] === 'users' && parts[1] && parts[1] !== 'import' ? (uuid.test(parts[1]) ? parts[1] : null) : undefined
   if (user === null) throw new HTTPError(400, 'invalid_id')
 
@@ -224,6 +305,18 @@ export async function adminRoute({ pool, admin, external }, method, url, body) {
     ])
     return [200, { user: userView(response.data), organizations, active_sessions: sessions }]
   }
+  if (user && parts[2] === 'claims' && parts.length === 3 && method === 'PATCH') {
+    const current = await admin('GET', `/admin/users/${user}`)
+    if (current.status !== 200) throw goTrueError(current)
+    const { patch } = claimsChange(current.data?.app_metadata, body)
+    const response = await admin('PUT', `/admin/users/${user}`, { app_metadata: patch })
+    if (response.status !== 200) throw goTrueError(response)
+    return [200, { claims: customClaims(response.data?.app_metadata) }]
+  }
+  if (user && parts[2] === 'impersonate' && parts.length === 3 && method === 'POST') {
+    if (!impersonation) throw new HTTPError(404, 'impersonation_disabled')
+    return startImpersonation({ pool, admin, goTrueError, siteURL: impersonation.siteURL, keyId }, user, body)
+  }
   if (user && parts[2] === 'sign-out' && parts.length === 3 && method === 'POST') {
     // GoTrue has no admin sign-out; deleting sessions ends their refresh
     // tokens, and every authorize() check fails from the next request.
@@ -239,41 +332,48 @@ export async function adminRoute({ pool, admin, external }, method, url, body) {
     if (duration !== 'none') await pool.query('DELETE FROM auth.sessions WHERE user_id = $1', [user])
     return [200, { user: userView(response.data) }]
   }
-  if (user && parts.length === 2 && method === 'DELETE') {
-    const blocked = await query(lastOwnerSQL, [user])
-    if (blocked.length) return [409, { status: 409, code: 'last_owner', organizations: blocked.map(r => r.slug) }]
-    const sole = (await query(soleMemberSQL, [user])).map(r => r.org_id)
-    const response = await admin('DELETE', `/admin/users/${user}`)
-    if (response.status !== 200) throw goTrueError(response)
-    // Organizations only this user belonged to would be unreachable.
-    const { rowCount } = sole.length
-      ? await pool.query('DELETE FROM gregale_auth.organizations o WHERE o.id = ANY($1::uuid[]) AND NOT EXISTS (SELECT 1 FROM gregale_auth.memberships x WHERE x.org_id = o.id)', [sole])
-      : { rowCount: 0 }
-    return [200, { deleted: true, organizations_deleted: rowCount }]
-  }
+  if (user && parts.length === 2 && method === 'DELETE') return deleteUser({ pool, admin }, user)
   if (path === '/activity' && method === 'GET') return [200, await activity(query, url.searchParams)]
   if (path === '/orgs' && method === 'GET') {
     const { page, perPage, search } = pageParams(url.searchParams)
-    const rows = await query(`SELECT o.id, o.slug, o.name, o.created_at, (SELECT count(*)::int FROM gregale_auth.memberships m WHERE m.org_id = o.id) AS members, count(*) OVER ()::int AS total
+    const rows = await query(`SELECT o.id, o.slug, o.name, o.created_at, o.mfa_required, (SELECT count(*)::int FROM gregale_auth.memberships m WHERE m.org_id = o.id) AS members, count(*) OVER ()::int AS total
       FROM gregale_auth.organizations o WHERE $1 = '' OR o.slug ILIKE $2 ESCAPE '\\' OR o.name ILIKE $2 ESCAPE '\\'
       ORDER BY o.created_at DESC, o.id LIMIT $3 OFFSET $4`, [search, likePattern(search), perPage, (page - 1) * perPage])
     return [200, { organizations: rows.map(({ total, ...org }) => org), total: rows[0]?.total ?? 0, page, per_page: perPage }]
   }
+  if (parts[0] === 'orgs' && parts.length === 3 && parts[2] === 'audit-log' && method === 'GET') {
+    if (!uuid.test(parts[1])) throw new HTTPError(400, 'invalid_id')
+    const { at, id, limit } = auditPage(url.searchParams)
+    return auditReply(await query(`SELECT ${auditColumns} FROM gregale_auth.org_audit_feed($1, $2, $3, $4)`, [parts[1], at, id, limit]), limit)
+  }
   if (parts[0] === 'orgs' && parts.length === 2 && method === 'GET') {
     if (!uuid.test(parts[1])) throw new HTTPError(400, 'invalid_id')
-    const [org] = await query('SELECT id, slug, name, created_at FROM gregale_auth.organizations WHERE id = $1', [parts[1]])
+    const [org] = await query('SELECT id, slug, name, created_at, mfa_required FROM gregale_auth.organizations WHERE id = $1', [parts[1]])
     if (!org) throw new HTTPError(404, 'not_found')
-    const [members, invitations] = await Promise.all([
-      query('SELECT m.user_id, u.email, m.role, m.created_at FROM gregale_auth.memberships m JOIN auth.users u ON u.id = m.user_id WHERE m.org_id = $1 ORDER BY m.created_at LIMIT 500', [org.id]),
+    const [members, invitations, domains] = await Promise.all([
+      query(`SELECT m.user_id, u.email, m.role, m.created_at, ${hasFactorSQL('m.user_id')} AS mfa_enabled
+        FROM gregale_auth.memberships m JOIN auth.users u ON u.id = m.user_id WHERE m.org_id = $1 ORDER BY m.created_at LIMIT 500`, [org.id]),
       query('SELECT id, email, role, expires_at, created_at FROM gregale_auth.invitations WHERE org_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 500', [org.id]),
+      // Its email domains, and whether people at each join (sql/0017).
+      query('SELECT domain, verified_at, join_mode, join_role FROM gregale_auth.org_domains WHERE org_id = $1 ORDER BY domain', [org.id]),
     ])
-    return [200, { organization: org, members, invitations }]
+    return [200, { organization: org, members, invitations, domains: domains.map(d => ({ domain: d.domain, verified: d.verified_at !== null, join: { mode: d.join_mode, role: d.join_role } })) }]
+  }
+  // The application's operator may change an organization's second-factor
+  // requirement (sql/0016) without being a member, for example to restore
+  // access after its owners lost their factors.
+  if (parts[0] === 'orgs' && parts.length === 2 && method === 'PATCH') {
+    if (!uuid.test(parts[1])) throw new HTTPError(400, 'invalid_id')
+    if (typeof body?.mfa_required !== 'boolean') throw new HTTPError(400, 'invalid_mfa_required')
+    const [org] = await query('UPDATE gregale_auth.organizations SET mfa_required = $2 WHERE id = $1 RETURNING id, slug, name, created_at, mfa_required', [parts[1], body.mfa_required])
+    if (!org) throw new HTTPError(404, 'not_found')
+    return [200, { organization: org }]
   }
   throw new HTTPError(404, 'not_found')
 }
 
 // createAdminHandler serves /admin/v1. Without a key it does not exist.
-export function createAdminHandler({ pool, admin, keys, origins = [], external }) {
+export function createAdminHandler({ pool, admin, keys, origins = [], external, emails = {}, impersonation = null, serviceAccounts = false }) {
   const allowed = new Set(origins)
   return async (req, res) => {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
@@ -287,10 +387,11 @@ export function createAdminHandler({ pool, admin, keys, origins = [], external }
       return res.end()
     }
     try {
-      if (!keyMatches(keys, req.headers.authorization)) { req.resume(); throw new HTTPError(401, 'invalid_admin_key') }
+      const keyId = keyMatches(keys, req.headers.authorization)
+      if (!keyId) { req.resume(); throw new HTTPError(401, 'invalid_admin_key') }
       const url = new URL(req.url, 'http://admin.invalid')
       const body = await readJSON(req, limits.adminBodyBytes)
-      const [status, payload] = await adminRoute({ pool, admin, external }, req.method, url, body)
+      const [status, payload] = await adminRoute({ pool, admin, external, emails, impersonation, serviceAccounts, keyId }, req.method, url, body)
       reply(status, payload)
     } catch (err) {
       const failure = err instanceof HTTPError ? err : new HTTPError(500, 'internal_error')

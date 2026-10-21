@@ -1,9 +1,10 @@
 // adr: 1351 — exact candidate service allocation, expiry and routing preservation.
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"os"
@@ -46,7 +47,7 @@ func TestProjectReleaseStagingCLI(t *testing.T) {
 		} else {
 			args = append(args, "--stage", stage.ID)
 		}
-		code, out, stderr := captureBindingCLI(t, f.server.URL, args...)
+		code, out, stderr := main.CaptureBindingCLI(t, f.server.URL, args...)
 		if code != 0 {
 			t.Fatalf("%s: %d %s %s", action, code, out, stderr)
 		}

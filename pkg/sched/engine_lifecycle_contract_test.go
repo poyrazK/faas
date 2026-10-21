@@ -1,6 +1,6 @@
 // spec: §6.2
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -28,9 +29,9 @@ func deploymentWithMissingSecret(t *testing.T, store state.Store, appID string) 
 
 func TestWakeSealedEnvFailureReleasesAdmissionImmediately(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanHobby, 256, 1)
+	_, app, _ := sched.SeedApp(t, store, api.PlanHobby, 256, 1)
 	dep := deploymentWithMissingSecret(t, store, app.ID)
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 
 	if _, err := e.Wake(context.Background(), app.ID, dep.ID, "", ""); err == nil {
 		t.Fatal("Wake returned nil, want missing-secret error")
@@ -49,9 +50,9 @@ func TestWakeSealedEnvFailureReleasesAdmissionImmediately(t *testing.T) {
 
 func TestPrimeSealedEnvFailureReleasesAdmissionImmediately(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanHobby, 256, 1)
+	_, app, _ := sched.SeedApp(t, store, api.PlanHobby, 256, 1)
 	dep := deploymentWithMissingSecret(t, store, app.ID)
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 
 	if err := e.Prime(context.Background(), app.ID, dep.ID); err == nil {
 		t.Fatal("Prime returned nil, want missing-secret error")
@@ -70,22 +71,22 @@ func TestPrimeSealedEnvFailureReleasesAdmissionImmediately(t *testing.T) {
 
 func TestPrimeAllowsWarmReplacementAtServingConcurrencyCap(t *testing.T) {
 	store := state.NewMemStore()
-	acct, app, oldDep := seedApp(t, store, api.PlanScale, 1024, 1)
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	acct, app, oldDep := sched.SeedApp(t, store, api.PlanScale, 1024, 1)
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok {
 		t.Fatalf("LimitsFor(%q) failed", acct.Plan)
 	}
 
 	old, err := store.CreateInstance(context.Background(), app.ID, oldDep.ID,
-		string(state.StateRunning), app.RAMMB, e.defaultLocalNodeID, "old-live-wake")
+		string(state.StateRunning), app.RAMMB, (*e.DefaultLocalNodeID()), "old-live-wake")
 	if err != nil {
 		t.Fatalf("CreateInstance(old live): %v", err)
 	}
-	if err := e.Ledger().Admit(Request{
+	if err := e.Ledger().Admit(sched.Request{
 		Instance: old.ID, AppID: app.ID, DeploymentID: oldDep.ID,
 		Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: limits.VCPU,
-		MaxConcurrency: app.MaxConcurrency, NodeID: e.defaultLocalNodeID,
+		MaxConcurrency: app.MaxConcurrency, NodeID: (*e.DefaultLocalNodeID()),
 	}); err != nil {
 		t.Fatalf("admit old live instance: %v", err)
 	}

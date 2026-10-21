@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // ADR-212 state-layer coverage for endpoint quotas and soft-delete isolation.
 
@@ -8,15 +8,16 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreInboundWebhookQuotaAndTokenLookup(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(t.Context(), "inbound@example.test", api.PlanHobby)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	app, err := store.CreateApp(t.Context(), App{AccountID: account.ID, Slug: "inbound-state", Type: AppTypeApp, Status: AppActive})
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, Slug: "inbound-state", Type: state.AppTypeApp, Status: state.AppActive})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
@@ -24,8 +25,8 @@ func TestMemStoreInboundWebhookQuotaAndTokenLookup(t *testing.T) {
 	limits.InboundWebhookPerApp = 1
 	limits.InboundWebhookPerAccount = 1
 	tokenHash := bytes.Repeat([]byte{0x42}, 32)
-	created, err := store.CreateInboundWebhookEndpointIfUnderQuota(t.Context(), InboundWebhookEndpoint{
-		AppID: app.ID, AccountID: account.ID, Name: "stripe", Provider: InboundWebhookProviderStripe,
+	created, err := store.CreateInboundWebhookEndpointIfUnderQuota(t.Context(), state.InboundWebhookEndpoint{
+		AppID: app.ID, AccountID: account.ID, Name: "stripe", Provider: state.InboundWebhookProviderStripe,
 		TokenHash: tokenHash, SigningSecretSealed: []byte("sealed"), DeliveryPath: "/stripe", Enabled: true,
 	}, limits)
 	if err != nil {
@@ -36,19 +37,19 @@ func TestMemStoreInboundWebhookQuotaAndTokenLookup(t *testing.T) {
 		t.Fatalf("token lookup = %#v, %v", got, err)
 	}
 
-	_, err = store.CreateInboundWebhookEndpointIfUnderQuota(t.Context(), InboundWebhookEndpoint{
-		AppID: app.ID, AccountID: account.ID, Name: "second", Provider: InboundWebhookProviderStripe,
+	_, err = store.CreateInboundWebhookEndpointIfUnderQuota(t.Context(), state.InboundWebhookEndpoint{
+		AppID: app.ID, AccountID: account.ID, Name: "second", Provider: state.InboundWebhookProviderStripe,
 		TokenHash: bytes.Repeat([]byte{0x24}, 32), SigningSecretSealed: []byte("sealed"), Enabled: true,
 	}, limits)
-	var quota *InboundWebhookQuotaError
-	if !errors.As(err, &quota) || quota.Scope != InboundWebhookQuotaScopeApp {
+	var quota *state.InboundWebhookQuotaError
+	if !errors.As(err, &quota) || quota.Scope != state.InboundWebhookQuotaScopeApp {
 		t.Fatalf("second create error = %v, want app quota", err)
 	}
 
 	if _, err := store.SoftDeleteAppCascade(t.Context(), app.ID); err != nil {
 		t.Fatalf("SoftDeleteAppCascade: %v", err)
 	}
-	if _, err := store.InboundWebhookEndpointByTokenHash(t.Context(), tokenHash); !errors.Is(err, ErrNotFound) {
+	if _, err := store.InboundWebhookEndpointByTokenHash(t.Context(), tokenHash); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted app token lookup error = %v, want ErrNotFound", err)
 	}
 }

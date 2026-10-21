@@ -1,14 +1,15 @@
-package main
+package main_test
 
 import (
 	"errors"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
 
 func TestTransportProblemTruncatesUTF8Safely(t *testing.T) {
-	problem := transportProblem(errors.New(strings.Repeat("é", 119) + "€" + strings.Repeat("é", 20)))
+	problem := main.TransportProblem(errors.New(strings.Repeat("é", 119) + "€" + strings.Repeat("é", 20)))
 	if !utf8.ValidString(problem.Detail) {
 		t.Fatalf("transport error detail is not valid UTF-8: %q", problem.Detail)
 	}

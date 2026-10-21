@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,16 +7,17 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowRecoveryAutomaticEvaluationLifecycle(t *testing.T) {
 	for _, scenario := range []string{"pending_unknown", "applied_unknown", "completed"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 				ctx := context.Background()
-				review, app, run, now := seedAutomaticRecoveryReview(t, s, nil)
+				review, app, run, now := state.SeedAutomaticRecoveryReview(t, s, nil)
 				queue := func() api.WorkflowRecoveryAutomaticQueue {
-					out, err := s.(WorkflowRecoveryPolicyOperatorStore).GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)
+					out, err := s.(state.WorkflowRecoveryPolicyOperatorStore).GetWorkflowRecoveryAutomaticQueue(ctx, app.AccountID, app.ID)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -27,9 +28,9 @@ func TestWorkflowRecoveryAutomaticEvaluationLifecycle(t *testing.T) {
 					t.Fatalf("unevaluated queue %+v", initial)
 				}
 				if scenario == "pending_unknown" {
-					removeAutomaticLiveRun(t, s, run)
+					state.RemoveAutomaticLiveRun(t, s, run)
 				}
-				runAutomaticPolicy(t, s, now)
+				state.RunAutomaticPolicy(t, s, now)
 				want := "child_created"
 				if scenario == "pending_unknown" {
 					want = "evidence_unknown"
@@ -41,7 +42,7 @@ func TestWorkflowRecoveryAutomaticEvaluationLifecycle(t *testing.T) {
 				if scenario != "pending_unknown" && first.WaitingSince != nil {
 					t.Fatalf("creation recorded as waiting %+v", first)
 				}
-				runAutomaticPolicy(t, s, now.Add(time.Minute))
+				state.RunAutomaticPolicy(t, s, now.Add(time.Minute))
 				if scenario != "pending_unknown" {
 					want = "admission_wait"
 				}
@@ -49,10 +50,10 @@ func TestWorkflowRecoveryAutomaticEvaluationLifecycle(t *testing.T) {
 				if waiting.Reason != want || waiting.WaitingSince == nil {
 					t.Fatalf("waiting %+v", waiting)
 				}
-				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+				if pg, ok := s.(*state.PgStore); ok {
+					s = state.NewPgStore((*pg.Pool()).Pool)
 				}
-				runAutomaticPolicy(t, s, now.Add(2*time.Minute))
+				state.RunAutomaticPolicy(t, s, now.Add(2*time.Minute))
 				out := queue()
 				repeated := out.Entries[0].Action.LastEvaluation
 				if !repeated.EvaluatedAt.Equal(now.Add(2*time.Minute)) || !repeated.WaitingSince.Equal(*waiting.WaitingSince) || out.Entries[0].WaitingAgeSeconds == nil {
@@ -62,9 +63,9 @@ func TestWorkflowRecoveryAutomaticEvaluationLifecycle(t *testing.T) {
 					t.Fatal("read advanced evaluation")
 				}
 				if scenario == "completed" {
-					failAutomaticChild(t, s, run)
-					runAutomaticPolicy(t, s, now.Add(3*time.Minute))
-					retained, err := s.(WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicyReview(ctx, app.AccountID, app.ID, review.ID)
+					state.FailAutomaticChild(t, s, run)
+					state.RunAutomaticPolicy(t, s, now.Add(3*time.Minute))
+					retained, err := s.(state.WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicyReview(ctx, app.AccountID, app.ID, review.ID)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -75,25 +76,25 @@ func TestWorkflowRecoveryAutomaticEvaluationLifecycle(t *testing.T) {
 					return
 				}
 				if scenario == "applied_unknown" {
-					if _, err := s.(EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
+					if _, err := s.(state.EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
 						t.Fatal(err)
 					}
-					removeAutomaticLiveRun(t, s, run)
-					runAutomaticPolicy(t, s, now.Add(3*time.Minute))
+					state.RemoveAutomaticLiveRun(t, s, run)
+					state.RunAutomaticPolicy(t, s, now.Add(3*time.Minute))
 					out = queue()
 					repeated = out.Entries[0].Action.LastEvaluation
 					if repeated.Reason != "evidence_unknown" || !repeated.WaitingSince.Equal(now.Add(3*time.Minute)) || out.Outstanding != 1 || out.HourlyExecutions != 1 {
 						t.Fatalf("new reason or slot %+v", out)
 					}
 				}
-				p, err := s.(WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID)
+				p, err := s.(state.WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err = s.(WorkflowRecoveryPolicyOperatorStore).ControlWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, controlRequest(p, "pause")); err != nil {
+				if _, err = s.(state.WorkflowRecoveryPolicyOperatorStore).ControlWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, state.ControlRequest(p, "pause")); err != nil {
 					t.Fatal(err)
 				}
-				runAutomaticPolicy(t, s, now.Add(time.Hour))
+				state.RunAutomaticPolicy(t, s, now.Add(time.Hour))
 				if !reflect.DeepEqual(repeated, queue().Entries[0].Action.LastEvaluation) {
 					t.Fatal("pause advanced evaluation")
 				}
@@ -118,7 +119,7 @@ func TestWorkflowRecoveryAutomaticQueueAges(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := api.WorkflowRecoveryAutomaticQueue{ObservedAt: now, Pending: 1, Entries: []api.WorkflowRecoveryAutomaticQueueEntry{{QueuedAt: tc.queued, Action: api.WorkflowRecoveryAutomaticAction{LastEvaluation: &api.WorkflowRecoveryAutomaticEvaluation{WaitingSince: tc.waiting}}}}}
-			recoveryQueueFinish(&out, nil)
+			state.RecoveryQueueFinish(&out, nil)
 			e := out.Entries[0]
 			if e.QueuedAgeSeconds != tc.wantQueue || !reflect.DeepEqual(e.WaitingAgeSeconds, tc.wantWait) {
 				t.Fatalf("ages %+v", e)

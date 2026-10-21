@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,8 +52,8 @@ esac
 				t.Fatal(err)
 			}
 			var buf bytes.Buffer
-			render := map[string]func() int{"bash": cmdCompletionBash, "zsh": cmdCompletionZsh, "fish": cmdCompletionFish, "pwsh": cmdCompletionPowershell}[shell]
-			captureStdoutSwap(t, &buf, render)
+			render := map[string]func() int{"bash": main.CmdCompletionBash, "zsh": main.CmdCompletionZsh, "fish": main.CmdCompletionFish, "pwsh": main.CmdCompletionPowershell}[shell]
+			main.CaptureStdoutSwap(t, &buf, render)
 			scriptPath := filepath.Join(dir, "completion.ps1")
 			if err := os.WriteFile(scriptPath, buf.Bytes(), 0o600); err != nil {
 				t.Fatal(err)

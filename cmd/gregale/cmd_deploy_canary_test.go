@@ -4,19 +4,20 @@
 // so the parser is unit-testable without spinning up the flag
 // machinery.
 
-package main
+package main_test
 
 import (
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api/canary"
 )
 
 // TestParseCanaryStages_HappyPath pins the basic comma + @ shape.
 func TestParseCanaryStages_HappyPath(t *testing.T) {
-	got, err := parseCanaryStages("1@30s,10@2m,100@0s")
+	got, err := main.ParseCanaryStages("1@30s,10@2m,100@0s")
 	if err != nil {
 		t.Fatalf("parseCanaryStages: %v", err)
 	}
@@ -33,7 +34,7 @@ func TestParseCanaryStages_HappyPath(t *testing.T) {
 // TestParseCanaryStages_WhitespaceTolerance — "1@30s, 10@2m"
 // parses identically to the tight form.
 func TestParseCanaryStages_WhitespaceTolerance(t *testing.T) {
-	got, err := parseCanaryStages("1@30s, 10@2m , 100@0s")
+	got, err := main.ParseCanaryStages("1@30s, 10@2m , 100@0s")
 	if err != nil {
 		t.Fatalf("parseCanaryStages: %v", err)
 	}
@@ -49,7 +50,7 @@ func TestParseCanaryStages_WhitespaceTolerance(t *testing.T) {
 // slice, nil error. Caller (buildCanarySpec) is responsible for
 // rejecting empty stages when preset="custom".
 func TestParseCanaryStages_EmptyOK(t *testing.T) {
-	got, err := parseCanaryStages("")
+	got, err := main.ParseCanaryStages("")
 	if err != nil {
 		t.Fatalf("parseCanaryStages: %v", err)
 	}
@@ -77,7 +78,7 @@ func TestParseCanaryStages_BadShapes(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := parseCanaryStages(c.in)
+			_, err := main.ParseCanaryStages(c.in)
 			if err == nil {
 				t.Fatalf("parseCanaryStages(%q) accepted; want error", c.in)
 			}
@@ -91,7 +92,7 @@ func TestParseCanaryStages_BadShapes(t *testing.T) {
 // TestBuildCanarySpec_Empty — empty preset returns nil so the
 // server applies the fast-default zero-value (no canary).
 func TestBuildCanarySpec_Empty(t *testing.T) {
-	got, err := buildCanarySpec("", "")
+	got, err := main.BuildCanarySpec("", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +105,7 @@ func TestBuildCanarySpec_Empty(t *testing.T) {
 // just carry the name; Stages stays nil so the catalog lookup on
 // the server side resolves the ladder.
 func TestBuildCanarySpec_CatalogPreset(t *testing.T) {
-	got, err := buildCanarySpec("balanced", "")
+	got, err := main.BuildCanarySpec("balanced", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +123,7 @@ func TestBuildCanarySpec_CatalogPreset(t *testing.T) {
 // TestBuildCanarySpec_CustomHappyPath — preset=custom + a valid
 // stages string → a fully populated spec ready for the wire.
 func TestBuildCanarySpec_CustomHappyPath(t *testing.T) {
-	got, err := buildCanarySpec("custom", "1@30s,10@2m,100@0s")
+	got, err := main.BuildCanarySpec("custom", "1@30s,10@2m,100@0s")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestBuildCanarySpecRejectsEveryInvalidLadderClass(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := buildCanarySpec(tc.preset, tc.stages); err == nil {
+			if _, err := main.BuildCanarySpec(tc.preset, tc.stages); err == nil {
 				t.Fatalf("buildCanarySpec(%q, %q) accepted", tc.preset, tc.stages)
 			}
 		})

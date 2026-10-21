@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,7 +14,10 @@ import (
 
 func TestProjectContextTestSandboxPreservesAncestorContext(t *testing.T) {
 	parent := t.TempDir()
-	if _, err := saveProjectContext(parent, localProjectContext{Version: 1, Project: "shop"}); err != nil {
+	if !main.ProjectContextRootAllowed(parent) {
+		t.Fatalf("test temporary directory escaped the project-context sandbox: %s", parent)
+	}
+	if _, err := main.SaveProjectContext(parent, main.LocalProjectContext{Version: 1, Project: "shop"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(parent, ".git"), 0o755); err != nil {
@@ -23,33 +27,36 @@ func TestProjectContextTestSandboxPreservesAncestorContext(t *testing.T) {
 	if err := os.Mkdir(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	previous := testOnlyProjectContextRoot
-	testOnlyProjectContextRoot = root
-	t.Cleanup(func() { testOnlyProjectContextRoot = previous })
-	if _, _, err := findProjectContext(root); !errors.Is(err, errProjectContextNotFound) {
+	previous := (*main.TestOnlyProjectContextRoot)
+	(*main.TestOnlyProjectContextRoot) = root
+	t.Cleanup(func() { (*main.TestOnlyProjectContextRoot) = previous })
+	if _, _, err := main.FindProjectContext(root); !errors.Is(err, (*main.ErrProjectContextNotFound)) {
 		t.Fatalf("inherited parent context: %v", err)
 	}
-	got, err := projectContextRoot(root)
+	got, err := main.ProjectContextRoot(root)
 	if err != nil || got != root {
 		t.Fatalf("link destination escaped sandbox: %q, %v", got, err)
 	}
-	if _, err := saveProjectContext(got, localProjectContext{Version: 1, Project: "test-project", App: "test-app"}); err != nil {
+	if _, err := main.SaveProjectContext(got, main.LocalProjectContext{Version: 1, Project: "test-project", App: "test-app"}); err != nil {
 		t.Fatal(err)
 	}
-	context, _, err := findProjectContext(root)
+	context, _, err := main.FindProjectContext(root)
 	if err != nil || context.Project != "test-project" {
 		t.Fatalf("test-owned context unavailable: %+v, %v", context, err)
 	}
-	body, err := os.ReadFile(projectContextPath(parent))
+	body, err := os.ReadFile(main.ProjectContextPath(parent))
 	if err != nil || !bytes.Contains(body, []byte(`"shop"`)) {
 		t.Fatalf("ancestor context overwritten: %s, %v", body, err)
 	}
 }
 
 func TestCmdLinkStoresSingleWorkloadContextAndIgnoresIt(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	nested := filepath.Join(root, "services", "api")
@@ -57,25 +64,25 @@ func TestCmdLinkStoresSingleWorkloadContextAndIgnoresIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(nested)
-	authedFakeAPI(t, `{"id":"project-1","slug":"shop","workloads":[{"slug":"api","workload_name":"api"}]}`, http.StatusOK)
+	main.AuthedFakeAPI(t, `{"id":"project-1","slug":"shop","workloads":[{"slug":"api","workload_name":"api"}]}`, http.StatusOK)
 	var out bytes.Buffer
-	previousOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
+	previousOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
 
-	if code := cmdLink([]string{"shop"}); code != 0 {
+	if code := main.CmdLink([]string{"shop"}); code != 0 {
 		t.Fatalf("exit = %d, output=%s", code, out.String())
 	}
-	path := projectContextPath(root)
+	path := main.ProjectContextPath(root)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read context: %v", err)
 	}
-	var context localProjectContext
+	var context main.LocalProjectContext
 	if err := json.Unmarshal(b, &context); err != nil {
 		t.Fatalf("decode context: %v", err)
 	}
-	if context.Version != projectContextVersion || context.Project != "shop" || context.App != "api" {
+	if context.Version != main.ProjectContextVersion || context.Project != "shop" || context.App != "api" {
 		t.Fatalf("context = %+v", context)
 	}
 	ignored, err := os.ReadFile(filepath.Join(root, ".gitignore"))
@@ -85,25 +92,25 @@ func TestCmdLinkStoresSingleWorkloadContextAndIgnoresIt(t *testing.T) {
 	if !strings.Contains(string(ignored), ".gregale/") {
 		t.Fatalf("gitignore = %q, want .gregale/", ignored)
 	}
-	if app, err := linkedAppSlug(nested); err != nil || app != "api" {
+	if app, err := main.LinkedAppSlug(nested); err != nil || app != "api" {
 		t.Fatalf("linked app = %q, err=%v", app, err)
 	}
 }
 
 func TestCmdLinkRequiresExplicitAppForMultipleWorkloads(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	root := t.TempDir()
 	t.Chdir(root)
-	authedFakeAPI(t, `{"id":"project-1","slug":"shop","workloads":[{"slug":"api"},{"slug":"worker"}]}`, http.StatusOK)
+	main.AuthedFakeAPI(t, `{"id":"project-1","slug":"shop","workloads":[{"slug":"api"},{"slug":"worker"}]}`, http.StatusOK)
 	var out bytes.Buffer
-	previousOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
+	previousOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
 
-	if code := cmdLink([]string{"shop"}); code != 0 {
+	if code := main.CmdLink([]string{"shop"}); code != 0 {
 		t.Fatalf("exit = %d, want 0; output=%s", code, out.String())
 	}
-	context, _, err := linkedProjectContext(root)
+	context, _, err := main.LinkedProjectContext(root)
 	if err != nil {
 		t.Fatalf("read context: %v", err)
 	}
@@ -116,31 +123,31 @@ func TestCmdLinkRequiresExplicitAppForMultipleWorkloads(t *testing.T) {
 }
 
 func TestCmdContextAndUnlinkUseNearestCheckoutContext(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	root := t.TempDir()
 	nested := filepath.Join(root, "packages", "api")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := saveProjectContext(root, localProjectContext{Version: projectContextVersion, Project: "shop", App: "api", Environment: "development"}); err != nil {
+	if _, err := main.SaveProjectContext(root, main.LocalProjectContext{Version: main.ProjectContextVersion, Project: "shop", App: "api", Environment: "development"}); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(nested)
 	var out bytes.Buffer
-	previousOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = previousOut })
+	previousOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = previousOut })
 
-	if code := cmdContext(nil); code != 0 {
+	if code := main.CmdContext(nil); code != 0 {
 		t.Fatalf("context exit = %d; output=%s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "Project:     shop") || !strings.Contains(out.String(), "Environment: development") {
 		t.Fatalf("context output = %s", out.String())
 	}
-	if code := cmdUnlink(nil); code != 0 {
+	if code := main.CmdUnlink(nil); code != 0 {
 		t.Fatalf("unlink exit = %d; output=%s", code, out.String())
 	}
-	if _, err := os.Stat(projectContextPath(root)); !os.IsNotExist(err) {
+	if _, err := os.Stat(main.ProjectContextPath(root)); !os.IsNotExist(err) {
 		t.Fatalf("context file after unlink: err=%v", err)
 	}
 }
@@ -151,18 +158,18 @@ func TestResolveEnvironmentFlagOrContext(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := saveProjectContext(root, localProjectContext{
-		Version: projectContextVersion, Project: "shop", App: "api", Environment: "staging",
+	if _, err := main.SaveProjectContext(root, main.LocalProjectContext{
+		Version: main.ProjectContextVersion, Project: "shop", App: "api", Environment: "staging",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(nested)
 
-	got, err := resolveEnvironmentFlagOrContext("")
+	got, err := main.ResolveEnvironmentFlagOrContext("")
 	if err != nil || got != "staging" {
 		t.Fatalf("context environment = %q, err=%v; want staging", got, err)
 	}
-	got, err = resolveEnvironmentFlagOrContext("production")
+	got, err = main.ResolveEnvironmentFlagOrContext("production")
 	if err != nil || got != "production" {
 		t.Fatalf("explicit environment = %q, err=%v; want production", got, err)
 	}
@@ -170,7 +177,7 @@ func TestResolveEnvironmentFlagOrContext(t *testing.T) {
 
 func TestResolveEnvironmentFlagOrContextWithoutContext(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got, err := resolveEnvironmentFlagOrContext("")
+	got, err := main.ResolveEnvironmentFlagOrContext("")
 	if err != nil {
 		t.Fatalf("resolve without context: %v", err)
 	}

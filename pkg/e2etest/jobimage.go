@@ -8,10 +8,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 )
 
@@ -59,7 +62,35 @@ func CustomerWorkflowImage(repo string) (fakeImage, string) {
 	return nativeFixtureImage(repo, []string{"/job-fixture", "customer-workflow"})
 }
 
+// CustomerHTTPImage serves an ordinary HTTP Operation handler (ADR-521) that
+// reports progress and uploads a private file under its invocation claim.
+func CustomerHTTPImage(repo string) (fakeImage, string) {
+	return nativeFixtureImage(repo, []string{"/job-fixture", "customer-http"})
+}
+
+// ProcessJobImage (ADR-1790) is the job fixture with a Docker process config:
+// USER 1234 with a passwd entry and home, a WORKDIR that does not exist in
+// the image, ENV including a PATH that holds the fixture, and CMD
+// `job-fixture whoami` as a bare command.
+func ProcessJobImage(repo string) (fakeImage, string) {
+	return nativeFixtureImageWith(repo, map[string]any{
+		"Cmd":        []string{"job-fixture", "whoami"},
+		"Env":        []string{"PATH=/usr/local/bin:/usr/bin:/bin:/", "FIXTURE_FROM_IMAGE=yes"},
+		"User":       "1234",
+		"WorkingDir": "/srv/app",
+	}, map[string]string{
+		"etc/passwd": "root:x:0:0:root:/root:/bin/sh\napp:x:1234:1234:app:/home/app:/bin/sh\n",
+		"etc/group":  "root:x:0:\napp:x:1234:\n",
+	})
+}
+
 func nativeFixtureImage(repo string, command []string) (fakeImage, string) {
+	return nativeFixtureImageWith(repo, map[string]any{"Cmd": command, "Env": []string{}, "WorkingDir": "/"}, nil)
+}
+
+// nativeFixtureImageWith builds the fixture image with the given OCI process
+// config and extra root-owned files.
+func nativeFixtureImageWith(repo string, process map[string]any, files map[string]string) (fakeImage, string) {
 	binary, err := jobFixtureBinary()
 	if err != nil {
 		panic(err)
@@ -71,6 +102,22 @@ func nativeFixtureImage(repo string, command []string) (fakeImage, string) {
 	}
 	if _, err := tw.Write(binary); err != nil {
 		panic(err)
+	}
+	dirs := map[string]bool{}
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		if dir := path.Dir(name); dir != "." && !dirs[dir] {
+			dirs[dir] = true
+			if err := tw.WriteHeader(&tar.Header{Name: dir + "/", Mode: 0o755, Typeflag: tar.TypeDir}); err != nil {
+				panic(err)
+			}
+		}
+		body := files[name]
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+			panic(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			panic(err)
+		}
 	}
 	if err := tw.Close(); err != nil {
 		panic(err)
@@ -89,7 +136,7 @@ func nativeFixtureImage(repo string, command []string) (fakeImage, string) {
 	config := map[string]any{
 		"architecture": runtime.GOARCH,
 		"os":           "linux",
-		"config":       map[string]any{"Cmd": command, "Env": []string{}, "WorkingDir": "/"},
+		"config":       process,
 		"rootfs":       map[string]any{"type": "layers", "diff_ids": []string{"sha256:" + hex.EncodeToString(diffSum[:])}},
 	}
 	configBytes, _ := json.Marshal(config)

@@ -26,6 +26,82 @@ src/database.types.ts`. Use `--check` in CI to fail when your file differs
 from the database. Refresh the serving schema cache after migrations with
 `gregale data-api refresh my-data` and verify restart completion.
 
+### Public data without a session
+
+When the owner enables [public reads or public RPCs](../../docs/data-api.md#public-reads),
+create the client with `anonymous: true`. Requests then go out without an
+`Authorization` header whenever there is no token:
+
+```ts
+const visitor = createDataClient<Database>({ url: 'https://my-data.gregale.dev', anonymous: true }).schema('api')
+const { data: products } = await visitor.from('products').select('id,name').limit(20)
+const { data: results } = await visitor.rpc('search_products', { q: 'lamp' }, { get: true })
+```
+
+Anonymous callers must call public RPCs with `{ get: true }`; a `POST` returns
+`405 public_rpc_requires_get`. Arguments and results keep their generated
+types.
+
+One client can serve signed-in and signed-out visitors: with `anonymous: true`,
+`accessToken` may return `null`, and the request is then anonymous. An empty
+or malformed token still throws before any request is sent. Without
+`anonymous: true`, a missing token always throws, so a broken session never
+silently becomes anonymous access:
+
+```ts
+const db = createDataClient<Database>({
+  url: 'https://my-data.gregale.dev',
+  anonymous: true,
+  accessToken: async () => (await auth.getSession())?.accessToken ?? null,
+}).schema('api')
+```
+
+Anonymous requests through `expectedSchemaFingerprint` reach the API on a
+contract-pinned path, so the Data API does not mark them for the edge cache.
+
+### Live reads
+
+A live read is a Data API read whose result stays current: it arrives once,
+then changes as rows are written. Row-level security decides each row, as it
+does for REST reads. Set it up once with
+[`gregale data-api live enable`](../../docs/data-api.md#live-reads), which
+prints the WebSocket URL and the database ID:
+
+```ts
+import { LiveConnection, liveRead, liveSocket } from '@gregale/data/live'
+
+const connection = new LiveConnection({ connect: liveSocket('wss://my-data.gregale.dev/__gregale/realtime/ENDPOINT_ID') })
+const feed = connection.query({
+  database: DATABASE_ID,
+  token: () => session.accessToken,
+  ...liveRead(db.from('messages').select('id,body,author(name)').eq('channel_id', 7).order('id', { ascending: false }).limit(50)),
+})
+feed.subscribe(() => render(feed.getSnapshot().rows))
+```
+
+`liveRead` takes the read's rows type from the generated contract, and rows
+decode as the REST API returns them. Each read carries exactly one
+credential:
+
+- `token`, the signed-in user's token, called again before it expires;
+- `anonymous: true`, for relations in the Data API's public-read allowlist;
+- `serverKey` (with an optional `subject`) for trusted backends. Server keys
+  are refused from browsers.
+
+React components use the hook from `@gregale/data/live/react` (React 18 or
+later):
+
+```tsx
+import { useLiveRead } from '@gregale/data/live/react'
+
+const { rows, status } = useLiveRead(connection, { database: DATABASE_ID, anonymous: true, ...liveRead(visitor.from('products').select('id,name')) })
+```
+
+The connection reconnects with backoff and resumes each read, keeping the
+last rows meanwhile. `status` is `connecting` (also while reconnecting),
+`live`, `stale` (the result could not be kept current, for example after a
+credential expired) or `closed`.
+
 ### Pin requests to the generated contract
 
 Regenerated TypeScript files also export a runtime `schemaFingerprint` value.

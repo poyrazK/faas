@@ -10,12 +10,14 @@ import (
 )
 
 const billingRunCols = `id::text, account_id::text, period_start, period_end, sources, finalize, export_provider, hold_on_gaps,
-	trigger, status, discovered_at, coalesce(lease_owner, ''), lease_until, created_at, started_at, completed_at, notified_at`
+	trigger, status, discovered_at, coalesce(lease_owner, ''), lease_until, created_at, started_at, completed_at, notified_at,
+	product_discovered_at`
 
 func scanBillingRun(row pgx.Row) (BillingRun, error) {
 	var r BillingRun
 	err := row.Scan(&r.ID, &r.AccountID, &r.PeriodStart, &r.PeriodEnd, &r.Sources, &r.Finalize, &r.Export, &r.HoldOnGaps,
-		&r.Trigger, &r.Status, &r.DiscoveredAt, &r.LeaseOwner, &r.LeaseUntil, &r.CreatedAt, &r.StartedAt, &r.CompletedAt, &r.NotifiedAt)
+		&r.Trigger, &r.Status, &r.DiscoveredAt, &r.LeaseOwner, &r.LeaseUntil, &r.CreatedAt, &r.StartedAt, &r.CompletedAt, &r.NotifiedAt,
+		&r.ProductDiscoveredAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BillingRun{}, ErrNotFound
 	}
@@ -67,7 +69,10 @@ func (s *PgStore) fillBillingRunCounts(ctx context.Context, runs []BillingRun) e
 		}
 		runs[index[runID]].Counts[outcome] = n
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return s.addBillingRunProductCounts(ctx, runs, index)
 }
 
 func (s *PgStore) billingRunWithCounts(ctx context.Context, run BillingRun) (BillingRun, error) {
@@ -158,7 +163,13 @@ func (s *PgStore) ListBillingRunItems(ctx context.Context, accountID, runID, out
 	if err != nil {
 		return nil, fmt.Errorf("list billing run items: %w", err)
 	}
-	return scanBillingRunItems(rows)
+	items, err := scanBillingRunItems(rows)
+	if err != nil || len(items) == limit {
+		return items, err
+	}
+	// Product Control items sort after every other kind.
+	products, err := s.billingRunProductItems(ctx, runID, outcome, after, limit-len(items))
+	return append(items, products...), err
 }
 
 func (s *PgStore) ClaimBillingRun(ctx context.Context, owner string, now time.Time, ttl time.Duration) (BillingRun, error) {
@@ -196,9 +207,26 @@ func (s *PgStore) DiscoverBillingRunItems(ctx context.Context, runID, owner, ten
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	run, err := lockLeasedBillingRun(ctx, tx, runID, owner)
-	if err != nil || run.DiscoveredAt != nil {
+	if err != nil || run.Discovered() {
 		return err
 	}
+	if run.DiscoveredAt == nil {
+		if err := discoverBillingRunUsageItems(ctx, tx, run, tenantReason, now); err != nil {
+			return err
+		}
+	}
+	if run.Includes(BillingRunSourceProductCustomers) && run.ProductDiscoveredAt == nil {
+		if err := discoverBillingRunProductItems(ctx, tx, run, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// discoverBillingRunUsageItems adds app consumers and platform tenants with
+// billable usage in the run's month (ADR-1503).
+func discoverBillingRunUsageItems(ctx context.Context, tx pgx.Tx, run BillingRun, tenantReason string, now time.Time) error {
+	runID := run.ID
 	if run.Includes(BillingRunSourceAppConsumers) {
 		// Usage attributed to a platform tenant is billed on the tenant's
 		// statement when the run includes platform tenants (ADR-1503).
@@ -235,9 +263,14 @@ func (s *PgStore) DiscoverBillingRunItems(ctx context.Context, runID, owner, ten
 			select $1::uuid, 'platform_tenant', p.id, p.external_ref, 'pending', $5::timestamptz, $5::timestamptz
 			  from platform_tenants p
 			 where p.account_id = $2::uuid
-			   and exists (select 1 from platform_tenant_usage_minutes t
-			                where t.account_id = $2::uuid and t.platform_tenant_id = p.id and t.billable_units > 0
-			                  and t.window_start >= $3 and t.window_start < $4)
+			   and (exists (select 1 from platform_tenant_usage_minutes t
+			                 where t.account_id = $2::uuid and t.platform_tenant_id = p.id and t.billable_units > 0
+			                   and t.window_start >= $3 and t.window_start < $4)
+			        -- A card with a base fee or minimum bills tenants without
+			        -- usage too (ADR-1322).
+			        or (p.created_at < $4 and exists (select 1 from platform_tenant_rate_cards r
+			             where r.account_id = $2::uuid and r.platform_tenant_id = p.id and r.effective_from < $4
+			               and (r.base_fee_millicents_per_month > 0 or r.minimum_millicents_per_month > 0))))
 			on conflict do nothing`, runID, run.AccountID, run.PeriodStart, run.PeriodEnd, now); err != nil {
 			return fmt.Errorf("discover platform tenants: %w", err)
 		}
@@ -245,7 +278,7 @@ func (s *PgStore) DiscoverBillingRunItems(ctx context.Context, runID, owner, ten
 	if _, err := tx.Exec(ctx, `update billing_runs set discovered_at = $2 where id = $1::uuid`, runID, now); err != nil {
 		return fmt.Errorf("mark billing run discovered: %w", err)
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (s *PgStore) ListDueBillingRunItems(ctx context.Context, runID, owner string, now time.Time, limit int) ([]BillingRunItem, error) {
@@ -257,18 +290,40 @@ func (s *PgStore) ListDueBillingRunItems(ctx context.Context, runID, owner strin
 	if !leased {
 		return nil, ErrBillingRunLeaseLost
 	}
+	// Items are processed in descending Key order; Product Control keys
+	// sort after every other kind.
+	items, err := s.dueBillingRunProductItems(ctx, runID, now, limit)
+	if err != nil || len(items) == limit {
+		return items, err
+	}
 	rows, err := s.pool.Query(ctx, `select `+billingRunItemCols+` from billing_run_items
 		where run_id = $1::uuid and outcome = 'pending' and next_attempt_at <= $2
-		order by source_kind desc, source_id desc limit $3`, runID, now, limit)
+		order by source_kind desc, source_id desc limit $3`, runID, now, limit-len(items))
 	if err != nil {
 		return nil, fmt.Errorf("list due billing run items: %w", err)
 	}
-	return scanBillingRunItems(rows)
+	usage, err := scanBillingRunItems(rows)
+	return append(items, usage...), err
+}
+
+func (s *PgStore) RenewBillingRunLease(ctx context.Context, runID, owner string, until time.Time) error {
+	tag, err := s.pool.Exec(ctx, `update billing_runs set lease_until = greatest(lease_until, $3)
+		where id = $1::uuid and lease_owner = $2 and status <> 'completed'`, runID, owner, until.UTC())
+	if err != nil {
+		return fmt.Errorf("renew billing run lease: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrBillingRunLeaseLost
+	}
+	return nil
 }
 
 func (s *PgStore) UpdateBillingRunItem(ctx context.Context, owner string, item BillingRunItem) error {
 	if !validBillingRunItemOutcome(item.Outcome) || len(item.Reason) > 1000 {
 		return fmt.Errorf("%w: invalid billing run item", ErrInvalidArgument)
+	}
+	if item.SourceKind == StatementSourceProductControl {
+		return s.updateBillingRunProductItem(ctx, owner, item)
 	}
 	tag, err := s.pool.Exec(ctx, `update billing_run_items i
 		   set outcome = $4, statement_id = nullif($5, '')::uuid, revision = nullif($6, 0), currency = nullif($7, ''),
@@ -299,12 +354,18 @@ func (s *PgStore) ReleaseBillingRun(ctx context.Context, runID, owner string, no
 	if _, err := lockLeasedBillingRun(ctx, tx, runID, owner); err != nil {
 		return BillingRun{}, err
 	}
-	run, err := scanBillingRun(tx.QueryRow(ctx, `update billing_runs
+	// A run completes once every included source is discovered and no item
+	// of either table is pending.
+	run, err := scanBillingRun(tx.QueryRow(ctx, `with done as (
+			select r.discovered_at is not null
+			       and (not ('product_customers' = any(r.sources)) or r.product_discovered_at is not null)
+			       and not exists (select 1 from billing_run_items where run_id = r.id and outcome = 'pending')
+			       and not exists (select 1 from billing_run_product_items where run_id = r.id and outcome = 'pending') as done
+			  from billing_runs r where r.id = $1::uuid)
+		update billing_runs
 		   set lease_owner = null, lease_until = null,
-		       status = case when discovered_at is not null and not exists (select 1 from billing_run_items
-		                  where run_id = $1::uuid and outcome = 'pending') then 'completed' else status end,
-		       completed_at = case when discovered_at is not null and not exists (select 1 from billing_run_items
-		                  where run_id = $1::uuid and outcome = 'pending') then $2 else completed_at end
+		       status = case when (select done from done) then 'completed' else status end,
+		       completed_at = case when (select done from done) then $2 else completed_at end
 		 where id = $1::uuid returning `+billingRunCols, runID, now))
 	if err != nil {
 		return BillingRun{}, fmt.Errorf("release billing run: %w", err)

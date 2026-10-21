@@ -71,7 +71,7 @@ func (m *MemStore) AppendFinancialAdjustment(_ context.Context, adjustment Finan
 }
 
 func (m *MemStore) retainFinancialUsageLocked(previous, current usageMinute) {
-	account, ok := m.accounts[current.AccountID]
+	account, ok := m.billingResourceAccountLocked(current.AccountID)
 	if !ok {
 		return
 	} // Legacy test fixtures have no owning account.
@@ -187,7 +187,7 @@ func (m *MemStore) PutFinancialPriceSnapshot(_ context.Context, p FinancialPrice
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.accounts[p.AccountID]; !ok {
+	if _, ok := m.billingResourceAccountLocked(p.AccountID); !ok {
 		return FinancialPriceSnapshot{}, ErrNotFound
 	}
 	if m.financialPrices == nil {
@@ -199,6 +199,11 @@ func (m *MemStore) PutFinancialPriceSnapshot(_ context.Context, p FinancialPrice
 			return FinancialPriceSnapshot{}, ErrConflict
 		}
 		return old, nil
+	}
+	if p.Price.Meter == "egress" {
+		if b, ok := m.financialComputeBooks[computeBookKey(p.AccountID, "", p.PeriodStart)]; ok && b.Egress.Initialized && (!financial.EgressContractFits(p.Price, b.Egress) || p.Price.IncludedQuantity < b.Egress.AllowanceGranted) {
+			return FinancialPriceSnapshot{}, financial.ErrComputeUnavailable
+		}
 	}
 	p.PeriodStart = p.PeriodStart.UTC()
 	p.PeriodEnd = p.PeriodEnd.UTC()

@@ -151,6 +151,10 @@ type HostingPhaseObserver interface {
 // bridge stamps it from req.Pusher.Login; the apid paths leave
 // it empty.
 type EnqueueParams struct {
+	// IntentID gives durable non-webhook orchestration the same recovery
+	// guarantees as DeliveryID. The two namespaces cannot collide.
+	IntentID            string
+	BuildDependencies   []state.DeploymentDependencyPin
 	ReviewedRolloutMode string
 	ExpectedReview      *api.AppReleaseReview
 	ReviewedSettings    *state.ProjectEnvironmentWorkloadSettings
@@ -162,6 +166,9 @@ type EnqueueParams struct {
 	// one current preview policy snapshot before granting this batch.
 	OperationAdmissionEnabled bool
 	DeliveryID                string
+	// OperationID is a trusted APID workflow identity, persisted before enqueue.
+	// It is separate from authenticated GitHub delivery identities.
+	OperationID string
 	// RetryOf preserves the original deployment and copies its input settings.
 	// RetryFrom records the requested stage; retained source is rebuilt when
 	// intermediate stage checkpoints are unavailable.
@@ -173,6 +180,7 @@ type EnqueueParams struct {
 	// ImageRef selects OCI materialization instead of a source build. Only
 	// trusted project callers set it after static workload admission.
 	ImageHealthcheck    *api.ComposeHealthcheck
+	ImageProcess        *api.ComposeProcess
 	ImageRef            string
 	ImagePort           int
 	ImageCommand        []string
@@ -183,8 +191,12 @@ type EnqueueParams struct {
 	// DockerfilePath is the explicit Dockerfile selected inside SourceRoot.
 	// It is captured in the deployment's immutable inferred profile.
 	DockerfilePath string
-	SourceURL      string
-	CommitSHA      string
+	// DockerfileBuild is the app's Compose build.args and build.target
+	// (ADR-20261019142544), captured in the inferred profile beside the
+	// Dockerfile path.
+	DockerfileBuild *api.DockerfileBuildOptions
+	SourceURL       string
+	CommitSHA       string
 	// GitHubSourceRef is populated when a GitHub deployment was resolved from
 	// a mutable branch (source-ref request or webhook push). Imaged rechecks
 	// it immediately before promotion.
@@ -287,6 +299,10 @@ func sourceBackendFromEnv(ctx context.Context) (storage.StorageBackend, error) {
 }
 
 func publishSource(ctx context.Context, be storage.StorageBackend, buildID, path string) error {
+	return publishSourceWithDeadline(ctx, be, buildID, path, false)
+}
+
+func publishSourceWithDeadline(ctx context.Context, be storage.StorageBackend, buildID, path string, preserveDeadline bool) error {
 	if be == nil {
 		return nil
 	}
@@ -306,7 +322,11 @@ func publishSource(ctx context.Context, be storage.StorageBackend, buildID, path
 	// has left after the archive scans: on production-us a 243 MiB source,
 	// inside the Scale plan's 250 MB cap, failed every retry with "context
 	// deadline exceeded" in this Put (hunt #10, H10-26).
-	putCtx, cancel := context.WithTimeout(reqbudget.WithoutBudget(context.WithoutCancel(ctx)), sourcePublishTimeout(size))
+	putParent := reqbudget.WithoutBudget(context.WithoutCancel(ctx))
+	if preserveDeadline {
+		putParent = ctx
+	}
+	putCtx, cancel := context.WithTimeout(putParent, sourcePublishTimeout(size))
 	defer cancel()
 	if err := be.Put(putCtx, "sources/"+buildID+".tar.gz", f); err != nil {
 		return fmt.Errorf("publish source archive: %w", err)
@@ -377,6 +397,12 @@ func hashSourceFile(path string) (string, error) {
 // <FAAS_SPOOL_ROOT>/projects/<acct>/<project>/<appID>.tar.gz (see
 // cmd/apid/scan_service.go + apply helper).
 func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) (EnqueueResult, error) {
+	if p.IntentID != "" {
+		if p.DeliveryID != "" {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: choose intent or delivery identity")
+		}
+		p.DeliveryID = "intent:" + p.IntentID
+	}
 	if len(p.OperationDefinitions) > 0 && !p.OperationAdmissionEnabled {
 		return EnqueueResult{}, api.ErrCapacity("new operation admission is disabled")
 	}
@@ -426,13 +452,54 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	}
 	buildID := id.String()
 	deploymentID := ""
+	if p.DeliveryID != "" && p.OperationID != "" {
+		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: ambiguous work identity")
+	}
+	replayable := p.DeliveryID != "" || p.OperationID != ""
 	if p.DeliveryID != "" {
 		deploymentID, buildID = githubDeliveryIDs(p.DeliveryID, p.AppID)
+	} else if p.OperationID != "" {
+		deploymentID, buildID = OperationIDs(p.OperationID, p.AppID)
+	}
+	var recovered *state.Deployment
+	if p.OperationID != "" {
+		reader, ok := store.(interface {
+			DeploymentByID(context.Context, string) (state.Deployment, error)
+			BuildByID(context.Context, string) (state.Build, error)
+		})
+		if !ok {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: workflow recovery unavailable")
+		}
+		existing, readErr := reader.DeploymentByID(ctx, deploymentID)
+		if readErr == nil {
+			if existing.AppID != p.AppID || existing.Kind != p.Kind || workflowScope(existing.Scope) != workflowScope(p.Scope) {
+				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: workflow deployment identity changed")
+			}
+			build, buildErr := reader.BuildByID(ctx, buildID)
+			if buildErr == nil {
+				if build.DeploymentID != existing.ID {
+					return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: workflow build identity changed")
+				}
+				return EnqueueResult{DeploymentID: existing.ID, BuildID: build.ID}, nil
+			}
+			if !errors.Is(buildErr, state.ErrNotFound) {
+				return EnqueueResult{}, buildErr
+			}
+			if existing.Status != state.DeployPending {
+				return EnqueueResult{}, state.ErrConflict
+			}
+			recovered = &existing
+		} else if !errors.Is(readErr, state.ErrNotFound) {
+			return EnqueueResult{}, readErr
+		}
 	}
 	var sourceErr error
 	sourceSHA256 := ""
 	var inferredProfile json.RawMessage
-	if p.RetryOf != "" {
+	if recovered != nil {
+		sourceSHA256 = recovered.SourceSHA256
+		inferredProfile = append(json.RawMessage(nil), recovered.InferredProfile...)
+	} else if p.RetryOf != "" {
 		sourceErr = publishRetrySource(ctx, sourceStorage, buildID, p)
 	} else {
 		sourceSHA256, err = hashSourceFile(p.SourcePath)
@@ -483,6 +550,9 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 					profile = runtimeProfile
 				}
 			}
+			if !p.DockerfileBuild.IsZero() {
+				profile.DockerfileBuild = p.DockerfileBuild.Clone()
+			}
 			if inferredProfile, err = json.Marshal(profile); err != nil {
 				if p.Log != nil {
 					p.Log.Warn("apidsource.Enqueue: encode source profile", "app", p.AppID, "err", err)
@@ -490,7 +560,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 				inferredProfile = nil
 			}
 		}
-		sourceErr = publishSource(ctx, sourceStorage, buildID, p.SourcePath)
+		sourceErr = publishSourceWithDeadline(ctx, sourceStorage, buildID, p.SourcePath, p.OperationID != "")
 	}
 	if err := sourceErr; err != nil {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: source handoff: %w", err)
@@ -517,6 +587,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	// chain, so pre-#606 callers that don't pass actor fields render
 	// identical wire shapes.
 	input := state.Deployment{
+		BuildDependencies:    p.BuildDependencies,
 		ExpectedReview:       p.ExpectedReview,
 		ReviewedRolloutMode:  p.ReviewedRolloutMode,
 		ReviewedSettings:     p.ReviewedSettings,
@@ -583,7 +654,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		// A deterministic ID conflict means this delivery/app pair crossed
 		// the commit boundary during an earlier attempt. Recover the durable
 		// row rather than creating duplicate customer work.
-		if p.DeliveryID == "" || !errors.Is(err, state.ErrConflict) {
+		if !replayable || !errors.Is(err, state.ErrConflict) {
 			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: create deployment: %w", err)
 		}
 		idempotent, ok := store.(interface {
@@ -609,7 +680,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: operation definitions: %w", err)
 	}
 
-	if p.DeliveryID != "" {
+	if replayable {
 		if reader, ok := store.(interface {
 			BuildByID(context.Context, string) (state.Build, error)
 		}); ok {
@@ -676,7 +747,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		build, err = store.CreateBuildWithID(ctx, buildID, d.ID, p.Kind, p.SourceBytes, filepath.Join(logDir, "build.log"))
 	}
 	if err != nil {
-		if p.DeliveryID != "" && errors.Is(err, state.ErrConflict) {
+		if replayable && errors.Is(err, state.ErrConflict) {
 			if reader, ok := store.(interface {
 				BuildByID(context.Context, string) (state.Build, error)
 			}); ok {
@@ -687,7 +758,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		}
 		// Delivery-backed work remains pending for the durable inbox to
 		// retry. Non-webhook callers keep the historical terminal cleanup.
-		if p.DeliveryID != "" {
+		if replayable {
 			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: create build: %w", err)
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -778,6 +849,12 @@ func githubDeliveryIDs(deliveryID, appID string) (deploymentID, buildID string) 
 		uuid.NewSHA1(githubDeliveryNamespace, []byte(key+"\x00build")).String()
 }
 
+// IntentIDs lets an orchestrator recover the exact deployment/build before
+// re-enqueuing a request whose reply was lost.
+func IntentIDs(intentID, appID string) (string, string) {
+	return githubDeliveryIDs("intent:"+intentID, appID)
+}
+
 func createDeployment(ctx context.Context, store Store, p EnqueueParams, input state.Deployment) (state.Deployment, error) {
 	if p.RetryOf == "" {
 		return store.CreateDeployment(ctx, input)
@@ -789,4 +866,18 @@ func createDeployment(ctx context.Context, store Store, p EnqueueParams, input s
 		return state.Deployment{}, fmt.Errorf("apidsource: store does not support deployment retry")
 	}
 	return retries.RetryDeploymentFromStage(ctx, p.RetryOf, p.RetryFrom)
+}
+
+// OperationIDs binds one durable workflow attempt to exactly one app.
+func OperationIDs(operationID, appID string) (deploymentID, buildID string) {
+	ns := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale.dev/project-migration/v1"))
+	key := operationID + "\x00" + appID
+	return uuid.NewSHA1(ns, []byte(key+"\x00deployment")).String(), uuid.NewSHA1(ns, []byte(key+"\x00build")).String()
+}
+
+func workflowScope(scope string) string {
+	if scope == "" {
+		return api.DefaultEnvScope
+	}
+	return scope
 }

@@ -18,11 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagepublisher"
 )
 
-type standardPublisherTestStore interface {
-	standardAutomaticTestStore
-	BuildExportPublicationStore
-	artifactScanTestStore
-}
+type standardPublisherTestStore = contractTestStore
 
 func TestMemApplicationStandardPublisherInheritance(t *testing.T) {
 	standardPublisherInheritance(t, NewMemStore())

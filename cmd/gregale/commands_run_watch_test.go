@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // spec: §4.4
 // adr: 171
@@ -6,6 +6,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,22 +24,22 @@ func TestCmdRunWatchJSONReconnectsWithCursor(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "watch-token")
 
-	oldJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = oldJSON })
-	out, _, restore := swapIO(t)
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = oldJSON })
+	out, _, restore := main.SwapIO(t)
 	defer restore()
 
-	if got := cmdRun([]string{"--runtime", "node24", "--source", "console.log(1)", "--watch"}); got != 0 {
+	if got := main.CmdRun([]string{"--runtime", "node24", "--source", "console.log(1)", "--watch"}); got != 0 {
 		t.Fatalf("cmdRun exit = %d, output=%q", got, out.String())
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	if len(lines) != 4 {
 		t.Fatalf("watch output lines = %d, output=%q", len(lines), out.String())
 	}
-	var events []executionWatchEvent
+	var events []main.ExecutionWatchEvent
 	for _, line := range lines {
-		var event executionWatchEvent
+		var event main.ExecutionWatchEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			t.Fatalf("event JSON %q: %v", line, err)
 		}
@@ -65,13 +66,13 @@ func TestCmdRunWatchHumanDoesNotDuplicateOutput(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "watch-token")
 
-	oldJSON := jsonOutput
-	jsonOutput = false
-	t.Cleanup(func() { jsonOutput = oldJSON })
-	out, errOut, restore := swapIO(t)
+	oldJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	t.Cleanup(func() { (*main.JsonOutput) = oldJSON })
+	out, errOut, restore := main.SwapIO(t)
 	defer restore()
 
-	if got := cmdRun([]string{"--runtime", "node24", "--source", "console.log(1)", "--watch"}); got != 0 {
+	if got := main.CmdRun([]string{"--runtime", "node24", "--source", "console.log(1)", "--watch"}); got != 0 {
 		t.Fatalf("cmdRun exit = %d, stdout=%q, stderr=%q", got, out.String(), errOut())
 	}
 	if got := strings.Count(out.String(), "hello\n"); got != 1 {

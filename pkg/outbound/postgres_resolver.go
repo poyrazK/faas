@@ -59,7 +59,17 @@ const integrationPolicySQL = `
 	       integration.ai_request_log_enabled,
 	       COALESCE(integration.ai_user_daily_token_limit, 0), COALESCE(integration.ai_user_daily_cost_limit_millicents, 0),
 	       integration.ai_request_log_content, integration.ai_content_email, integration.ai_content_payment_card,
-	       integration.ai_content_iban, integration.ai_content_secret, integration.ai_content_blocked_terms
+	       integration.ai_content_iban, integration.ai_content_secret, integration.ai_content_blocked_terms,
+	       integration.ai_log_export, integration.ai_moderation_action, COALESCE(integration.ai_moderation_kind, ''),
+	       COALESCE(integration.ai_moderation_integration_id::text, ''), COALESCE(integration.ai_moderation_model, ''),
+	       integration.ai_moderation_categories, integration.ai_moderation_on_error, integration.ai_allow_unmetered,
+	       integration.ai_auto_prompt_cache,
+	       integration.ai_response_email, integration.ai_response_payment_card, integration.ai_response_iban,
+	       integration.ai_response_secret, integration.ai_response_blocked_terms, integration.ai_response_moderation,
+	       ARRAY(SELECT tag_limit.tag FROM outbound_ai_tag_limits tag_limit
+	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag),
+	       ARRAY(SELECT tag_limit.daily_cost_limit_millicents FROM outbound_ai_tag_limits tag_limit
+	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag)
 	  FROM outbound_integrations integration
 	  JOIN accounts account ON account.id = integration.account_id
 	 WHERE integration.id = $1`
@@ -89,7 +99,10 @@ const currentAIPricesSQL = `
 	SELECT entry.model_prefix, entry.input_millicents_per_mtok, entry.cached_input_millicents_per_mtok,
 	       entry.cache_write_millicents_per_mtok, entry.output_millicents_per_mtok,
 	       entry.input_image_millicents_per_mtok, entry.output_image_millicents_per_mtok, entry.millicents_per_image,
-	       entry.millicents_per_audio_minute, entry.millicents_per_million_characters
+	       entry.millicents_per_audio_minute, entry.millicents_per_million_characters, entry.millicents_per_video_second,
+	       entry.millicents_per_web_search, entry.millicents_per_file_search, entry.millicents_per_code_session_gb,
+	       entry.input_audio_millicents_per_mtok, entry.cached_input_audio_millicents_per_mtok,
+	       entry.output_audio_millicents_per_mtok
 	  FROM outbound_ai_price_entries entry
 	 WHERE entry.price_list_id = (
 	       SELECT list.id FROM outbound_ai_price_lists list
@@ -117,16 +130,24 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var policyUpdatedAt time.Time
 	var aiProvider string
 	var aiDailyTokenLimitValue, aiDailyCostLimitValue, aiMonthlyCostLimitValue int64
-	var aiRequestLogEnabled, aiRequestLogContent bool
+	var aiRequestLogEnabled, aiRequestLogContent, aiLogExport, aiAllowUnmetered, aiAutoPromptCache bool
 	var contentPolicy api.OutboundAIContentPolicy
 	var aiUserTokenLimitValue, aiUserCostLimitValue int64
+	var tagLimitTags []string
+	var tagLimitCosts []int64
 	err := results.QueryRow().
 		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
 			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue,
 			&aiProvider, &aiDailyTokenLimitValue, &aiDailyCostLimitValue, &aiMonthlyCostLimitValue, &aiRequestLogEnabled,
 			&aiUserTokenLimitValue, &aiUserCostLimitValue, &aiRequestLogContent, &contentPolicy.Email,
-			&contentPolicy.PaymentCard, &contentPolicy.IBAN, &contentPolicy.Secret, &contentPolicy.BlockedTerms)
+			&contentPolicy.PaymentCard, &contentPolicy.IBAN, &contentPolicy.Secret, &contentPolicy.BlockedTerms,
+			&aiLogExport, &contentPolicy.Moderation.Action, &contentPolicy.Moderation.Kind, &contentPolicy.Moderation.IntegrationID,
+			&contentPolicy.Moderation.Model, &contentPolicy.Moderation.Categories, &contentPolicy.Moderation.OnError, &aiAllowUnmetered,
+			&aiAutoPromptCache,
+			&contentPolicy.Response.Email, &contentPolicy.Response.PaymentCard, &contentPolicy.Response.IBAN,
+			&contentPolicy.Response.Secret, &contentPolicy.Response.BlockedTerms, &contentPolicy.Response.Moderation,
+			&tagLimitTags, &tagLimitCosts)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -253,9 +274,21 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 		BindingAIGuardrails: bindingAIGuardrails, AIRequestLogEnabled: aiRequestLogEnabled, AIRequestLogContent: aiRequestLogContent,
 		AccountPlan:       api.Plan(plan),
 		AIContentPolicy:   contentPolicy,
+		AILogExport:       aiLogExport,
+		AIAllowUnmetered:  aiAllowUnmetered,
+		AIAutoPromptCache: aiAutoPromptCache,
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
 		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}
+	// ADR-1436: the integration's tag limits.
+	for index, tag := range tagLimitTags {
+		if index < len(tagLimitCosts) {
+			if i.AITagDailyCostLimits == nil {
+				i.AITagDailyCostLimits = make(map[string]int64, len(tagLimitTags))
+			}
+			i.AITagDailyCostLimits[tag] = tagLimitCosts[index]
+		}
+	}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err
 	}
@@ -271,7 +304,9 @@ func scanAIPrices(rows pgx.Rows) ([]AIPrice, error) {
 		if err := rows.Scan(&entry.ModelPrefix, &entry.InputMillicentsPerMTok, &entry.CachedInputMillicentsPerMTok,
 			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
 			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
-			&entry.MillicentsPerMillionCharacters); err != nil {
+			&entry.MillicentsPerMillionCharacters, &entry.MillicentsPerVideoSecond, &entry.MillicentsPerWebSearch,
+			&entry.MillicentsPerFileSearch, &entry.MillicentsPerCodeSessionGB, &entry.InputAudioMillicentsPerMTok,
+			&entry.CachedInputAudioMillicentsPerMTok, &entry.OutputAudioMillicentsPerMTok); err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry)

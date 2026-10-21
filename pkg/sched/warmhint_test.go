@@ -15,9 +15,10 @@
 // unconditional fan-out; the change filter lives on the engine
 // boundary.
 
-package sched
+package sched_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/sched"
 	"sync"
 	"testing"
 	"time"
@@ -25,17 +26,17 @@ import (
 
 func TestBroadcaster_FansOutToSubscribers(t *testing.T) {
 	t.Parallel()
-	b := newWarmHintBroadcaster()
+	b := sched.NewWarmHintBroadcaster()
 
-	ch1, unsub1 := b.subscribe(8)
+	ch1, unsub1 := b.Subscribe(8)
 	defer unsub1()
-	ch2, unsub2 := b.subscribe(8)
+	ch2, unsub2 := b.Subscribe(8)
 	defer unsub2()
 
-	b.emit(WarmHintEvent{AppID: "app-1", NodeID: "node-a"})
-	b.emit(WarmHintEvent{AppID: "app-2", NodeID: "node-b"})
+	b.Emit(sched.WarmHintEvent{AppID: "app-1", NodeID: "node-a"})
+	b.Emit(sched.WarmHintEvent{AppID: "app-2", NodeID: "node-b"})
 
-	for _, ch := range []<-chan WarmHintEvent{ch1, ch2} {
+	for _, ch := range []<-chan sched.WarmHintEvent{ch1, ch2} {
 		got := drainN(t, ch, 2)
 		if got[0].AppID != "app-1" || got[0].NodeID != "node-a" {
 			t.Errorf("event[0] = %+v, want {app-1, node-a}", got[0])
@@ -48,20 +49,20 @@ func TestBroadcaster_FansOutToSubscribers(t *testing.T) {
 
 func TestBroadcaster_DropsOnFullChannel(t *testing.T) {
 	t.Parallel()
-	b := newWarmHintBroadcaster()
+	b := sched.NewWarmHintBroadcaster()
 
 	// bufCap=1 → second emit drops.
-	ch, unsub := b.subscribe(1)
+	ch, unsub := b.Subscribe(1)
 	defer unsub()
 
 	// Fill the buffer with the first emit.
-	b.emit(WarmHintEvent{AppID: "app-1", NodeID: "node-a"})
+	b.Emit(sched.WarmHintEvent{AppID: "app-1", NodeID: "node-a"})
 
 	// Two more emits with the buffer still full → both drop.
-	b.emit(WarmHintEvent{AppID: "app-2", NodeID: "node-b"})
-	b.emit(WarmHintEvent{AppID: "app-3", NodeID: "node-c"})
+	b.Emit(sched.WarmHintEvent{AppID: "app-2", NodeID: "node-b"})
+	b.Emit(sched.WarmHintEvent{AppID: "app-3", NodeID: "node-c"})
 
-	if got := b.droppedCount(); got != 2 {
+	if got := b.DroppedCount(); got != 2 {
 		t.Errorf("droppedCount = %d, want 2", got)
 	}
 
@@ -74,10 +75,10 @@ func TestBroadcaster_DropsOnFullChannel(t *testing.T) {
 
 func TestBroadcaster_UnsubscribeStopsDelivery(t *testing.T) {
 	t.Parallel()
-	b := newWarmHintBroadcaster()
+	b := sched.NewWarmHintBroadcaster()
 
-	ch, unsub := b.subscribe(8)
-	b.emit(WarmHintEvent{AppID: "app-1", NodeID: "node-a"})
+	ch, unsub := b.Subscribe(8)
+	b.Emit(sched.WarmHintEvent{AppID: "app-1", NodeID: "node-a"})
 	if got := drainN(t, ch, 1); got[0].AppID != "app-1" {
 		t.Fatalf("pre-unsubscribe event = %+v, want {app-1, ...}", got[0])
 	}
@@ -86,7 +87,7 @@ func TestBroadcaster_UnsubscribeStopsDelivery(t *testing.T) {
 	unsub()
 
 	// Emit after unsubscribe — channel is closed; Recv returns zero+ok=false.
-	b.emit(WarmHintEvent{AppID: "app-2", NodeID: "node-b"})
+	b.Emit(sched.WarmHintEvent{AppID: "app-2", NodeID: "node-b"})
 
 	// Channel is closed, so the next read returns the zero value
 	// and ok=false. We don't read it explicitly — that would
@@ -94,37 +95,37 @@ func TestBroadcaster_UnsubscribeStopsDelivery(t *testing.T) {
 	// always returns immediately with the zero value. Verify
 	// subscriberCount is 0 and dropped is 0 (the post-unsubscribe
 	// emit found an empty subs map).
-	if got := b.subscriberCount(); got != 0 {
+	if got := b.SubscriberCount(); got != 0 {
 		t.Errorf("subscriberCount after unsub = %d, want 0", got)
 	}
-	if got := b.droppedCount(); got != 0 {
+	if got := b.DroppedCount(); got != 0 {
 		t.Errorf("droppedCount after unsub = %d, want 0", got)
 	}
 }
 
 func TestBroadcaster_NilSafety(t *testing.T) {
 	t.Parallel()
-	var b *warmHintBroadcaster
+	var b *sched.WarmHintBroadcaster
 	// All public methods must tolerate a nil receiver.
-	b.emit(WarmHintEvent{AppID: "x", NodeID: "y"})
-	if got := b.subscriberCount(); got != 0 {
+	b.Emit(sched.WarmHintEvent{AppID: "x", NodeID: "y"})
+	if got := b.SubscriberCount(); got != 0 {
 		t.Errorf("nil subscriberCount = %d, want 0", got)
 	}
-	if got := b.droppedCount(); got != 0 {
+	if got := b.DroppedCount(); got != 0 {
 		t.Errorf("nil droppedCount = %d, want 0", got)
 	}
 }
 
 func TestBroadcaster_ConcurrentEmit(t *testing.T) {
 	t.Parallel()
-	b := newWarmHintBroadcaster()
+	b := sched.NewWarmHintBroadcaster()
 	const nSubs = 4
 	const nEmits = 100
 	const bufCap = 256 // generous buffer so emit doesn't drop under -race
 
-	subs := make([]<-chan WarmHintEvent, nSubs)
+	subs := make([]<-chan sched.WarmHintEvent, nSubs)
 	for i := 0; i < nSubs; i++ {
-		ch, unsub := b.subscribe(bufCap)
+		ch, unsub := b.Subscribe(bufCap)
 		subs[i] = ch
 		defer unsub()
 	}
@@ -132,7 +133,7 @@ func TestBroadcaster_ConcurrentEmit(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(nSubs)
 	for i := 0; i < nSubs; i++ {
-		go func(sub <-chan WarmHintEvent) {
+		go func(sub <-chan sched.WarmHintEvent) {
 			defer wg.Done()
 			seen := 0
 			for seen < nEmits {
@@ -148,7 +149,7 @@ func TestBroadcaster_ConcurrentEmit(t *testing.T) {
 	}
 
 	for i := 0; i < nEmits; i++ {
-		b.emit(WarmHintEvent{AppID: "app", NodeID: "node"})
+		b.Emit(sched.WarmHintEvent{AppID: "app", NodeID: "node"})
 	}
 	wg.Wait()
 }
@@ -161,11 +162,11 @@ func TestBroadcaster_ConcurrentEmit(t *testing.T) {
 // broadcaster is a pure fan-out with no opinion on the payload.
 func TestBroadcaster_EmitPreservesZeroWrittenAt(t *testing.T) {
 	t.Parallel()
-	b := newWarmHintBroadcaster()
-	ch, unsub := b.subscribe(2)
+	b := sched.NewWarmHintBroadcaster()
+	ch, unsub := b.Subscribe(2)
 	defer unsub()
 
-	b.emit(WarmHintEvent{AppID: "app", NodeID: "node"})
+	b.Emit(sched.WarmHintEvent{AppID: "app", NodeID: "node"})
 
 	got := drainN(t, ch, 1)[0]
 	if !got.WrittenAt.IsZero() {
@@ -179,12 +180,12 @@ func TestBroadcaster_EmitPreservesZeroWrittenAt(t *testing.T) {
 // passes is what subscribers see.
 func TestBroadcaster_EmitPreservesExplicitWrittenAt(t *testing.T) {
 	t.Parallel()
-	b := newWarmHintBroadcaster()
-	ch, unsub := b.subscribe(2)
+	b := sched.NewWarmHintBroadcaster()
+	ch, unsub := b.Subscribe(2)
 	defer unsub()
 
 	want := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
-	b.emit(WarmHintEvent{AppID: "app", NodeID: "node", WrittenAt: want})
+	b.Emit(sched.WarmHintEvent{AppID: "app", NodeID: "node", WrittenAt: want})
 
 	got := drainN(t, ch, 1)[0]
 	if !got.WrittenAt.Equal(want) {
@@ -195,9 +196,9 @@ func TestBroadcaster_EmitPreservesExplicitWrittenAt(t *testing.T) {
 // drainN reads up to n events from ch, with a 1s safety timeout
 // per event. Returns whatever was collected (caller asserts the
 // length).
-func drainN(t *testing.T, ch <-chan WarmHintEvent, n int) []WarmHintEvent {
+func drainN(t *testing.T, ch <-chan sched.WarmHintEvent, n int) []sched.WarmHintEvent {
 	t.Helper()
-	out := make([]WarmHintEvent, 0, n)
+	out := make([]sched.WarmHintEvent, 0, n)
 	for len(out) < n {
 		select {
 		case ev, ok := <-ch:
@@ -217,7 +218,7 @@ func drainN(t *testing.T, ch <-chan WarmHintEvent, n int) []WarmHintEvent {
 // the engine's emit gate (engine.go RecordWake site).
 func TestRecordWakeIfChanged(t *testing.T) {
 	t.Parallel()
-	w := NewWarmAffinity(0)
+	w := sched.NewWarmAffinity(0)
 
 	// (1) Cold entry — changed=true, prev="".
 	prev, changed := w.RecordWakeIfChanged("app", "node-a")

@@ -42,6 +42,21 @@ type OutboundAIPriceEntry struct {
 	MillicentsPerImage             *int64 `json:"millicents_per_image,omitempty"`
 	MillicentsPerAudioMinute       *int64 `json:"millicents_per_audio_minute,omitempty"`
 	MillicentsPerMillionCharacters *int64 `json:"millicents_per_million_characters,omitempty"`
+	// MillicentsPerVideoSecond prices each second of generated video
+	// (ADR-1432). A model prefix may name a resolution after "@", such as
+	// "veo-3.1-generate-001@4k", which wins for calls at that resolution.
+	MillicentsPerVideoSecond *int64 `json:"millicents_per_video_second,omitempty"`
+	// Built-in tool prices (ADR-1433): per web search (a call, query or
+	// grounded prompt, as the provider bills it), per file search, and per
+	// GB of code-interpreter container memory per session.
+	MillicentsPerWebSearch     *int64 `json:"millicents_per_web_search,omitempty"`
+	MillicentsPerFileSearch    *int64 `json:"millicents_per_file_search,omitempty"`
+	MillicentsPerCodeSessionGB *int64 `json:"millicents_per_code_session_gb,omitempty"`
+	// Audio token prices per million (ADR 20261019072722). Each falls back
+	// to the text price of the same kind: input, cached input or output.
+	InputAudioMillicentsPerMTok       *int64 `json:"input_audio_millicents_per_mtok,omitempty"`
+	CachedInputAudioMillicentsPerMTok *int64 `json:"cached_input_audio_millicents_per_mtok,omitempty"`
+	OutputAudioMillicentsPerMTok      *int64 `json:"output_audio_millicents_per_mtok,omitempty"`
 }
 
 // ValidOutboundAIPriceEntries checks one complete price list.
@@ -56,13 +71,18 @@ func ValidOutboundAIPriceEntries(entries []OutboundAIPriceEntry) bool {
 			return false
 		}
 		for _, optional := range []*int64{entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok,
-			entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok, entry.MillicentsPerMillionCharacters} {
+			entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok, entry.MillicentsPerMillionCharacters,
+			entry.InputAudioMillicentsPerMTok, entry.CachedInputAudioMillicentsPerMTok, entry.OutputAudioMillicentsPerMTok} {
 			if optional != nil && !validPrice(*optional) {
 				return false
 			}
 		}
 		if !optionalWithin(entry.MillicentsPerImage, MaxOutboundAIPriceMillicentsPerImage) ||
-			!optionalWithin(entry.MillicentsPerAudioMinute, MaxOutboundAIPriceMillicentsPerAudioMinute) {
+			!optionalWithin(entry.MillicentsPerAudioMinute, MaxOutboundAIPriceMillicentsPerAudioMinute) ||
+			!optionalWithin(entry.MillicentsPerVideoSecond, MaxOutboundAIPriceMillicentsPerVideoSecond) ||
+			!optionalWithin(entry.MillicentsPerWebSearch, MaxOutboundAIPriceMillicentsPerToolUse) ||
+			!optionalWithin(entry.MillicentsPerFileSearch, MaxOutboundAIPriceMillicentsPerToolUse) ||
+			!optionalWithin(entry.MillicentsPerCodeSessionGB, MaxOutboundAIPriceMillicentsPerToolUse) {
 			return false
 		}
 		if _, dup := seen[entry.ModelPrefix]; dup {
@@ -115,16 +135,66 @@ const (
 // provider, or blocks the request. A request that contains a blocked term,
 // compared without case, is blocked. The gateway checks the string values
 // of buffered JSON bodies and the text fields of multipart forms.
+// Moderation adds a model-based check (ADR-1340), and Response checks the
+// model's output (ADR-1435).
 type OutboundAIContentPolicy struct {
-	Email        string   `json:"email"`
-	PaymentCard  string   `json:"payment_card"`
-	IBAN         string   `json:"iban"`
-	Secret       string   `json:"secret"`
-	BlockedTerms []string `json:"blocked_terms"`
+	Email        string                   `json:"email"`
+	PaymentCard  string                   `json:"payment_card"`
+	IBAN         string                   `json:"iban"`
+	Secret       string                   `json:"secret"`
+	BlockedTerms []string                 `json:"blocked_terms"`
+	Moderation   OutboundAIModeration     `json:"moderation"`
+	Response     OutboundAIResponsePolicy `json:"response"`
+}
+
+// OutboundAIResponsePolicy checks the text a model sends back before the
+// caller sees it (ADR-1435). The detectors redact or block as on requests;
+// BlockedTerms blocks a response holding one of the policy's terms; and
+// Moderation flags or blocks it with the policy's moderation check.
+type OutboundAIResponsePolicy struct {
+	Email        string `json:"email"`
+	PaymentCard  string `json:"payment_card"`
+	IBAN         string `json:"iban"`
+	Secret       string `json:"secret"`
+	BlockedTerms string `json:"blocked_terms"`
+	Moderation   string `json:"moderation"`
+}
+
+// Normalized replaces empty actions with off.
+func (p OutboundAIResponsePolicy) Normalized() OutboundAIResponsePolicy {
+	for _, action := range []*string{&p.Email, &p.PaymentCard, &p.IBAN, &p.Secret, &p.BlockedTerms, &p.Moderation} {
+		if *action == "" {
+			*action = OutboundAIContentOff
+		}
+	}
+	return p
+}
+
+// Active reports whether responses are checked.
+func (p OutboundAIResponsePolicy) Active() bool {
+	p = p.Normalized()
+	for _, action := range []string{p.Email, p.PaymentCard, p.IBAN, p.Secret, p.BlockedTerms, p.Moderation} {
+		if action != OutboundAIContentOff {
+			return true
+		}
+	}
+	return false
+}
+
+func (p OutboundAIResponsePolicy) valid() bool {
+	p = p.Normalized()
+	for _, action := range []string{p.Email, p.PaymentCard, p.IBAN, p.Secret} {
+		if action != OutboundAIContentOff && action != OutboundAIContentRedact && action != OutboundAIContentBlock {
+			return false
+		}
+	}
+	return (p.BlockedTerms == OutboundAIContentOff || p.BlockedTerms == OutboundAIContentBlock) &&
+		(p.Moderation == OutboundAIModerationOff || p.Moderation == OutboundAIModerationFlag || p.Moderation == OutboundAIModerationBlock)
 }
 
 // Normalized replaces empty actions with off and a nil term list with an
-// empty one.
+// empty one. The moderation check keeps its settings while responses use
+// them (ADR-1435).
 func (p OutboundAIContentPolicy) Normalized() OutboundAIContentPolicy {
 	for _, action := range []*string{&p.Email, &p.PaymentCard, &p.IBAN, &p.Secret} {
 		if *action == "" {
@@ -134,10 +204,13 @@ func (p OutboundAIContentPolicy) Normalized() OutboundAIContentPolicy {
 	if p.BlockedTerms == nil {
 		p.BlockedTerms = []string{}
 	}
+	p.Response = p.Response.Normalized()
+	p.Moderation = p.Moderation.normalized(p.Response.Moderation != OutboundAIModerationOff)
 	return p
 }
 
-// Active reports whether any detector or term is on.
+// Active reports whether any detector or term is on. Moderation is
+// separate: it runs after admission (ADR-1340).
 func (p OutboundAIContentPolicy) Active() bool {
 	p = p.Normalized()
 	for _, action := range []string{p.Email, p.PaymentCard, p.IBAN, p.Secret} {
@@ -158,7 +231,8 @@ func (p OutboundAIContentPolicy) Valid() bool {
 			return false
 		}
 	}
-	if len(p.BlockedTerms) > OutboundAIBlockedTermsMax {
+	if len(p.BlockedTerms) > OutboundAIBlockedTermsMax || !p.Response.valid() ||
+		!p.Moderation.validFor(p.Response.Moderation != OutboundAIModerationOff) {
 		return false
 	}
 	seen := make(map[string]struct{}, len(p.BlockedTerms))
@@ -177,17 +251,25 @@ func (p OutboundAIContentPolicy) Valid() bool {
 }
 
 // OutboundAIPriceCatalogResponse is the built-in price catalog of one
-// provider (ADR-994): list prices converted from USD at USDPerEUR and
-// rounded up. It prices the models an integration's own list does not name;
-// a "*" entry in that list turns the catalog off for the integration.
+// provider (ADR-994): list prices in Currency, the billing currency, rounded
+// up (ADR 20261019123822). It prices the models an integration's own list
+// does not name; a "*" entry in that list turns the catalog off for the
+// integration.
 type OutboundAIPriceCatalogResponse struct {
-	AIProvider string                 `json:"ai_provider"`
-	Source     string                 `json:"source"`
-	Generated  string                 `json:"generated"`
-	USDPerEUR  string                 `json:"usd_per_eur"`
-	FXSource   string                 `json:"fx_source"`
-	Entries    []OutboundAIPriceEntry `json:"entries"`
+	AIProvider string `json:"ai_provider"`
+	Source     string `json:"source"`
+	Generated  string `json:"generated"`
+	Currency   string `json:"currency"`
+	// Deprecated: USDPerEUR is always "1" and FXSource names no rate since
+	// the catalog moved to US dollars; released SDKs still require them.
+	USDPerEUR string                 `json:"usd_per_eur"`
+	FXSource  string                 `json:"fx_source"`
+	Entries   []OutboundAIPriceEntry `json:"entries"`
 }
+
+// OutboundAIPriceCatalogFXSource is the deprecated fx_source of a US-dollar
+// catalog (ADR 20261019123822).
+const OutboundAIPriceCatalogFXSource = "none: list prices are in US dollars"
 
 // PutOutboundBindingAIBudgetRequest sets or clears an app's daily AI token
 // limit on one integration binding.
@@ -202,6 +284,47 @@ var outboundAIRouteName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])
 type OutboundAIRouteTarget struct {
 	IntegrationID string `json:"integration_id"`
 	Model         string `json:"model,omitempty"`
+	// Weight is the target's share of first attempts on a weighted route,
+	// from 0 to 100 (ADR-1434).
+	Weight *int `json:"weight,omitempty"`
+}
+
+// Route strategies (ADR-1434): how a route picks the target a call tries
+// first. The other targets follow as fallbacks in route order.
+const (
+	OutboundAIRouteStrategyOrdered  = "ordered"
+	OutboundAIRouteStrategyWeighted = "weighted"
+	OutboundAIRouteStrategyLatency  = "latency"
+	OutboundAIRouteStrategyCost     = "cost"
+)
+
+// ValidOutboundAIRouteStrategy checks a strategy with its targets' weights
+// and latency target. A weighted route weighs every target, at least one
+// above zero; other strategies take no weights; only a cost route takes
+// max_ttfb_ms.
+func ValidOutboundAIRouteStrategy(strategy string, maxTTFBMS *int, targets []OutboundAIRouteTarget) bool {
+	switch strategy {
+	case "", OutboundAIRouteStrategyOrdered, OutboundAIRouteStrategyLatency, OutboundAIRouteStrategyCost:
+		for _, target := range targets {
+			if target.Weight != nil {
+				return false
+			}
+		}
+	case OutboundAIRouteStrategyWeighted:
+		total := 0
+		for _, target := range targets {
+			if target.Weight == nil || *target.Weight < 0 || *target.Weight > OutboundAIRouteWeightMax {
+				return false
+			}
+			total += *target.Weight
+		}
+		if total == 0 {
+			return false
+		}
+	default:
+		return false
+	}
+	return maxTTFBMS == nil || (strategy == OutboundAIRouteStrategyCost && *maxTTFBMS >= 1 && *maxTTFBMS <= OutboundAIRouteMaxTTFBMSMax)
 }
 
 // OutboundAIRoute tries its targets in order (ADR-990). Callers use
@@ -214,6 +337,12 @@ type OutboundAIRoute struct {
 	Targets   []OutboundAIRouteTarget `json:"targets"`
 	CreatedAt time.Time               `json:"created_at"`
 	UpdatedAt time.Time               `json:"updated_at"`
+	// Canary is the route's model canary, if it has one (ADR-1340).
+	Canary *OutboundAIRouteCanary `json:"canary"`
+	// Strategy picks the target each call tries first; MaxTTFBMS is a cost
+	// route's latency target (ADR-1434).
+	Strategy  string `json:"strategy"`
+	MaxTTFBMS *int   `json:"max_ttfb_ms"`
 }
 
 type OutboundAIRouteList struct {
@@ -226,11 +355,18 @@ type CreateOutboundAIRouteRequest struct {
 	// Format defaults to "native"; "openai" translates (ADR-991).
 	Format  string                  `json:"format,omitempty"`
 	Targets []OutboundAIRouteTarget `json:"targets"`
+	// Strategy defaults to "ordered"; MaxTTFBMS is a cost route's latency
+	// target (ADR-1434).
+	Strategy  string `json:"strategy,omitempty"`
+	MaxTTFBMS *int   `json:"max_ttfb_ms,omitempty"`
 }
 
-// PutOutboundAIRouteTargetsRequest replaces a route's ordered targets.
+// PutOutboundAIRouteTargetsRequest replaces a route's ordered targets and
+// its strategy, which defaults to "ordered" (ADR-1434).
 type PutOutboundAIRouteTargetsRequest struct {
-	Targets []OutboundAIRouteTarget `json:"targets"`
+	Targets   []OutboundAIRouteTarget `json:"targets"`
+	Strategy  string                  `json:"strategy,omitempty"`
+	MaxTTFBMS *int                    `json:"max_ttfb_ms,omitempty"`
 }
 
 // ValidOutboundAIRouteName accepts DNS-label style route names.
@@ -405,6 +541,9 @@ const (
 	// Per-end-user UTC-day budgets (ADR-995); their alerts name EndUser.
 	OutboundAIBudgetUserDailyTokens = "user_daily_tokens"
 	OutboundAIBudgetUserDailyCost   = "user_daily_cost"
+	// OutboundAIBudgetTagDailyCost is one tag's UTC-day cost limit
+	// (ADR-1438); its alerts name Tag.
+	OutboundAIBudgetTagDailyCost = "tag_daily_cost"
 )
 
 // OutboundAIBudgetIsPerUser reports whether a budget is one end user's.
@@ -426,6 +565,8 @@ type OutboundAIBudgetAlert struct {
 	Limit            int64     `json:"limit"`
 	Used             int64     `json:"used"`
 	CrossedAt        time.Time `json:"crossed_at"`
+	// Tag is the tag of a tag_daily_cost alert (ADR-1438).
+	Tag *string `json:"tag"`
 }
 
 type OutboundAIBudgetAlertList struct {
@@ -446,6 +587,9 @@ type OutboundAIBudgetThresholdWebhookPayload struct {
 	Limit            int64     `json:"limit"`
 	Used             int64     `json:"used"`
 	CrossedAt        time.Time `json:"crossed_at"`
+	// Tag is the tag whose daily cost limit crossed the threshold
+	// (ADR-1438).
+	Tag *string `json:"tag"`
 }
 
 // OutboundAIRequestLogEntry is one settled AI call's metadata (ADR-991).
@@ -469,6 +613,8 @@ type OutboundAIRequestLogEntry struct {
 	Attempts          int       `json:"attempts"`
 	// EndUser is the call's X-Gregale-AI-User value, when sent (ADR-994).
 	EndUser *string `json:"end_user"`
+	// Tags are the call's X-Gregale-AI-Tags, sorted by key (ADR-1436).
+	Tags []string `json:"tags"`
 	// ContentCaptured reports that the call's bodies can be read (ADR-996).
 	ContentCaptured bool `json:"content_captured"`
 }

@@ -9,7 +9,7 @@ import type { Invoice } from './Invoice.js';
  */
 export type FinancialCostsResponse = {
   account_id: string;
-  currency: 'EUR';
+  currency: 'USD';
   period_start: string;
   period_end: string;
   as_of: string;

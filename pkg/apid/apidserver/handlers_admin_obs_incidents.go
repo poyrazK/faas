@@ -8,15 +8,14 @@ package apidserver
 // remain owned by their existing controllers.
 
 import (
-	"crypto/sha256"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -30,6 +29,9 @@ func (s *server) obsIncidents(w http.ResponseWriter, r *http.Request, caller sta
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
+	}
+	if owner, err := uuid.Parse(caller.ID); err == nil {
+		q.ownerID = owner.String()
 	}
 	items, unavailable, err := s.loadObsIncidents(r, q)
 	if err != nil {
@@ -56,14 +58,16 @@ func (s *server) obsIncidents(w http.ResponseWriter, r *http.Request, caller sta
 }
 
 type obsIncidentQuery struct {
-	since        time.Time
-	sinceClamped bool
-	kind         string
-	severity     string
-	cursor       string
-	limit        int
-	beforeAt     time.Time
-	beforeID     string
+	since                                      time.Time
+	sinceClamped                               bool
+	kind                                       string
+	severity                                   string
+	cursor                                     string
+	limit                                      int
+	beforeAt                                   time.Time
+	beforeID                                   string
+	alertStatus                                string
+	acknowledgment, ownership, ownerID, snooze string
 }
 
 func parseObsIncidentQuery(r *http.Request) (obsIncidentQuery, *api.Problem) {
@@ -80,7 +84,11 @@ func parseObsIncidentQuery(r *http.Request) (obsIncidentQuery, *api.Problem) {
 			return obsIncidentQuery{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid since", "since must be RFC 3339 (e.g. 2026-09-12T00:00:00Z)")
 		}
-		floor := now.Add(-time.Duration(api.ObsAdminWindowMaxHours) * time.Hour)
+		window := time.Duration(api.ObsAdminWindowMaxHours) * time.Hour
+		if q.kind == "platform_alert" {
+			window = api.ObsAlertHistoryRetention
+		}
+		floor := now.Add(-window)
 		q.since = t.UTC()
 		if q.since.Before(floor) {
 			q.since = floor
@@ -102,6 +110,16 @@ func parseObsIncidentQuery(r *http.Request) (obsIncidentQuery, *api.Problem) {
 			return obsIncidentQuery{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid severity", "severity must be warning, error, or critical")
 		}
+	}
+	q.acknowledgment = r.URL.Query().Get("acknowledgment")
+	q.ownership = r.URL.Query().Get("ownership")
+	q.snooze = r.URL.Query().Get("snooze")
+	if prob := validateObsTriageFilters(q); prob != nil {
+		return obsIncidentQuery{}, prob
+	}
+	q.alertStatus = strings.TrimSpace(r.URL.Query().Get("alert_status"))
+	if q.alertStatus != "" && (q.kind != "platform_alert" || q.alertStatus != "firing" && q.alertStatus != "resolved" && q.alertStatus != "unknown") {
+		return obsIncidentQuery{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid alert status", "alert_status requires type=platform_alert and must be firing, resolved, or unknown")
 	}
 	limitProb, limit := api.ParseLimit(r.URL.Query().Get("limit"), api.ObsIncidentLimitDefault, api.ObsIncidentLimitMax, "incidents")
 	if limitProb != nil {
@@ -132,14 +150,18 @@ func (s *server) loadObsIncidents(r *http.Request, q obsIncidentQuery) ([]api.Ob
 			return nil, nil, err
 		}
 		for i := range items {
-			enrichObsIncident(&items[i])
+			operatorobs.Enrich(&items[i])
 		}
 	}
 	if q.kind == "" || q.kind == "platform_alert" {
-		alerts, available := s.obsFiringAlertIncidents(r)
-		if !available {
-			unavailable = append(unavailable, "prometheus")
+		alerts, missing, err := operatorobs.AlertIncidents(r.Context(), s.store, s.promqlClient, state.OperatorAlertFilter{
+			Acknowledgment: q.acknowledgment, Ownership: q.ownership, OwnerID: q.ownerID, Snooze: q.snooze,
+			Now: now, Since: q.since, BeforeAt: q.beforeAt, BeforeID: q.beforeID, Severity: q.severity, Status: q.alertStatus, Limit: q.limit + 1,
+		})
+		if err != nil {
+			return nil, nil, err
 		}
+		unavailable = append(unavailable, missing...)
 		for _, alert := range alerts {
 			if q.severity == "" || q.severity == alert.Severity {
 				items = append(items, alert)
@@ -153,59 +175,6 @@ func (s *server) loadObsIncidents(r *http.Request, q obsIncidentQuery) ([]api.Ob
 		return items[i].ObservedAt.After(items[j].ObservedAt)
 	})
 	return items, unavailable, nil
-}
-
-func enrichObsIncident(item *api.ObsIncident) {
-	item.DedupeKey = strings.Replace(item.ID, "/", ":", 1)
-	if item.AccountID != "" {
-		item.AuditPath = "/v1/admin/obs/audit-log/search?target_account_id=" + item.AccountID
-	}
-	switch item.Type {
-	case "deployment":
-		item.ActionPath = "/v1/admin/ops/deployments/" + item.ResourceID
-		item.RunbookURL = "/docs/runbooks/FaasDeployFailed.md"
-	case "job_run":
-		item.ActionPath = "/v1/admin/ops/jobs/runs/" + item.ResourceID
-		item.RunbookURL = "/docs/ops/gregalectl-operator-quickstart.md#job-run-incidents"
-	case "compute_node":
-		item.ActionPath = "/v1/admin/obs/nodes/" + item.ResourceName + "/detail"
-		item.AuditPath = "/v1/admin/obs/audit-log/search?kind_prefix=operator.action."
-		item.RunbookURL = "/docs/runbooks/FaasComputeNodeStuckInactive.md"
-	}
-}
-
-func (s *server) obsFiringAlertIncidents(r *http.Request) ([]api.ObsIncident, bool) {
-	if s.promqlClient == nil {
-		return nil, false
-	}
-	// ALERTS_FOR_STATE holds the persisted activation time. A scrape timestamp
-	// changes on every request and would make keyset pagination skip alerts.
-	rows, err := s.promqlClient.QueryVector(r.Context(), `ALERTS{alertstate="firing",alertname!="FaasWatchdog",severity!="info"} * ignoring(alertstate) group_left() ALERTS_FOR_STATE`)
-	if err != nil {
-		return nil, false
-	}
-	out := make([]api.ObsIncident, 0, len(rows))
-	for _, row := range rows {
-		name := row.Labels["alertname"]
-		if name == "" || row.Value <= 0 {
-			return nil, false
-		}
-		severity := "warning"
-		switch row.Labels["severity"] {
-		case "page", "critical":
-			severity = "critical"
-		case "error":
-			severity = "error"
-		}
-		labels, _ := json.Marshal(row.Labels)
-		key := fmt.Sprintf("platform_alert/%x", sha256.Sum256(labels))
-		summary := name
-		if component := row.Labels["component"]; component != "" {
-			summary += " (" + component + ")"
-		}
-		out = append(out, api.ObsIncident{ID: key, Type: "platform_alert", Severity: severity, Status: "firing", Summary: summary, ResourceID: name, ResourceName: summary, ObservedAt: time.UnixMilli(int64(row.Value * 1000)).UTC(), DedupeKey: key, ActionPath: "/v1/admin/obs/health", RunbookURL: "/docs/ops/alert-cookbook.md"})
-	}
-	return out, true
 }
 
 func paginateObsIncidents(items []api.ObsIncident, rawCursor string, limit int) ([]api.ObsIncident, string, *api.Problem) {
@@ -236,4 +205,14 @@ func paginateObsIncidents(items []api.ObsIncident, rawCursor string, limit int) 
 		return page, next, nil
 	}
 	return remaining, next, nil
+}
+
+func validateObsTriageFilters(q obsIncidentQuery) *api.Problem {
+	if (q.acknowledgment != "" || q.ownership != "" || q.snooze != "") && q.kind != "platform_alert" ||
+		q.acknowledgment != "" && q.acknowledgment != "acknowledged" && q.acknowledgment != "unacknowledged" ||
+		q.ownership != "" && q.ownership != "owned" && q.ownership != "unowned" && q.ownership != "mine" ||
+		q.snooze != "" && q.snooze != "active" && q.snooze != "inactive" {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid triage filter", "type=platform_alert required; acknowledgment=acknowledged|unacknowledged, ownership=owned|unowned|mine, snooze=active|inactive")
+	}
+	return nil
 }

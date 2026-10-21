@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -21,9 +22,9 @@ func TestTrafficPromotionBindingsUsesGateRouteEvenForIdempotentRetry(t *testing.
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/"+serving:
-					writeJSONTest(w, api.DeploymentResponse{ID: serving, Status: statusLive, TrafficPercent: 100})
+					main.WriteJSONTest(w, api.DeploymentResponse{ID: serving, Status: main.StatusLive, TrafficPercent: 100})
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/"+target:
-					writeJSONTest(w, api.DeploymentResponse{ID: target, Status: statusLive, TrafficPercent: percent})
+					main.WriteJSONTest(w, api.DeploymentResponse{ID: target, Status: main.StatusLive, TrafficPercent: percent})
 				case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments/"+target+"/promote":
 					calls++
 					var req api.BindingPromotionRequest
@@ -33,7 +34,7 @@ func TestTrafficPromotionBindingsUsesGateRouteEvenForIdempotentRetry(t *testing.
 					if req.ExpectedServingDeploymentID == nil || *req.ExpectedServingDeploymentID != serving || req.MaxVerificationAge != "2m0s" || !req.AllowUnsupported {
 						t.Errorf("policy: %+v", req)
 					}
-					writeJSONTest(w, api.BindingPromotionResponse{Deployment: api.DeploymentResponse{ID: target, Status: statusLive, TrafficPercent: 100}, FromPercent: percent, ToPercent: 100, AlreadyPromoted: percent == 100, BindingsCheck: &api.BindingCheckReport{Passed: true, DeploymentID: target, ExpectedDeploymentID: target, Scope: "default", CheckedAt: time.Now(), MaxVerificationAge: "2m0s", AllowUnsupported: true, Coverage: "partial"}})
+					main.WriteJSONTest(w, api.BindingPromotionResponse{Deployment: api.DeploymentResponse{ID: target, Status: main.StatusLive, TrafficPercent: 100}, FromPercent: percent, ToPercent: 100, AlreadyPromoted: percent == 100, BindingsCheck: &api.BindingCheckReport{Passed: true, DeploymentID: target, ExpectedDeploymentID: target, Scope: "default", CheckedAt: time.Now(), MaxVerificationAge: "2m0s", AllowUnsupported: true, Coverage: "partial"}})
 				default:
 					t.Errorf("unexpected %s %s", r.Method, r.URL)
 					http.Error(w, "unexpected", 404)
@@ -43,10 +44,10 @@ func TestTrafficPromotionBindingsUsesGateRouteEvenForIdempotentRetry(t *testing.
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_test")
 			var out, errs bytes.Buffer
-			oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-			osStdout, osStderr, jsonOutput = &out, &errs, true
-			defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
-			code := cmdTrafficPromote([]string{"--deployment", target, "--if-serving", serving, "--require-bindings", "--max-verification-age", "2m", "--allow-unsupported"})
+			oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+			(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &errs, true
+			defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
+			code := main.CmdTrafficPromote([]string{"--deployment", target, "--if-serving", serving, "--require-bindings", "--max-verification-age", "2m", "--allow-unsupported"})
 			if code != 0 || calls != 1 {
 				t.Fatalf("code=%d gate calls=%d output=%s %s", code, calls, out.String(), errs.String())
 			}
@@ -65,7 +66,7 @@ func TestTrafficPromotionBindingsRejectsOldServersAndUnconfirmedReports(t *testi
 			posts := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet {
-					writeJSONTest(w, api.DeploymentResponse{ID: target, Status: statusLive})
+					main.WriteJSONTest(w, api.DeploymentResponse{ID: target, Status: main.StatusLive})
 					return
 				}
 				if r.Method != http.MethodPost || r.URL.Path != "/v1/deployments/"+target+"/promote" {
@@ -98,17 +99,17 @@ func TestTrafficPromotionBindingsRejectsOldServersAndUnconfirmedReports(t *testi
 					api.WriteProblem(w, problem)
 					return
 				}
-				writeJSONTest(w, api.BindingPromotionResponse{Deployment: api.DeploymentResponse{ID: target, TrafficPercent: 100}, ToPercent: 100, BindingsCheck: report})
+				main.WriteJSONTest(w, api.BindingPromotionResponse{Deployment: api.DeploymentResponse{ID: target, TrafficPercent: 100}, ToPercent: 100, BindingsCheck: report})
 			}))
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_test")
 			var out, errs bytes.Buffer
-			oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-			osStdout, osStderr, jsonOutput = &out, &errs, true
-			defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
-			captured, restoreErr := captureStderr(t)
-			code := cmdTrafficPromote([]string{"--deployment", target, "--require-bindings"})
+			oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+			(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &errs, true
+			defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
+			captured, restoreErr := main.CaptureStderr(t)
+			code := main.CmdTrafficPromote([]string{"--deployment", target, "--require-bindings"})
 			restoreErr()
 			if code == 0 || posts != 1 || out.Len() != 0 {
 				t.Fatalf("unconfirmed gate accepted: code=%d posts=%d out=%s", code, posts, out.String())
@@ -124,7 +125,7 @@ func TestTrafficPromotionBindingPolicyRequiresGateBeforeNetwork(t *testing.T) {
 	t.Setenv("FAAS_API", "http://127.0.0.1:1")
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
 	for _, flags := range [][]string{{"--max-verification-age", "1m"}, {"--allow-unsupported"}, {"--require-application-ack"}, {"--require-bindings", "--max-verification-age", "0s"}} {
-		if code := cmdTrafficPromote(append([]string{"--deployment", "0123456789abcdef0123456789abcdef"}, flags...)); code == 0 {
+		if code := main.CmdTrafficPromote(append([]string{"--deployment", "0123456789abcdef0123456789abcdef"}, flags...)); code == 0 {
 			t.Fatalf("invalid policy accepted: %v", flags)
 		}
 	}
@@ -137,7 +138,7 @@ func TestTrafficPromotionApplicationAckUsesDedicatedRouteAndRequiresPolicyEcho(t
 			posts := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet {
-					writeJSONTest(w, api.DeploymentResponse{ID: target, Status: statusLive})
+					main.WriteJSONTest(w, api.DeploymentResponse{ID: target, Status: main.StatusLive})
 					return
 				}
 				if r.Method != http.MethodPost || r.URL.Path != "/v1/deployments/"+target+"/promote-with-application-ack" {
@@ -155,16 +156,16 @@ func TestTrafficPromotionApplicationAckUsesDedicatedRouteAndRequiresPolicyEcho(t
 					return
 				}
 				report := &api.BindingCheckReport{Passed: true, DeploymentID: target, ExpectedDeploymentID: target, Scope: "default", CheckedAt: time.Now(), MaxVerificationAge: "10m0s", RequireApplicationAck: mode == "supported"}
-				writeJSONTest(w, api.BindingPromotionResponse{Deployment: api.DeploymentResponse{ID: target, TrafficPercent: 100}, ToPercent: 100, BindingsCheck: report})
+				main.WriteJSONTest(w, api.BindingPromotionResponse{Deployment: api.DeploymentResponse{ID: target, TrafficPercent: 100}, ToPercent: 100, BindingsCheck: report})
 			}))
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_test")
-			oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+			oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
 			var out, errs bytes.Buffer
-			osStdout, osStderr, jsonOutput = &out, &errs, true
-			defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
-			code := cmdTrafficPromote([]string{"--deployment", target, "--require-bindings", "--require-application-ack"})
+			(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &errs, true
+			defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
+			code := main.CmdTrafficPromote([]string{"--deployment", target, "--require-bindings", "--require-application-ack"})
 			if posts != 1 || (code == 0) != (mode == "supported") {
 				t.Fatalf("%s: code=%d posts=%d %s %s", mode, code, posts, out.String(), errs.String())
 			}

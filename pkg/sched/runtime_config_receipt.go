@@ -21,27 +21,54 @@ func addRuntimeSidecarSecretVersions(inputs *state.RuntimeConfigInputs, candidat
 	}
 }
 
-func (e *Engine) snapshotRuntimeConfigFresh(ctx context.Context, snap state.Snapshot) (bool, error) {
+// snapshotRuntimeConfigFreshFor checks snap with its deployment in hand (nil
+// reads it). The receipt and whether one is required are independent reads
+// and run concurrently (ADR-1741); a missing receipt then needs no more.
+func (e *Engine) snapshotRuntimeConfigFreshFor(ctx context.Context, snap state.Snapshot, dep *state.Deployment, receipt *snapshotReceipt) (bool, error) {
 	receipts, ok := e.store.(state.RuntimeConfigReceiptStore)
 	if !ok {
 		return true, nil
 	}
-	deployment, err := e.store.DeploymentByID(ctx, snap.DeploymentID)
-	if err != nil {
-		return false, err
+	var deployment state.Deployment
+	if dep != nil && dep.ID == snap.DeploymentID {
+		deployment = *dep
+	} else {
+		var err error
+		if deployment, err = e.store.DeploymentByID(ctx, snap.DeploymentID); err != nil {
+			return false, err
+		}
 	}
-	inputs, exists, err := receipts.SnapshotRuntimeConfigReceipt(ctx, snap.ID)
-	if err != nil {
-		return false, err
+	var (
+		inputs                 state.RuntimeConfigInputs
+		exists, required       bool
+		receiptErr, requireErr error
+	)
+	concurrently(
+		func() { inputs, exists, receiptErr = receipts.SnapshotRuntimeConfigReceipt(ctx, snap.ID) },
+		func() {
+			required, requireErr = receipts.RuntimeConfigReceiptRequired(ctx, deployment.AppID, deployment.Scope)
+		},
+	)
+	if receiptErr != nil {
+		return false, receiptErr
+	}
+	if receipt != nil {
+		*receipt = snapshotReceipt{snapshotID: snap.ID, inputs: inputs, exists: exists}
 	}
 	if exists {
 		if inputs.Scope != normalizedDeploymentScope(deployment.Scope) {
 			return false, nil
 		}
+		app, err := e.store.AppByID(ctx, deployment.AppID)
+		if err != nil {
+			return false, err
+		}
+		if handled, fresh, err := state.ReleaseSecretRuntimeInputsFresh(ctx, e.store, app.AccountID, app.ID, deployment.ID, inputs); err != nil || handled {
+			return fresh, err
+		}
 		return receipts.RuntimeConfigInputsFresh(ctx, deployment.AppID, inputs)
 	}
-	required, err := receipts.RuntimeConfigReceiptRequired(ctx, deployment.AppID, deployment.Scope)
-	return !required, err
+	return !required, requireErr
 }
 
 func (e *Engine) runtimeConfigReceiptStale(ctx context.Context, instance state.Instance, boundary time.Time, scope string) bool {
@@ -54,6 +81,13 @@ func (e *Engine) runtimeConfigReceiptStale(ctx context.Context, instance state.I
 		return true
 	}
 	if exists {
+		app, err := e.store.AppByID(ctx, instance.AppID)
+		if err != nil {
+			return true
+		}
+		if handled, fresh, err := state.ReleaseSecretRuntimeInputsFresh(ctx, e.store, app.AccountID, app.ID, instance.DeploymentID, inputs); err != nil || handled {
+			return err != nil || inputs.Boundary.Before(boundary) || !fresh
+		}
 		fresh, err := receipts.RuntimeConfigInputsFresh(ctx, instance.AppID, inputs)
 		return err != nil || inputs.Scope != normalizedDeploymentScope(scope) || inputs.Boundary.Before(boundary) || !fresh
 	}

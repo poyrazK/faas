@@ -14,6 +14,8 @@ table inet faas {
   counter drop_v4_192_168_0_0_16 {}
   counter drop_v6____128 {}
   counter drop_v6___1_128 {}
+  counter drop_v6_64_ff9b___96 {}
+  counter drop_v6_64_ff9b_1___48 {}
   counter drop_v6_2001___32 {}
   counter drop_v6_2002___16 {}
   counter drop_v6_fc00___7 {}
@@ -46,6 +48,11 @@ table inet faas {
 {% if faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}
 {% for cidr in faas_compute_allowed_cidrs -%}
     ip saddr {{ cidr }} tcp dport { {{ faas_compute_allowed_ports | join(', ') }} } accept comment "faas control services from compute"
+{% endfor -%}
+{% endif -%}
+{% if (faas_livequeryd_managed | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}
+{% for cidr in faas_compute_allowed_cidrs -%}
+    ip saddr {{ cidr }} tcp dport {{ (faas_livequeryd_listen | default('0.0.0.0:9480')).rsplit(':', 1)[1] }} accept comment "live-query hub from realtimed (ADR-20261016151947)"
 {% endfor -%}
 {% endif -%}
 {% if (faas_edge_on_compute_nodes | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_edge_private_listen_addr | default('') and faas_compute_allowed_cidrs is defined and faas_compute_allowed_cidrs -%}
@@ -100,6 +107,8 @@ table inet faas {
     ip daddr 192.168.0.0/16 counter name "drop_v4_192_168_0_0_16" drop
     ip6 daddr ::/128 counter name "drop_v6____128" drop
     ip6 daddr ::1/128 counter name "drop_v6___1_128" drop
+    ip6 daddr 64:ff9b::/96 counter name "drop_v6_64_ff9b___96" drop
+    ip6 daddr 64:ff9b:1::/48 counter name "drop_v6_64_ff9b_1___48" drop
     ip6 daddr 2001::/32 counter name "drop_v6_2001___32" drop
     ip6 daddr 2002::/16 counter name "drop_v6_2002___16" drop
     ip6 daddr fc00::/7 counter name "drop_v6_fc00___7" drop
@@ -147,3 +156,14 @@ table inet faas {
 {{ '    ' }}ip6 saddr {{ masquerade_cidr_v6 }} oifname "{{ public_iface }}" masquerade
 {% endif -%}{{ '  ' }}}
 }
+
+{% if faas_public_forwarding | default(false) -%}
+table inet faas_public_forward {
+  chain output {
+    type filter hook output priority -1; policy accept;
+    meta mark & 0x80000000 == 0x80000000 meta mark set meta mark ^ meta oif
+    meta mark & 0x80000000 == 0x80000000 meta mark != 0x80000000 drop
+    meta mark == 0x80000000 meta mark set meta mark ^ meta oif
+  }
+}
+{% endif -%}

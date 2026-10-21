@@ -41,15 +41,30 @@ func snapshotReplicaRetryDelay(attempt int) time.Duration {
 // on every worker tick and also repairs jobs missed while a node or schedd
 // was offline.
 func (s *PgStore) EnqueueSnapshotReplicasForNode(ctx context.Context, nodeID string) (int, error) {
+	added, _, err := s.ReconcileSnapshotReplicas(ctx, nodeID)
+	return added, err
+}
+
+// ReconcileSnapshotReplicas is EnqueueSnapshotReplicasForNode that also
+// reports whether ClaimSnapshotReplica could lease a job for the node. The
+// replica worker ticks every 100 ms on every node; a caught-up node used to
+// open a claim transaction each tick to find nothing (begin, select,
+// rollback: about 60 statements a second across production-us). With this
+// probe a caught-up tick is one read. Pending fan-out work always reports
+// claimable, so a tick that enqueues still claims as before.
+func (s *PgStore) ReconcileSnapshotReplicas(ctx context.Context, nodeID string) (int, bool, error) {
 	if nodeID == "" {
-		return 0, errors.New("state: enqueue snapshot replicas: node_id required")
+		return 0, false, errors.New("state: enqueue snapshot replicas: node_id required")
 	}
-	active, pending, err := s.snapshotReplicaWorkPending(ctx, nodeID)
+	active, pending, claimable, err := s.snapshotReplicaWorkPending(ctx, nodeID)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	if !active || !pending {
-		return 0, nil
+	if !active {
+		return 0, false, nil
+	}
+	if !pending {
+		return 0, claimable, nil
 	}
 	// A concurrent cursor or replica write aborts the repeatable-read
 	// snapshot with 40001; retry it whole rather than fail the tick
@@ -58,10 +73,10 @@ func (s *PgStore) EnqueueSnapshotReplicasForNode(ctx context.Context, nodeID str
 		added, err := s.enqueueSnapshotReplicasForNodeOnce(ctx, nodeID)
 		var pgErr *pgconn.PgError
 		if attempt >= 2 || !errors.As(err, &pgErr) || pgErr.Code != "40001" {
-			return added, err
+			return added, true, err
 		}
 		if err := ctx.Err(); err != nil {
-			return 0, err
+			return 0, true, err
 		}
 	}
 }
@@ -169,11 +184,12 @@ func (s *PgStore) enqueueSnapshotReplicasForNodeOnce(ctx context.Context, nodeID
 }
 
 // snapshotReplicaWorkPending keeps the 100 ms pickup loop read-only while a
-// node is caught up. A fan-out event that commits just after this query is
+// node is caught up, and reports whether a claim would find a job. A fan-out event that commits just after this query is
 // observed on the next tick, preserving the sub-200 ms pickup contract.
-func (s *PgStore) snapshotReplicaWorkPending(ctx context.Context, nodeID string) (active, pending bool, err error) {
+func (s *PgStore) snapshotReplicaWorkPending(ctx context.Context, nodeID string) (active, pending, claimable bool, err error) {
 	err = s.pool.QueryRow(ctx, `
 		select cn.active,
+		       cn.active and exists (select 1 `+snapshotReplicaClaimableFrom+`),
 		       cn.active and (
 		         not exists (
 		           select 1 from snapshot_replica_cursors c where c.node_id = cn.id
@@ -202,14 +218,14 @@ func (s *PgStore) snapshotReplicaWorkPending(ctx context.Context, nodeID string)
 		         )
 		       )
 		  from compute_nodes cn
-		 where cn.id = $1`, nodeID, int(snapshotReplicaRevalidateAfter/time.Second)).Scan(&active, &pending)
+		 where cn.id = $1`, nodeID, int(snapshotReplicaRevalidateAfter/time.Second)).Scan(&active, &claimable, &pending)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, false, ErrNotFound
+		return false, false, false, ErrNotFound
 	}
 	if err != nil {
-		return false, false, fmt.Errorf("state: enqueue snapshot replicas preflight: %w", err)
+		return false, false, false, fmt.Errorf("state: enqueue snapshot replicas preflight: %w", err)
 	}
-	return active, pending, nil
+	return active, pending, claimable, nil
 }
 
 // RecordSnapshotOrigin lets the reconciler restrict fan-out to the producer's
@@ -233,6 +249,26 @@ func (s *PgStore) RecordSnapshotOrigin(ctx context.Context, snapshotID, nodeID s
 	}
 	return nil
 }
+
+// snapshotReplicaClaimableFrom selects the replica jobs ClaimSnapshotReplica
+// may lease for node $1. The idle-tick probe in snapshotReplicaWorkPending
+// reads the same text, so it can never report "nothing claimable" while a
+// claim would find a job.
+const snapshotReplicaClaimableFrom = `from snapshot_replicas r
+		join snapshots sn on sn.id = r.snapshot_id
+		join deployments d on d.id = sn.deployment_id
+		join apps a on a.id = d.app_id
+		join compute_nodes cn on cn.id = r.node_id
+		where r.node_id = $1
+		  and sn.stale = false
+		  and a.status <> 'deleted'
+		  and d.status in ('snapshotting', 'live', 'superseded')
+		  and (
+				r.state = 'pending'
+				or (r.state = 'failed' and r.next_attempt_at is not null)
+				or (r.state = 'syncing' and r.updated_at < now() - interval '5 minutes')
+			  )
+		  and (r.next_attempt_at is null or r.next_attempt_at <= now())`
 
 // ClaimSnapshotReplica leases one job with row locking. A stale syncing lease
 // is reclaimable after five minutes so a crashed node-local worker cannot
@@ -272,21 +308,7 @@ func (s *PgStore) ClaimSnapshotReplica(ctx context.Context, nodeID string) (Snap
 		       r.attempts,
 		       r.ready_at is not null,
 		       case when r.ready_at is not null then r.updated_at else r.created_at end
-		from snapshot_replicas r
-		join snapshots sn on sn.id = r.snapshot_id
-		join deployments d on d.id = sn.deployment_id
-		join apps a on a.id = d.app_id
-		join compute_nodes cn on cn.id = r.node_id
-		where r.node_id = $1
-		  and sn.stale = false
-		  and a.status <> 'deleted'
-		  and d.status in ('snapshotting', 'live', 'superseded')
-		  and (
-				r.state = 'pending'
-				or (r.state = 'failed' and r.next_attempt_at is not null)
-				or (r.state = 'syncing' and r.updated_at < now() - interval '5 minutes')
-			  )
-		  and (r.next_attempt_at is null or r.next_attempt_at <= now())
+		`+snapshotReplicaClaimableFrom+`
 		order by case d.status
 		           when 'live' then 0
 		           when 'snapshotting' then 1

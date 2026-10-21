@@ -22,5 +22,9 @@ export type RollbackRequest = {
    * One-line reason for an exact checked rollback. Cannot be combined with alert_rule_id.
    */
   reason?: string;
+  /**
+   * Roll back although release commands ran after the target last served (ADR-1448). Rollback does not undo them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks never set it.
+   */
+  acknowledge_releases?: boolean;
 };
 

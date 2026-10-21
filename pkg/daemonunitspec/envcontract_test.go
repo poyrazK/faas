@@ -85,7 +85,7 @@ func scanLiterals(t *testing.T, root string, dirs []string) map[string]map[strin
 // imports them, so their env reads belong to apid, not "shared". List a
 // package here only if no other daemon imports it (pkg/apid/apidsource is
 // also used by githubd and stays shared).
-var apidOwnedPkgs = []string{"pkg/apid/apidserver/", "pkg/apid/durable/", "pkg/apid/receivers/"}
+var apidOwnedPkgs = []string{"pkg/apid/apidserver/", "pkg/apid/durable/", "pkg/apid/receivers/", "pkg/apid/release/"}
 
 func ownerOf(rel string) string {
 	for _, prefix := range apidOwnedPkgs {
@@ -181,7 +181,7 @@ func TestEnvContract_Sorted(t *testing.T) {
 // sets it.
 func TestEnvContract_EveryReadIsDeclared(t *testing.T) {
 	root := repoRoot(t)
-	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest"))
+	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest", "internal"))
 	byName := EnvContractByName()
 	var missing []string
 	for name, files := range reads {
@@ -218,7 +218,7 @@ func TestEnvContract_EveryReadIsDeclared(t *testing.T) {
 // by something, so the doc never advertises a knob that does nothing.
 func TestEnvContract_NoStaleEntries(t *testing.T) {
 	root := repoRoot(t)
-	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest"))
+	reads := scanLiterals(t, root, append(append([]string{}, daemonDirs...), "pkg", "guest", "internal"))
 	// Script consumers: shell under deploy/scripts, shell embedded in role
 	// tasks (postgres archive_command), and ExecStart lines in units.
 	scripts := readTree(t, root, []string{"deploy/scripts", "deploy/ansible/roles", "deploy/systemd"}, func(p string) bool {

@@ -36,11 +36,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/rootfs"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 
 	"filippo.io/age"
@@ -187,7 +187,10 @@ type Handler struct {
 	// OCI pull sites inside aboveBaseLayers + the legacy
 	// PullLayers path, plus imaged_oci_pull_duration_seconds
 	// per-pull op{manifest,config,blob,above_base}.
-	ops *wire.OpsMetrics
+	ops                *wire.OpsMetrics
+	handoffMetrics     *buildImageHandoffMetrics
+	preparationMetrics *imagePreparationProgressMetrics
+	postCaptureMetrics *postCaptureMetrics
 	// audit (issue #470 / PR C / ADR-074) is the imaged-side
 	// audit-log seam used to emit app.warm_snapshot_stale from the
 	// MarkFCSnapshotsStale path. Wired via WithAudit; nil opts
@@ -647,8 +650,29 @@ func (h *Handler) replicateLayer(ctx context.Context, layerKey string) error {
 // PullLayers. Nil-safe (Observe* is no-op on a nil receiver).
 // Mirrors pkg/builderd/builderd.go's WithOpsMetrics (PR #124,
 // ADR-030) and cmd/apid/server.go's WithOpsMetrics (this PR).
+// Wire before Loop.Run; one handler owns handoff diagnostics per registry.
 func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
+	if h.ops == ops {
+		return h
+	}
+	if h.handoffMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.handoffMetrics)
+	}
+	if h.preparationMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.preparationMetrics)
+	}
+	if h.postCaptureMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.postCaptureMetrics)
+	}
 	h.ops = ops
+	h.handoffMetrics = nil
+	h.preparationMetrics = nil
+	h.postCaptureMetrics = nil
+	if ops != nil && ops.Registry() != nil {
+		h.handoffMetrics = newBuildImageHandoffMetrics(ops.Registry())
+		h.preparationMetrics = newImagePreparationProgressMetrics(ops.Registry())
+		h.postCaptureMetrics = newPostCaptureMetrics(ops.Registry())
+	}
 	return h
 }
 
@@ -867,7 +891,7 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	// the ext4 bytes to a local tempdir so grype dir:<path> can
 	// scan a filesystem path regardless of where the canonical
 	// bytes live.
-	appsKey := sched.AppLayerKey(app.Slug, layerID)
+	appsKey := storagekey.AppLayer(app.Slug, layerID)
 	rc, err := be.Get(ctx, appsKey)
 	if err != nil {
 		return "", func() {}, fmt.Errorf("imaged: scan stage backend.Get(%q): %w", appsKey, err)
@@ -1544,7 +1568,7 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	if err := h.deleteJobArtifactKey(ctx, be, sched.JobLayerKey(jobID)); err != nil {
+	if err := h.deleteJobArtifactKey(ctx, be, storagekey.JobLayer(jobID)); err != nil {
 		return err
 	}
 	if lister, ok := be.(storage.LocalArtifactLister); ok {
@@ -1671,7 +1695,7 @@ func jobArtifactJobID(key string) (string, bool) {
 	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(key, prefix), suffix), "/")
 	if len(parts) == 1 {
 		stem := parts[0]
-		if _, err := uuid.Parse(stem); err == nil && sched.JobLayerKey(stem) == key {
+		if _, err := uuid.Parse(stem); err == nil && storagekey.JobLayer(stem) == key {
 			return stem, true
 		}
 		attempt := strings.Split(stem, "__")
@@ -1684,7 +1708,7 @@ func jobArtifactJobID(key string) (string, bool) {
 		if _, err := uuid.Parse(attempt[1]); err != nil {
 			return "", false
 		}
-		return attempt[0], sched.JobLayerAttemptKey(attempt[0], attempt[1]) == key
+		return attempt[0], storagekey.JobLayerAttempt(attempt[0], attempt[1]) == key
 	}
 	return "", false
 }
@@ -1815,7 +1839,7 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 	if err != nil {
 		return err
 	}
-	acct, err := h.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, h.store, app)
 	if err != nil {
 		return fmt.Errorf("imaged: load account: %w", err)
 	}
@@ -2324,7 +2348,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	// economics (CLAUDE.md "load-bearing — DO NOT fix"). The M5 fallback
 	// below streams all layers via oci.PullLayers for fakes that don't
 	// implement ManifestPuller.
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	be, err := h.storageFor()
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "imaged: storageFor")
@@ -2603,7 +2627,7 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.transitionFailure(ctx, dep.ID, msg)
 			return findings, fmt.Errorf("imaged: %s", msg)
 		}
-		layerKey := sched.AppSidecarLayerKey(app.Slug, dep.ID, sc.Name)
+		layerKey := storagekey.AppSidecarLayer(app.Slug, dep.ID, sc.Name)
 		// Per-sidecar pull path. We use the same h.oci
 		// ManifestPuller as the main image; per-sidecar
 		// auth may differ (a sidecar image can sit on a
@@ -2971,7 +2995,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		defer cleanupBuiltLayers()
 	}
 
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	be, err := h.storageFor()
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "storageFor")
@@ -3269,7 +3293,12 @@ func (h *Handler) rejectEphemeralSnapshot(ctx context.Context, candidate snapsho
 // handleDeploymentActivation is the common post-readiness deployment gate.
 // snapshot is populated for request/service flows; ready is populated for the
 // non-snapshot worker/job flows. Exactly one input must be present.
-func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snapshotWrittenPayload, ready *deploymentReadyPayload) error {
+func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snapshotWrittenPayload, ready *deploymentReadyPayload) (err error) {
+	input, phase := "snapshot", "evidence"
+	if ready != nil {
+		input = "ready"
+	}
+	defer func() { h.postCaptureMetrics.observeAttempt(ctx, input, phase, err) }()
 	deploymentID := snapshot.DeploymentID
 	if ready != nil {
 		deploymentID = ready.DeploymentID
@@ -3569,9 +3598,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 	}
 
+	phase = "dependency"
 	if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
 		return gateErr
 	}
+	phase = "verification"
 	// Snapshot candidates are verified through the gateway's authenticated,
 	// deployment-pinned smoke path before the live pointer moves. Keeping the
 	// predecessor live during this phase is the zero-downtime boundary: a slow
@@ -3640,6 +3671,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// actually-superseded predecessor may be drained. Manual traffic splits and
 	// canaries can keep the predecessor live, so confirm its durable state
 	// instead of inferring it from the attempted promotion.
+	phase = "promotion"
 	checkedRollback := false
 	if rollbacks, ok := h.store.(state.CheckedRollbackStore); ok {
 		operation, err := rollbacks.CheckedRollbackForTarget(ctx, dep.ID)
@@ -3648,6 +3680,20 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		checkedRollback = err == nil && operation.Status == "preparing"
 	}
+	// ADR-1446: a plain rollback (manual or first-wake 5xx auto-rollback)
+	// deliberately activates an older revision. Like a checked rollback it
+	// must skip the latest-revision fence and the source-branch freshness
+	// check, which would otherwise supersede every rollback target.
+	if !checkedRollback {
+		if prepared, ok := h.store.(state.RollbackPreparedStore); ok {
+			isPrepared, err := prepared.DeploymentRollbackPrepared(ctx, dep.ID)
+			if err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("imaged: read rollback marker: %w", err)
+			}
+			checkedRollback = isPrepared
+		}
+	}
+
 	if h.validatorArtifactCheck != nil {
 		if err := h.validatorArtifactCheck(ctx, dep.AppID, dep.ID); err != nil {
 			return fmt.Errorf("imaged: validator artifact preflight: %w", err)
@@ -3733,6 +3779,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		return fmt.Errorf("imaged: mark live: %w", promoteErr)
 	}
+	phase = "finalize"
 	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)
 	if previousLiveID != "" {
 		previous, previousErr := h.store.DeploymentByID(ctx, previousLiveID)
@@ -3966,7 +4013,7 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 	if err != nil {
 		return err
 	}
-	acct, err := h.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, h.store, app)
 	if err != nil {
 		return fmt.Errorf("imaged: load account: %w", err)
 	}
@@ -5014,7 +5061,7 @@ func (h *Handler) buildFullRootfsLayer(
 	if err != nil {
 		return fmt.Errorf("imaged: full-rootfs storage backend: %w", err)
 	}
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	sbomKey := h.sbomStorageKeyForDeployment(ctx, dep.ID)
 	sbomRun := h.syftRun
 	// Direct OCI deployments have no source build row and therefore no

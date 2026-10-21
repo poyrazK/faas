@@ -1,6 +1,6 @@
 package main
 
-// adr: 1580
+// adr: 1736
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -170,5 +171,59 @@ func TestReloadByHandoffSkipsDaemonsThatDoNotHandOff(t *testing.T) {
 	handedOff, reason, err := hostRuntime{}.reloadByHandoff(context.Background(), "schedd")
 	if err != nil || handedOff || reason != "" || f.reloads != 0 {
 		t.Fatalf("reloadByHandoff(schedd) = (%v, %q, %v), reloads %d; want a silent restart", handedOff, reason, err, f.reloads)
+	}
+}
+
+// apid reloads like the gateways (ADR 20261018132058): a deploy that only
+// changes its binary hands off, and a hand-off apid refuses after waiting out
+// a memory spike falls back to a restart.
+func TestReloadByHandoffAPID(t *testing.T) {
+	f := newFakeUnit(t)
+	f.takeOverAfter = 3
+	f.install(t)
+	handedOff, reason, err := hostRuntime{binaryDir: t.TempDir()}.reloadByHandoff(context.Background(), "apid")
+	if err != nil || !handedOff || f.reloads != 1 {
+		t.Fatalf("apid reload = (%v, %q, %v) after %d reloads, want one hand-off", handedOff, reason, err, f.reloads)
+	}
+
+	refused := newFakeUnit(t)
+	refused.takeOverAfter = -1
+	refused.failStatus = wire.HandoffStatusFailed + " 2026-10-18T00:00:00Z: wire: hand-off refused: cgroup uses 300000000 of 536870912 bytes"
+	refused.install(t)
+	handedOff, reason, err = hostRuntime{binaryDir: t.TempDir()}.reloadByHandoff(context.Background(), "apid")
+	if err != nil || handedOff || !strings.Contains(reason, "hand-off refused") {
+		t.Fatalf("refused apid reload = (%v, %q, %v), want a restart naming the refusal", handedOff, reason, err)
+	}
+}
+
+// A successor the old generation rejected in its pre-traffic check
+// (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md) must not
+// reach customers through a restart: the reload is an error, so the deploy
+// fails and rolls back while the old generation still serves.
+func TestReloadByHandoffRejectedByAPreTrafficCheckFailsTheDeploy(t *testing.T) {
+	for _, service := range []string{"apid", "gatewayd-public"} {
+		t.Run(service, func(t *testing.T) {
+			f := newFakeUnit(t)
+			f.takeOverAfter = -1
+			f.failStatus = wire.HandoffStatusFailed + " 2026-10-20T00:00:00Z: wire: successor 300: " +
+				wire.ErrHandoffRejected.Error() + " api: GET /v1/apps answered 500, want [401]"
+			f.install(t)
+			handedOff, _, err := hostRuntime{binaryDir: t.TempDir()}.reloadByHandoff(context.Background(), service)
+			if err == nil || handedOff || !strings.Contains(err.Error(), "failed its pre-traffic check") {
+				t.Fatalf("rejected %s reload = (%v, %v), want an error and no restart", service, handedOff, err)
+			}
+			if f.reloads != 1 {
+				t.Fatalf("reloads = %d, want 1", f.reloads)
+			}
+		})
+	}
+}
+
+// deployctl waits longer than the daemon may: first the memory wait, then
+// the successor's readiness bound.
+func TestHandoffWaitBoundCoversTheDaemonsWaits(t *testing.T) {
+	daemon := time.Duration(api.HandoffMemoryWaitSeconds+api.HandoffReadyTimeoutSeconds) * time.Second
+	if got := handoffWaitBound(); got <= daemon {
+		t.Fatalf("deployctl waits %v for a reload, want more than the daemon's %v", got, daemon)
 	}
 }

@@ -11,9 +11,21 @@ export type PlatformTenantRateCardResponse = {
   tenant_id: string;
   currency: string;
   /**
-   * What the tenant card prices (ADR-1310).
+   * What the tenant card prices (ADR-1310, ADR-1319).
    */
-  unit: 'request' | 'compute_second' | 'response_megabyte';
+  unit: string;
+  /**
+   * The card's fixed monthly charge per tenant (ADR-1322).
+   */
+  base_fee_millicents_per_month?: number;
+  /**
+   * The card's minimum monthly usage charge per tenant (ADR-1322).
+   */
+  minimum_millicents_per_month?: number;
+  /**
+   * Whether the first month's fees are prorated (ADR-1325).
+   */
+  prorate_monthly_fees?: boolean;
   price_millicents_per_unit: number;
   /**
    * Free units per tenant per UTC calendar month (ADR-975).

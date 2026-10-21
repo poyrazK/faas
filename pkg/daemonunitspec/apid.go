@@ -10,7 +10,12 @@
 // the rest up at next `make generate` run.
 package daemonunitspec
 
-import "github.com/onebox-faas/faas/pkg/daemonunit"
+import (
+	"fmt"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
+)
 
 // UnitApid is the canonical unit for faas-apid — public control-plane
 // API (spec §4.1).
@@ -55,7 +60,7 @@ func UnitApid() daemonunit.Unit {
 
 		Type: "notify",
 		// `systemctl reload` hands off to a second generation that serves
-		// new connections while this one finishes its own (ADR-1580).
+		// new connections while this one finishes its own (ADR-1736).
 		NotifyAccess: "main",
 		ExecReload:   handoffReload,
 		OOMPolicy:    "continue",
@@ -68,8 +73,11 @@ func UnitApid() daemonunit.Unit {
 		// watchdog (gated on pkg/wire.Liveness).
 		WatchdogSec: "90s",
 
+		// A reload runs two apid generations in this cgroup (ADR-1736); the
+		// cap fits a spiking successor beside a draining predecessor, and
+		// GOMEMLIMIT keeps each process near half (ADR 20261018132058).
 		Slice:     "faas-cp.slice",
-		MemoryMax: "256M",
+		MemoryMax: fmt.Sprintf("%dM", api.APIDMemoryMaxMB),
 
 		// apid serves unix and high loopback ports; it never needs host
 		// capabilities. Emit an empty bounding set so package defaults cannot
@@ -79,6 +87,7 @@ func UnitApid() daemonunit.Unit {
 
 		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/profiling.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
+			{Key: "GOMEMLIMIT", Value: fmt.Sprintf("%dMiB", api.APIDGoMemLimitMB)},
 			{Key: "FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED", Value: "0"},
@@ -133,6 +142,7 @@ func UnitApid() daemonunit.Unit {
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 			{Name: "faas_host_age_identity_previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
+			{Name: "faas_fleet_age_identity_previous", Path: "/etc/faas/secrets/fleet.age.previous", Optional: true},
 			{Name: "faas_fleet_age_recipient", Path: "/etc/faas/secrets/fleet.age.pub"},
 			{Name: "faas_host_age_recipient", Path: "/etc/faas/secrets/host.age.pub"},
 			{Name: "faas_host_hmac_key", Path: "/etc/faas/secrets/host.hmac.key"},

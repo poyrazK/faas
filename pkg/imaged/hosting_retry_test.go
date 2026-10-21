@@ -16,11 +16,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func hostingProgress(t *testing.T, f *hostingReplay) state.HostingVerificationProgress {
 	t.Helper()
-	dep, err := f.store.DeploymentByID(context.Background(), f.candidate.ID)
+	dep, err := f.store.MemStore.DeploymentByID(context.Background(), f.candidate.ID)
 	var stages state.StageState
 	if err != nil {
 		t.Fatal(err)
@@ -79,12 +80,12 @@ func TestHostingPublicationRecoverySurvivesHandlerRestart(t *testing.T) {
 	}
 	// A new process reconstructs its handler; all retry state comes from storage.
 	now = *first.RetryNotBefore
-	f.handler = New(f.store, f.notif, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmokeRequired(true).WithHostingSmoke(smoke)
+	f.handler = New(statetest.NewMem(f.store), f.notif, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmokeRequired(true).WithHostingSmoke(smoke)
 	f.handler.hostingVerificationNow = clock
 	if err := f.handler.HandleNotification(ctx, f.notification); err != nil {
 		t.Fatal(err)
 	}
-	live, err := f.store.LiveDeploymentForScope(ctx, f.candidate.AppID, state.DefaultEnvScope)
+	live, err := f.store.MemStore.LiveDeploymentForScope(ctx, f.candidate.AppID, state.DefaultEnvScope)
 	last := hostingProgress(t, f)
 	if err != nil || live.ID != f.candidate.ID || publications != 2 || requests.Load() != 1 || f.notif.failed != 0 || last.Attempts != 2 || !last.DeadlineAt.Equal(first.DeadlineAt) || last.LastErrorCode != "" || last.RetryNotBefore != nil || last.CompletedAt == nil {
 		t.Fatalf("recovery did not promote same candidate: live=%s progress=%+v publications=%d requests=%d events=%d err=%v", live.ID, last, publications, requests.Load(), f.notif.failed, err)
@@ -126,9 +127,9 @@ func TestHostingPublicationDeadlineFinalizesPlatformFailureAtomically(t *testing
 	if err := f.handler.HandleNotification(ctx, f.notification); err == nil {
 		t.Fatal("expired recovery did not fail candidate")
 	}
-	dep, _ := f.store.DeploymentByID(ctx, f.candidate.ID)
+	dep, _ := f.store.MemStore.DeploymentByID(ctx, f.candidate.ID)
 	receipt, err := apihostingreceipt.Decode(dep.APIHostingReceipt)
-	live, liveErr := f.store.LiveDeploymentForScope(ctx, dep.AppID, state.DefaultEnvScope)
+	live, liveErr := f.store.MemStore.LiveDeploymentForScope(ctx, dep.AppID, state.DefaultEnvScope)
 	if err != nil || liveErr != nil || dep.Status != state.DeployFailed || dep.ErrorCode != api.CodeDeploymentVerificationUnavailable || receipt.Smoke.ErrorCode != apihostingreceipt.SmokeErrorVerificationUnavailable || live.ID != f.previous.ID || probes != 1 || f.notif.failed != 1 || f.notif.commitErr != nil || hostingProgress(t, f).Attempts != first.Attempts {
 		t.Fatalf("incorrect expiry verdict: dep=%+v smoke=%+v live=%s probes=%d events=%d commit=%v err=%v liveErr=%v", dep, receipt.Smoke, live.ID, probes, f.notif.failed, f.notif.commitErr, err, liveErr)
 	}
@@ -156,7 +157,7 @@ func TestHostingPublicationRecoveryPreservesAppHealthFailure(t *testing.T) {
 	if err := f.handler.HandleNotification(context.Background(), f.notification); err == nil {
 		t.Fatal("application health failure retried")
 	}
-	dep, _ := f.store.DeploymentByID(context.Background(), f.candidate.ID)
+	dep, _ := f.store.MemStore.DeploymentByID(context.Background(), f.candidate.ID)
 	if dep.Status != state.DeployFailed || dep.ErrorCode != api.CodeDeploymentSmokeFailed || probes != 2 || f.notif.failed != 1 || hostingProgress(t, f).LastErrorCode != "" {
 		t.Fatalf("app failure misclassified: status=%s code=%s probes=%d events=%d", dep.Status, dep.ErrorCode, probes, f.notif.failed)
 	}
@@ -165,7 +166,7 @@ func TestHostingPublicationRecoveryPreservesAppHealthFailure(t *testing.T) {
 func TestHostingPublicationFailureCannotOverwriteCancellation(t *testing.T) {
 	f := hostingReplayFixture(t)
 	f.handler.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
-		if err := f.store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployCancelled, "customer cancelled"); err != nil {
+		if err := f.store.MemStore.UpdateDeploymentStatus(ctx, dep.ID, state.DeployCancelled, "customer cancelled"); err != nil {
 			t.Fatal(err)
 		}
 		return unavailablePublication(ctx, app, dep)
@@ -173,7 +174,7 @@ func TestHostingPublicationFailureCannotOverwriteCancellation(t *testing.T) {
 	if err := f.handler.HandleNotification(context.Background(), f.notification); err != nil {
 		t.Fatal(err)
 	}
-	dep, _ := f.store.DeploymentByID(context.Background(), f.candidate.ID)
+	dep, _ := f.store.MemStore.DeploymentByID(context.Background(), f.candidate.ID)
 	if dep.Status != state.DeployCancelled || len(dep.APIHostingReceipt) != 0 || f.notif.failed != 0 || hostingProgress(t, f).LastErrorCode != "" {
 		t.Fatalf("publication failure replaced cancellation: status=%s receipt=%s events=%d", dep.Status, dep.APIHostingReceipt, f.notif.failed)
 	}
@@ -199,7 +200,7 @@ func TestHostingProgressPersistenceOutageRemainsReplayable(t *testing.T) {
 		t.Run(string(action), func(t *testing.T) {
 			f := hostingReplayFixture(t)
 			outage := errors.New("progress commit unavailable")
-			f.handler.store = &hostingProgressFaultStore{hostingFailureFaultStore: f.store, action: action, err: outage}
+			f.handler.store = statetest.NewMem(&hostingProgressFaultStore{hostingFailureFaultStore: f.store, action: action, err: outage})
 			probes := 0
 			f.handler.WithHostingSmoke(func(ctx context.Context, app state.App, dep state.Deployment) (apihostingreceipt.SmokeResult, error) {
 				probes++
@@ -218,7 +219,7 @@ func TestHostingProgressPersistenceOutageRemainsReplayable(t *testing.T) {
 			if err := f.handler.HandleNotification(context.Background(), f.notification); err != nil {
 				t.Fatal(err)
 			}
-			live, err := f.store.LiveDeploymentForScope(context.Background(), f.candidate.AppID, state.DefaultEnvScope)
+			live, err := f.store.MemStore.LiveDeploymentForScope(context.Background(), f.candidate.AppID, state.DefaultEnvScope)
 			if err != nil || live.ID != f.candidate.ID || f.notif.failed != 0 {
 				t.Fatalf("progress outage stranded candidate: live=%s err=%v", live.ID, err)
 			}

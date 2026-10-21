@@ -13,9 +13,10 @@
 //      pipe with no data) is not silently considered "approved" —
 //      destruction requires the destructive verb on its own line.
 
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
@@ -73,9 +74,9 @@ func TestRequireTyped_TableDriven(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			pipeStdin(t, tc.input)
+			main.PipeStdin(t, tc.input)
 
-			got := requireTyped(tc.expected)
+			got := main.RequireTyped(tc.expected)
 			if got != tc.want {
 				t.Fatalf("requireTyped(%q) with input %q = %v, want %v",
 					tc.expected, tc.input, got, tc.want)
@@ -90,9 +91,9 @@ func TestRequireTyped_TableDriven(t *testing.T) {
 // the documented contract — `gh` uses the same shape and screen
 // readers / muscle memory depend on it.
 func TestRequireTyped_PromptShape(t *testing.T) {
-	pipeStdin(t, "delete my account\n")
-	rd, restore := captureStderr(t)
-	got := requireTyped("delete my account")
+	main.PipeStdin(t, "delete my account\n")
+	rd, restore := main.CaptureStderr(t)
+	got := main.RequireTyped("delete my account")
 	restore()
 
 	if !got {
@@ -107,9 +108,9 @@ func TestRequireTyped_PromptShape(t *testing.T) {
 // production-us hunt #4: piped (non-terminal) stdin names the --quiet bypass
 // so a script waiting on the prompt says why in its log.
 func TestRequireTyped_NonTerminalNamesTheBypass(t *testing.T) {
-	pipeStdin(t, "delete edge rule\n")
-	rd, restore := captureStderr(t)
-	got := requireTyped("delete edge rule")
+	main.PipeStdin(t, "delete edge rule\n")
+	rd, restore := main.CaptureStderr(t)
+	got := main.RequireTyped("delete edge rule")
 	restore()
 	if !got || !strings.Contains(rd.String(), "pass --quiet to skip this confirmation") {
 		t.Fatalf("requireTyped = %v, stderr %q; want piped input accepted and the --quiet hint shown", got, rd.String())
@@ -122,9 +123,9 @@ func TestRequireTyped_NonTerminalNamesTheBypass(t *testing.T) {
 // cmdAccountRestore et al) and for users who scroll back and want
 // to know whether they typed wrong or hit Ctrl-C.
 func TestRequireTyped_MismatchPrintsCancel(t *testing.T) {
-	pipeStdin(t, "wrong\n")
-	rd, restore := captureStderr(t)
-	got := requireTyped("delete my account")
+	main.PipeStdin(t, "wrong\n")
+	rd, restore := main.CaptureStderr(t)
+	got := main.RequireTyped("delete my account")
 	restore()
 
 	if got {

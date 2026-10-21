@@ -31,7 +31,7 @@ func (s *PgStore) ObserveObjectMultipartPartBody(ctx context.Context, r ObjectBu
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(b.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(b.AccountID), mustPgUUID(b.ID)); err != nil {
 		return mapErr(err)
 	}
 	if _, err = lockObjectMutationBucket(ctx, tx, b); err != nil {

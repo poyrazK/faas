@@ -415,6 +415,7 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			ReferrerHost:                         row.ReferrerHost,
 			Country:                              row.Country,
 			WakeID:                               row.WakeID,
+			TraceInferred:                        row.TraceInferred,
 			GuestRuntime:                         row.GuestRuntime,
 			GuestOutcome:                         row.GuestOutcome,
 			GuestErrorClass:                      row.GuestErrorClass,
@@ -476,6 +477,7 @@ type bucketKey struct {
 	ReferrerHost                         string
 	Country                              string
 	WakeID                               string
+	TraceInferred                        bool
 	GuestRuntime                         string
 	GuestOutcome                         string
 	GuestErrorClass                      string

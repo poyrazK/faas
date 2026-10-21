@@ -23,6 +23,9 @@ func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string)
 		return RuntimeAppValuesSnapshot{}, err
 	}
 	owner.Values = m.runtimeAppEnvRowsLocked(owner)
+	if owner.Inherited, err = m.inheritedProjectEnvLocked(owner); err != nil {
+		return RuntimeAppValuesSnapshot{}, err
+	}
 	d := m.deployments[deploymentID]
 	result := RuntimeAppValuesSnapshot{RuntimeAppEnvSnapshot: owner, Secrets: []AppSecret{}, SecretGrants: RuntimeAppSecretGrants{
 		OverrideEnvSecrets: append([]byte(nil), d.OverrideEnvSecrets...), Sidecars: append([]byte(nil), d.Sidecars...),
@@ -43,6 +46,11 @@ func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string)
 			ManagedPostgresBindingID: row.ManagedPostgresBindingID, ManagedPostgresAccess: row.ManagedPostgresAccess, ManagedCredentialRef: row.ManagedCredentialRef,
 			ManagedCredentialGeneration: row.ManagedCredentialGeneration, ManagedObjectStorageCredentialID: row.ManagedObjectStorageCredentialID,
 		})
+	}
+	if rows, pinned := m.releaseSecretPins[deploymentID]; pinned {
+		if err := applyReleaseSecretSnapshot(&result, rows); err != nil {
+			return RuntimeAppValuesSnapshot{}, err
+		}
 	}
 	sort.Slice(result.Secrets, func(i, j int) bool { return result.Secrets[i].Key < result.Secrets[j].Key })
 	runtimeApp, err := AppForDeploymentRuntime(m.apps[appID], d)
@@ -74,6 +82,21 @@ func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string)
 		return RuntimeAppValuesSnapshot{}, err
 	}
 	return result, nil
+}
+
+// inheritedProjectEnvLocked reads the latest configuration of the project
+// environment the owner's scope maps to (ADR-1136).
+func (m *MemStore) inheritedProjectEnvLocked(owner RuntimeAppEnvSnapshot) ([]AppEnv, error) {
+	app := m.apps[owner.AppID]
+	if app.ProjectID == "" {
+		return []AppEnv{}, nil
+	}
+	versions := m.projectEnvironmentConfigs[projectEnvironmentConfigKey(app.ProjectID, workloadEnvironmentSlug(owner.Scope))]
+	if len(versions) == 0 {
+		return []AppEnv{}, nil
+	}
+	latest := versions[len(versions)-1]
+	return inheritedProjectEnv(owner.AccountID, owner.AppID, owner.Scope, owner.Values, latest.Values, latest.CreatedAt.UTC())
 }
 
 // PostgreSQL cascades observation rows when their scoped secret is deleted.

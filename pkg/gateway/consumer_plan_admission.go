@@ -98,12 +98,14 @@ func (h *Handler) consumerPlanPolicy(ctx context.Context, app App, consumerID st
 }
 
 // enforceConsumerPlan admits a consumer's request against its plan's
-// per-minute request limit and monthly weighted-unit cap. Denied and
+// per-minute request limit and monthly weighted-unit cap. Plans, spend caps
+// and overdue holds are API monetization, so it admits everything while
+// monetization is off (ADR-20261018090210). Denied and
 // unverifiable requests never become billable. Consumers on unlimited plans
 // cost one cached lookup and no counter write.
 func (h *Handler) enforceConsumerPlan(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, deploymentSmoke bool) bool {
 	consumerID := authenticatedFrom(r.Context()).ConsumerID
-	if deploymentSmoke || h.consumerPlanStore == nil || consumerID == "" {
+	if deploymentSmoke || h.consumerPlanStore == nil || consumerID == "" || !h.apiMonetizationEnabled() {
 		return true
 	}
 	policy, err := h.consumerPlanPolicy(r.Context(), app, consumerID)

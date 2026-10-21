@@ -14,14 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-type environmentWorkPolicyTestStore interface {
-	state.Store
-	state.ProjectEnvironmentWorkPolicyStore
-	state.DeploymentWorkloadSpecReader
-	state.AppWorkPolicyStore
-	state.ProjectReleaseSetStore
-	state.ProjectEnvironmentWorkloadQualificationStore
-}
+type environmentWorkPolicyTestStore = contractTestStore
 
 func TestMemEnvironmentWorkPoliciesAreIsolatedAndPinned(t *testing.T) {
 	testEnvironmentWorkPoliciesAreIsolatedAndPinned(t, state.NewMemStore())

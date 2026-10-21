@@ -1,5 +1,5 @@
 // adr: 387
-package state
+package state_test
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestExclusiveOperationStoreLifecycle(t *testing.T) {
@@ -23,18 +24,18 @@ func TestExclusiveOperationStoreLifecycle(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			ctx := context.Background()
 			now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-			var base Store
-			var ownerStore ExclusiveWorkStore
+			var base state.Store
+			var ownerStore state.ExclusiveWorkStore
 			var pool *pgxpool.Pool
 			if backend == "postgres" {
 				pool = pgtest.OpenMigrated(t)
 				if err := db.MigrateUp(ctx, pool); err != nil {
 					t.Fatalf("MigrateUp: %v", err)
 				}
-				store := NewPgStore(pool)
+				store := state.NewPgStore(pool)
 				base, ownerStore = store, store
 			} else {
-				store := NewMemStoreWithExclusiveClock(func() time.Time { return now })
+				store := state.NewMemStoreWithExclusiveClock(func() time.Time { return now })
 				base, ownerStore = store, store
 			}
 
@@ -42,15 +43,15 @@ func TestExclusiveOperationStoreLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			app, err := base.CreateApp(ctx, App{
+			app, err := base.CreateApp(ctx, state.App{
 				AccountID: account.ID, Slug: "exclusive-state-" + uuid.NewString()[:8],
-				Type: AppTypeApp, Runtime: "node22", RAMMB: 256,
+				Type: state.AppTypeApp, Runtime: "node22", RAMMB: 256,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			deployment, err := base.CreateDeployment(ctx, Deployment{
-				AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:exclusive-state-test", Status: DeployLive,
+			deployment, err := base.CreateDeployment(ctx, state.Deployment{
+				AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:exclusive-state-test", Status: state.DeployLive,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -58,18 +59,18 @@ func TestExclusiveOperationStoreLifecycle(t *testing.T) {
 			nodeID := "exclusive-state-node"
 			if pool != nil {
 				node, err := base.(interface {
-					ComputeNodeByName(context.Context, string) (ComputeNode, error)
-				}).ComputeNodeByName(ctx, DefaultLocalNodeName)
+					ComputeNodeByName(context.Context, string) (state.ComputeNode, error)
+				}).ComputeNodeByName(ctx, state.DefaultLocalNodeName)
 				if err != nil {
 					t.Fatal(err)
 				}
 				nodeID = node.ID
 			}
-			instance, err := base.CreateInstance(ctx, app.ID, deployment.ID, string(StateRunning), 256, nodeID, uuid.NewString())
+			instance, err := base.CreateInstance(ctx, app.ID, deployment.ID, string(state.StateRunning), 256, nodeID, uuid.NewString())
 			if err != nil {
 				t.Fatal(err)
 			}
-			incarnation := ExclusiveIncarnation(instance)
+			incarnation := state.ExclusiveIncarnation(instance)
 
 			policy := exclusivework.Policy{
 				Name: "state-lifecycle", Scope: "account", MemberAppIDs: []string{app.ID},
@@ -79,7 +80,7 @@ func TestExclusiveOperationStoreLifecycle(t *testing.T) {
 			if _, err := ownerStore.UpsertExclusiveWorkPolicy(ctx, account.ID, policy); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ownerStore.UpsertExclusiveWorkPolicy(ctx, account.ID, exclusivework.Policy{Name: "Bad_Name"}); !errors.Is(err, ErrInvalidArgument) {
+			if _, err := ownerStore.UpsertExclusiveWorkPolicy(ctx, account.ID, exclusivework.Policy{Name: "Bad_Name"}); !errors.Is(err, state.ErrInvalidArgument) {
 				t.Fatalf("invalid policy error = %v, want ErrInvalidArgument", err)
 			}
 			policies, err := ownerStore.ListExclusiveWorkPolicies(ctx, account.ID)
@@ -87,9 +88,9 @@ func TestExclusiveOperationStoreLifecycle(t *testing.T) {
 				t.Fatalf("policies = %+v, err = %v", policies, err)
 			}
 
-			admit := func(key, idempotencyKey, request string) (ExclusiveOperation, error) {
+			admit := func(key, idempotencyKey, request string) (state.ExclusiveOperation, error) {
 				keyJSON, _ := json.Marshal(key)
-				op, _, err := ownerStore.AdmitExclusiveOperation(ctx, ExclusiveAdmission{
+				op, _, err := ownerStore.AdmitExclusiveOperation(ctx, state.ExclusiveAdmission{
 					AccountID: account.ID, AppID: app.ID, PolicyName: policy.Name,
 					Key:     keyJSON,
 					Request: json.RawMessage(request), IdempotencyKey: idempotencyKey,
@@ -107,10 +108,10 @@ func TestExclusiveOperationStoreLifecycle(t *testing.T) {
 			if _, err := admit("lane-1", "first-request", `{"kind":"sync","version":2}`); !errors.Is(err, exclusivework.ErrIdentityConflict) {
 				t.Fatalf("changed idempotent request error = %v, want identity conflict", err)
 			}
-			if _, _, err := ownerStore.AdmitExclusiveOperation(ctx, ExclusiveAdmission{
+			if _, _, err := ownerStore.AdmitExclusiveOperation(ctx, state.ExclusiveAdmission{
 				AccountID: account.ID, AppID: app.ID, PolicyName: policy.Name,
 				Key: json.RawMessage(`"customer:acme:crm-sync"`), Request: json.RawMessage(`[]`),
-			}); !errors.Is(err, ErrInvalidArgument) {
+			}); !errors.Is(err, state.ErrInvalidArgument) {
 				t.Fatalf("invalid request error = %v, want ErrInvalidArgument", err)
 			}
 

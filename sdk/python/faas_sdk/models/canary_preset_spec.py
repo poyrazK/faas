@@ -21,7 +21,7 @@ class CanaryPresetSpec:
     """The canary ladder a customer asks for on a deploy (issue
     #976 / ADR-122 / SAFE-RELEASES-A + production-leveling
     Stream F). Preset is the catalog name from
-    pkg/api/canary (none/slow/balanced/aggressive/1-10-50-100/
+    pkg/api/canary (none/slow/balanced/aggressive/1-10-50-100/adaptive/
     custom). When Preset is 'custom', Stages is the
     customer-supplied ladder (each entry is percent +
     duration string in time.ParseDuration form, e.g.

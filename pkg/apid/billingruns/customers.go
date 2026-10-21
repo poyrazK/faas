@@ -172,7 +172,10 @@ func (s *Service) exportTenant(ctx context.Context, acct state.Account, tenant s
 		return false, api.ErrInternal("could not list the month's statements")
 	}
 	for _, revision := range revisions {
-		if revision.Status != state.APIConsumerUsageStatementFinalized || revision.AmountMillicents == 0 {
+		if revision.Status != state.APIConsumerUsageStatementFinalized || revision.AmountDueMillicents() == 0 {
+			if revision.Status == state.APIConsumerUsageStatementFinalized && revision.CreditAppliedMillicents > 0 && item.ExportedCount == 0 {
+				item.Reason = creditCoveredReason
+			}
 			continue
 		}
 		if _, err := statements.GetPlatformTenantStatementHandoff(ctx, acct.ID, tenant.ID, revision.ID); err == nil {

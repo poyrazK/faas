@@ -41,12 +41,7 @@ func TestPgSnapshotLocalityTracksOriginResidency(t *testing.T) {
 	checkSnapshotLocality(t, s, dep)
 }
 
-type localityTestStore interface {
-	state.Store
-	state.SnapshotOriginStore
-	state.SnapshotReplicaLeaseStore
-	state.SnapshotLocalityStore
-}
+type localityTestStore = contractTestStore
 
 func checkSnapshotLocality(t *testing.T, s localityTestStore, dep string) {
 	t.Helper()

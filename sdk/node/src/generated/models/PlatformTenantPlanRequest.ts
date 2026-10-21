@@ -16,9 +16,21 @@ export type PlatformTenantPlanRequest = {
   route_weights?: Record<string, number>;
   request_budget?: PlatformTenantPlanBudget;
   /**
-   * What the card a plan assignment creates prices (ADR-1310). Assigning a plan whose unit differs from the tenant's current card starts its card at the next UTC month boundary.
+   * What the card a plan assignment creates prices (ADR-1310, ADR-1319). Assigning a plan also starts a free card for each other unit the tenant is charged for, so the plan is the tenant's whole price.
    */
-  unit?: 'request' | 'compute_second' | 'response_megabyte';
+  unit?: string;
+  /**
+   * Fixed monthly charge per tenant the plan's card sets (ADR-1322).
+   */
+  base_fee_millicents_per_month?: number;
+  /**
+   * Minimum monthly usage charge per tenant the plan's card sets (ADR-1322).
+   */
+  minimum_millicents_per_month?: number;
+  /**
+   * Prorate the first month's fees (ADR-1325).
+   */
+  prorate_monthly_fees?: boolean;
   /**
    * How the plan's ladder prices a tenant's month (ADR-1309); volume needs tiers.
    */

@@ -46,8 +46,14 @@ EOF
 cat >"$BIN/stat" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$1" == -c && "$2" == '%s %Y' ]]
-printf '%s %s\n' "$(wc -c <"$3" | tr -d ' ')" 1704067200
+[[ "$1" == -c && "$2" == '%s %Y %n' ]]
+shift 2
+for path in "$@"; do
+  mtime=1704067200
+  # Backup history files outlive the segments they describe.
+  [[ "$path" == *.backup ]] && mtime=1700000000
+  printf '%s %s %s\n' "$(wc -c <"$path" | tr -d ' ')" "$mtime" "$path"
+done
 EOF
 chmod +x "$BIN/pg_archivecleanup" "$BIN/rclone" "$BIN/stat" "$PRUNER"
 
@@ -57,7 +63,9 @@ make_backup() {
   rm -rf "$payload"
   mkdir -p "$dir" "$payload"
   printf 'START WAL LOCATION: 0/0 (file %s)\n' "$boundary" >"$payload/backup_label"
-  tar -czf "$dir/base.tar.gz" -C "$payload" backup_label
+  # pg_basebackup writes backup_label first and the data directory after it.
+  printf 'data' >"$payload/PG_VERSION"
+  tar -czf "$dir/base.tar.gz" -C "$payload" backup_label PG_VERSION
   if [[ "$with_manifest" == true ]]; then
     printf '{}\n' >"$dir/backup_manifest"
   fi
@@ -81,6 +89,8 @@ new=000000010000000000000030
 printf old >"$ARCHIVE/$old"
 printf boundary >"$ARCHIVE/$boundary"
 printf new >"$ARCHIVE/$new"
+# pg_archivecleanup (PostgreSQL 16) never removes backup history files.
+printf label >"$ARCHIVE/$old.00000028.backup"
 make_backup basebackup-2026-01-01T000000Z "$boundary"
 
 out="$(run_pruner)"
@@ -99,7 +109,12 @@ run_pruner --apply >/dev/null
 [[ -e "$ARCHIVE/$boundary" ]]
 [[ -e "$ARCHIVE/$new" ]]
 [[ -s "$STATE/wal-prune-success" ]]
-grep -Fq 'bytes=' "$STATE/wal-archive-stats"
+# Bytes cover the two remaining WAL files, "boundary" (8 bytes) + "new" (3),
+# and the history file (5). Ages cover segments only: the older history file
+# must not make the archive look like it reaches back further than its WAL.
+[[ -e "$ARCHIVE/$old.00000028.backup" ]]
+grep -Fqx 'bytes=16' "$STATE/wal-archive-stats"
+grep -Fqx 'oldest_timestamp_seconds=1704067200' "$STATE/wal-archive-stats"
 
 rm -rf "$BACKUPS" "$STATE"
 mkdir -p "$BACKUPS"

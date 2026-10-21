@@ -125,6 +125,12 @@ After each function deploys, Gregale applies its manifest settings:
 - **`idle_timeout_s`**: how long the function stays warm after a request.
 - **Cron triggers**: the function's crons match `triggers:` exactly. Removing
   one from the file removes it.
+- **Realtime triggers**: a `kind: realtime` trigger runs the function for each
+  message of a realtime consumer group (see
+  [function triggers](realtime.md#function-triggers)). Once a function declares
+  one, its realtime triggers match `triggers:` by `slug`; a changed endpoint,
+  channel or group replaces the trigger. A function that declares none keeps
+  realtime triggers created with `gregale triggers create`.
 - **`bucket_events`**: notifications from that bucket go to the function.
   Gregale changes only the notification rules it created for this function
   and leaves every other rule on the bucket alone. Configuring notifications

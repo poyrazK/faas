@@ -4,7 +4,12 @@
 /* eslint-disable */
 import type { AppEnvListResponse } from '../models/AppEnvListResponse.js';
 import type { AppEnvResponse } from '../models/AppEnvResponse.js';
+import type { ConfigGuard } from '../models/ConfigGuard.js';
+import type { ConfigRevisionDetail } from '../models/ConfigRevisionDetail.js';
+import type { ConfigRollbackRequest } from '../models/ConfigRollbackRequest.js';
+import type { ConfigRollbackResponse } from '../models/ConfigRollbackResponse.js';
 import type { EnvDiffResponse } from '../models/EnvDiffResponse.js';
+import type { ListConfigRevisionsResponse } from '../models/ListConfigRevisionsResponse.js';
 import type { PutAppEnvRequest } from '../models/PutAppEnvRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -107,6 +112,205 @@ export class EnvService {
     });
   }
   /**
+   * List a scope's config revisions (ADR-1451).
+   * Newest first. Each customer env or secret write records a revision of the scope's complete config; the newest 100 are kept. Values are not listed; read one revision for its variables.
+   * @returns ListConfigRevisionsResponse Config revisions and the scope's newest config guard.
+   * @throws ApiError
+   */
+  public static listConfigRevisions({
+    slug,
+    scope,
+    limit = 20,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * lowercase alnum + dash, no leading/trailing dash) — e.g.
+     * `default`, `staging`, `prod-eu`. Or the reserved sentinel
+     * `__all__` on GET only, which returns the nested
+     * `env_by_scope` response shape (every scope on the app).
+     * Omitted = `scope=default` (pre-PR-B behavior).
+     *
+     */
+    scope?: string,
+    /**
+     * Revisions to return, newest first.
+     */
+    limit?: number,
+  }): CancelablePromise<ListConfigRevisionsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/config/revisions',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read one config revision (ADR-1451).
+   * The scope's variables and secret versions after the change. Secret values and fingerprints are never returned.
+   * @returns ConfigRevisionDetail The config revision.
+   * @throws ApiError
+   */
+  public static getConfigRevision({
+    slug,
+    revision,
+    scope,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The scope's config revision number, from the config history.
+     */
+    revision: number,
+    /**
+     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * lowercase alnum + dash, no leading/trailing dash) — e.g.
+     * `default`, `staging`, `prod-eu`. Or the reserved sentinel
+     * `__all__` on GET only, which returns the nested
+     * `env_by_scope` response shape (every scope on the app).
+     * Omitted = `scope=default` (pre-PR-B behavior).
+     *
+     */
+    scope?: string,
+  }): CancelablePromise<ConfigRevisionDetail> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/config/revisions/{revision}',
+      path: {
+        'slug': slug,
+        'revision': revision,
+      },
+      query: {
+        'scope': scope,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a scope's newest config guard (ADR-1451).
+   * A guard judges the first traffic served with a changed config against the config before it, and restores the previous config when the new one fails. 404 `config_guard_not_found` when no change in the scope was guarded.
+   * @returns ConfigGuard The config guard and, once closed, its decision.
+   * @throws ApiError
+   */
+  public static getConfigGuard({
+    slug,
+    scope,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * lowercase alnum + dash, no leading/trailing dash) — e.g.
+     * `default`, `staging`, `prod-eu`. Or the reserved sentinel
+     * `__all__` on GET only, which returns the nested
+     * `env_by_scope` response shape (every scope on the app).
+     * Omitted = `scope=default` (pre-PR-B behavior).
+     *
+     */
+    scope?: string,
+  }): CancelablePromise<ConfigGuard> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/config/guard',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Restore a scope's variables to a config revision (ADR-1451).
+   * Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
+   * @returns ConfigRollbackResponse What the rollback changed.
+   * @throws ApiError
+   */
+  public static rollbackConfig({
+    slug,
+    requestBody,
+    scope,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: ConfigRollbackRequest,
+    /**
+     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * lowercase alnum + dash, no leading/trailing dash) — e.g.
+     * `default`, `staging`, `prod-eu`. Or the reserved sentinel
+     * `__all__` on GET only, which returns the nested
+     * `env_by_scope` response shape (every scope on the app).
+     * Omitted = `scope=default` (pre-PR-B behavior).
+     *
+     */
+    scope?: string,
+  }): CancelablePromise<ConfigRollbackResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/config/rollback',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Set an env var.
    * Persists the plaintext value verbatim in the app_envs table (no
    * seal step). Env vars are non-sensitive runtime config by contract
@@ -128,6 +332,7 @@ export class EnvService {
     slug,
     key,
     requestBody,
+    guard,
     scope,
   }: {
     /**
@@ -142,6 +347,14 @@ export class EnvService {
      * Env var payload — key name + plaintext.
      */
     requestBody: PutAppEnvRequest,
+    /**
+     * `false` opts this env or secret write out of the config guard
+     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * closes as superseded. Omitted or `true` guards the change when the
+     * scope has a live deployment.
+     *
+     */
+    guard?: boolean,
     /**
      * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
@@ -161,6 +374,7 @@ export class EnvService {
         'key': key,
       },
       query: {
+        'guard': guard,
         'scope': scope,
       },
       body: requestBody,
@@ -194,6 +408,7 @@ export class EnvService {
   public static deleteEnv({
     slug,
     key,
+    guard,
     scope,
   }: {
     /**
@@ -204,6 +419,14 @@ export class EnvService {
      * Secret key. Must start with a letter; A-Z, 0-9, underscore.
      */
     key: string,
+    /**
+     * `false` opts this env or secret write out of the config guard
+     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * closes as superseded. Omitted or `true` guards the change when the
+     * scope has a live deployment.
+     *
+     */
+    guard?: boolean,
     /**
      * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
@@ -223,6 +446,7 @@ export class EnvService {
         'key': key,
       },
       query: {
+        'guard': guard,
         'scope': scope,
       },
       errors: {

@@ -13,15 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type nodeSettlementTestStore interface {
-	accountingStore
-	state.ObjectTrackedGatewayUploadStore
-	state.ObjectNodeSettlementStore
-	state.ObjectMultipartUploadStore
-	state.ObjectMultipartTransferStore
-	state.ObjectMultipartCompletionStore
-	state.ObjectUploadRouteStore
-}
+type nodeSettlementTestStore = contractTestStore
 
 func TestObjectNodeSettlementOutboxMem(t *testing.T) {
 	st := state.NewMemStore()

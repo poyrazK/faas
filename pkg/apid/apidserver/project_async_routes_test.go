@@ -130,14 +130,19 @@ func TestPlanProjectManifestAsyncRoutesClassifiesDiffAndSkips(t *testing.T) {
 func TestApplyProjectManifestAsyncRoutesScopesClearsAndNoTriggers(t *testing.T) {
 	srv, store, acct, reports := sourceRefAsyncRouteTestFixture(t)
 	ctx := context.Background()
+	// Apps bind only to an existing project of their owner (#4882).
+	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "async-routes"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	billing, err := store.CreateApp(ctx, state.App{
 		AccountID: acct.ID, Slug: "billing", Type: state.AppTypeApp,
-		ProjectID: "project-id", WorkloadName: "billing", RootDir: "services/billing",
+		ProjectID: project.ID, WorkloadName: "billing", RootDir: "services/billing",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	reports.ProjectID = "project-id"
+	reports.ProjectID = project.ID
 	reports.WorkloadName = "reports"
 	reports.RootDir = "services/reports"
 	routes := []gregalemanifest.AsyncRoute{

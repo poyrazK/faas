@@ -1,7 +1,7 @@
 # Managed by Ansible (postgres_standby). Local edits are overwritten.
 # ADR-1344 §8: warm-standby replica of {{ faas_postgres_primary_host }}. The
 # postgres role removes this file once the host is converged as a primary.
-primary_conninfo = 'host={{ faas_postgres_primary_host }} port={{ faas_postgres_primary_port }} user=replicator passfile=/var/lib/postgresql/.pgpass application_name={{ inventory_hostname }} sslmode=prefer'
+primary_conninfo = 'host={{ faas_postgres_primary_host }} port={{ faas_postgres_primary_port }} user=replicator passfile=/var/lib/postgresql/.pgpass application_name={{ inventory_hostname }} sslmode=verify-full sslrootcert={{ faas_postgres_standby_primary_cert }}'
 primary_slot_name = '{{ faas_postgres_standby_slot }}'
 hot_standby = on
 # Read-only queries here never hold back vacuum on the primary.

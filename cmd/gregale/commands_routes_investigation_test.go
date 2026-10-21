@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 )
@@ -35,8 +36,8 @@ func cliInvestigation(opts api.RouteHealthInvestigationOptions) api.RouteHealthI
 func TestRouteInvestigationCLIWireExportAndEvidenceBinding(t *testing.T) {
 	for _, scenario := range []string{"json", "human", "customer", "out", "overwrite", "wrong_window", "wrong_side_counts", "wrong_code", "wrong_target", "wrong_link", "duplicate", "unexpected_identities", "invalid_filter"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			opts := api.RouteHealthInvestigationOptions{Method: "POST", Path: "/checkout", StatusCode: 403}
 			if scenario == "customer" {
 				opts.CustomerID = "44444444-4444-4444-8444-444444444444"
@@ -73,14 +74,14 @@ func TestRouteInvestigationCLIWireExportAndEvidenceBinding(t *testing.T) {
 				if scenario == "customer" && r.URL.Query().Get("customer_group_by") != "tenant" {
 					t.Error("customer dimension was not normalized")
 				}
-				writeJSONTest(w, report)
+				main.WriteJSONTest(w, report)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			old := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"routes", "health", "investigate", "demo", "--deployment", healthCandidateID, "--route", "POST /checkout", "--status", "403"}
 			if scenario != "human" {
 				args = append(args, "--json")
@@ -104,7 +105,7 @@ func TestRouteInvestigationCLIWireExportAndEvidenceBinding(t *testing.T) {
 			if scenario == "json" || scenario == "human" || scenario == "customer" || scenario == "out" {
 				want = 0
 			}
-			if code := run(args); code != want {
+			if code := main.Run(args); code != want {
 				t.Fatalf("exit %d want %d: %s", code, want, out.String())
 			}
 			if scenario == "json" {

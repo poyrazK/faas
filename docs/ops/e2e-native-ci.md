@@ -190,3 +190,14 @@ still apply.
 Remove `/etc/faas/builder-acceptance-host` from the instance to stop execution
 immediately while preserving the identity configuration. Reverting the
 workload-identity provider condition revokes GitHub authentication before SSH.
+
+## Project worker release lane
+
+Select `project-worker-release-only` for the ADR-20261019120008 mixed HTTP/push-worker
+qualification. It exercises isolated candidate startup/configuration, real queue
+delivery, controller restart recovery, atomic publication, critical-probe rollback,
+unlaunchable-worker refusal and bounded retirement of a SIGTERM-resistant guest.
+The lane has a blocking verdict and the normal host lock, cleanup and service
+restoration. Its three scenarios must pass with final leakcheck evidence before
+production admission is enabled. See the
+[worker release acceptance runbook](project-worker-release-native-acceptance.md).

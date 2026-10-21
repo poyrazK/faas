@@ -58,6 +58,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
@@ -559,7 +560,20 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
 		return
 	}
+	attemptID, ok := uploadSubmissionAttemptID(w, r)
+	if !ok {
+		return
+	}
+	if attemptID != "" {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), attemptID))
+	}
+	if s.replayUploadSubmission(w, r, row.AppSlug) {
+		return
+	}
 	if outcome, outcomeErr := s.store.GetUploadCommitOutcome(r.Context(), uploadID); outcomeErr == nil {
+		if !s.attachUploadSubmission(w, r, row.AppSlug, outcome.DeploymentID) {
+			return
+		}
 		api.WriteProblem(w, api.ErrUploadSessionAlreadyCommitted(uploadID, outcome.DeploymentID))
 		return
 	} else if !errors.Is(outcomeErr, state.ErrNotFound) {
@@ -635,7 +649,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		}
 	}(r.Context())
 	limits := api.MustLimitsFor(acct.Plan)
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars, OverrideFreeze: opts.OverrideFreeze}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(opts.Healthcheck)
 	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
@@ -678,6 +692,11 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
+	if prob := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
 	if prob := validateDeploymentRollbackOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -758,7 +777,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	if !s.admitCanaryDeployment(w, r, rollout) {
 		return
 	}
-	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !opts.NoTriggers)
+	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !opts.NoTriggers)
+	if stagedManifest.cronIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return

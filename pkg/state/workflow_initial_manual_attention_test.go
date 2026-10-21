@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,16 +9,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 1277
 func TestWorkflowInitialManualAttention(t *testing.T) {
 	for _, receivers := range []bool{false, true} {
 		t.Run(map[bool]string{false: "late_receiver", true: "subscribed"}[receivers], func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
-				ctx := WithEventRecoveryActor(context.Background(), "api_key", "attention-operator")
-				run, app, failure, p := seedInitialReview(t, s)
-				reviews := s.(WorkflowInitialRecoveryReviewStore)
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
+				ctx := state.WithEventRecoveryActor(context.Background(), "api_key", "attention-operator")
+				run, app, failure, p := state.SeedInitialReview(t, s)
+				reviews := s.(state.WorkflowInitialRecoveryReviewStore)
 				r, err := reviews.PrepareWorkflowInitialRecoveryReview(ctx, app.AccountID, app.ID, failure, api.WorkflowInitialRecoveryReviewRequest{ExpectedPolicyVersion: p.Version})
 				if err != nil {
 					t.Fatal(err)
@@ -27,40 +28,40 @@ func TestWorkflowInitialManualAttention(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err = s.(EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
+				if _, err = s.(state.EventRecoveryStore).ProcessNextEventRecovery(ctx, time.Now().UTC()); err != nil {
 					t.Fatal(err)
 				}
 				if _, err = s.ClaimNextDueWorkflowRun(ctx); err != nil {
 					t.Fatal(err)
 				}
 				p.Policy.Mode, p.Policy.HourlyExecutionBudget, p.Policy.PauseAfterFailures = "automatic_initial", 1, 1
-				p, err = s.(WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{ExpectedVersion: p.Version, Policy: p.Policy})
+				p, err = s.(state.WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{ExpectedVersion: p.Version, Policy: p.Policy})
 				if err != nil {
 					t.Fatal(err)
 				}
-				p, err = s.(WorkflowRecoveryPolicyOperatorStore).ControlWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.ControlWorkflowRecoveryPolicyRequest{Operation: "pause", ExpectedVersion: p.Version, ExpectedUpdatedAt: p.UpdatedAt, Reason: "paused while investigating"})
+				p, err = s.(state.WorkflowRecoveryPolicyOperatorStore).ControlWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.ControlWorkflowRecoveryPolicyRequest{Operation: "pause", ExpectedVersion: p.Version, ExpectedUpdatedAt: p.UpdatedAt, Reason: "paused while investigating"})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err = s.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusFailed, nil, nil); err != nil {
+				if err = s.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusFailed, nil, nil); err != nil {
 					t.Fatal(err)
 				}
 				finished, err := s.GetWorkflowRun(ctx, run.ID)
 				if err != nil || finished.FinishedAt == nil {
 					t.Fatalf("terminal proof %+v %v", finished, err)
 				}
-				if m, ok := s.(*MemStore); ok {
-					m.mu.Lock()
-					delete(m.eventRecoveryJobs[r.JobID].WorkflowResults, 1)
-					m.mu.Unlock()
+				if m, ok := s.(*state.MemStore); ok {
+					(*m.Mu()).Lock()
+					delete((*m.EventRecoveryJobs())[r.JobID].WorkflowResults, 1)
+					(*m.Mu()).Unlock()
 				} else {
-					if _, err = s.(*PgStore).pool.Exec(ctx, "DELETE FROM event_recovery_workflow_results WHERE job_id=$1::uuid", r.JobID); err != nil {
+					if _, err = (*s.(*state.PgStore).Pool()).Exec(ctx, "DELETE FROM event_recovery_workflow_results WHERE job_id=$1::uuid", r.JobID); err != nil {
 						t.Fatal(err)
 					}
 				}
 				hook := func() string {
 					t.Helper()
-					h, e := s.CreateAppWebhook(ctx, AppWebhook{AccountID: app.AccountID, AppID: app.ID, TargetURL: "https://manual-attention.example.test/hook", SecretSealed: []byte("sealed"), Enabled: true, EventFilter: []string{string(AppWebhookEventRecoveryQueueBlocked)}})
+					h, e := s.CreateAppWebhook(ctx, state.AppWebhook{AccountID: app.AccountID, AppID: app.ID, TargetURL: "https://manual-attention.example.test/hook", SecretSealed: []byte("sealed"), Enabled: true, EventFilter: []string{string(state.AppWebhookEventRecoveryQueueBlocked)}})
 					if e != nil {
 						t.Fatal(e)
 					}
@@ -73,22 +74,22 @@ func TestWorkflowInitialManualAttention(t *testing.T) {
 				poll := func() {
 					t.Helper()
 					now := time.Now().UTC().Truncate(time.Microsecond)
-					if m, ok := s.(*MemStore); ok {
-						m.mu.Lock()
-						delete(m.initialCompletionNext, r.ID)
-						m.mu.Unlock()
+					if m, ok := s.(*state.MemStore); ok {
+						(*m.Mu()).Lock()
+						delete((*m.InitialCompletionNext()), r.ID)
+						(*m.Mu()).Unlock()
 					} else {
-						if _, e := s.(*PgStore).pool.Exec(ctx, "UPDATE workflow_initial_recovery_reviews SET completion_next_observe_at=$2 WHERE id=$1::uuid", r.ID, now); e != nil {
+						if _, e := (*s.(*state.PgStore).Pool()).Exec(ctx, "UPDATE workflow_initial_recovery_reviews SET completion_next_observe_at=$2 WHERE id=$1::uuid", r.ID, now); e != nil {
 							t.Fatal(e)
 						}
 					}
-					did, e := s.(WorkflowInitialManualCompletionStore).ProcessNextWorkflowInitialManualCompletion(ctx, time.Now().UTC())
+					did, e := s.(state.WorkflowInitialManualCompletionStore).ProcessNextWorkflowInitialManualCompletion(ctx, time.Now().UTC())
 					if e != nil || !did {
 						t.Fatalf("observer %v %v", did, e)
 					}
 				}
 				poll()
-				first := initialAutomaticReview(t, s, app, r.ID)
+				first := state.InitialAutomaticReview(t, s, app, r.ID)
 				a := first.Attention
 				if a == nil || a.BlockReason != "terminal_outcome_not_saved" || a.Sequence != 1 || a.Diagnosis == nil || !a.Diagnosis.Repairable || a.Notification == nil || a.Notification.State != "blocked" || a.EvidenceURL == "" || a.CLICommand == "" || a.OperatorAction == "" {
 					t.Fatalf("missing attention %+v", a)
@@ -103,27 +104,27 @@ func TestWorkflowInitialManualAttention(t *testing.T) {
 				if _, err = reviews.GetWorkflowInitialRecoveryReview(ctx, app.AccountID, app.ID, r.ID); err != nil {
 					t.Fatal(err)
 				}
-				if _, err = s.(WorkflowInitialEvidenceStore).DiagnoseWorkflowInitialEvidence(ctx, app.AccountID, app.ID, r.ID); err != nil {
+				if _, err = s.(state.WorkflowInitialEvidenceStore).DiagnoseWorkflowInitialEvidence(ctx, app.AccountID, app.ID, r.ID); err != nil {
 					t.Fatal(err)
 				}
-				if after := initialAutomaticReview(t, s, app, r.ID); !reflect.DeepEqual(first, after) {
+				if after := state.InitialAutomaticReview(t, s, app, r.ID); !reflect.DeepEqual(first, after) {
 					t.Fatal("read changed attention")
 				}
 				poll()
-				same := initialAutomaticReview(t, s, app, r.ID)
+				same := state.InitialAutomaticReview(t, s, app, r.ID)
 				if same.Attention.Sequence != 1 || !reflect.DeepEqual(same.Attention.Notification, a.Notification) {
 					t.Fatal("unchanged evidence replayed or recipients changed")
 				}
 				setFinished := func(at *time.Time) {
 					t.Helper()
-					if m, ok := s.(*MemStore); ok {
-						m.mu.Lock()
-						v := m.workflowRuns[run.ID]
+					if m, ok := s.(*state.MemStore); ok {
+						(*m.Mu()).Lock()
+						v := (*m.WorkflowRuns())[run.ID]
 						v.FinishedAt = at
-						m.workflowRuns[run.ID] = v
-						m.mu.Unlock()
+						(*m.WorkflowRuns())[run.ID] = v
+						(*m.Mu()).Unlock()
 					} else {
-						tx, e := s.(*PgStore).pool.Begin(ctx)
+						tx, e := (*s.(*state.PgStore).Pool()).Begin(ctx)
 						if e != nil {
 							t.Fatal(e)
 						}
@@ -144,35 +145,35 @@ func TestWorkflowInitialManualAttention(t *testing.T) {
 				}
 				setFinished(nil)
 				poll()
-				changed := initialAutomaticReview(t, s, app, r.ID)
+				changed := state.InitialAutomaticReview(t, s, app, r.ID)
 				if changed.Attention.Sequence != 2 || changed.Attention.Notification.EventID == a.Notification.EventID || changed.Attention.Diagnosis.Reason != "completion_time_unverified" || changed.Attention.Diagnosis.Repairable || changed.Attention.BlockReason == "" || changed.Result != nil {
 					t.Fatalf("changed proof %+v", changed.Attention)
 				}
 				poll()
-				if unchanged := initialAutomaticReview(t, s, app, r.ID); unchanged.Attention.Sequence != 2 {
+				if unchanged := state.InitialAutomaticReview(t, s, app, r.ID); unchanged.Attention.Sequence != 2 {
 					t.Fatal("unverified proof repeatedly alerted")
 				}
 				setFinished(finished.FinishedAt)
 				req := api.WorkflowInitialEvidenceRepairRequest{RequestID: uuid.NewString(), Reason: "restore verified completion proof"}
-				if _, err = s.(WorkflowInitialEvidenceStore).RepairWorkflowInitialEvidence(ctx, app.AccountID, app.ID, r.ID, req); err != nil {
+				if _, err = s.(state.WorkflowInitialEvidenceStore).RepairWorkflowInitialEvidence(ctx, app.AccountID, app.ID, r.ID, req); err != nil {
 					t.Fatal(err)
 				}
-				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+				if pg, ok := s.(*state.PgStore); ok {
+					s = state.NewPgStore((*pg.Pool()).Pool)
 				}
 				poll()
-				final := initialAutomaticReview(t, s, app, r.ID)
+				final := state.InitialAutomaticReview(t, s, app, r.ID)
 				if final.Result == nil || final.Result.Outcome != "failed" || final.Attention.Sequence != 3 || final.Attention.BlockReason != "" || final.Attention.Notification.State != "recovered" || final.Attention.Diagnosis.Reason != "already_confirmed" {
 					t.Fatalf("verified clearance %+v", final)
 				}
 				if final.AutomaticResult != nil || final.AutomaticEvaluation != nil || final.AutomaticBlockSequence != 0 || final.AutomaticBlockNotification != nil {
 					t.Fatal("manual attention changed automatic state")
 				}
-				current, err := s.(WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID)
+				current, err := s.(state.WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID)
 				if err != nil || current.AutomaticExecution == nil || current.AutomaticExecution.ConsecutiveFailures != 0 || current.AutomaticExecution.PausedAt == nil || !current.AutomaticExecution.PausedAt.Equal(*p.AutomaticExecution.PausedAt) {
 					t.Fatalf("pause or counters changed %+v %v", current, err)
 				}
-				history, err := s.(WorkflowRecoveryHistoryStore).GetWorkflowRecoveryHistory(ctx, app.AccountID, app.ID, api.WorkflowRecoveryHistoryOptions{RunID: run.ID, Limit: 100})
+				history, err := s.(state.WorkflowRecoveryHistoryStore).GetWorkflowRecoveryHistory(ctx, app.AccountID, app.ID, api.WorkflowRecoveryHistoryOptions{RunID: run.ID, Limit: 100})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -190,7 +191,7 @@ func TestWorkflowInitialManualAttention(t *testing.T) {
 				if counts["initial_recovery_blocked"] != 2 || counts["initial_recovery_cleared"] != 1 || counts["initial_evidence_repaired"] != 1 || counts["initial_recovery_result"] != 1 {
 					t.Fatalf("history counts %+v", counts)
 				}
-				if _, err = s.(AppWebhookEventOutboxStore).DrainAppWebhookEventOutbox(ctx, 32); err != nil {
+				if _, err = s.(state.AppWebhookEventOutboxStore).DrainAppWebhookEventOutbox(ctx, 32); err != nil {
 					t.Fatal(err)
 				}
 				rows, err := s.ClaimDueAppWebhookDeliveries(ctx, 32, time.Now().Add(time.Minute))
@@ -199,7 +200,7 @@ func TestWorkflowInitialManualAttention(t *testing.T) {
 				}
 				captured := 0
 				for _, row := range rows {
-					if row.Event != AppWebhookEventRecoveryQueueBlocked {
+					if row.Event != state.AppWebhookEventRecoveryQueueBlocked {
 						continue
 					}
 					captured++
@@ -230,17 +231,17 @@ func TestWorkflowInitialManualAttentionClearance(t *testing.T) {
 	now := time.Now().UTC()
 	r := api.WorkflowInitialRecoveryReview{ID: uuid.NewString(), Policy: api.WorkflowRecoveryPolicy{Mode: "preview"}, Status: "submitted", SubmittedAt: &now, Target: api.WorkflowRunRecoveryTarget{RunID: uuid.NewString()}}
 	d := api.WorkflowInitialEvidenceDiagnosis{RunID: r.Target.RunID, ResumeCount: 1, Reason: "job_not_retained"}
-	if p := initialManualAttentionTransition(&r, "evidence_unknown", now, d); p == nil {
+	if p := state.InitialManualAttentionTransition(&r, "evidence_unknown", now, d); p == nil {
 		t.Fatal("missing block")
 	}
 	for _, reason := range []string{"admission_wait", "execution_wait", "recovery_running", "result_recorded", "policy_changed", "automatic_paused"} {
-		if p := initialManualAttentionTransition(&r, reason, now, d); p != nil || r.Attention.BlockReason == "" {
+		if p := state.InitialManualAttentionTransition(&r, reason, now, d); p != nil || r.Attention.BlockReason == "" {
 			t.Fatalf("unverified %s cleared attention", reason)
 		}
 	}
 	d.Reason = "run_not_terminal"
 	d.Execution = &api.EventRecoveryExecution{Source: "workflow_run", State: "running"}
-	if p := initialManualAttentionTransition(&r, "recovery_running", now, d); p == nil || p.State != "recovered" || r.Result != nil {
+	if p := state.InitialManualAttentionTransition(&r, "recovery_running", now, d); p == nil || p.State != "recovered" || r.Result != nil {
 		t.Fatal("verified progress did not clear, or invented completion")
 	}
 }

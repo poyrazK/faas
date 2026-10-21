@@ -1,10 +1,11 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"sync"
 	"testing"
 	"time"
@@ -13,15 +14,15 @@ import (
 func TestWorkflowRunRecoveryJobs(t *testing.T) {
 	for _, scenario := range []string{"queue", "changed", "cancel", "unsafe", "scope"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, store Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 				ctx := context.Background()
-				run, app := seedResumeRun(t, store, simpleResumeSpec())
-				failResumeRun(t, store, run, "send")
-				recovery := store.(EventRecoveryStore)
+				run, app := state.SeedResumeRun(t, store, state.SimpleResumeSpec())
+				state.FailResumeRun(t, store, run, "send")
+				recovery := store.(state.EventRecoveryStore)
 				req := api.EventRecoveryRequest{RequestID: uuid.NewString(), RatePerSecond: 1, WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID, ExpectedResumeCount: 0}}}}
 				if scenario == "scope" {
 					req.WorkflowRuns.Name = "other"
-					if _, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, req); !errors.Is(err, ErrEventRecoveryChanged) {
+					if _, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, req); !errors.Is(err, state.ErrEventRecoveryChanged) {
 						t.Fatalf("scope=%v", err)
 					}
 					return
@@ -40,13 +41,13 @@ func TestWorkflowRunRecoveryJobs(t *testing.T) {
 				}
 				changed := req
 				changed.RatePerSecond = 2
-				if _, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, changed); !errors.Is(err, ErrEventRecoveryRequestConflict) {
+				if _, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, changed); !errors.Is(err, state.ErrEventRecoveryRequestConflict) {
 					t.Fatalf("conflict=%v", err)
 				}
-				if pg, ok := store.(*PgStore); ok {
-					recovery = NewPgStore(pg.pool)
+				if pg, ok := store.(*state.PgStore); ok {
+					recovery = state.NewPgStore((*pg.Pool()).Pool)
 				}
-				if _, err := recovery.GetEventRecovery(ctx, uuid.NewString(), job.ID); !errors.Is(err, ErrNotFound) {
+				if _, err := recovery.GetEventRecovery(ctx, uuid.NewString(), job.ID); !errors.Is(err, state.ErrNotFound) {
 					t.Fatalf("tenant=%v", err)
 				}
 				// A caller cannot mutate the stored fence through response pointers.
@@ -67,7 +68,7 @@ func TestWorkflowRunRecoveryJobs(t *testing.T) {
 				}
 				switch scenario {
 				case "changed":
-					if _, _, _, err := store.(WorkflowResumeStore).ResumeWorkflowRun(ctx, resumeOptions(run, app, 0)); err != nil {
+					if _, _, _, err := store.(state.WorkflowResumeStore).ResumeWorkflowRun(ctx, state.ResumeOptions(run, app, 0)); err != nil {
 						t.Fatal(err)
 					}
 				case "cancel":
@@ -76,7 +77,7 @@ func TestWorkflowRunRecoveryJobs(t *testing.T) {
 					}
 				case "unsafe":
 					message := "cancelled by operator"
-					if err := store.MarkWorkflowRunStatus(ctx, run.ID, WorkflowRunStatusDead, nil, &message); err != nil {
+					if err := store.MarkWorkflowRunStatus(ctx, run.ID, state.WorkflowRunStatusDead, nil, &message); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -92,7 +93,7 @@ func TestWorkflowRunRecoveryJobs(t *testing.T) {
 				if items.Items[0].State != want || items.Items[0].WorkflowRunID != run.ID || *items.Items[0].ExpectedResumeCount != 0 {
 					t.Fatalf("item=%+v", items.Items[0])
 				}
-				resumes, err := store.(WorkflowResumeStore).ListWorkflowResumes(ctx, run.ID)
+				resumes, err := store.(state.WorkflowResumeStore).ListWorkflowResumes(ctx, run.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -113,19 +114,19 @@ func TestWorkflowRunRecoveryJobs(t *testing.T) {
 }
 
 func TestWorkflowRunRecoveryCapacityWait(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
-		run, app := seedResumeRun(t, store, simpleResumeSpec())
-		failResumeRun(t, store, run, "send")
-		active := []*WorkflowRun{}
+		run, app := state.SeedResumeRun(t, store, state.SimpleResumeSpec())
+		state.FailResumeRun(t, store, run, "send")
+		active := []*state.WorkflowRun{}
 		for i := 0; i < api.PlanHobby.WorkflowMaxConcurrentRuns(); i++ {
-			other := &WorkflowRun{AppID: app.ID, WorkflowName: run.WorkflowName, DefinitionSnapshot: run.DefinitionSnapshot, Input: run.Input}
+			other := &state.WorkflowRun{AppID: app.ID, WorkflowName: run.WorkflowName, DefinitionSnapshot: run.DefinitionSnapshot, Input: run.Input}
 			if err := store.CreateWorkflowRun(ctx, other); err != nil {
 				t.Fatal(err)
 			}
 			active = append(active, other)
 		}
-		recovery := store.(EventRecoveryStore)
+		recovery := store.(state.EventRecoveryStore)
 		req := api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID}}}}
 		job, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, req)
 		if err != nil {
@@ -139,17 +140,17 @@ func TestWorkflowRunRecoveryCapacityWait(t *testing.T) {
 		if err != nil || saved.PendingCount != 1 || saved.QueuedCount != 0 {
 			t.Fatalf("capacity job=%+v %v", saved, err)
 		}
-		records, err := store.(WorkflowResumeStore).ListWorkflowResumes(ctx, run.ID)
+		records, err := store.(state.WorkflowResumeStore).ListWorkflowResumes(ctx, run.ID)
 		if err != nil || len(records) != 0 {
 			t.Fatalf("capacity resumed=%+v %v", records, err)
 		}
 		if did, err := recovery.ProcessNextEventRecovery(ctx, now); err != nil || did {
 			t.Fatalf("bounded retry=%v %v", did, err)
 		}
-		if err := store.MarkWorkflowRunStatus(ctx, active[0].ID, WorkflowRunStatusSucceeded, nil, nil); err != nil {
+		if err := store.MarkWorkflowRunStatus(ctx, active[0].ID, state.WorkflowRunStatusSucceeded, nil, nil); err != nil {
 			t.Fatal(err)
 		}
-		if did, err := recovery.ProcessNextEventRecovery(ctx, now.Add(EventDeliveryCapacityRetryDelay+time.Second)); err != nil || !did {
+		if did, err := recovery.ProcessNextEventRecovery(ctx, now.Add(state.EventDeliveryCapacityRetryDelay+time.Second)); err != nil || !did {
 			t.Fatalf("admission=%v %v", did, err)
 		}
 		saved, err = recovery.GetEventRecovery(ctx, app.AccountID, job.ID)
@@ -160,11 +161,11 @@ func TestWorkflowRunRecoveryCapacityWait(t *testing.T) {
 }
 
 func TestWorkflowRunRecoveryConcurrentJobs(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
-		run, app := seedResumeRun(t, store, simpleResumeSpec())
-		failResumeRun(t, store, run, "send")
-		recovery := store.(EventRecoveryStore)
+		run, app := state.SeedResumeRun(t, store, state.SimpleResumeSpec())
+		state.FailResumeRun(t, store, run, "send")
+		recovery := store.(state.EventRecoveryStore)
 		// Initial recovery admission rejects duplicate jobs. Exercise competing
 		// worker claims on a later generation, retaining the same one-resume fence.
 		if _, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID}}}}); err != nil {
@@ -176,7 +177,7 @@ func TestWorkflowRunRecoveryConcurrentJobs(t *testing.T) {
 		if _, err := store.ClaimNextDueWorkflowRun(ctx); err != nil {
 			t.Fatal(err)
 		}
-		failResumeRun(t, store, run, "send")
+		state.FailResumeRun(t, store, run, "send")
 		jobs := []string{}
 		for i := 0; i < 2; i++ {
 			job, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID, ExpectedResumeCount: 1}}}})
@@ -214,7 +215,7 @@ func TestWorkflowRunRecoveryConcurrentJobs(t *testing.T) {
 		if queued != 1 || skipped != 1 {
 			t.Fatalf("queued=%d skipped=%d", queued, skipped)
 		}
-		records, err := store.(WorkflowResumeStore).ListWorkflowResumes(ctx, run.ID)
+		records, err := store.(state.WorkflowResumeStore).ListWorkflowResumes(ctx, run.ID)
 		if err != nil || len(records) != 2 {
 			t.Fatalf("resumes=%+v %v", records, err)
 		}

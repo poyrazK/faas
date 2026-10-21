@@ -50,9 +50,19 @@ func (m *MemStore) syncEnvironmentGitOpsJobLocked(row EnvironmentWorkloadIntent,
 	}
 	image := row.Source
 	if image == nil {
-		image, _, _ = observedWorkloadSource(app, "")
+		image, _, _ = observedWorkloadSource(app, EnvironmentGitSourceSpec{})
 	}
-	if image == nil || image.Kind != "image" {
+	if image == nil {
+		return row, ErrConflict
+	}
+	jobIntent := row
+	jobIntent.Source = image
+	sourceRef, ok := environmentGitOpsJobSourceRef(jobIntent)
+	if !ok {
+		return row, ErrConflict
+	}
+	command, commandOK := EnvironmentGitOpsJobCommand(jobIntent)
+	if !commandOK {
 		return row, ErrConflict
 	}
 	index := plan.PlanIndex()
@@ -71,7 +81,7 @@ func (m *MemStore) syncEnvironmentGitOpsJobLocked(row EnvironmentWorkloadIntent,
 		if count >= limit {
 			return row, &JobQuotaError{Scope: JobQuotaScopePerAccount, Limit: limit, Observed: count}
 		}
-		job, err := m.jobCreateLocked(row.AccountID, jobName, "recurring", image.Image, []string{}, api.JobRAMMB[index],
+		job, err := m.jobCreateLocked(row.AccountID, jobName, "recurring", sourceRef, command, api.JobRAMMB[index],
 			api.JobTaskTimeoutSec[index], 1, 0, envOverrides)
 		if err != nil {
 			return row, err
@@ -98,15 +108,15 @@ func (m *MemStore) syncEnvironmentGitOpsJobLocked(row EnvironmentWorkloadIntent,
 			}
 		}
 	}
-	if job.ImageRef != image.Image {
+	if job.ImageRef != sourceRef {
 		job.ImageResolvedDigest, job.ImageStorageKey = "", ""
 		job.ImageMaterializationStatus, job.ImageMaterializationError = "pending", ""
 		job.ImageMaterializedAt, job.ImageMaterializationNextAttemptAt = nil, nil
 		job.ImageMaterializationAttempts = 0
 	}
-	job.Name, job.Kind, job.ImageRef = jobName, "recurring", image.Image
+	job.Name, job.Kind, job.ImageRef = jobName, "recurring", sourceRef
 	job.RAMMB, job.TaskTimeoutS, job.MaxParallelism, job.RetryMax = api.JobRAMMB[index], api.JobTaskTimeoutSec[index], 1, 0
-	job.EnvOverrides, job.Status, job.Command = append(json.RawMessage(nil), envOverrides...), "paused", []string{}
+	job.EnvOverrides, job.Status, job.Command = append(json.RawMessage(nil), envOverrides...), "paused", command
 	job.CronSchedule, job.CronTimezone = row.Schedule.Cron, row.Schedule.Timezone
 	job.SchedulePolicy = workpolicy.Clone(row.Schedule.SchedulePolicy)
 	job.FailureRules = workpolicy.Clone(row.Schedule.FailureRules)

@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.create_image_run_request_env import CreateImageRunRequestEnv
+    from ..models.image_run_registry_auth import ImageRunRegistryAuth
 
 
 T = TypeVar("T", bound="CreateImageRunRequest")
@@ -39,6 +40,15 @@ class CreateImageRunRequest:
     timeout_sec is at most 3600. Needs the operator gate FAAS_INTERACTIVE_IMAGE_RUNS; otherwise 501."""
     tty: bool | Unset = UNSET
     """Give the interactive command a pseudo-terminal. Requires interactive."""
+    user: str | Unset = UNSET
+    """ADR-1790: run as name|uid[:group|gid], resolved in the image's passwd and group files, instead of the image
+    USER (docker run -u)."""
+    workdir: str | Unset = UNSET
+    """ADR-1790: absolute working directory instead of the image WORKDIR (docker run -w); created when missing."""
+    registry_auth: ImageRunRegistryAuth | Unset = UNSET
+    """ADR-1790: credential for a private image's registry. apid stores it sealed on the image's runner job for
+    that registry host, exactly as PUT /v1/jobs/{name}/registry-credentials does, and never returns it. Every run
+    that supplies it refreshes it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -68,6 +78,14 @@ class CreateImageRunRequest:
 
         tty = self.tty
 
+        user = self.user
+
+        workdir = self.workdir
+
+        registry_auth: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.registry_auth, Unset):
+            registry_auth = self.registry_auth.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -91,12 +109,19 @@ class CreateImageRunRequest:
             field_dict["interactive"] = interactive
         if tty is not UNSET:
             field_dict["tty"] = tty
+        if user is not UNSET:
+            field_dict["user"] = user
+        if workdir is not UNSET:
+            field_dict["workdir"] = workdir
+        if registry_auth is not UNSET:
+            field_dict["registry_auth"] = registry_auth
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.create_image_run_request_env import CreateImageRunRequestEnv
+        from ..models.image_run_registry_auth import ImageRunRegistryAuth
 
         d = dict(src_dict)
         image = d.pop("image")
@@ -127,6 +152,17 @@ class CreateImageRunRequest:
 
         tty = d.pop("tty", UNSET)
 
+        user = d.pop("user", UNSET)
+
+        workdir = d.pop("workdir", UNSET)
+
+        _registry_auth = d.pop("registry_auth", UNSET)
+        registry_auth: ImageRunRegistryAuth | Unset
+        if isinstance(_registry_auth, Unset):
+            registry_auth = UNSET
+        else:
+            registry_auth = ImageRunRegistryAuth.from_dict(_registry_auth)
+
         create_image_run_request = cls(
             image=image,
             entrypoint=entrypoint,
@@ -137,6 +173,9 @@ class CreateImageRunRequest:
             pull=pull,
             interactive=interactive,
             tty=tty,
+            user=user,
+            workdir=workdir,
+            registry_auth=registry_auth,
         )
 
         create_image_run_request.additional_properties = d

@@ -1,16 +1,17 @@
 // adr: 201
-package main
+package main_test
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestBuildEdgeRuleActionRetryAppliesDefaults(t *testing.T) {
-	raw, err := buildEdgeRuleAction("retry", edgeRuleActionInputs{})
+	raw, err := main.BuildEdgeRuleAction("retry", main.EdgeRuleActionInputs{})
 	if err != nil {
 		t.Fatalf("a bare retry rule must be valid (platform defaults): %v", err)
 	}
@@ -33,7 +34,7 @@ func TestBuildEdgeRuleActionRetryAppliesDefaults(t *testing.T) {
 }
 
 func TestBuildEdgeRuleActionRetryCarriesFlags(t *testing.T) {
-	raw, err := buildEdgeRuleAction("retry", edgeRuleActionInputs{
+	raw, err := main.BuildEdgeRuleAction("retry", main.EdgeRuleActionInputs{
 		RetryMaxAttempts:        3,
 		RetryAllowNonIdempotent: true,
 		RetryMinRemainingMs:     1000,
@@ -58,18 +59,18 @@ func TestBuildEdgeRuleActionRetryCarriesFlags(t *testing.T) {
 func TestBuildEdgeRuleActionRetryRejectsBadValues(t *testing.T) {
 	cases := []struct {
 		name string
-		in   edgeRuleActionInputs
+		in   main.EdgeRuleActionInputs
 		want string
 	}{
-		{"one attempt is a no-op", edgeRuleActionInputs{RetryMaxAttempts: 1}, "max_attempts"},
-		{"above the ceiling", edgeRuleActionInputs{RetryMaxAttempts: 99}, "max_attempts"},
-		{"backoff above cap", edgeRuleActionInputs{RetryBackoffMs: 99999}, "backoff_ms"},
-		{"min_remaining above cap", edgeRuleActionInputs{RetryMinRemainingMs: 99999999}, "min_remaining_ms"},
-		{"budget percent above cap", edgeRuleActionInputs{RetryBudgetPercent: 101}, "budget_percent"},
-		{"budget minimum above cap", edgeRuleActionInputs{RetryBudgetMinRetries: 33}, "budget_min_retries"},
+		{"one attempt is a no-op", main.EdgeRuleActionInputs{RetryMaxAttempts: 1}, "max_attempts"},
+		{"above the ceiling", main.EdgeRuleActionInputs{RetryMaxAttempts: 99}, "max_attempts"},
+		{"backoff above cap", main.EdgeRuleActionInputs{RetryBackoffMs: 99999}, "backoff_ms"},
+		{"min_remaining above cap", main.EdgeRuleActionInputs{RetryMinRemainingMs: 99999999}, "min_remaining_ms"},
+		{"budget percent above cap", main.EdgeRuleActionInputs{RetryBudgetPercent: 101}, "budget_percent"},
+		{"budget minimum above cap", main.EdgeRuleActionInputs{RetryBudgetMinRetries: 33}, "budget_min_retries"},
 	}
 	for _, tc := range cases {
-		_, err := buildEdgeRuleAction("retry", tc.in)
+		_, err := main.BuildEdgeRuleAction("retry", tc.in)
 		if err == nil {
 			t.Fatalf("%s: accepted, want a local validation error", tc.name)
 		}
@@ -80,7 +81,7 @@ func TestBuildEdgeRuleActionRetryRejectsBadValues(t *testing.T) {
 }
 
 func TestBuildEdgeRuleActionCircuitBreakerAppliesDefaults(t *testing.T) {
-	raw, err := buildEdgeRuleAction("circuit_breaker", edgeRuleActionInputs{})
+	raw, err := main.BuildEdgeRuleAction("circuit_breaker", main.EdgeRuleActionInputs{})
 	if err != nil {
 		t.Fatalf("a bare circuit_breaker rule must be valid: %v", err)
 	}
@@ -102,15 +103,15 @@ func TestBuildEdgeRuleActionCircuitBreakerAppliesDefaults(t *testing.T) {
 func TestBuildEdgeRuleActionCircuitBreakerRejectsBadValues(t *testing.T) {
 	cases := []struct {
 		name string
-		in   edgeRuleActionInputs
+		in   main.EdgeRuleActionInputs
 		want string
 	}{
-		{"threshold is a ratio", edgeRuleActionInputs{CircuitFailureThreshold: 5}, "failure_threshold"},
-		{"window above cap", edgeRuleActionInputs{CircuitWindowSeconds: 99999}, "window_seconds"},
-		{"ceiling below interval", edgeRuleActionInputs{CircuitOpenSeconds: 60, CircuitMaxOpenSeconds: 5}, "max_open_seconds"},
+		{"threshold is a ratio", main.EdgeRuleActionInputs{CircuitFailureThreshold: 5}, "failure_threshold"},
+		{"window above cap", main.EdgeRuleActionInputs{CircuitWindowSeconds: 99999}, "window_seconds"},
+		{"ceiling below interval", main.EdgeRuleActionInputs{CircuitOpenSeconds: 60, CircuitMaxOpenSeconds: 5}, "max_open_seconds"},
 	}
 	for _, tc := range cases {
-		_, err := buildEdgeRuleAction("circuit_breaker", tc.in)
+		_, err := main.BuildEdgeRuleAction("circuit_breaker", tc.in)
 		if err == nil {
 			t.Fatalf("%s: accepted, want a local validation error", tc.name)
 		}
@@ -124,7 +125,7 @@ func TestBuildEdgeRuleActionCircuitBreakerRejectsBadValues(t *testing.T) {
 // server accepts is unreachable from the CLI (or vice versa).
 func TestEdgeRuleKindVocabCoversTrafficPrimitives(t *testing.T) {
 	want := map[string]bool{"retry": false, "circuit_breaker": false}
-	for _, k := range edgeRuleKindVocab {
+	for _, k := range *main.EdgeRuleKindVocab {
 		if _, ok := want[k]; ok {
 			want[k] = true
 		}

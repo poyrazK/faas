@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,10 +8,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemPlatformTenantRateCardsVersionedAndTenantScoped(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	account, err := store.CreateAccount(ctx, "tenant-rate-card-"+uuid.NewString()+"@example.test", api.PlanPro)
 	if err != nil {
@@ -26,30 +27,30 @@ func TestMemPlatformTenantRateCardsVersionedAndTenantScoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create newer: %v", err)
 	}
-	if newer.Currency != "EUR" || newer.Unit != PlatformTenantRateCardUnitRequest {
+	if newer.Currency != "EUR" || newer.Unit != state.PlatformTenantRateCardUnitRequest {
 		t.Fatalf("normalized card = %+v", newer)
 	}
 	older := effective.Add(-time.Minute)
 	if _, err := store.CreatePlatformTenantRateCard(ctx, account.ID, tenant.ID, "EUR", 2000, older); err != nil {
 		t.Fatalf("create older: %v", err)
 	}
-	if _, err := store.CreatePlatformTenantRateCard(ctx, account.ID, tenant.ID, "EUR", 3000, effective); !errors.Is(err, ErrConflict) {
+	if _, err := store.CreatePlatformTenantRateCard(ctx, account.ID, tenant.ID, "EUR", 3000, effective); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate effective minute = %v, want ErrConflict", err)
 	}
-	if _, err := store.CreatePlatformTenantRateCard(ctx, account.ID, tenant.ID, "USD", 3000, effective.Add(time.Minute)); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.CreatePlatformTenantRateCard(ctx, account.ID, tenant.ID, "USD", 3000, effective.Add(time.Minute)); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("currency change = %v, want ErrInvalidArgument", err)
 	}
 	cards, err := store.ListPlatformTenantRateCards(ctx, account.ID, tenant.ID)
 	if err != nil || len(cards) != 2 || !cards[0].EffectiveFrom.Equal(older) || !cards[1].EffectiveFrom.Equal(effective) {
 		t.Fatalf("cards = %+v, err=%v; want chronological tenant history", cards, err)
 	}
-	if _, err := store.ListPlatformTenantRateCards(ctx, uuid.NewString(), tenant.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.ListPlatformTenantRateCards(ctx, uuid.NewString(), tenant.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account list = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemPlatformTenantRateCardRejectsPartialMinute(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	account, err := store.CreateAccount(ctx, "tenant-rate-card-"+uuid.NewString()+"@example.test", api.PlanPro)
 	if err != nil {

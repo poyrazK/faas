@@ -9,13 +9,17 @@ import (
 
 var _ ObjectStorageCustomerUsageV2Store = (*MemStore)(nil)
 
-func (m *MemStore) RecordObjectCustomerUsageV2(_ context.Context, report api.ObjectStorageCustomerUsageReportV2) error {
+func (m *MemStore) RecordObjectCustomerUsageV2(ctx context.Context, report api.ObjectStorageCustomerUsageReportV2) error {
 	report = normalizeObjectCustomerUsageV2(report)
 	if !validObjectCustomerUsageV2(report, time.Now().UTC()) {
 		return ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	var latest *api.ObjectStorageCustomerUsageReportV2
 	for i := range m.objectCustomerReportsV2 {
 		old := &m.objectCustomerReportsV2[i]
@@ -42,9 +46,14 @@ func (m *MemStore) RecordObjectCustomerUsageV2(_ context.Context, report api.Obj
 	return nil
 }
 
-func (m *MemStore) LatestObjectCustomerUsageV2(_ context.Context, accountID, backendID string, periodStart time.Time) (api.ObjectStorageCustomerUsageReportV2, error) {
+func (m *MemStore) LatestObjectCustomerUsageV2(ctx context.Context, accountID, backendID string, periodStart time.Time) (api.ObjectStorageCustomerUsageReportV2, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 api.ObjectStorageCustomerUsageReportV2
+		return zero0, err
+	}
+
 	var latest *api.ObjectStorageCustomerUsageReportV2
 	for i := range m.objectCustomerReportsV2 {
 		r := &m.objectCustomerReportsV2[i]

@@ -2,7 +2,8 @@ package api
 
 // ServiceWakeAheadResponse is an app's ADR-977 wake-ahead opt-in. When
 // enabled, a cold wake of this app also starts restoring the services it is
-// measured to call soon after it wakes.
+// measured to call soon after it wakes, and until that evidence exists, the
+// services it declares (ADR-1137).
 type ServiceWakeAheadResponse struct {
 	Slug      string                   `json:"slug"`
 	Enabled   bool                     `json:"enabled"`

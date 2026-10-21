@@ -12,9 +12,17 @@ var _ ObjectS3CredentialStore = (*MemStore)(nil)
 var _ ObjectS3CredentialRekeyStore = (*MemStore)(nil)
 var _ ObjectS3CredentialBindingStore = (*MemStore)(nil)
 
-func (m *MemStore) CreateObjectS3Credential(_ context.Context, c ObjectS3Credential, maxPerBucket int) (ObjectS3Credential, error) {
+func (m *MemStore) CreateObjectS3Credential(ctx context.Context, c ObjectS3Credential, maxPerBucket int) (ObjectS3Credential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ObjectS3Credential{}, err
+	}
+	var err error
+	c, err = m.prepareObjectIssuerLocked(ctx, c)
+	if err != nil {
+		return ObjectS3Credential{}, err
+	}
 	return m.createObjectS3CredentialLocked(c, maxPerBucket, false)
 }
 
@@ -48,12 +56,17 @@ func (m *MemStore) createObjectS3CredentialLocked(c ObjectS3Credential, maxPerBu
 	return cloneObjectS3Credential(c), nil
 }
 
-func (m *MemStore) CreateObjectS3ComputeBinding(_ context.Context, req ObjectS3ComputeBindingCreateRequest) (ObjectS3Credential, error) {
+func (m *MemStore) CreateObjectS3ComputeBinding(ctx context.Context, req ObjectS3ComputeBindingCreateRequest) (ObjectS3Credential, error) {
 	if !validObjectS3ComputeBindingCreateRequest(req) {
 		return ObjectS3Credential{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectS3Credential
+		return zero0, err
+	}
+
 	return m.createObjectS3ComputeBindingLocked(req, false)
 }
 
@@ -91,6 +104,9 @@ func (m *MemStore) createObjectS3ComputeBindingLocked(req ObjectS3ComputeBinding
 		return ObjectS3Credential{}, ErrConflict
 	}
 	for _, secret := range req.Secrets {
+		if !m.secretEncryptionKeyAllowedLocked(secret.Kid) {
+			return ObjectS3Credential{}, ErrConflict
+		}
 		if _, exists := m.secrets[secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}]; exists {
 			return ObjectS3Credential{}, ErrConflict
 		}
@@ -128,9 +144,14 @@ func (m *MemStore) createObjectS3ComputeBindingLocked(req ObjectS3ComputeBinding
 	return cloneObjectS3Credential(c), nil
 }
 
-func (m *MemStore) ListObjectS3Credentials(_ context.Context, accountID, bucketID string) ([]ObjectS3Credential, error) {
+func (m *MemStore) ListObjectS3Credentials(ctx context.Context, accountID, bucketID string) ([]ObjectS3Credential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectS3Credential
+		return zero0, err
+	}
+
 	bucket, ok := m.objectBuckets[bucketID]
 	if !ok || bucket.AccountID != accountID || bucket.State == "deleted" {
 		return nil, ErrNotFound
@@ -147,9 +168,13 @@ func (m *MemStore) ListObjectS3Credentials(_ context.Context, accountID, bucketI
 	return out, nil
 }
 
-func (m *MemStore) RevokeObjectS3Credential(_ context.Context, accountID, bucketID, credentialID string) error {
+func (m *MemStore) RevokeObjectS3Credential(ctx context.Context, accountID, bucketID, credentialID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	c, ok := m.objectS3Credentials[credentialID]
 	if !ok || c.AccountID != accountID || c.BucketID != bucketID || c.Status != ObjectS3CredentialStatusActive {
 		return ErrNotFound
@@ -166,12 +191,17 @@ func (m *MemStore) RevokeObjectS3Credential(_ context.Context, accountID, bucket
 	return nil
 }
 
-func (m *MemStore) RevokeObjectS3ComputeBinding(_ context.Context, accountID, bucketID, bindingID string) (bool, error) {
+func (m *MemStore) RevokeObjectS3ComputeBinding(ctx context.Context, accountID, bucketID, bindingID string) (bool, error) {
 	if !validObjectS3ComputeBindingRevokeRequest(accountID, bucketID, bindingID) {
 		return false, ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 bool
+		return zero0, err
+	}
+
 	c, ok := m.objectS3Credentials[bindingID]
 	if !ok || c.AccountID != accountID || c.BucketID != bucketID || c.ManagedAppID == "" || c.RotationParentID != "" {
 		return false, ErrNotFound
@@ -216,9 +246,14 @@ func (m *MemStore) RevokeObjectS3ComputeBinding(_ context.Context, accountID, bu
 	return true, nil
 }
 
-func (m *MemStore) GetObjectS3Credential(_ context.Context, accountID, bucketID, credentialID string) (ObjectS3Credential, error) {
+func (m *MemStore) GetObjectS3Credential(ctx context.Context, accountID, bucketID, credentialID string) (ObjectS3Credential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectS3Credential
+		return zero0, err
+	}
+
 	c, ok := m.objectS3Credentials[credentialID]
 	if !ok || c.AccountID != accountID || c.BucketID != bucketID || c.RotationParentID != "" || c.URL != nil {
 		return ObjectS3Credential{}, ErrNotFound
@@ -226,9 +261,14 @@ func (m *MemStore) GetObjectS3Credential(_ context.Context, accountID, bucketID,
 	return cloneObjectS3Credential(c), nil
 }
 
-func (m *MemStore) PendingObjectS3CredentialRotation(_ context.Context, accountID, bucketID, bindingID string) (string, error) {
+func (m *MemStore) PendingObjectS3CredentialRotation(ctx context.Context, accountID, bucketID, bindingID string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 string
+		return zero0, err
+	}
+
 	for _, c := range m.objectS3Credentials {
 		if c.AccountID == accountID && c.BucketID == bucketID && c.RotationParentID == bindingID && c.Status == ObjectS3CredentialStatusActive {
 			return c.RotationWakeID, nil
@@ -237,12 +277,17 @@ func (m *MemStore) PendingObjectS3CredentialRotation(_ context.Context, accountI
 	return "", nil
 }
 
-func (m *MemStore) StageObjectS3CredentialRotation(_ context.Context, req ObjectS3CredentialRotationRequest) (ObjectS3Credential, error) {
+func (m *MemStore) StageObjectS3CredentialRotation(ctx context.Context, req ObjectS3CredentialRotationRequest) (ObjectS3Credential, error) {
 	if !validObjectS3CredentialRotationRequest(req) {
 		return ObjectS3Credential{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectS3Credential
+		return zero0, err
+	}
+
 	c, ok := m.objectS3Credentials[req.BindingID]
 	if !ok || c.AccountID != req.AccountID || c.BucketID != req.BucketID || c.Status != ObjectS3CredentialStatusActive || c.RotationParentID != "" || c.ManagedAppID == "" {
 		return ObjectS3Credential{}, ErrNotFound
@@ -256,6 +301,9 @@ func (m *MemStore) StageObjectS3CredentialRotation(_ context.Context, req Object
 		}
 	}
 	for _, secret := range req.Secrets {
+		if !m.secretEncryptionKeyAllowedLocked(secret.Kid) {
+			return ObjectS3Credential{}, ErrConflict
+		}
 		row, ok := m.secrets[secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}]
 		if !ok || row.AccountID != secret.AccountID || row.ManagedObjectStorageCredentialID != req.BindingID {
 			return ObjectS3Credential{}, ErrConflict
@@ -285,12 +333,16 @@ func (m *MemStore) StageObjectS3CredentialRotation(_ context.Context, req Object
 	return cloneObjectS3Credential(c), nil
 }
 
-func (m *MemStore) StampObjectS3CredentialRotation(_ context.Context, appID, wakeID string) error {
+func (m *MemStore) StampObjectS3CredentialRotation(ctx context.Context, appID, wakeID string) error {
 	if appID == "" || wakeID == "" {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	for id, stage := range m.objectS3Credentials {
 		if stage.RotationWakeID != wakeID || stage.Status != ObjectS3CredentialStatusActive || stage.RotationStampedAt != nil {
 			continue
@@ -312,12 +364,16 @@ func (m *MemStore) StampObjectS3CredentialRotation(_ context.Context, appID, wak
 	return nil
 }
 
-func (m *MemStore) FinalizeObjectS3CredentialRotationsForApp(_ context.Context, appID, wakeID string) error {
+func (m *MemStore) FinalizeObjectS3CredentialRotationsForApp(ctx context.Context, appID, wakeID string) error {
 	if appID == "" || wakeID == "" {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	now := time.Now().UTC()
 	for id, stage := range m.objectS3Credentials {
 		if stage.RotationWakeID != wakeID || stage.Status != ObjectS3CredentialStatusActive {
@@ -333,15 +389,21 @@ func (m *MemStore) FinalizeObjectS3CredentialRotationsForApp(_ context.Context, 
 	return nil
 }
 
-func (m *MemStore) ResolveObjectS3Credential(_ context.Context, accessKeyID string) (ObjectS3Credential, ObjectBucket, error) {
+func (m *MemStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID string) (ObjectS3Credential, ObjectBucket, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectS3Credential
+		var zero1 ObjectBucket
+		return zero0, zero1, err
+	}
+
 	for _, c := range m.objectS3Credentials {
 		if c.AccessKeyID != accessKeyID || c.Status != ObjectS3CredentialStatusActive || !m.objectURLCredentialLiveLocked(c) {
 			continue
 		}
 		bucket, ok := m.objectBuckets[c.BucketID]
-		if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" || !m.cloneBucketAccessibleLocked(bucket) {
+		if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" || !m.cloneBucketAccessibleLocked(bucket) || !m.objectCredentialLiveLocked(c, bucket) {
 			return ObjectS3Credential{}, ObjectBucket{}, ErrNotFound
 		}
 		return cloneObjectS3Credential(c), bucket, nil
@@ -349,9 +411,13 @@ func (m *MemStore) ResolveObjectS3Credential(_ context.Context, accessKeyID stri
 	return ObjectS3Credential{}, ObjectBucket{}, ErrNotFound
 }
 
-func (m *MemStore) TouchObjectS3Credential(_ context.Context, credentialID string, usedAt time.Time) error {
+func (m *MemStore) TouchObjectS3Credential(ctx context.Context, credentialID string, usedAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	c, ok := m.objectS3Credentials[credentialID]
 	if !ok || c.Status != ObjectS3CredentialStatusActive {
 		return ErrNotFound
@@ -364,9 +430,14 @@ func (m *MemStore) TouchObjectS3Credential(_ context.Context, credentialID strin
 	return nil
 }
 
-func (m *MemStore) ListObjectS3CredentialsForRekey(_ context.Context, limit int, afterID string) ([]ObjectS3Credential, error) {
+func (m *MemStore) ListObjectS3CredentialsForRekey(ctx context.Context, limit int, afterID string) ([]ObjectS3Credential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectS3Credential
+		return zero0, err
+	}
+
 	if limit < 1 || limit > 200 {
 		limit = 50
 	}
@@ -383,9 +454,13 @@ func (m *MemStore) ListObjectS3CredentialsForRekey(_ context.Context, limit int,
 	return out, nil
 }
 
-func (m *MemStore) ResealObjectS3Credential(_ context.Context, credentialID, previousKID, currentKID string, sealed []byte) error {
+func (m *MemStore) ResealObjectS3Credential(ctx context.Context, credentialID, previousKID, currentKID string, sealed []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	if currentKID == "" || len(sealed) == 0 {
 		return ErrInvalidArgument
 	}

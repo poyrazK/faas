@@ -4,7 +4,8 @@
 
 The control-plane Prometheus HTTP service-discovery producer is stale, is
 returning fewer compute targets than the active registry expects, or is
-returning healthy targets that Prometheus cannot scrape. Prometheus itself may
+returning healthy targets that Prometheus cannot scrape, or has multiple
+scraped producers for the same discovery gauge. Prometheus itself may
 still be up while remote `gatewayd-internal`, vmmd, imaged, builderd or
 Promtail metrics are frozen, incomplete, or absent.
 
@@ -26,20 +27,54 @@ with the producer's registry-node count.
 Query the producer-side signals in Prometheus:
 
 ```text
-apid_metrics_discovery_registry_nodes{job="gatewayd-internal"}
-apid_metrics_discovery_targets{job="gatewayd-internal"}
-apid_metrics_discovery_invalid_targets{job="gatewayd-internal"}
-time() - apid_metrics_discovery_last_success_timestamp_seconds{job="gatewayd-internal"}
-rate(apid_metrics_discovery_requests_total{outcome=~"error|unavailable"}[10m])
+apid_metrics_discovery_registry_nodes{job="apid",exported_job="gatewayd-internal"}
+apid_metrics_discovery_targets{job="apid",exported_job="gatewayd-internal"}
+apid_metrics_discovery_invalid_targets{job="apid",exported_job="gatewayd-internal"}
+time() - apid_metrics_discovery_last_success_timestamp_seconds{job="apid",exported_job="gatewayd-internal"}
+rate(apid_metrics_discovery_requests_total{job="apid",exported_job="gatewayd-internal",outcome=~"error|unavailable"}[10m])
 ```
 
-Repeat with `job="vmmd"`, `job="imaged"`, `job="builderd"`, or
-`job="promtail-compute"` for the affected compute scrape.
-The expected state is:
+The default Prometheus scrape uses `honor_labels=false`: apid's own `job`
+label is renamed to `exported_job`, while `job` identifies the apid scrape.
+Keep `job="apid"` and repeat with the affected compute job in `exported_job`:
+`gatewayd-internal`, `vmmd`, `imaged`, `builderd`, `node-compute`, `realtimed`,
+`schedd-compute`, or `promtail-compute`. Do not change scrape label precedence
+or enable `honor_labels` to repair these queries.
+The expected state for an enabled discovery job is:
 
-- `last_success` age below 120 seconds;
+- a nonzero `last_success` timestamp within the past 120 seconds;
 - `targets` equal to `registry_nodes` for each job; and
 - `invalid_targets` equal to zero.
+
+apid preinitializes zero gauges for optional and single-box-unused discovery
+jobs. A zero refresh timestamp with no observed discovery request is unproven
+collection intent and does not raise a bootstrap-staleness warning. Once a
+request is observed (including failed requests), a persistently zero refresh
+warns. Previously successful snapshots still warn when their refresh stops.
+A successful empty fleet has a fresh nonzero refresh timestamp, so it remains
+distinct from these unrequested initial zeros. Request counters cover the current
+apid process lifetime, including manual loopback diagnostics; they are not an
+inventory of currently enabled scrape jobs.
+
+The rules normalize all four gauges into job-only recordings before joining
+with compute `up` series:
+
+```text
+faas_compute_metrics_discovery_registry_nodes:by_job{job="gatewayd-internal"}
+faas_compute_metrics_discovery_targets:by_job{job="gatewayd-internal"}
+faas_compute_metrics_discovery_invalid_targets:by_job{job="gatewayd-internal"}
+time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job{job="gatewayd-internal"}
+```
+
+Each gauge must have exactly one apid source per intended compute job. A
+missing normalized series means unavailable evidence, not zero targets or a
+healthy empty fleet. `FaasComputeMetricsDiscoveryAmbiguous` warns if any gauge
+has multiple sources; they are neither summed nor arbitrarily chosen. Inspect
+raw series by `instance` for duplicate apid scrape targets or extra producer
+labels. This is an explicit singleton-source contract, not HA snapshot merging.
+An entirely missing source does not establish an expected deployment role:
+check apid's `up`, raw metrics, and `gregalectl obs input-health --expected-role
+control-plane-v1 --json` rather than treating absent alerts as healthy evidence.
 
 Check the downstream coverage signals next. These compare the latest healthy
 target list from apid with the `up` series Prometheus is actually producing:
@@ -52,7 +87,11 @@ max by (job, node) (scrape_duration_seconds{job=~"gatewayd-internal|promtail-com
 ```
 
 The expected state is one healthy target per discovered target and coverage of
-`1` for each enabled job. A target with `up == 0` is a downstream scrape
+`1` when at least one target is expected. A fresh zero-node registry has
+`targets=registry_nodes=invalid_targets=0`, coverage `0` (the denominator is
+clamped to one), and no empty/low-coverage warning. Zero and future refresh
+timestamps cannot enable downstream scrape warnings; a persistently invalid
+refresh raises the stale-discovery warning. A target with `up == 0` is a downstream scrape
 failure. If coverage is below `1` but no `up == 0` series exists, all or part
 of the target list disappeared before Prometheus created a scrape series.
 The rendered control-plane jobs have a hard `target_limit` of 1,000, and apid
@@ -82,7 +121,9 @@ curl -fsS http://127.0.0.1:9095/api/v1/targets \
 ```
 
 On the control-plane host, verify that apid's internal endpoint is reachable
-from the Prometheus user. The endpoint is deliberately loopback-only:
+from the Prometheus user. Query only endpoints for enabled HTTP-SD jobs:
+manual diagnostics also count as discovery attempts. The endpoints are
+loopback-only:
 
 ```sh
 curl -fsS http://127.0.0.1:9101/v1/internal/metrics/targets
@@ -111,6 +152,12 @@ ORDER BY name;
 ```
 
 ## Recovery
+
+For ambiguous discovery, reconcile duplicate apid scrape targets through the
+managed Prometheus configuration. Verify that each raw gauge has one producer
+for the affected `exported_job` and that its normalized recordings return.
+Do not sum snapshots or select a convenient producer to silence the warning;
+intentional HA needs an explicit source-authority design.
 
 Fix the registry row through the compute-node registration/reconciliation
 path. Do not hand-edit `prometheus.yml` or add provider IPs as a workaround;

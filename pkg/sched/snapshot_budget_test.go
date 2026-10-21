@@ -1,10 +1,11 @@
-package sched
+package sched_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // TestSnapshotBudgetFor_ScalesWithMemory pins the reason the budget is
@@ -17,8 +18,8 @@ import (
 // at exactly 25s in PauseAndSnapshot, so no deployment could reach
 // `live`.
 func TestSnapshotBudgetFor_ScalesWithMemory(t *testing.T) {
-	free := SnapshotBudgetFor(128)
-	scale := SnapshotBudgetFor(1024)
+	free := sched.SnapshotBudgetFor(128)
+	scale := sched.SnapshotBudgetFor(1024)
 
 	if scale <= free {
 		t.Errorf("Scale budget (%s) must exceed Free budget (%s) — a snapshot writes guest memory", scale, free)
@@ -39,9 +40,9 @@ func TestSnapshotBudgetFor_ScalesWithMemory(t *testing.T) {
 // cancel the RPC instantly and fail every park on that row.
 func TestSnapshotBudgetFor_UnknownRAMFallsBack(t *testing.T) {
 	for _, ram := range []int{0, -1} {
-		if got := SnapshotBudgetFor(ram); got != SnapshotTimeout {
+		if got := sched.SnapshotBudgetFor(ram); got != sched.SnapshotTimeout {
 			t.Errorf("SnapshotBudgetFor(%d) = %s, want the flat %s fallback (a zero deadline cancels instantly)",
-				ram, got, SnapshotTimeout)
+				ram, got, sched.SnapshotTimeout)
 		}
 	}
 }
@@ -55,10 +56,10 @@ func TestSnapshotBudgetCoversEveryPlan(t *testing.T) {
 		if !ok {
 			continue
 		}
-		got := SnapshotBudgetFor(limits.RAMMB)
-		if got < SnapshotBudgetBase {
+		got := sched.SnapshotBudgetFor(limits.RAMMB)
+		if got < sched.SnapshotBudgetBase {
 			t.Errorf("plan %s (%d MB): budget %s is below the fixed-overhead base %s",
-				plan, limits.RAMMB, got, SnapshotBudgetBase)
+				plan, limits.RAMMB, got, sched.SnapshotBudgetBase)
 		}
 	}
 }
@@ -73,17 +74,17 @@ func TestSnapshotBudgetCoversEveryPlan(t *testing.T) {
 // legitimately still writing, turning a working park into a FAILED
 // instance and destroying the snapshot the next wake would have used.
 func TestWatchdogSpares_SnapshotWithinScaledBudget(t *testing.T) {
-	if SnapshotBudgetFor(1024) <= SnapshotSweepBudget {
+	if sched.SnapshotBudgetFor(1024) <= sched.SnapshotSweepBudget {
 		t.Fatalf("precondition: SnapshotBudgetFor(1024) = %s must exceed SnapshotSweepBudget = %s, or this exemption is unnecessary",
-			SnapshotBudgetFor(1024), SnapshotSweepBudget)
+			sched.SnapshotBudgetFor(1024), sched.SnapshotSweepBudget)
 	}
 	// A 1024 MB row parked 25s ago is past the flat sweep budget but
 	// still inside its own — the watchdog must leave it alone.
 	const parkedAgo = 25 * time.Second
-	if parkedAgo <= SnapshotSweepBudget {
+	if parkedAgo <= sched.SnapshotSweepBudget {
 		t.Fatal("precondition: the row must be old enough for the sweep query to return it")
 	}
-	if parkedAgo >= SnapshotBudgetFor(1024) {
+	if parkedAgo >= sched.SnapshotBudgetFor(1024) {
 		t.Fatal("precondition: the row must still be inside its scaled budget")
 	}
 }
@@ -102,18 +103,17 @@ func TestWatchdogSpares_SnapshotWithinScaledBudget(t *testing.T) {
 // The grace must exceed the longest budget the engine hands out, or the
 // bug returns for exactly the calls most expensive to lose.
 func TestRouterCloseGraceExceedsLongestRPC(t *testing.T) {
-	longest := SnapshotBudgetFor(maxPlanRAMMB())
-	if routerCloseGrace <= longest {
+	longest := sched.SnapshotBudgetFor(sched.MaxPlanRAMMB())
+	if (*sched.RouterCloseGrace) <= longest {
 		t.Errorf("routerCloseGrace (%s) must exceed the longest per-call budget (%s); "+
-			"a shorter grace cancels in-flight snapshots on any node-change notify",
-			routerCloseGrace, longest)
+			"a shorter grace cancels in-flight snapshots on any node-change notify", (*sched.RouterCloseGrace), longest)
 	}
 }
 
 // maxPlanRAMMB must track the limits table, not a stale literal — a new
 // plan with more memory has to widen the grace automatically.
 func TestMaxPlanRAMMBTracksLimits(t *testing.T) {
-	got := maxPlanRAMMB()
+	got := sched.MaxPlanRAMMB()
 	if got <= 0 {
 		t.Fatalf("maxPlanRAMMB() = %d, want the largest plan RAM", got)
 	}

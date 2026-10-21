@@ -1,17 +1,18 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreHeartbeatStatsKeepLatestSourceSpecificSamples(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 
-	node, err := store.CreateComputeNode(ctx, ComputeNode{
+	node, err := store.CreateComputeNode(ctx, state.ComputeNode{
 		Name:      "heartbeat-stats-node",
 		TargetURL: "unix:///run/faas/vmmd.sock",
 		Active:    true,
@@ -19,7 +20,7 @@ func TestMemStoreHeartbeatStatsKeepLatestSourceSpecificSamples(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateComputeNode: %v", err)
 	}
-	peer, err := store.CreateComputeNode(ctx, ComputeNode{
+	peer, err := store.CreateComputeNode(ctx, state.ComputeNode{
 		Name:      "heartbeat-stats-peer",
 		TargetURL: "unix:///run/faas/vmmd-peer.sock",
 		Active:    true,
@@ -29,7 +30,7 @@ func TestMemStoreHeartbeatStatsKeepLatestSourceSpecificSamples(t *testing.T) {
 	}
 
 	base := time.Date(2026, time.September, 12, 10, 0, 0, 0, time.UTC)
-	if err := store.AppendComputeNodeHeartbeatWithStats(ctx, "missing-node", base, base, "heartbeat_tick", 10, 20); !errors.Is(err, ErrNotFound) {
+	if err := store.AppendComputeNodeHeartbeatWithStats(ctx, "missing-node", base, base, "heartbeat_tick", 10, 20); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("AppendComputeNodeHeartbeatWithStats(missing) = %v, want ErrNotFound", err)
 	}
 	if err := store.AppendComputeNodeHeartbeatWithStats(ctx, node.ID, base, base, "builder_tick", 12.5, 1024); err != nil {
@@ -39,7 +40,7 @@ func TestMemStoreHeartbeatStatsKeepLatestSourceSpecificSamples(t *testing.T) {
 	if err := store.AppendComputeNodeHeartbeatWithStats(ctx, node.ID, latestAt, latestAt, "heartbeat_tick", 37.5, 4096); err != nil {
 		t.Fatalf("AppendComputeNodeHeartbeatWithStats(latest): %v", err)
 	}
-	if err := store.AppendComputeNodeHeartbeatWithStats(ctx, node.ID, latestAt, latestAt, "heartbeat_tick", 99, 99); !errors.Is(err, ErrConflict) {
+	if err := store.AppendComputeNodeHeartbeatWithStats(ctx, node.ID, latestAt, latestAt, "heartbeat_tick", 99, 99); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("AppendComputeNodeHeartbeatWithStats(duplicate) = %v, want ErrConflict", err)
 	}
 	if err := store.AppendComputeNodeHeartbeat(ctx, peer.ID, latestAt, latestAt, "heartbeat_tick"); err != nil {
@@ -50,7 +51,7 @@ func TestMemStoreHeartbeatStatsKeepLatestSourceSpecificSamples(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LatestHeartbeatStats: %v", err)
 	}
-	byNode := make(map[string]ComputeNodeHeartbeatStats, len(all))
+	byNode := make(map[string]state.ComputeNodeHeartbeatStats, len(all))
 	for _, row := range all {
 		byNode[row.NodeID] = row
 	}
@@ -79,9 +80,9 @@ func TestMemStoreHeartbeatStatsKeepLatestSourceSpecificSamples(t *testing.T) {
 
 func TestMemStoreListComputeNodesPageHonorsLimit(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	for _, name := range []string{"page-zulu", "page-alpha"} {
-		if _, err := store.CreateComputeNode(ctx, ComputeNode{Name: name, TargetURL: "unix:///run/faas/" + name + ".sock", Active: true}); err != nil {
+		if _, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: name, TargetURL: "unix:///run/faas/" + name + ".sock", Active: true}); err != nil {
 			t.Fatalf("CreateComputeNode(%s): %v", name, err)
 		}
 	}

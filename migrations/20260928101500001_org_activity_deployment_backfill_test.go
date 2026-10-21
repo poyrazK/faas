@@ -31,7 +31,9 @@ func TestMigrations_OrgActivityDeploymentBackfill(t *testing.T) {
 		t.Fatalf("set app organization: %v", err)
 	}
 	deploymentID := uuid.NewString()
-	missingOrgAppID := seedApp(t, ctx, pool, ownerID)
+	// Since #4882 a new app binds its owner's personal org, so an app without an
+	// organization exists only for an account that has none.
+	missingOrgAppID := seedApp(t, ctx, pool, seedAccount(t, ctx, pool))
 	missingOrgDeploymentID := uuid.NewString()
 	unknownActorDeploymentID := uuid.NewString()
 	githubDeploymentID := uuid.NewString()

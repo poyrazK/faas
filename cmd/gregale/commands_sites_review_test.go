@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -54,7 +55,7 @@ func TestSitesReviewedPromotionUsesSuppliedRevisionWithoutReadOrRetry(t *testing
 					_ = json.NewEncoder(w).Encode(api.NewProblem(status, "hosting_release_conflict", "Refresh required", ""))
 				}
 			})
-			code := cmdSites([]string{"promote", "--site", reviewSiteID, "--release", reviewReleaseID, "--expected-revision", "7"})
+			code := main.CmdSites([]string{"promote", "--site", reviewSiteID, "--release", reviewReleaseID, "--expected-revision", "7"})
 			if calls != 1 || (code == 0) != (status == 202) {
 				t.Fatalf("calls=%d exit=%d", calls, code)
 			}
@@ -64,9 +65,9 @@ func TestSitesReviewedPromotionUsesSuppliedRevisionWithoutReadOrRetry(t *testing
 
 func TestSitesReviewDiffIsReadOnlyAndReportsBaseline(t *testing.T) {
 	var output bytes.Buffer
-	previousOutput := osStdout
-	osStdout = &output
-	defer func() { osStdout = previousOutput }()
+	previousOutput := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	defer func() { (*main.OsStdout) = previousOutput }()
 	calls := 0
 	reviewCLI(t, func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -79,7 +80,7 @@ func TestSitesReviewDiffIsReadOnlyAndReportsBaseline(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.HostingSite{ID: reviewSiteID, Status: "active", Revision: 4})
 		}
 	})
-	if code := cmdSites([]string{"diff", "--site", reviewSiteID, "--release", reviewReleaseID}); code != 0 || calls != 2 {
+	if code := main.CmdSites([]string{"diff", "--site", reviewSiteID, "--release", reviewReleaseID}); code != 0 || calls != 2 {
 		t.Fatalf("calls=%d exit=%d", calls, code)
 	}
 	var review api.HostingReleaseReview
@@ -98,7 +99,7 @@ func TestSitesReviewRejectsUnsafeOptionsBeforeRequests(t *testing.T) {
 		{"deploy", "--no-promote", "--wait"},
 		{"deploy", "--wait", "--wait-timeout", "0s"},
 	} {
-		if code := cmdSites(args); code == 0 {
+		if code := main.CmdSites(args); code == 0 {
 			t.Fatalf("accepted %v", args)
 		}
 	}
@@ -116,16 +117,16 @@ func TestSitesWaitRefusesLegacyBeforePromoting(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.HostingSite{ID: reviewSiteID, Revision: 7})
 	})
-	if code := cmdSites([]string{"promote", "--site", reviewSiteID, "--release", reviewReleaseID, "--expected-revision", "7", "--wait"}); code == 0 || calls != 1 {
+	if code := main.CmdSites([]string{"promote", "--site", reviewSiteID, "--release", reviewReleaseID, "--expected-revision", "7", "--wait"}); code == 0 || calls != 1 {
 		t.Fatalf("calls=%d exit=%d", calls, code)
 	}
 }
 
 func TestSitesWaitTimeoutLeavesPromotionCommitted(t *testing.T) {
 	var output bytes.Buffer
-	previousOutput := osStdout
-	osStdout = &output
-	defer func() { osStdout = previousOutput }()
+	previousOutput := (*main.OsStdout)
+	(*main.OsStdout) = &output
+	defer func() { (*main.OsStdout) = previousOutput }()
 	promotions := 0
 	reads := 0
 	site := api.HostingSite{ID: reviewSiteID, Status: "active", OriginID: "origin", Revision: 7, DurableRouting: true}
@@ -145,7 +146,7 @@ func TestSitesWaitTimeoutLeavesPromotionCommitted(t *testing.T) {
 		}
 	})
 	start := time.Now()
-	code := cmdSites([]string{"promote", "--site", reviewSiteID, "--release", reviewReleaseID, "--expected-revision", "7", "--wait", "--wait-timeout", "200ms"})
+	code := main.CmdSites([]string{"promote", "--site", reviewSiteID, "--release", reviewReleaseID, "--expected-revision", "7", "--wait", "--wait-timeout", "200ms"})
 	if code == 0 || promotions != 1 || reads != 1 || site.ActiveReleaseID != reviewReleaseID || time.Since(start) > 2*time.Second {
 		t.Fatalf("exit=%d promotions=%d reads=%d", code, promotions, reads)
 	}

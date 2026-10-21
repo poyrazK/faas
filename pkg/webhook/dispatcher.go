@@ -730,7 +730,6 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		return
 	}
 	if errors.Is(res.Err, webhookout.ErrTerminal) ||
-		errors.Is(res.Err, webhookout.ErrBodyTooLarge) ||
 		errors.Is(res.Err, oci.ErrImageEgressDenied) {
 		if d.markDead(ctx, row, fmt.Sprintf("webhook: terminal delivery error: %v", res.Err), meta) {
 			d.emitAudit(ctx, "webhook.dead", row, hook, res.Err, res.StatusCode)

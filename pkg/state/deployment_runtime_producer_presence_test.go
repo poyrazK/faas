@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 435. Retained presence prevents legacy fallback without reading scans.
 
@@ -8,16 +8,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type runtimeProducerPresenceTestStore interface {
-	runtimeProducerInputTestStore
-	DeploymentRuntimeProducerPresenceStore
-}
+type runtimeProducerPresenceTestStore = state.ContractTestStore
 
 func runtimeProducerPresence(t *testing.T, s runtimeProducerPresenceTestStore) {
 	t.Helper()
-	proof, app, dep := registryVerificationFixture(t, s, false)
+	proof, app, dep := state.RegistryVerificationFixture(t, s, false)
 	if _, err := s.RecordDeploymentRegistryVerification(t.Context(), proof); err != nil {
 		t.Fatal(err)
 	}
@@ -25,18 +23,18 @@ func runtimeProducerPresence(t *testing.T, s runtimeProducerPresenceTestStore) {
 	if err != nil || present {
 		t.Fatal("publisher verification alone invented producer presence", present, err)
 	}
-	_, _, app, dep = artifactScanBaseFixture(t, s)
+	_, _, app, dep = state.ArtifactScanBaseFixture(t, s)
 	present, err = s.HasDeploymentRuntimeProducers(t.Context(), app.AccountID, app.ID, dep.ID)
 	if err != nil || !present {
 		t.Fatal("unscanned retained producer appeared absent", present, err)
 	}
-	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("presence synthesized component scans", err)
 	}
 	if err := s.SetDeploymentRootfs(t.Context(), dep.ID, "/changed.ext4", "apps/changed.ext4", 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetCurrentDeploymentRegistryRootfs(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetCurrentDeploymentRegistryRootfs(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("fixture retained a valid current producer", err)
 	}
 	present, err = s.HasDeploymentRuntimeProducers(t.Context(), app.AccountID, app.ID, dep.ID)
@@ -47,11 +45,11 @@ func runtimeProducerPresence(t *testing.T, s runtimeProducerPresenceTestStore) {
 		ids := []string{app.AccountID, app.ID, dep.ID}
 		ids[i] = uuid.NewString()
 		present, err = s.HasDeploymentRuntimeProducers(t.Context(), ids[0], ids[1], ids[2])
-		if present || !errors.Is(err, ErrNotFound) {
+		if present || !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("presence escaped owner scope", i, present, err)
 		}
 	}
-	if present, err := s.HasDeploymentRuntimeProducers(t.Context(), "invalid", app.ID, dep.ID); present || !errors.Is(err, ErrInvalidArgument) {
+	if present, err := s.HasDeploymentRuntimeProducers(t.Context(), "invalid", app.ID, dep.ID); present || !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatal("malformed presence scope accepted", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -62,5 +60,5 @@ func runtimeProducerPresence(t *testing.T, s runtimeProducerPresenceTestStore) {
 }
 
 func TestMemRuntimeProducerPresenceIncludesStaleHistory(t *testing.T) {
-	runtimeProducerPresence(t, NewMemStore())
+	runtimeProducerPresence(t, state.NewMemStore())
 }

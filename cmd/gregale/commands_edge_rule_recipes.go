@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const edgeRuleRecipeUsage = "usage: gregale edge-rules recipe <recipe> [--app <slug>] [--host <hostname>] [--set name=value]... [--enforce]"
+const edgeRuleRecipeUsage = "usage: gregale edge-rules recipe <recipe> [--app <slug>] [--host <hostname>] [--set name=value]... [--enforce] [--alert-webhook-url <url> (--alert-webhook-secret-stdin|--alert-webhook-secret <s>) [--alert-threshold N]]"
 
 // edgeRuleRecipeJSON is the --json shape of one catalog entry.
 type edgeRuleRecipeJSON struct {
@@ -79,7 +79,11 @@ func cmdEdgeRulesRecipe(args []string) int {
 	var sets multiFlag
 	fs.Var(&sets, "set", "recipe parameter as name=value (repeat; see gregale edge-rules recipes)")
 	enforce := fs.Bool("enforce", false, "enforce immediately instead of starting in log mode")
-	flags, positional := splitArgsForFlags(args, "enforce")
+	alertURL := fs.String("alert-webhook-url", "", "also alert this webhook when the rule spikes (ADR-986 amendment)")
+	alertSecret := fs.String("alert-webhook-secret", "", "webhook signing secret for the spike alert (prefer --alert-webhook-secret-stdin)")
+	alertSecretStdin := fs.Bool("alert-webhook-secret-stdin", false, "read the spike alert's webhook secret from stdin")
+	alertThreshold := fs.Int("alert-threshold", api.EdgeRuleRecipeAlertDefaultPerHour, "spike alert threshold: matches per hour")
+	flags, positional := splitArgsForFlags(args, "enforce", "alert-webhook-secret-stdin")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -122,9 +126,23 @@ func cmdEdgeRulesRecipe(args []string) int {
 	if prob != nil {
 		return printErr("Invalid recipe input", errToError(prob))
 	}
+	wantAlert := strings.TrimSpace(*alertURL) != ""
+	if wantAlert {
+		if err := resolveAlertSecret(alertSecret, *alertSecretStdin); err != nil {
+			return printErr("Invalid alert webhook secret", err)
+		}
+		if _, prob := api.EdgeRuleRecipeAlert(recipe.ID, "pending", *alertThreshold, *alertURL, *alertSecret); prob != nil {
+			return printErr("Invalid alert input", errToError(prob))
+		}
+	}
 	out, err := client.CreateEdgeRule(context.Background(), slug, req)
 	if err != nil {
 		return printErr("Recipe failed", err)
+	}
+	if wantAlert {
+		if code := createRecipeAlert(client, slug, recipe.ID, out.ID, *alertThreshold, *alertURL, *alertSecret); code != 0 {
+			return code
+		}
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
@@ -144,4 +162,21 @@ func recipeHostLabel(host string) string {
 		return "every host of the app"
 	}
 	return host
+}
+
+// createRecipeAlert adds the recipe's spike alert for the rule it created. A
+// failure leaves the rule in place and says how to add the alert by hand.
+func createRecipeAlert(client *api.Client, slug, recipeID, ruleID string, perHour int, webhookURL, secret string) int {
+	req, prob := api.EdgeRuleRecipeAlert(recipeID, ruleID, perHour, webhookURL, secret)
+	if prob != nil {
+		return printErr("Invalid alert input", errToError(prob))
+	}
+	alert, err := client.CreateAlertRule(context.Background(), slug, req)
+	if err != nil {
+		return printErr("Rule "+ruleID+" was added, but its spike alert failed (retry with gregale alerts add --metric edge_rule_activity --edge-rule-id "+ruleID+")", err)
+	}
+	if !jsonOutput {
+		_, _ = fmt.Fprintf(osStdout, "  Alert:   %q fires above %d matches per hour (alert %s)\n", alert.Name, perHour, alert.ID)
+	}
+	return 0
 }

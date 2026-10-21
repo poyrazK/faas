@@ -9,7 +9,8 @@ import (
 )
 
 // Readiness policy and receiver credentials need an isolated copy strategy;
-// evidence and probe leases must remain operational state of the source.
+// deployment evidence, one-shot overrides, probe leases and incident events
+// remain operational state of the source.
 func testMCPReadinessCloneInventory(t *testing.T, fx *Fixture) {
 	tables, err := state.ProjectEnvironmentCloneSchemaPolicies()
 	if err != nil {
@@ -42,7 +43,7 @@ func testMCPReadinessCloneInventory(t *testing.T, fx *Fixture) {
 			t.Fatalf("configuration capture must still require isolation: %s", table)
 		}
 	}
-	for _, table := range []string{"deployment_mcp_readiness_monitors", "mcp_readiness_incident_events"} {
+	for _, table := range []string{"deployment_mcp_readiness_monitors", "deployment_mcp_readiness_overrides", "mcp_readiness_incident_events"} {
 		index := slices.IndexFunc(tables, func(p state.ProjectEnvironmentCloneSchemaPolicy) bool { return p.TableName == table })
 		if index < 0 || tables[index].Kind != state.CloneSchemaOperational {
 			t.Fatalf("readiness evidence or leases became copied configuration: %s", table)

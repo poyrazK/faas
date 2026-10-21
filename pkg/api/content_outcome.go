@@ -15,6 +15,11 @@ const (
 	ContentOutcomeUncacheable = "uncacheable"
 	// ContentOutcomeFirst: the first response seen for this URL.
 	ContentOutcomeFirst = "first"
+	// ContentOutcomeStale: on a route with a cache rule, the body stored on a
+	// refill differed from the previous one, and the refill came within the
+	// rule's max-age plus a small lag (ADR-1199): the cached copy was very
+	// probably served after the content had changed.
+	ContentOutcomeStale = "stale"
 
 	contentOutcomeSame    = "same_"
 	contentOutcomeChanged = "changed_"
@@ -38,6 +43,16 @@ func ContentOutcomeFor(same bool, gap time.Duration) string {
 	return prefix + contentOutcomeLong
 }
 
+// ContentRefillStale reports whether a changed body stored gap after the
+// previous one, under a cache rule with maxAge, counts as a stale refill.
+func ContentRefillStale(gap, maxAge time.Duration) bool {
+	if maxAge <= 0 {
+		return false
+	}
+	lag := max(time.Duration(float64(maxAge)*RouteContentStaleLagShare), RouteContentStaleMinLag)
+	return gap <= maxAge+lag
+}
+
 // ContentOutcomes is the closed set of non-empty outcomes, in a stable order.
 func ContentOutcomes() []string {
 	out := []string{ContentOutcomeUncacheable, ContentOutcomeFirst}
@@ -47,7 +62,7 @@ func ContentOutcomes() []string {
 		}
 		out = append(out, prefix+contentOutcomeLong)
 	}
-	return out
+	return append(out, ContentOutcomeStale)
 }
 
 // ValidContentOutcome reports whether s is empty or a known outcome.

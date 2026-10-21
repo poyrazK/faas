@@ -69,7 +69,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/activity"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
-	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
@@ -819,13 +818,20 @@ func (a *synthAdapter) restoreDurableQueueIdentity(ctx context.Context, appID st
 	if stored.ID != inv.ID || stored.AppID != appID ||
 		(stored.Source != state.InvocationQueue && stored.Source != state.InvocationDelayedTask) ||
 		stored.State != state.InvocationDispatching || stored.Attempts != inv.Attempts ||
-		stored.ReplayGeneration != inv.ReplayGeneration || !bytes.Equal(stored.Payload, inv.Payload) {
+		stored.ReplayGeneration != inv.ReplayGeneration || stored.LeaseExpiresAt == nil || !stored.LeaseExpiresAt.After(time.Now()) || !bytes.Equal(stored.Payload, inv.Payload) {
 		return inv, state.ErrConflict
 	}
 	inv.AccountID = stored.AccountID
 	inv.PlatformTenantID = stored.PlatformTenantID
 	inv.DeploymentScope = stored.DeploymentScope
 	inv.QueueBindingID = stored.QueueBindingID
+	// Named bound work must enter the environment resolver as queue work.
+	// The ESM transport omits its queue identity; all claim and payload checks
+	// above apply before recovering the durable origin. Unbound/delayed ESM
+	// deliveries retain their existing transport semantics.
+	if stored.Source == state.InvocationQueue && stored.QueueBindingID != "" {
+		inv.Source, inv.QueueName = state.InvocationQueue, stored.QueueName
+	}
 	return inv, nil
 }
 
@@ -941,6 +947,10 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 			}
 		}
 	}
+	// A step of an Operation-linked workflow run carries the identity the
+	// guest presents back to apid. ApplyGuestHeaders cleared every reserved
+	// Operation header above; render it again from the ledger-resolved step.
+	applyWorkflowOperationHeaders(req.Header, inv.WorkflowOperation)
 	if inv.ExclusiveClaim != nil {
 		req.Header.Set(api.ExclusiveOperationIDHeader, inv.ExclusiveClaim.OperationID)
 		req.Header.Set(api.ExclusiveOperationGenerationHeader, strconv.FormatInt(inv.ExclusiveClaim.Generation, 10))
@@ -1031,6 +1041,10 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
+	// apiMonetization is the API monetization release gate
+	// (ADR-20261018090210), following the api_monetization_enabled runtime
+	// setting. Nil keeps monetization off.
+	apiMonetization func() bool
 	// Private identity is built only with the process-wide drain tracker.
 	runtimeIngressIdentity http.Handler
 	listen                 func(network, addr string) (net.Listener, error)
@@ -1077,7 +1091,7 @@ type runDeps struct {
 	// Tests use a private ledger; an empty value retains the production path.
 	egressPendingPath string
 	// onHandoff stops node-level work run() started before runWithDeps once
-	// a hand-off's successor serves (ADR-1580).
+	// a hand-off's successor serves (ADR-1736).
 	onHandoff []func()
 	// lastSeen flushes per-instance last_request_at to schedd (spec §4.1). nil in
 	// tests (the wake/routing path doesn't need it); production wires the
@@ -1398,8 +1412,31 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("gatewayd: open db: %w", err)
 	}
-	defer pool.Close()
+	return runThenClosePool(ctx, log, pool.Close, func(ctx context.Context) error {
+		return runOnPool(ctx, log, pool)
+	})
+}
 
+// runThenClosePool runs body under a context that ends when body returns,
+// and closes the pool only after that. Goroutines body starts hold pooled
+// connections until their context ends (the notify hub's LISTEN connection,
+// the repair pollers), and pgxpool.Close waits for every one of them. Closing
+// first left a gateway that failed to start hanging instead of exiting, with
+// its error never logged. The error is logged before this cleanup so it
+// reaches the journal even if a close stalls.
+func runThenClosePool(ctx context.Context, log *slog.Logger, closePool func(), body func(context.Context) error) error {
+	bodyCtx, stop := context.WithCancel(ctx)
+	err := body(bodyCtx)
+	if err != nil {
+		log.Error("gatewayd-internal: stopping after error", "err", err)
+	}
+	stop()
+	closePool()
+	return err
+}
+
+// runOnPool is run's body; runThenClosePool owns the pool's lifetime.
+func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return err
@@ -1441,7 +1478,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	deps := defaultDeps()
 	// handoffCtx carries the work that speaks for this node's gateway rather
 	// than for one request: a hand-off ends it here and the successor takes it
-	// over (ADR-1580). Requests and their sinks keep ctx.
+	// over (ADR-1736). Requests and their sinks keep ctx.
 	handoffCtx, endHandoffWork := context.WithCancel(ctx)
 	defer endHandoffWork()
 	deps.onHandoff = append(deps.onHandoff, endHandoffWork)
@@ -1494,6 +1531,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	deps.appsDomain = appsDomain
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
+	apiMonetizationFlag := runtimeconfig.NewBoolFlag(api.APIMonetizationEnabled())
+	deps.apiMonetization = apiMonetizationFlag.Load
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	router := pgRouter{
@@ -1559,6 +1598,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			releaseID, deploymentID, err := pgStore.ResolveProjectRelease(ctx, appID, scope, requestedID)
 			if errors.Is(err, state.ErrNotFound) {
 				return "", "", gateway.ErrReleaseGone
+			}
+			return releaseID, deploymentID, err
+		}).
+		WithProjectCanaryResolver(func(ctx context.Context, appID, scope, key string) (string, string, error) {
+			releaseID, deploymentID, err := pgStore.ResolveProjectCanary(ctx, appID, scope, key)
+			if errors.Is(err, state.ErrNotFound) {
+				err = gateway.ErrReleaseGone
 			}
 			return releaseID, deploymentID, err
 		}).
@@ -1951,6 +1997,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
 			inv.ResolvedDeploymentID = deploymentID
+			if inv.Source == "esm" && inv.Attempts > 0 && inv.DeploymentScope == "production" && inv.QueueBindingID != "" && app.Manifest.ExecutionMode == api.ExecutionModeWorker {
+				if err := pgStore.BeginProjectWorkerJobEvidence(ctx, inv); err != nil {
+					return inv, 0, err
+				}
+				inv.WorkerJobEvidence = true
+			}
 			return synth.forwardInvocationWithStatus(ctx, target, inv)
 		},
 	}
@@ -1962,6 +2014,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// of the synthAdapter struct literal, which broke the compile.
 	// Restoring the off-the-brace call keeps both sides readable.
 	deps.synth = gateway.NewSynthServer(gatewaydInternalSocket, synth, log)
+	deps.synth.WithWorkerJobEvidence(pgStore.FinishProjectWorkerJobEvidence)
 	// ADR-119 — wire the synth-side metrics, audit emitter, and app-mode
 	// lookup here. The verifier itself is loaded later from the cluster key or
 	// environment fallback and is attached after that load completes.
@@ -2096,7 +2149,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
 		watcher := runtimeconfig.New(pgStore, pool,
-			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS},
+			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization},
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 				enabled, err := runtimeconfig.Bool(value)
 				if err != nil {
@@ -2105,12 +2158,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 				switch key {
 				case runtimeconfig.KeyTenantSurfaces:
 					tenantSurfacesFlag.Store(enabled)
+				case runtimeconfig.KeyAPIMonetization:
+					apiMonetizationFlag.Store(enabled)
 				case runtimeconfig.KeyHSTS:
 					hstsFlag.Store(enabled)
 					httpsec.SetHSTSEnabled(enabled)
 				}
 				return nil
 			}, log)
+		watcher.Daemon = "gatewayd-internal" // ADR-1700 apply receipts
 		if err := watcher.Reconcile(runtimeCtx); err != nil {
 			log.Warn("gatewayd: initial runtime config reconcile failed", "err", err)
 		}
@@ -2538,7 +2594,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// handoffCtx carries the work that speaks for this node's gateway rather
 	// than for one request: a hand-off ends it here and the successor takes it
-	// over (ADR-1580). Requests and their sinks keep ctx.
+	// over (ADR-1736). Requests and their sinks keep ctx.
 	handoffCtx, endHandoffWork := context.WithCancel(ctx)
 	defer endHandoffWork()
 	stores := &generationStores{log: log}
@@ -2668,6 +2724,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	if deps.pgStore != nil {
+		handler.WithFinancialBudgetAdmission(newFinancialBudgetAdmission(deps.pgStore))
+	}
 	if err := configureOperationRoutes(handler, deps); err != nil {
 		return fmt.Errorf("gatewayd-internal: %w", err)
 	}
@@ -2791,6 +2850,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
+	handler.WithAPIMonetization(deps.apiMonetization)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are
 	// read only for requests that have to queue, through a 30 s cache.
 	if pgStore := deps.pgStore; pgStore != nil {
@@ -2895,6 +2955,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		log.Warn("edge waf in-path checks disabled by FAAS_EDGE_WAF_INLINE_DISABLED; warn and block rules only observe")
 	}
+	// ADR-831 amendment 7 — kind=challenge. Tokens and passes are signed
+	// with a key derived from the session key every gateway shares, so a
+	// pass issued by one gateway is honoured by all.
+	if deps.sessions != nil {
+		handler.WithEdgeChallengeKey(gateway.DeriveEdgeChallengeKey(deps.sessions.BindingKey()))
+	}
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
 	// (applyEdgeRuleJWT short-circuits, matching pre-PR-5 + dev
@@ -2988,10 +3054,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if !isUnixSocketPath(egressGRPCSocket) && deps.egressTLS == nil {
 		return fmt.Errorf("gatewayd: egress target %q is non-unix but egress_tls_* is empty (set egress_tls_cert_path / key_path / ca_path or point the target at a unix socket for single-box mode)", egressGRPCSocket)
 	}
-	egressPendingPath := deps.egressPendingPath
-	if egressPendingPath == "" {
-		egressPendingPath = egressgrpc.DefaultPendingPath
-	}
+	egressPendingPath := gatewayEgressPendingPath(deps.egressPendingPath, osGetenv)
 	egressGRPCSrv, err := stores.openEgress(egressSink, egressPendingPath)
 	if err != nil {
 		return fmt.Errorf("gatewayd: open durable egress replay ledger: %w", err)
@@ -3247,6 +3310,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					ReferrerHost:                         row.ReferrerHost,
 					Country:                              row.Country,
 					WakeId:                               row.WakeID,
+					TraceInferred:                        row.TraceInferred,
 					InstanceId:                           row.InstanceID,
 					GuestDurationMs:                      int32(row.GuestDurationMS),
 					GuestRuntime:                         row.GuestRuntime,
@@ -3920,14 +3984,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Enabled:   pgStore.ServiceWakeAheadEnabled,
 			Residency: pgStore.ServiceWakeAheadFleetResidency,
 			Wake:      newServiceProxyWaker(pgStore, handler.EnsureWakeAheadCapacity),
+			// ADR-1137: declared dependencies stand in until there is evidence.
+			Declared: newWakeAheadDeclared(pgStore, newServiceProxyResolver(pgStore), newServiceProxyAuthorizer(pgStore)),
 		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
+			AdmitRuntime:              financialBudgetServiceAdmission(pgStore),
+			APIMonetization:           deps.apiMonetization,
 			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
 			Authorize:                 newServiceProxyAuthorizer(pgStore),
 			AllowAlias:                guestServiceAliasAllowed,
 			ResolveEnvironmentBinding: newServiceProxyEnvironmentBindingResolver(pgStore),
+			AuthorizeBound:            newServiceProxyBoundAuthorizer(pgStore),
 			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
 				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
 			},
@@ -3979,6 +4048,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveServiceCallersByHostIP
+			if cfg.NodeName != "" {
+				localNode := newLocalNodeID(pgStore, cfg.NodeName)
+				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, localNode)
+				// ADR-1138: guest calls without trace context join the trace of
+				// the one request their instance is serving.
+				serviceProxyConfig.InferCallerTrace = newServiceTraceInference(deps.nodeCache.cache, localNode, api.ServiceTraceInferenceTimeout)
+			}
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {
 					return "", "", err
@@ -4007,7 +4083,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	errc := make(chan error, 6)
 	var servers []drainedServer
 	// sessionDrains stop raw listeners and wait for their sessions; a
-	// hand-off's old generation runs them (ADR-1580).
+	// hand-off's old generation runs them (ADR-1736).
 	var sessionDrains []func(context.Context) error
 	var serviceDiscoveryServers []*dns.Server
 	addSrv := func(s *http.Server) *wire.HTTPDrain {
@@ -4799,4 +4875,19 @@ func rpsKind(fn func(plan string) (float64, bool)) string {
 		return "noop"
 	}
 	return "api.LimitsFor"
+}
+
+// applyWorkflowOperationHeaders renders a ledger-resolved workflow step's
+// Operation identity for the guest. A nil step adds nothing.
+func applyWorkflowOperationHeaders(h http.Header, step *state.WorkflowOperationStep) {
+	if step == nil {
+		return
+	}
+	h.Set(api.OperationIDHeader, step.OperationID)
+	h.Set(api.OperationExecutionKindHeader, "workflow")
+	h.Set(api.OperationWorkflowRunHeader, step.RunID)
+	h.Set(api.OperationWorkflowStepHeader, step.StepName)
+	h.Set(api.OperationGenerationHeader, strconv.Itoa(step.Generation))
+	h.Set(api.OperationAttemptHeader, strconv.Itoa(step.Attempt))
+	h.Set(api.OperationWorkflowCapabilityHeader, step.Capability)
 }

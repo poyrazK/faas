@@ -85,12 +85,13 @@ func (m *Manager) startTicketSubscription(ctx context.Context, c *connection, fr
 	sub := &resumeSubscription{filter: frame.Filter, cancel: cancel, wake: make(chan struct{}, 1), lastSent: frame.After, lastAck: frame.After}
 	c.mu.Lock()
 	c.resumeSubs[frame.Channel] = sub
-	c.channels[frame.Channel] = struct{}{}
+	c.addChannelLocked(frame.Channel)
 	c.mu.Unlock()
 	if err := m.queueResume(ctx, c, resumeServerFrame{Type: "subscribed", Channel: frame.Channel, Sequence: frame.After, OldestSequence: page.OldestSequence, LatestSequence: page.LatestSequence}); err != nil {
 		m.removeResumeSubscription(ctx, c, frame.Channel, sub)
 		return false
 	}
+	m.watchSubscriptionOccupancy(ctx, c, frame)
 	go m.pumpResumeSubscription(subCtx, c, frame.Channel, sub, page)
 	return true
 }

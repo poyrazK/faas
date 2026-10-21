@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,14 +9,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func seedRecoveryNotificationReview(t *testing.T, s Store, retry bool) (api.WorkflowRecoveryPolicyReview, App, *WorkflowRun, time.Time) {
+func seedRecoveryNotificationReview(t *testing.T, s state.Store, retry bool) (api.WorkflowRecoveryPolicyReview, state.App, *state.WorkflowRun, time.Time) {
 	t.Helper()
 	ctx := context.Background()
-	run, app := seedResumeRun(t, s, simpleResumeSpec())
-	failResumeRun(t, s, run, "send")
-	recovery := s.(EventRecoveryStore)
+	run, app := state.SeedResumeRun(t, s, state.SimpleResumeSpec())
+	state.FailResumeRun(t, s, run, "send")
+	recovery := s.(state.EventRecoveryStore)
 	_, err := recovery.CreateEventRecovery(ctx, app.AccountID, app.ID, api.EventRecoveryRequest{RequestID: uuid.NewString(), WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: run.WorkflowName, ExecutionDeadlineSeconds: 60, Runs: []api.WorkflowRunRecoveryTarget{{RunID: run.ID}}}})
 	if err != nil {
 		t.Fatal(err)
@@ -28,13 +29,13 @@ func seedRecoveryNotificationReview(t *testing.T, s Store, retry bool) (api.Work
 		if _, e := s.ClaimNextDueWorkflowRun(ctx); e != nil {
 			t.Fatal(e)
 		}
-		failResumeRun(t, s, run, "send")
+		state.FailResumeRun(t, s, run, "send")
 	}
-	p := testRecoveryPreviewPolicy(run.WorkflowName)
+	p := state.TestRecoveryPreviewPolicy(run.WorkflowName)
 	if !retry {
 		p.Triggers = []string{"deadline_exceeded"}
 	}
-	policies := s.(WorkflowRecoveryPolicyStore)
+	policies := s.(state.WorkflowRecoveryPolicyStore)
 	if _, e := policies.SetWorkflowRecoveryPolicy(ctx, app.AccountID, app.ID, api.SetWorkflowRecoveryPolicyRequest{Policy: p}); e != nil {
 		t.Fatal(e)
 	}
@@ -51,11 +52,11 @@ func seedRecoveryNotificationReview(t *testing.T, s Store, retry bool) (api.Work
 func TestWorkflowRecoveryReviewNotifications(t *testing.T) {
 	for _, scenario := range []string{"queued", "no_receivers", "dismissed", "approved", "stale", "applied", "retry_applied", "unknown", "late_hook", "concurrent"} {
 		t.Run(scenario, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 				ctx := context.Background()
 				review, app, run, now := seedRecoveryNotificationReview(t, s, scenario == "retry_applied")
-				hookInput := AppWebhook{AccountID: app.AccountID, AppID: app.ID, TargetURL: "https://review.example.test/ready", SecretSealed: []byte("test-sealed"), Enabled: true, EventFilter: []string{string(AppWebhookEventRecoveryReviewReady)}}
-				var hook AppWebhook
+				hookInput := state.AppWebhook{AccountID: app.AccountID, AppID: app.ID, TargetURL: "https://review.example.test/ready", SecretSealed: []byte("test-sealed"), Enabled: true, EventFilter: []string{string(state.AppWebhookEventRecoveryReviewReady)}}
+				var hook state.AppWebhook
 				var err error
 				if scenario != "no_receivers" {
 					hook, err = s.CreateAppWebhook(ctx, hookInput)
@@ -66,15 +67,15 @@ func TestWorkflowRecoveryReviewNotifications(t *testing.T) {
 				// An unrelated filter must never join the frozen receiver list.
 				unrelated := hookInput
 				unrelated.TargetURL = "https://review.example.test/unrelated"
-				unrelated.EventFilter = []string{string(AppWebhookEventRecoveryCompleted)}
+				unrelated.EventFilter = []string{string(state.AppWebhookEventRecoveryCompleted)}
 				if _, err = s.CreateAppWebhook(ctx, unrelated); err != nil {
 					t.Fatal(err)
 				}
-				policies := s.(WorkflowRecoveryPolicyStore)
-				notices := s.(WorkflowRecoveryReviewNotificationStore)
+				policies := s.(state.WorkflowRecoveryPolicyStore)
+				notices := s.(state.WorkflowRecoveryReviewNotificationStore)
 				switch scenario {
 				case "approved", "dismissed":
-					if _, err = policies.DecideWorkflowRecoveryPolicyReview(WithEventRecoveryActor(ctx, "api_key", "reviewer"), app.AccountID, app.ID, review.ID, api.WorkflowRecoveryReviewDecisionRequest{Decision: scenario, Reason: "reviewed incident"}); err != nil {
+					if _, err = policies.DecideWorkflowRecoveryPolicyReview(state.WithEventRecoveryActor(ctx, "api_key", "reviewer"), app.AccountID, app.ID, review.ID, api.WorkflowRecoveryReviewDecisionRequest{Decision: scenario, Reason: "reviewed incident"}); err != nil {
 						t.Fatal(err)
 					}
 				case "stale":
@@ -82,20 +83,20 @@ func TestWorkflowRecoveryReviewNotifications(t *testing.T) {
 						t.Fatal(err)
 					}
 				case "applied":
-					if _, err = s.(WorkflowRecoveryCancellationStore).WorkflowRecoveryCancellation(ctx, app.AccountID, review.JobID, *review.Plan.Actions[0].Cancellation, false); err != nil {
+					if _, err = s.(state.WorkflowRecoveryCancellationStore).WorkflowRecoveryCancellation(ctx, app.AccountID, review.JobID, *review.Plan.Actions[0].Cancellation, false); err != nil {
 						t.Fatal(err)
 					}
 				case "retry_applied":
-					if _, err = s.(EventRecoveryStore).CreateEventRecovery(ctx, app.AccountID, app.ID, *review.Plan.Actions[0].Retry); err != nil {
+					if _, err = s.(state.EventRecoveryStore).CreateEventRecovery(ctx, app.AccountID, app.ID, *review.Plan.Actions[0].Retry); err != nil {
 						t.Fatal(err)
 					}
 				case "unknown":
-					if m, ok := s.(*MemStore); ok {
-						m.mu.Lock()
-						delete(m.workflowRuns, run.ID)
-						m.mu.Unlock()
+					if m, ok := s.(*state.MemStore); ok {
+						(*m.Mu()).Lock()
+						delete((*m.WorkflowRuns()), run.ID)
+						(*m.Mu()).Unlock()
 					} else {
-						if _, err = s.(*PgStore).pool.Exec(ctx, "DELETE FROM workflow_runs WHERE id=$1::uuid", run.ID); err != nil {
+						if _, err = (*s.(*state.PgStore).Pool()).Exec(ctx, "DELETE FROM workflow_runs WHERE id=$1::uuid", run.ID); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -142,19 +143,19 @@ func TestWorkflowRecoveryReviewNotifications(t *testing.T) {
 					want = "suppressed"
 				}
 				n := retained.Notification
-				if n == nil || n.Status != want || n.EventID != recoveryReviewNotificationID(review.ID) {
+				if n == nil || n.Status != want || n.EventID != state.RecoveryReviewNotificationID(review.ID) {
 					t.Fatalf("capture=%+v want=%s", n, want)
 				}
 				if want == "queued" && (len(n.ReceiverWebhookIDs) != 1 || n.ReceiverWebhookIDs[0] != hook.ID) {
 					t.Fatalf("receivers=%+v", n)
 				}
-				if _, e := policies.GetWorkflowRecoveryPolicyReview(ctx, uuid.NewString(), app.ID, review.ID); !errors.Is(e, ErrNotFound) {
+				if _, e := policies.GetWorkflowRecoveryPolicyReview(ctx, uuid.NewString(), app.ID, review.ID); !errors.Is(e, state.ErrNotFound) {
 					t.Fatalf("foreign receipt=%v", e)
 				}
 				// A process restart and repeated polls must not create another event.
-				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
-					notices = s.(WorkflowRecoveryReviewNotificationStore)
+				if pg, ok := s.(*state.PgStore); ok {
+					s = state.NewPgStore((*pg.Pool()).Pool)
+					notices = s.(state.WorkflowRecoveryReviewNotificationStore)
 				}
 				if worked, e := notices.ProcessNextWorkflowRecoveryReviewNotification(ctx, now.Add(time.Hour)); worked || e != nil {
 					t.Fatalf("duplicate capture=%v %v", worked, e)
@@ -166,7 +167,7 @@ func TestWorkflowRecoveryReviewNotifications(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				relayer := s.(AppWebhookEventOutboxStore)
+				relayer := s.(state.AppWebhookEventOutboxStore)
 				if _, err = relayer.DrainAppWebhookEventOutbox(ctx, 32); err != nil {
 					t.Fatal(err)
 				}
@@ -174,9 +175,9 @@ func TestWorkflowRecoveryReviewNotifications(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				noticeRows := []AppWebhookDelivery{}
+				noticeRows := []state.AppWebhookDelivery{}
 				for _, row := range rows {
-					if row.Event == AppWebhookEventRecoveryReviewReady {
+					if row.Event == state.AppWebhookEventRecoveryReviewReady {
 						noticeRows = append(noticeRows, row)
 					}
 				}
@@ -221,7 +222,7 @@ func TestWorkflowRecoveryReviewNotifications(t *testing.T) {
 					t.Fatalf("retry=%+v %v", retryRows, err)
 				}
 				if scenario == "queued" || scenario == "concurrent" {
-					if _, err = s.(WorkflowRecoveryPolicyStore).DecideWorkflowRecoveryPolicyReview(ctx, app.AccountID, app.ID, review.ID, api.WorkflowRecoveryReviewDecisionRequest{Decision: "dismissed", Reason: "incident already resolved"}); err != nil {
+					if _, err = s.(state.WorkflowRecoveryPolicyStore).DecideWorkflowRecoveryPolicyReview(ctx, app.AccountID, app.ID, review.ID, api.WorkflowRecoveryReviewDecisionRequest{Decision: "dismissed", Reason: "incident already resolved"}); err != nil {
 						t.Fatal(err)
 					}
 					allowed, reason, e = notices.WorkflowRecoveryReviewNotificationAllowed(ctx, retryRows[0], now)

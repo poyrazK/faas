@@ -1,28 +1,29 @@
-package main
+package main_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os/exec"
 	"testing"
 	"time"
 )
 
 func TestCheckoutResilienceExampleManifest(t *testing.T) {
-	manifest, dir, err := readTestManifestDocument("../../examples/scenario-checkout/gregale-test.yaml", func(string, testScenario) []string { return nil })
+	manifest, dir, err := main.ReadTestManifestDocument("../../examples/scenario-checkout/gregale-test.yaml", func(string, main.TestScenario) []string { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collectTestValidation(manifest.Scenarios, dir, "checkout-outage"); err != nil {
+	if _, err := main.CollectTestValidation(manifest.Scenarios, dir, "checkout-outage"); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestCheckoutConcurrentExampleManifest(t *testing.T) {
-	manifest, dir, err := readTestManifestDocument("../../examples/scenario-checkout/gregale-batch-test.yaml", func(string, testScenario) []string { return nil })
+	manifest, dir, err := main.ReadTestManifestDocument("../../examples/scenario-checkout/gregale-batch-test.yaml", func(string, main.TestScenario) []string { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collectTestValidation(manifest.Scenarios, dir, "checkout-batch"); err != nil {
+	if _, err := main.CollectTestValidation(manifest.Scenarios, dir, "checkout-batch"); err != nil {
 		t.Fatal(err)
 	}
 }

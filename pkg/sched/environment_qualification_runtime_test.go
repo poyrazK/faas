@@ -66,9 +66,6 @@ func queuedQualificationExecutionFixtureWithBindingsAndTransport(t *testing.T, b
 			name = fmt.Sprintf("api%d", i+1)
 		}
 		manifest := state.AppManifest{ExecutionMode: mode, Port: 8079, StartupDeadlineS: 10}
-		if i == 0 {
-			manifest.ServiceBindingTransport = transport
-		}
 		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-" + name, Type: state.AppTypeApp,
 			Status: state.AppActive, RAMMB: 512, CPUMillicores: 250, MaxConcurrency: 1, WorkloadClass: workloadClass,
 			Manifest: manifest})
@@ -83,6 +80,20 @@ func queuedQualificationExecutionFixtureWithBindingsAndTransport(t *testing.T, b
 		workload := api.EnvironmentWorkload{App: app.Slug,
 			Source:  &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/shop@sha256:" + strings.Repeat("d", 64)},
 			Runtime: json.RawMessage(fmt.Sprintf(`{"port":8087,"healthz":"/reviewed-ready","startup_deadline_s":25,"execution_mode":%q}`, mode))}
+		if i == 0 && transport != "" {
+			var runtime map[string]json.RawMessage
+			if err := json.Unmarshal(workload.Runtime, &runtime); err != nil {
+				t.Fatal(err)
+			}
+			runtime["service_binding_transport"], err = json.Marshal(transport)
+			if err != nil {
+				t.Fatal(err)
+			}
+			workload.Runtime, err = json.Marshal(runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		if mode == api.ExecutionModeJob {
 			workload.JobSmoke = &api.EnvironmentJobSmoke{Command: []string{"node", "smoke.js"}, TimeoutSeconds: 30}
 		} else {

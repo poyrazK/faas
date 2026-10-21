@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -19,13 +20,13 @@ func TestSecretAckProgressRequiresEveryReloadEnabledTarget(t *testing.T) {
 			{InstanceID: "two", ReloadSupport: "enabled", Reported: true, Version: 4},
 		},
 	}
-	enabled, pending, err := secretAckProgress(secret)
+	enabled, pending, err := main.SecretAckProgress(secret)
 	if err != nil || enabled != 2 || pending != 1 {
 		t.Fatalf("progress = enabled %d pending %d err %v, want 2/1/nil", enabled, pending, err)
 	}
 	secret.RuntimeReloadObservations[1].ApplicationAckVersion = 4
 	secret.RuntimeReloadObservations[1].ApplicationAck = "applied"
-	enabled, pending, err = secretAckProgress(secret)
+	enabled, pending, err = main.SecretAckProgress(secret)
 	if err != nil || enabled != 2 || pending != 0 {
 		t.Fatalf("all applied progress = enabled %d pending %d err %v, want 2/0/nil", enabled, pending, err)
 	}
@@ -37,7 +38,7 @@ func TestSecretAckProgressFailsClosedOnUnknownOrDisabledTargets(t *testing.T) {
 			secret := api.AppSecretResponse{DeliveryVersion: 1, RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{{
 				InstanceID: "legacy", ReloadSupport: support,
 			}}}
-			if _, _, err := secretAckProgress(secret); err == nil {
+			if _, _, err := main.SecretAckProgress(secret); err == nil {
 				t.Fatalf("support %q unexpectedly accepted", support)
 			}
 		})
@@ -48,7 +49,7 @@ func TestSecretAckProgressAcceptsCurrentApplicationProofForLegacyTarget(t *testi
 	secret := api.AppSecretResponse{DeliveryVersion: 2, RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{{
 		InstanceID: "legacy", ReloadSupport: "unknown", ApplicationAckVersion: 2, ApplicationAck: "applied",
 	}}}
-	if enabled, pending, err := secretAckProgress(secret); err != nil || enabled != 1 || pending != 0 {
+	if enabled, pending, err := main.SecretAckProgress(secret); err != nil || enabled != 1 || pending != 0 {
 		t.Fatalf("legacy proof progress = enabled %d pending %d err %v, want 1/0/nil", enabled, pending, err)
 	}
 }
@@ -57,12 +58,12 @@ func TestSecretAckProgressWaitsForUnsupportedTargetAfterRestart(t *testing.T) {
 	secret := api.AppSecretResponse{DeliveryVersion: 2, RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{{
 		InstanceID: "legacy", ReloadSupport: "disabled",
 	}}}
-	if targets, pending, err := secretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 1 || pending != 1 {
+	if targets, pending, err := main.SecretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 1 || pending != 1 {
 		t.Fatalf("unacknowledged restart progress = targets %d pending %d err %v, want 1/1/nil", targets, pending, err)
 	}
 	secret.RuntimeReloadObservations[0].ApplicationAckVersion = 2
 	secret.RuntimeReloadObservations[0].ApplicationAck = "applied"
-	if targets, pending, err := secretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 1 || pending != 0 {
+	if targets, pending, err := main.SecretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 1 || pending != 0 {
 		t.Fatalf("acknowledged restart progress = targets %d pending %d err %v, want 1/0/nil", targets, pending, err)
 	}
 }
@@ -75,13 +76,13 @@ func TestSecretAckProgressFailsFastWhenRestartedRuntimeCannotAcknowledge(t *test
 		{InstanceID: "old-instance", ReloadSupport: "disabled"},
 		{InstanceID: "fresh-instance", ReloadSupport: "disabled"},
 	}}
-	_, _, err := secretAckProgressWithRestart(secret, "fresh-instance")
+	_, _, err := main.SecretAckProgressWithRestart(secret, "fresh-instance")
 	if err == nil || !strings.Contains(err.Error(), "omit --wait-for-ack") {
 		t.Fatalf("restart progress err = %v, want an immediate cannot-acknowledge error", err)
 	}
 	// A runtime still booting reports "unknown" and may yet acknowledge.
 	secret.RuntimeReloadObservations[1].ReloadSupport = "unknown"
-	if targets, pending, err := secretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 2 || pending != 2 {
+	if targets, pending, err := main.SecretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 2 || pending != 2 {
 		t.Fatalf("booting restart progress = targets %d pending %d err %v, want 2/2/nil", targets, pending, err)
 	}
 }
@@ -91,11 +92,11 @@ func TestSecretAckProgressDefersPriorRuntimeFailureAfterRestart(t *testing.T) {
 		{InstanceID: "old-instance", ReloadSupport: "disabled", ApplicationAckVersion: 2, ApplicationAck: "failed"},
 		{InstanceID: "fresh-instance", ReloadSupport: "disabled", ApplicationAckVersion: 2, ApplicationAck: "applied"},
 	}}
-	if targets, pending, err := secretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 2 || pending != 1 {
+	if targets, pending, err := main.SecretAckProgressWithRestart(secret, "fresh-instance"); err != nil || targets != 2 || pending != 1 {
 		t.Fatalf("restart progress = targets %d pending %d err %v, want 2/1/nil", targets, pending, err)
 	}
 	secret.RuntimeReloadObservations[1].ApplicationAck = "failed"
-	if _, _, err := secretAckProgressWithRestart(secret, "fresh-instance"); err == nil {
+	if _, _, err := main.SecretAckProgressWithRestart(secret, "fresh-instance"); err == nil {
 		t.Fatal("fresh runtime application failure unexpectedly accepted")
 	}
 }
@@ -105,7 +106,7 @@ func TestSecretAckProgressSurfacesApplicationFailure(t *testing.T) {
 		InstanceID: "one", ReloadSupport: "enabled", Reported: true, Version: 2,
 		ApplicationAckVersion: 2, ApplicationAck: "failed",
 	}}}
-	if _, _, err := secretAckProgress(secret); err == nil {
+	if _, _, err := main.SecretAckProgress(secret); err == nil {
 		t.Fatal("failed application acknowledgement unexpectedly accepted")
 	}
 }
@@ -115,7 +116,7 @@ func TestFindSecretStatusMatchesScope(t *testing.T) {
 		{Key: "DATABASE_URL", Scope: "staging"},
 		{Key: "DATABASE_URL", Scope: "prod"},
 	}}
-	got, ok := findSecretStatus(list, "DATABASE_URL", "prod")
+	got, ok := main.FindSecretStatus(list, "DATABASE_URL", "prod")
 	if !ok || got.Scope != "prod" {
 		t.Fatalf("findSecretStatus = %+v, %v; want prod row", got, ok)
 	}
@@ -123,7 +124,7 @@ func TestFindSecretStatusMatchesScope(t *testing.T) {
 
 func TestWaitForSecretApplicationAckRejectsIncompleteRoster(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
+		main.WriteJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
 			Key: "DATABASE_URL", Scope: "prod", DeliveryVersion: 3,
 		}}})
 	}))
@@ -131,14 +132,14 @@ func TestWaitForSecretApplicationAckRejectsIncompleteRoster(t *testing.T) {
 	client := api.NewClient(server.URL, "test-token")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, err := waitForSecretApplicationAck(ctx, client, "app", "DATABASE_URL", "prod"); err == nil {
+	if _, err := main.WaitForSecretApplicationAck(ctx, client, "app", "DATABASE_URL", "prod"); err == nil {
 		t.Fatal("incomplete runtime roster unexpectedly accepted")
 	}
 }
 
 func TestWaitForSecretApplicationAckSucceedsForEmptyCompleteRoster(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
+		main.WriteJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
 			Key: "DATABASE_URL", Scope: "prod", DeliveryVersion: 3, RuntimeReloadTargetsComplete: true,
 		}}})
 	}))
@@ -146,14 +147,14 @@ func TestWaitForSecretApplicationAckSucceedsForEmptyCompleteRoster(t *testing.T)
 	client := api.NewClient(server.URL, "test-token")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if count, err := waitForSecretApplicationAck(ctx, client, "app", "DATABASE_URL", "prod"); err != nil || count != 0 {
+	if count, err := main.WaitForSecretApplicationAck(ctx, client, "app", "DATABASE_URL", "prod"); err != nil || count != 0 {
 		t.Fatalf("wait returned count %d err %v, want 0/nil", count, err)
 	}
 }
 
 func TestWaitForSecretApplicationAckAfterRestartRejectsEmptyRoster(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
+		main.WriteJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
 			Key: "DATABASE_URL", Scope: "prod", DeliveryVersion: 3, RuntimeReloadTargetsComplete: true,
 		}}})
 	}))
@@ -161,14 +162,14 @@ func TestWaitForSecretApplicationAckAfterRestartRejectsEmptyRoster(t *testing.T)
 	client := api.NewClient(server.URL, "test-token")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, err := waitForSecretApplicationAckAfterRestart(ctx, client, "app", "DATABASE_URL", "prod", "instance-1"); err == nil {
+	if _, err := main.WaitForSecretApplicationAckAfterRestart(ctx, client, "app", "DATABASE_URL", "prod", "instance-1"); err == nil {
 		t.Fatal("restart with no authorized runtime unexpectedly succeeded")
 	}
 }
 
 func TestWaitForSecretApplicationAckTimesOutOnMissingAck(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
+		main.WriteJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{
 			Key: "DATABASE_URL", Scope: "prod", DeliveryVersion: 3, RuntimeReloadTargetsComplete: true,
 			RuntimeReloadObservations: []api.SecretRuntimeReloadObservation{{
 				InstanceID: "instance-1", ReloadSupport: "enabled", Reported: true, Version: 3,
@@ -179,7 +180,7 @@ func TestWaitForSecretApplicationAckTimesOutOnMissingAck(t *testing.T) {
 	client := api.NewClient(server.URL, "test-token")
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
-	if _, err := waitForSecretApplicationAck(ctx, client, "app", "DATABASE_URL", "prod"); err == nil {
+	if _, err := main.WaitForSecretApplicationAck(ctx, client, "app", "DATABASE_URL", "prod"); err == nil {
 		t.Fatal("wait without acknowledgement unexpectedly succeeded")
 	}
 }
@@ -189,7 +190,7 @@ func TestWaitForSecretRevocationAckReturnsOnlyAfterComplete(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/app/secret-revocations/revocation-1" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
-		writeJSONTest(w, api.AppSecretRevocationResponse{
+		main.WriteJSONTest(w, api.AppSecretRevocationResponse{
 			ID: "revocation-1", Status: "complete", TargetCount: 2, AcknowledgedCount: 2,
 		})
 	}))
@@ -197,7 +198,7 @@ func TestWaitForSecretRevocationAckReturnsOnlyAfterComplete(t *testing.T) {
 	client := api.NewClient(server.URL, "test-token")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	progress, err := waitForSecretRevocationAck(ctx, client, "app", "revocation-1")
+	progress, err := main.WaitForSecretRevocationAck(ctx, client, "app", "revocation-1")
 	if err != nil || progress.AcknowledgedCount != 2 {
 		t.Fatalf("wait returned %+v, %v; want complete 2/2", progress, err)
 	}
@@ -205,7 +206,7 @@ func TestWaitForSecretRevocationAckReturnsOnlyAfterComplete(t *testing.T) {
 
 func TestWaitForSecretRevocationAckFailsClosedForBlockedTarget(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		writeJSONTest(w, api.AppSecretRevocationResponse{
+		main.WriteJSONTest(w, api.AppSecretRevocationResponse{
 			ID: "revocation-1", Status: "blocked", TargetCount: 1, PendingCount: 1,
 		})
 	}))
@@ -213,7 +214,7 @@ func TestWaitForSecretRevocationAckFailsClosedForBlockedTarget(t *testing.T) {
 	client := api.NewClient(server.URL, "test-token")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, err := waitForSecretRevocationAck(ctx, client, "app", "revocation-1"); err == nil {
+	if _, err := main.WaitForSecretRevocationAck(ctx, client, "app", "revocation-1"); err == nil {
 		t.Fatal("blocked revocation unexpectedly succeeded")
 	}
 }

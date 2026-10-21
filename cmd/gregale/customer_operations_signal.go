@@ -24,8 +24,12 @@ type customerOperationSignalClient interface {
 
 type customerOperationSignalCommand struct {
 	app, id, scope, operation, subject string
-	timeout                            time.Duration
-	request                            api.OperationSignalRequest
+	// ADR-20261017100853: --self signals the tenant's own Operations; a subject signal
+	// then names the definition instead of scope and operation.
+	self       bool
+	definition string
+	timeout    time.Duration
+	request    api.OperationSignalRequest
 }
 
 func parseCustomerOperationSignal(args []string) (customerOperationSignalCommand, error) {
@@ -41,15 +45,23 @@ func parseCustomerOperationSignal(args []string) (customerOperationSignalCommand
 	fs.StringVar(&c.scope, "scope", "", "environment, with --operation and --subject")
 	fs.StringVar(&c.operation, "operation", "", "operation name, with --scope and --subject")
 	fs.StringVar(&c.subject, "subject", "", "business subject as TYPE:ID, with --scope and --operation")
+	fs.BoolVar(&c.self, "self", false, "signal the authenticated tenant's own operations")
+	fs.StringVar(&c.definition, "definition", "", "operation definition ID, with --self and --subject")
 	if err := parseInterspersed(fs, args); err != nil {
 		return c, err
 	}
-	if c.app == "" || c.request.Event == "" || c.request.SignalID == "" || c.timeout < 0 {
-		return c, fmt.Errorf("signal requires --app, --event and --signal-id")
+	if c.request.Event == "" || c.request.SignalID == "" || c.timeout < 0 {
+		return c, fmt.Errorf("signal requires --event and --signal-id")
 	}
-	bySubject := c.scope != "" || c.operation != "" || c.subject != ""
+	bySubject := c.scope != "" || c.operation != "" || c.subject != "" || c.definition != ""
 	switch {
-	case bySubject && (fs.NArg() != 0 || c.scope == "" || c.operation == "" || !strings.Contains(c.subject, ":")):
+	case c.self && (c.app != "" || c.scope != "" || c.operation != ""):
+		return c, fmt.Errorf("--self derives ownership from credentials; omit --app, and name a subject signal's --definition instead of --scope and --operation")
+	case !c.self && (c.app == "" || c.definition != ""):
+		return c, fmt.Errorf("signal requires --app; --definition needs --self")
+	case c.self && bySubject && (fs.NArg() != 0 || !validCustomerOperationUUID(c.definition) || !strings.Contains(c.subject, ":")):
+		return c, fmt.Errorf("a --self subject signal takes --definition UUID and --subject TYPE:ID instead of an operation ID")
+	case !c.self && bySubject && (fs.NArg() != 0 || c.scope == "" || c.operation == "" || !strings.Contains(c.subject, ":")):
 		return c, fmt.Errorf("a subject signal takes --scope, --operation and --subject TYPE:ID instead of an operation ID")
 	case !bySubject && (fs.NArg() != 1 || !validCustomerOperationUUID(fs.Arg(0))):
 		return c, fmt.Errorf("signal requires an operation UUID, or --scope, --operation and --subject")
@@ -91,7 +103,11 @@ func cmdCustomerOperationSignal(args []string) int {
 		ctx, cancel = context.WithTimeout(ctx, c.timeout)
 		defer cancel()
 	}
-	err = runCustomerOperationSignal(ctx, client, c, osStdout, jsonOutput)
+	var scoped customerOperationSignalClient = client
+	if c.self {
+		scoped = tenantCustomerOperationSignalClient{client: client, definition: c.definition}
+	}
+	err = runCustomerOperationSignal(ctx, scoped, c, osStdout, jsonOutput)
 	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 		return 130
 	}
@@ -139,4 +155,20 @@ func runCustomerOperationSignal(ctx context.Context, client customerOperationSig
 		}
 	}
 	return nil
+}
+
+// tenantCustomerOperationSignalClient selects only the tenant-self signal
+// routes (ADR-20261017100853); a subject signal is scoped by its definition.
+type tenantCustomerOperationSignalClient struct {
+	client     *api.Client
+	definition string
+}
+
+func (c tenantCustomerOperationSignalClient) SignalOperation(ctx context.Context, _, id string, req api.OperationSignalRequest) (api.OperationSignalReceipt, error) {
+	return c.client.SignalPlatformTenantSelfOperation(ctx, id, req)
+}
+
+func (c tenantCustomerOperationSignalClient) SignalOperationsBySubject(ctx context.Context, _ string, req api.OperationSubjectSignalRequest) (api.OperationSubjectSignalResponse, error) {
+	return c.client.SignalPlatformTenantSelfOperationsBySubject(ctx, api.PlatformTenantSubjectSignalRequest{DefinitionID: c.definition,
+		Subject: req.Subject, SignalID: req.SignalID, Event: req.Event, Payload: req.Payload})
 }

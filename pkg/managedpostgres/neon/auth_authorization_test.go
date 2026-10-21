@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -23,12 +25,13 @@ const authorizationSQLDir = "../../../cmd/gregale/templates/auth/sql"
 
 // The tables and columns of GoTrue's schema that the helpers read. The
 // template's end-to-end run applies the real migrations.
-const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, phone text, phone_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false, is_sso_user boolean NOT NULL DEFAULT false, created_at timestamptz DEFAULT now());
+const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, phone text, phone_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false, is_sso_user boolean NOT NULL DEFAULT false, role varchar(255), created_at timestamptz DEFAULT now());
 CREATE TABLE auth.identities (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, provider text NOT NULL, provider_id text NOT NULL);
 CREATE TABLE auth.sso_providers (id uuid PRIMARY KEY);
 CREATE TABLE auth.sso_domains (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), sso_provider_id uuid NOT NULL REFERENCES auth.sso_providers ON DELETE CASCADE, domain text NOT NULL);
-CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz, aal text, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), refreshed_at timestamp);
-CREATE TABLE auth.audit_log_entries (instance_id uuid, id uuid PRIMARY KEY, payload json, created_at timestamptz, ip_address varchar(64) NOT NULL DEFAULT '');`
+CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz, aal text, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), refreshed_at timestamp, user_agent text, ip inet, oauth_client_id uuid);
+CREATE TABLE auth.audit_log_entries (instance_id uuid, id uuid PRIMARY KEY, payload json, created_at timestamptz, ip_address varchar(64) NOT NULL DEFAULT '');
+CREATE TABLE auth.mfa_factors (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, factor_type text NOT NULL, status text NOT NULL);`
 
 type authUser struct{ id, session uuid.UUID }
 
@@ -295,6 +298,380 @@ func TestSQLSubjectAuthorizationForRealtimeIsOwnerOnlyAndUserLevel(t *testing.T)
 	reader := f.connect(t, f.readonly.name)
 	deniedSQL(t, reader, `SELECT gregale_auth.authorize_subject('`+bob.id.String()+`', 'realtime:read', '`+resource+`')`)
 	deniedSQL(t, reader, `SELECT gregale_auth.user_active('`+bob.id.String()+`')`)
+}
+
+// TestSQLUserSessionsListAndEndOnlyTheCallersOwn pins sql/0013: a person
+// lists their first-party sessions and ends any but the current one.
+func TestSQLUserSessionsListAndEndOnlyTheCallersOwn(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
+	phone, client := uuid.New(), uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.sessions (id, user_id, user_agent, ip, refreshed_at) VALUES ($1, $2, 'Mozilla/5.0 (iPhone)', '203.0.113.7', (now() + interval '1 minute') AT TIME ZONE 'UTC')`, phone, alice.id)
+	executeSQL(t, owner, `INSERT INTO auth.sessions (id, user_id, oauth_client_id) VALUES ($1, $2, gen_random_uuid())`, client, alice.id)
+	actAs(ctx, t, owner, alice)
+	rows, err := owner.Query(ctx, `SELECT id, ip, current FROM gregale_auth.list_sessions()`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []string
+	for rows.Next() {
+		var id uuid.UUID
+		var ip *string
+		var current bool
+		if err := rows.Scan(&id, &ip, &current); err != nil {
+			t.Fatal(err)
+		}
+		listed = append(listed, fmt.Sprintf("%s %v %v", id, ip != nil && *ip == "203.0.113.7", current))
+	}
+	rows.Close()
+	// Most recently active first; the OAuth client's session is not listed.
+	if want := []string{phone.String() + " true false", alice.session.String() + " false true"}; !reflect.DeepEqual(listed, want) {
+		t.Fatalf("listed %v, want %v", listed, want)
+	}
+	wantSQLError(t, owner, "22023", "current_session", `SELECT gregale_auth.end_session($1)`, alice.session)
+	wantSQLError(t, owner, "P0002", "not_found", `SELECT gregale_auth.end_session($1)`, bob.session)
+	wantSQLError(t, owner, "P0002", "not_found", `SELECT gregale_auth.end_session($1)`, client)
+	executeSQL(t, owner, `SELECT gregale_auth.end_session($1)`, phone)
+	if queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM auth.sessions WHERE id = $1)`, phone) || !queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM auth.sessions WHERE id = $1)`, bob.session) {
+		t.Fatal("end_session ended the wrong sessions")
+	}
+	executeSQL(t, owner, `SELECT set_config('request.jwt.claims', '', false)`)
+	wantSQLError(t, owner, "28000", "not_authenticated", `SELECT * FROM gregale_auth.list_sessions()`)
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	reader := f.connect(t, f.readonly.name)
+	deniedSQL(t, reader, `SELECT * FROM gregale_auth.list_sessions()`)
+	deniedSQL(t, reader, `SELECT gregale_auth.end_session('`+phone.String()+`')`)
+}
+
+// TestSQLActiveOrganizationIsChosenByAMemberForTheirSession pins sql/0015:
+// a session may act in an organization its user belongs to, and the choice
+// goes with the session or the organization.
+func TestSQLActiveOrganizationIsChosenByAMemberForTheirSession(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
+	actAs(ctx, t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	var slug, role string
+	if err := owner.QueryRow(ctx, `SELECT slug, role FROM gregale_auth.set_active_organization($1)`, org).Scan(&slug, &role); err != nil || slug != "acme" || role != "owner" {
+		t.Fatalf("set = %q %q, %v", slug, role, err)
+	}
+	active := func(u authUser) bool {
+		return queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM gregale_auth.session_organizations WHERE session_id = $1)`, u.session)
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.set_active_organization($1)`, org)
+	if !active(alice) {
+		t.Fatal("choosing again lost the choice")
+	}
+	actAs(ctx, t, owner, bob)
+	wantSQLError(t, owner, "P0002", "not_found", `SELECT gregale_auth.set_active_organization($1)`, org)
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, `SELECT gregale_auth.set_active_organization(NULL)`)
+	if active(alice) {
+		t.Fatal("NULL did not clear the choice")
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.set_active_organization($1)`, org)
+	executeSQL(t, owner, `DELETE FROM auth.sessions WHERE id = $1`, alice.session)
+	if active(alice) {
+		t.Fatal("an ended session kept its organization")
+	}
+	executeSQL(t, owner, `SELECT set_config('request.jwt.claims', '', false)`)
+	wantSQLError(t, owner, "28000", "not_authenticated", `SELECT gregale_auth.set_active_organization($1)`, org)
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	deniedSQL(t, f.connect(t, f.readonly.name), `SELECT gregale_auth.set_active_organization('`+org.String()+`')`)
+}
+
+// TestSQLOrganizationAuditLogRecordsChangesAndSignIns pins sql/0020: every
+// membership, invitation and domain change is recorded with its actor, an
+// organization's deletion cascades cleanly, and audit:read gates reading.
+func TestSQLOrganizationAuditLogRecordsChangesAndSignIns(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
+	actAs(ctx, t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.invite($1, 'bob@example.test', 'member', $2, 3600)`, org, tokenHash(t))
+	executeSQL(t, owner, `INSERT INTO gregale_auth.memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org, bob.id)
+	executeSQL(t, owner, `SELECT gregale_auth.set_member_role($1, $2, 'admin')`, org, bob.id)
+	executeSQL(t, owner, `SELECT gregale_auth.add_org_domain($1, 'acme.com', $2)`, org, strings.Repeat("a", 32))
+	executeSQL(t, owner, `INSERT INTO auth.audit_log_entries (id, payload, created_at) VALUES (gen_random_uuid(), json_build_object('action', 'login', 'actor_id', $1::text), now())`, bob.id)
+	executeSQL(t, owner, `SELECT gregale_auth.remove_member($1, $2)`, org, bob.id)
+	rows, err := owner.Query(ctx, `SELECT action, coalesce(actor_email, '-'), coalesce(target_email, '-') FROM gregale_auth.org_audit_entries($1, NULL, NULL, 100) ORDER BY occurred_at`, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for rows.Next() {
+		var action, actor, target string
+		if err := rows.Scan(&action, &actor, &target); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, action+" "+actor+" "+target)
+	}
+	rows.Close()
+	want := []string{
+		"organization.created alice@example.test -", "member.added alice@example.test alice@example.test", "invitation.created alice@example.test -",
+		"member.added alice@example.test bob@example.test", "member.role_changed alice@example.test bob@example.test", "domain.added alice@example.test -",
+		"member.removed alice@example.test bob@example.test",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("audit log\n%v\nwant\n%v", got, want)
+	}
+	// A former member's sign-in is not the organization's to see; a member's is.
+	executeSQL(t, owner, `INSERT INTO auth.audit_log_entries (id, payload, created_at) VALUES (gen_random_uuid(), json_build_object('action', 'login', 'actor_id', $1::text), now())`, alice.id)
+	if !queryBool(t, owner, `SELECT count(*) = 1 FROM gregale_auth.org_audit_entries($1, NULL, NULL, 100) WHERE action = 'member.signed_in'`, org) {
+		t.Fatal("sign-ins are not limited to current members")
+	}
+	// Changes without a caller (the admin key, SSO, SCIM) have no actor.
+	executeSQL(t, owner, `SELECT set_config('request.jwt.claims', '', false)`)
+	executeSQL(t, owner, `INSERT INTO gregale_auth.memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org, bob.id)
+	if !queryBool(t, owner, `SELECT actor_id IS NULL FROM gregale_auth.org_audit_log WHERE org_id = $1 ORDER BY occurred_at DESC LIMIT 1`, org) {
+		t.Fatal("a change without a caller has an actor")
+	}
+	actAs(ctx, t, owner, bob)
+	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.org_audit_entries($1, NULL, NULL, 10)`, org)
+	executeSQL(t, owner, `DELETE FROM gregale_auth.organizations WHERE id = $1`, org)
+	if queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM gregale_auth.org_audit_log WHERE org_id = $1)`, org) {
+		t.Fatal("entries outlived their organization")
+	}
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	deniedSQL(t, f.connect(t, f.readonly.name), `SELECT gregale_auth.org_audit_feed('`+org.String()+`', NULL, NULL, 10)`)
+}
+
+// TestSQLOrganizationMFARequirementHoldsPermissionsToAAL2Sessions pins
+// sql/0016: once an organization requires a second factor, its permissions
+// hold only in sessions GoTrue raised to aal2, and only someone holding
+// mfa:manage in such a session changes the requirement.
+func TestSQLOrganizationMFARequirementHoldsPermissionsToAAL2Sessions(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
+	actAs(ctx, t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	executeSQL(t, owner, `INSERT INTO gregale_auth.memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org, bob.id)
+	executeSQL(t, owner, `SELECT gregale_auth.apply_authz('{"policies":[{"action":"read","resource":"doc","permission":"org:read"}]}')`)
+	aal := func(u authUser, level string) {
+		executeSQL(t, owner, `UPDATE auth.sessions SET aal = $2 WHERE id = $1`, u.session, level)
+	}
+	resource := "org/" + org.String() + "/doc/1"
+	allowed := func(u authUser) bool {
+		actAs(ctx, t, owner, u)
+		var ok bool
+		if err := owner.QueryRow(ctx, `SELECT gregale_auth.authorize('read', $1)`, resource).Scan(&ok); err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	setMFA := `SELECT gregale_auth.set_organization_mfa($1, $2)`
+	if !allowed(bob) {
+		t.Fatal("a member was refused before any requirement")
+	}
+
+	// Changing the requirement needs mfa:manage and an aal2 session.
+	actAs(ctx, t, owner, alice)
+	wantSQLError(t, owner, "42501", "mfa_required", setMFA, org, true)
+	aal(bob, "aal2")
+	actAs(ctx, t, owner, bob)
+	wantSQLError(t, owner, "42501", "forbidden", setMFA, org, true)
+	aal(bob, "aal1")
+	aal(alice, "aal2")
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, setMFA, org, true)
+
+	// Below aal2 a member keeps the membership and loses its permissions.
+	if allowed(bob) || !allowed(alice) {
+		t.Fatal("the requirement did not hold permissions to aal2 sessions")
+	}
+	actAs(ctx, t, owner, bob)
+	if !queryBool(t, owner, `SELECT gregale_auth.mfa_blocks($1)`, org) {
+		t.Fatal("mfa_blocks does not explain the refusal")
+	}
+	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.list_members($1)`, org)
+	wantSQLError(t, owner, "42501", "mfa_required", `SELECT gregale_auth.set_active_organization($1)`, org)
+	if !queryBool(t, owner, `SELECT mfa_required FROM gregale_auth.list_organizations() WHERE id = $1`, org) {
+		t.Fatal("a member cannot see that the organization requires a second factor")
+	}
+	if !queryBool(t, owner, `SELECT gregale_auth.authorize_subject($1, 'read', $2) IS FALSE`, bob.id, resource) {
+		t.Fatal("subject authorization ignored the requirement")
+	}
+
+	// Verifying a factor raises the session; removing it lowers it again.
+	aal(bob, "aal2")
+	if !allowed(bob) || !queryBool(t, owner, `SELECT gregale_auth.authorize_subject($1, 'read', $2)`, bob.id, resource) {
+		t.Fatal("an aal2 member was refused")
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.set_active_organization($1)`, org)
+	executeSQL(t, owner, `INSERT INTO auth.mfa_factors (user_id, factor_type, status) VALUES ($1, 'totp', 'verified'), ($2, 'recovery_code', 'verified')`, bob.id, alice.id)
+	memberMFA := func(u authUser) map[uuid.UUID]*bool {
+		actAs(ctx, t, owner, u)
+		rows, err := owner.Query(ctx, `SELECT user_id, mfa_enabled FROM gregale_auth.list_members($1)`, org)
+		if err != nil {
+			t.Fatal(err)
+		}
+		listed, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (struct {
+			id      uuid.UUID
+			enabled *bool
+		}, error) {
+			var v struct {
+				id      uuid.UUID
+				enabled *bool
+			}
+			return v, row.Scan(&v.id, &v.enabled)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[uuid.UUID]*bool{}
+		for _, v := range listed {
+			out[v.id] = v.enabled
+		}
+		return out
+	}
+	// Owners see who has a factor (recovery codes alone do not count);
+	// plain members do not.
+	if got := memberMFA(alice); got[bob.id] == nil || !*got[bob.id] || got[alice.id] == nil || *got[alice.id] {
+		t.Fatalf("an owner sees second factors as %v", got)
+	}
+	if got := memberMFA(bob); got[bob.id] != nil || got[alice.id] != nil {
+		t.Fatalf("a member sees second factors as %v", got)
+	}
+	aal(bob, "aal1")
+	if allowed(bob) {
+		t.Fatal("a session lowered to aal1 kept its permissions")
+	}
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, setMFA, org, false)
+	if !allowed(bob) {
+		t.Fatal("turning the requirement off did not restore access")
+	}
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	reader := f.connect(t, f.readonly.name)
+	deniedSQL(t, reader, `SELECT gregale_auth.set_organization_mfa('`+org.String()+`', false)`)
+	deniedSQL(t, reader, `SELECT gregale_auth.mfa_blocks('`+org.String()+`')`)
+	deniedSQL(t, reader, `SELECT gregale_auth.session_mfa()`)
+}
+
+// TestSQLDomainJoinAddsProvenPeopleOnceAndOnlyWhileAddressesAreConfirmed
+// pins sql/0017: people with a confirmed address at an organization's
+// verified domain join it at once or when they choose, never twice, and not
+// at all while the app confirms addresses without asking.
+func TestSQLDomainJoinAddsProvenPeopleOnceAndOnlyWhileAddressesAreConfirmed(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	executeSQL(t, owner, `UPDATE gregale_auth.domain_join_settings SET enabled = true`)
+	alice := newAuthUser(t, owner, "alice@acme.com")
+	bob := newAuthUser(t, owner, "bob@acme.com")
+	other := newAuthUser(t, owner, "dave@globex.com")
+	unconfirmed := uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.users (id, email) VALUES ($1, 'carol@acme.com')`, unconfirmed)
+	actAs(ctx, t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.add_org_domain($1, 'acme.com', $2)`, org, strings.Repeat("a", 32))
+	executeSQL(t, owner, `SELECT gregale_auth.add_org_domain($1, 'acme.io', $2)`, org, strings.Repeat("b", 32))
+	setJoin := `SELECT joined FROM gregale_auth.set_domain_join($1, $2, $3, $4)`
+	wantSQLError(t, owner, "42501", "domain_not_verified", setJoin, org, "acme.com", "suggest", "member")
+	executeSQL(t, owner, `SELECT gregale_auth.verify_org_domain($1, 'acme.com')`, org)
+	wantSQLError(t, owner, "22023", "unknown_role", setJoin, org, "acme.com", "automatic", "owner")
+	wantSQLError(t, owner, "22023", "invalid_join_mode", setJoin, org, "acme.com", "always", "member")
+	member := func(u uuid.UUID) bool {
+		return queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM gregale_auth.memberships WHERE org_id = $1 AND user_id = $2)`, org, u)
+	}
+
+	// Turning on 'automatic' adds the confirmed people already at the domain.
+	var joined int
+	if err := owner.QueryRow(ctx, setJoin, org, "acme.com", "automatic", "member").Scan(&joined); err != nil || joined != 1 {
+		t.Fatalf("automatic joined %d, %v", joined, err)
+	}
+	if !member(bob.id) || member(unconfirmed) || member(other.id) {
+		t.Fatal("automatic join added the wrong people")
+	}
+	// New people join when their address is confirmed.
+	eve := newAuthUser(t, owner, "Eve@ACME.com")
+	executeSQL(t, owner, `UPDATE auth.users SET email_confirmed_at = now() WHERE id = $1`, unconfirmed)
+	if !member(eve.id) || !member(unconfirmed) {
+		t.Fatal("a newly confirmed address did not join")
+	}
+
+	// Someone removed comes back only by invitation.
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, `SELECT gregale_auth.remove_member($1, $2)`, org, bob.id)
+	executeSQL(t, owner, setJoin, org, "acme.com", "suggest", "member")
+	executeSQL(t, owner, setJoin, org, "acme.com", "automatic", "member")
+	if member(bob.id) {
+		t.Fatal("a removed member was added again")
+	}
+	actAs(ctx, t, owner, bob)
+	wantSQLError(t, owner, "P0002", "not_found", `SELECT gregale_auth.join_organization($1)`, org)
+
+	// With 'suggest', people see the organization and join when they choose.
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, setJoin, org, "acme.com", "suggest", "member")
+	grace := newAuthUser(t, owner, "grace@acme.com")
+	if member(grace.id) {
+		t.Fatal("'suggest' added someone at once")
+	}
+	actAs(ctx, t, owner, grace)
+	var suggested string
+	if err := owner.QueryRow(ctx, `SELECT slug FROM gregale_auth.suggested_organizations()`).Scan(&suggested); err != nil || suggested != "acme" {
+		t.Fatalf("suggested %q, %v", suggested, err)
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.join_organization($1)`, org)
+	wantSQLError(t, owner, "23505", "already_member", `SELECT gregale_auth.join_organization($1)`, org)
+	actAs(ctx, t, owner, other)
+	wantSQLError(t, owner, "P0002", "not_found", `SELECT gregale_auth.join_organization($1)`, org)
+
+	// While the app confirms addresses without asking, nobody joins by domain.
+	executeSQL(t, owner, `UPDATE gregale_auth.domain_join_settings SET enabled = false`)
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, setJoin, org, "acme.com", "automatic", "member")
+	hank := newAuthUser(t, owner, "hank@acme.com")
+	if member(hank.id) {
+		t.Fatal("an address confirmed without asking joined")
+	}
+	actAs(ctx, t, owner, hank)
+	if queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM gregale_auth.suggested_organizations())`) {
+		t.Fatal("an unproven address was offered the organization")
+	}
+
+	// A custom role used for joining cannot be removed from the app's roles.
+	executeSQL(t, owner, `SELECT gregale_auth.apply_authz('{"roles":{"viewer":["org:read"]}}')`)
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, setJoin, org, "acme.com", "suggest", "viewer")
+	wantSQLError(t, owner, "23503", "role_in_use", `SELECT gregale_auth.apply_authz('{}')`)
+
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	reader := f.connect(t, f.readonly.name)
+	deniedSQL(t, reader, `SELECT gregale_auth.set_domain_join('`+org.String()+`', 'acme.com', 'automatic', 'member')`)
+	deniedSQL(t, reader, `SELECT gregale_auth.suggested_organizations()`)
+	deniedSQL(t, reader, `SELECT gregale_auth.join_organization('`+org.String()+`')`)
 }
 
 // TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled pins the outbox the

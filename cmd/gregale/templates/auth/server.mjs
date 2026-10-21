@@ -3,23 +3,27 @@ import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import pg from 'pg'
-import { adminKeyHashes, createAdminHandler, goTrueAdmin, goTrueError, signingKey } from './admin.mjs'
+import { adminKeyHashes, createAdminHandler, deleteOwnAccount, goTrueAdmin, goTrueError, signingKey } from './admin.mjs'
 import { createAuthzHandler, goTrueAuthenticator } from './authz.mjs'
-import { createHookServer, createMailer, hookAddress, hookEnv, newHookSecret } from './email.mjs'
+import { createHookServer, createMailer, hookAddress, hookEnv, loadEmailTemplates, newHookSecret } from './email.mjs'
 import { filterLogs } from './logs.mjs'
 import { callbackTokens, createRealtimeAuthorizer } from './realtime.mjs'
 import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
-import { createAnonymousPruner, createAuditPruner } from './retention.mjs'
+import { createAnonymousPruner, createAuditPruner, createOrgAuditPruner } from './retention.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
+import { signupRefusal } from './signups.mjs'
+import { impersonated, impersonationBlocked } from './impersonation.mjs'
+import { setDomainJoin } from './orgsso.mjs'
 import { goMemoryLimit, gotrue, limits, pagePolicy, runtimeConfig } from './config.mjs'
 import { accessTokenClaims, authorizationDetails, authorizationResource, bearerClaims, clientTokenAllowed, consentLocation, isClientToken, registrationOpen, wellKnownPath } from './oauth.mjs'
+import { createAuthenticator, createRateLimiter, issueToken, isServiceAccountToken, OAuthError, serviceAccountAllowed, tokenRequest, verificationKeys, verifyToken } from './serviceaccounts.mjs'
 
 const prefix = '/auth/v1'
 const authzPrefix = '/authz/v1/'
-const pages = new Set(['/ui', '/ui/', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone', '/ui/sso', '/ui/consent'])
+const pages = new Set(['/ui', '/ui/', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone', '/ui/sso', '/ui/consent', '/ui/account'])
 const assets = { '/ui/app.js': 'text/javascript; charset=utf-8', '/ui/style.css': 'text/css; charset=utf-8' }
 // The hosted pages load only their own script and style and call only this
 // origin, plus a configured logo's origin and CAPTCHA provider; tokens
@@ -45,6 +49,7 @@ function serveUI(req, res, ui) {
     res.end(JSON.stringify({
       site_url: ui.siteURL, redirect_urls: ui.redirectURLs, app: ui.app, logo_url: branding.logoURL,
       captcha: ui.captcha ? { provider: ui.captcha.provider, site_key: ui.captcha.siteKey, script: ui.captcha.script } : null,
+      web3: ui.web3 ?? { ethereum: false, solana: false },
     }))
   } else if (path === '/ui/brand.css') {
     // The accent colour is validated as #rrggbb, so it cannot break out.
@@ -112,10 +117,22 @@ function readBody(req, res, bodyBytes, done) {
   req.on('end', () => { if (received <= bodyBytes) done(Buffer.concat(chunks)) })
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null } = {}) {
+// tokenReply answers the token endpoint as RFC 6749 section 5 says.
+function tokenReply(res, status, payload, headers = {}) {
+  if (res.headersSent) return res.destroy()
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Pragma: 'no-cache', ...headers })
+  res.end(JSON.stringify(payload))
+}
+
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null } = {}) {
   return http.createServer((req, res) => {
     // A third-party OAuth client's token is good here only for userinfo.
-    if (isClientToken(bearerClaims(req.headers.authorization)) && !clientTokenAllowed(req.method, req.url)) return problem(res, 403, 'oauth_client_token')
+    const bearer = bearerClaims(req.headers.authorization)
+    if (isClientToken(bearer) && !clientTokenAllowed(req.method, req.url)) return problem(res, 403, 'oauth_client_token')
+    // A session support staff opened as a user cannot change the account.
+    if (impersonated(bearer) && impersonationBlocked(req.method, req.url)) return problem(res, 403, 'impersonation_restricted')
+    // A service account's token is for the application's API, not this host.
+    if (isServiceAccountToken(bearer) && !serviceAccountAllowed(req.method, req.url)) return problem(res, 403, 'service_account_token')
     if (settings && req.url.split('?')[0] === '/settings/v1') return serveSettings(req, res, settings)
     if (realtime && req.url === '/realtime/authorize-channel') return realtime(req, res)
     if (admin && /^\/admin\/v1([/?]|$)/.test(req.url)) return admin(req, res)
@@ -141,6 +158,25 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     if (oauth && req.method === 'POST' && path.split('?')[0] === '/oauth/clients/register') {
       return oauth.registrationOpen().then(open => open ? proxy(req, res, path, upstreamPort, bodyBytes, oauth) : problem(res, 403, 'oauth_client_limit'), () => problem(res, 503, 'auth_unavailable'))
     }
+    // The front answers the client-credentials grant for service accounts
+    // and passes every other token request to GoTrue as read.
+    if (serviceAccounts && req.method === 'POST' && path.split('?')[0] === '/oauth/token') {
+      return readBody(req, res, bodyBytes, body => {
+        let request
+        try { request = tokenRequest(req.headers['content-type'], body, req.headers.authorization) } catch (err) { return tokenReply(res, err.status, { error: err.error }, err.headers) }
+        if (!request) {
+          const headers = forwardHeaders(req.headers)
+          delete headers['content-length']
+          return upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, oauth).end(body)
+        }
+        // The public gateway replaces X-Real-IP with the verified client address.
+        serviceAccounts.issue({ ...request, address: String(req.headers['x-real-ip'] ?? req.socket.remoteAddress) }).then(payload => tokenReply(res, 200, payload), err => {
+          if (err instanceof OAuthError) return tokenReply(res, err.status, { error: err.error }, err.headers)
+          console.error(JSON.stringify({ level: 'error', event: 'service_account_token_failed', sqlstate: err?.code ?? null }))
+          tokenReply(res, 503, { error: 'temporarily_unavailable' })
+        })
+      })
+    }
     // A request that may text a number is read whole, checked against the
     // country allowlist and forwarded as read.
     if (smsCountries && smsSendPath(req.method, req.url)) {
@@ -163,6 +199,7 @@ function upstreamRequest(req, res, path, upstreamPort, headers, oauth) {
     if (oauth && responseHeaders.location) responseHeaders.location = oauth.location(responseHeaders.location)
     const details = oauth && req.method === 'GET' && response.statusCode === 200 ? authorizationDetails.exec(path.split('?')[0]) : null
     if (details) return withResource(response, res, responseHeaders, oauth, details[1])
+    if (oauth?.clientCredentials && req.method === 'GET' && response.statusCode === 200 && /^\/\.well-known\/(oauth-authorization-server|openid-configuration)$/.test(path)) return withClientCredentials(response, res, responseHeaders)
     res.writeHead(response.statusCode, responseHeaders)
     response.pipe(res)
   })
@@ -205,6 +242,27 @@ function withResource(response, res, headers, oauth, id) {
   })
 }
 
+// withClientCredentials adds the grant the front answers for service
+// accounts to GoTrue's RFC 8414 metadata.
+function withClientCredentials(response, res, headers) {
+  const chunks = []
+  let size = 0
+  response.on('data', chunk => { size += chunk.length; if (size <= limits.authzBodyBytes) chunks.push(chunk) })
+  response.on('end', () => {
+    try {
+      if (size > limits.authzBodyBytes) throw new Error('too large')
+      const metadata = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      const grants = Array.isArray(metadata.grant_types_supported) ? metadata.grant_types_supported : ['authorization_code', 'implicit']
+      const payload = JSON.stringify({ ...metadata, grant_types_supported: [...new Set([...grants, 'client_credentials'])] })
+      delete headers['content-length']
+      res.writeHead(200, { ...headers, 'content-length': Buffer.byteLength(payload) })
+      res.end(payload)
+    } catch {
+      problem(res, 502, 'auth_unavailable')
+    }
+  })
+}
+
 // GoTrue runs as a supervised child on loopback. Either process exiting ends
 // the instance so the platform restarts both together.
 export function start(env = process.env) {
@@ -215,30 +273,40 @@ export function start(env = process.env) {
   // connection that the database closed while it slept.
   const pool = new pg.Pool({ connectionString: config.gotrueEnv.DATABASE_URL, max: limits.frontPool, idleTimeoutMillis: 5000 })
   pool.on('error', () => {})
-  const accessToken = config.oauth ? payload => accessTokenClaims(pool, payload) : null
-  const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app, accessToken })
+  const tokenHook = config.oauth || config.orgClaims || config.impersonation
+  const accessToken = tokenHook ? payload => accessTokenClaims(pool, payload, { orgClaims: config.orgClaims, impersonation: config.impersonation }) : null
+  const beforeUserCreated = config.signups ? payload => signupRefusal(pool, config.signups, payload) : null
+  const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app, accessToken, beforeUserCreated, templates: () => loadEmailTemplates(pool) })
   hooks.listen(hookAddress.port, hookAddress.host)
-  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret, { accessToken: config.oauth }), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret, { accessToken: tokenHook, beforeUserCreated: Boolean(beforeUserCreated) }), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })
   filterLogs(child.stdout, process.stdout)
   filterLogs(child.stderr, process.stderr)
   const invitations = { mailer, external: config.external, app: config.app }
-  const ui = { siteURL: config.gotrueEnv.GOTRUE_SITE_URL, redirectURLs: config.redirects, app: config.app, branding: config.branding, captcha: config.captcha }
+  const ui = { siteURL: config.gotrueEnv.GOTRUE_SITE_URL, redirectURLs: config.redirects, app: config.app, branding: config.branding, captcha: config.captcha, web3: config.web3 }
   const workflows = workflowsConfig(env)
   const goTrue = goTrueAdmin(signingKey(config.gotrueEnv.GOTRUE_JWT_KEYS))
   const orgSSO = config.orgSSO ? { admin: goTrue, goTrueError, external: config.external } : null
-  const authz = createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO, teamEnabled: config.productControlTeamEnabled, emailEnabled: config.productControlEmailEnabled })
+  const deleteAccount = config.selfDeletion ? claims => deleteOwnAccount({ pool, admin: goTrue }, claims) : null
+  // Service accounts' tokens are signed and checked here, with the app's keys.
+  const jwtKeys = config.gotrueEnv.GOTRUE_JWT_KEYS
+  const authenticate = config.serviceAccounts ? createAuthenticator(goTrueAuthenticator(), token => verifyToken(token, { keys: verificationKeys(jwtKeys), issuer: config.api })) : goTrueAuthenticator()
+  const tokenLimits = { limiter: createRateLimiter(), failures: createRateLimiter() }
+  const serviceAccounts = config.serviceAccounts ? { issue: request => issueToken({ pool, signer: signingKey(jwtKeys), issuer: config.api, ...tokenLimits }, request) } : null
+  const authz = createAuthzHandler({ pool, authenticate, origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO, orgDomains: config.orgDomains, teamEnabled: config.productControlTeamEnabled, emailEnabled: config.productControlEmailEnabled, deleteAccount, orgClaims: config.orgClaims, sessions: config.sessions, serviceAccounts: config.serviceAccounts })
   const realtime = createRealtimeAuthorizer({ pool, tokens: callbackTokens(env) })
   // The dashboard is served from the Gregale API origin.
   let dashboard = []
   try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
-  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external })
+  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external, emails: { mailer, api: config.api, app: config.app },
+    impersonation: config.impersonation ? { siteURL: config.gotrueEnv.GOTRUE_SITE_URL } : null, serviceAccounts: config.serviceAccounts })
   const scim = createScimHandler({ pool, admin: goTrue, base: config.external })
   const oauth = config.oauth ? {
     location: location => consentLocation(location, config.gotrueEnv.GOTRUE_SITE_URL, config.external),
     registrationOpen: () => registrationOpen(pool),
     resource: id => authorizationResource(pool, id),
+    clientCredentials: config.serviceAccounts,
   } : null
-  const server = createServer({ authz, ui, realtime, admin, settings: config.settings, smsCountries: config.smsCountries, scim, oauth })
+  const server = createServer({ authz, ui, realtime, admin, settings: config.settings, smsCountries: config.smsCountries, scim, oauth, serviceAccounts })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)
@@ -246,8 +314,14 @@ export function start(env = process.env) {
   setLifecycleEvents(pool, Boolean(lifecycle)).then(() => events?.poke(), err => {
     console.error(JSON.stringify({ level: 'error', event: 'lifecycle_events_setup_failed', sqlstate: err?.code ?? null }))
   })
+  // Joining by email domain happens in triggers on GoTrue's tables, so
+  // the database learns at startup whether addresses here are proven.
+  if (config.orgDomains && !config.domainJoin) console.error(JSON.stringify({ level: 'warning', event: 'domain_join_needs_confirmed_addresses' }))
+  setDomainJoin(pool, config.domainJoin).catch(err => {
+    console.error(JSON.stringify({ level: 'error', event: 'domain_join_setup_failed', sqlstate: err?.code ?? null }))
+  })
   // Activity retention prunes on the same request-driven schedule.
-  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays })]
+  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createOrgAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays })]
   for (const pruner of pruners) pruner.poke()
   server.on('request', (req, res) => {
     if (publishesAfter(req)) res.on('finish', () => { events?.poke(); for (const pruner of pruners) pruner.poke() })

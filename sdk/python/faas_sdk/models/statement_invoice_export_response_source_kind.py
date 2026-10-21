@@ -1,10 +1,11 @@
 from typing import Literal
 
-StatementInvoiceExportResponseSourceKind = Literal["app_consumer", "platform_tenant"]
+StatementInvoiceExportResponseSourceKind = Literal["app_consumer", "platform_tenant", "product_control"]
 
 STATEMENT_INVOICE_EXPORT_RESPONSE_SOURCE_KIND_VALUES: set[StatementInvoiceExportResponseSourceKind] = {
     "app_consumer",
     "platform_tenant",
+    "product_control",
 }
 
 
