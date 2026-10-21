@@ -324,6 +324,10 @@ type MemStore struct {
 	financialBudgetEvaluations                 map[string]financialBudgetMemoryEvaluation
 	financialBudgetAlerts                      map[string]FinancialBudgetAlertDelivery
 	financialBudgetStops                       map[string]FinancialBudgetStop
+	financialBudgetChannels                    map[string][]string                            // policy id → channel ids (ADR-20261019193500)
+	financialBudgetChannelDeliveries           map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
+	financialBudgetProjections                 map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
+	financialObjectStorageEstimates            map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
 	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
 	financialComputeBooks                      map[string]financialComputeBook
 	financialComputeLeases                     map[string]financialComputeLease
@@ -1165,7 +1169,7 @@ type MemStore struct {
 	// (migration 00050, issue #259).
 	invoices               map[string]Invoice
 	invoiceRefunds         map[string]InvoiceRefund
-	billingUsageDeliveries map[string]struct{}
+	billingUsageDeliveries map[string]billingUsageDelivery
 	// objectStorageBilling is the in-memory mirror of the finalized
 	// object-storage month-close ledger.
 	objectStorageBilling           map[string]ObjectStorageBillingRecord
@@ -1821,7 +1825,7 @@ func NewMemStore() *MemStore {
 		// PR B writes via UpsertInvoice (webhook ingestion).
 		invoices:                       map[string]Invoice{},
 		invoiceRefunds:                 map[string]InvoiceRefund{},
-		billingUsageDeliveries:         map[string]struct{}{},
+		billingUsageDeliveries:         map[string]billingUsageDelivery{},
 		objectStorageBilling:           map[string]ObjectStorageBillingRecord{},
 		objectStorageBillingDeliveries: map[string]ObjectStorageBillingDelivery{},
 		// accountCredits starts empty; the operator-only
@@ -19985,6 +19989,15 @@ func (m *MemStore) UsageWindows(_ context.Context, start, end time.Time) ([]Usag
 	return out, nil
 }
 
+// billingUsageDelivery is one MemStore receipt; the first recorded quantity
+// wins, as in billing_usage_deliveries.
+type billingUsageDelivery struct {
+	provider, accountID string
+	meter               BillingMeter
+	hour                time.Time
+	quantity            int64
+}
+
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
 	return provider + "\x00" + accountID + "\x00" + string(meter) + "\x00" + hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
 }
@@ -20064,7 +20077,10 @@ func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.billingUsageDeliveries[billingUsageDeliveryKey(provider, accountID, meter, windowStart)] = struct{}{}
+	key := billingUsageDeliveryKey(provider, accountID, meter, windowStart)
+	if _, exists := m.billingUsageDeliveries[key]; !exists { // Postgres: ON CONFLICT DO NOTHING
+		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity}
+	}
 	return nil
 }
 
@@ -23401,6 +23417,26 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key, alert := range m.financialBudgetAlerts {
 		if alert.AccountID == id {
 			delete(m.financialBudgetAlerts, key)
+		}
+	}
+	for key, d := range m.financialBudgetChannelDeliveries {
+		if d.Alert.AccountID == id {
+			delete(m.financialBudgetChannelDeliveries, key)
+		}
+	}
+	for key, a := range m.financialBudgetProjections {
+		if a.AccountID == id {
+			delete(m.financialBudgetProjections, key)
+		}
+	}
+	for key, e := range m.financialObjectStorageEstimates {
+		if e.AccountID == id {
+			delete(m.financialObjectStorageEstimates, key)
+		}
+	}
+	for key := range m.financialBudgetChannels {
+		if p, ok := m.financialBudgets[key]; !ok || p.AccountID == id {
+			delete(m.financialBudgetChannels, key)
 		}
 	}
 	for key, stop := range m.financialBudgetStops {

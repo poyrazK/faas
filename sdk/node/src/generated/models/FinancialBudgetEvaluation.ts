@@ -15,5 +15,13 @@ export type FinancialBudgetEvaluation = {
   coverage_complete: boolean;
   fresh: boolean;
   reasons: Array<string>;
+  /**
+   * Month-end amount at the current run rate (ADR-20261019193500): an estimate, not an invoice. Absent, with projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale.
+   */
+  projected_millicents?: number;
+  /**
+   * Why no projection is available, for example compute:insufficient_history (less than a day of evidence) or incomplete_evidence.
+   */
+  projection_reason?: string;
 };
 
