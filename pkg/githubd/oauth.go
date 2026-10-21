@@ -457,7 +457,7 @@ func (a *AppAuth) ListInstallableRepos(ctx context.Context, installToken string,
 		// Capture the Link header BEFORE Close — some transports
 		// strip headers on close (not httptest.Server.Client,
 		// but defensive against future rewrites).
-		linkHdr := resp.Header.Get("Link")
+		linkHdr := strings.Join(resp.Header.Values("Link"), ", ")
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("githubd: list repos page %d: status=%d body=%s", page, resp.StatusCode, strings.TrimSpace(string(body)))
@@ -512,11 +512,6 @@ func nextLink(link string) string {
 			return uri
 		}
 	}
-	// Some clients/proxies split into multiple Link headers,
-	// each with one entry. The Go http.Header.Get joins them with
-	// ", " so this branch should never fire — but if it does,
-	// the caller gets empty string and pagination stops, which
-	// is the safer default.
 	return ""
 }
 

@@ -40,6 +40,8 @@ class RequestAnalyticsComputeCost:
     rate_millicents_per_gb_hour: int
     currency: RequestAnalyticsComputeCostCurrency
     allocation_method: RequestAnalyticsComputeCostAllocationMethod
+    """request_time_share (ADR-743) splits by observed request time; request_share is the fallback when the window
+    has no timing."""
     basis: RequestAnalyticsComputeCostBasis
     request_count: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

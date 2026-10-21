@@ -162,14 +162,20 @@ var catalog = map[string]Render{
 	api.CodeAppStartupTimeout: {
 		Title: "Application startup timeout",
 		Hint:  "your app didn't become ready in time",
-		Why:   "the application did not satisfy its configured readiness check before the startup deadline; startup_timeout_s controls this window, while idle_timeout_s controls parking",
-		Fix:   "• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• defer expensive initialization where possible\n• increase `startup_timeout_s` only when healthy startup needs more time",
+		Why:   "the application did not satisfy its configured readiness check before the startup deadline; the app's startup deadline (`startup_deadline_s` in gregale.yaml, `--startup-deadline-s` on deploy) controls this window, while its idle timeout controls parking",
+		Fix:   "• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• defer expensive initialization where possible\n• raise the startup deadline (`startup_deadline_s`, or `--startup-deadline-s` on deploy) only when healthy startup needs more time",
 	},
 	api.CodeAppStartupCrash: {
 		Title: "Application exited during startup",
 		Hint:  "your app crashed before it became ready",
 		Why:   "your app's process exited before it accepted traffic, after any restarts its restart policy allows; the last lines it printed are in the error detail",
 		Fix:   "• read the error in the detail (`gregale logs <slug>` has the full startup log)\n• run the start command locally with the same environment to reproduce\n• check that every required env var and secret is set (`gregale secrets list --app <slug>`)",
+	},
+	api.CodeExecutionModeConflict: {
+		Title: "Execution mode conflict",
+		Hint:  "your app did not behave like its execution mode",
+		Why:   "a worker must keep running without listening on a port, and a job must run to completion without serving; at startup your app did the other thing (the detail shows the port it bound or the code it exited with)",
+		Fix:   "• set `execution_mode` in gregale.yaml to match the app: `request` or `service` for a server, `worker` for a long-running consumer, `job` for a run-to-completion task\n• or change the start command so the process matches the mode you declared",
 	},
 	api.CodeStatelessOnlyViolation: {
 		Title: "Stateless-only platform",
@@ -229,7 +235,7 @@ var catalog = map[string]Render{
 		Title: "Readiness probe failed",
 		Hint:  "the deployed VM's /healthz never returned 200",
 		Why:   "the readiness stage boots the VM and polls /healthz on the plan's readiness timeout (default 35s). The VM reached the snapshot boot but the application inside did not become ready in time — distinct from CodeAppStartupTimeout which is the wake-side counterpart",
-		Fix:   "• check `gregale logs <slug>` for the boot sequence inside the guest\n• defer heavy init work until after /healthz starts listening\n• if your app genuinely needs more time, set `startup_timeout_s` higher in the app config",
+		Fix:   "• check `gregale logs <slug>` for the boot sequence inside the guest\n• defer heavy init work until after /healthz starts listening\n• if your app genuinely needs more time, raise `startup_deadline_s` in gregale.yaml (or `--startup-deadline-s` on deploy)",
 	},
 }
 
@@ -308,11 +314,11 @@ func startupFailureGuidance(detail string) (why, fix string) {
 	for _, field := range strings.Fields(detail) {
 		switch strings.TrimRight(field, ":;,") {
 		case "startup_phase=guest_startup":
-			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", "• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• increase `startup_timeout_s` only after confirming healthy startup needs more time"
+			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", "• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• raise the startup deadline (`startup_deadline_s`, or `--startup-deadline-s` on deploy) only after confirming healthy startup needs more time"
 		case "startup_phase=handler_healthcheck":
-			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", "• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• increase `startup_timeout_s` only when healthy initialization needs more time"
+			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", "• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• raise the startup deadline (`startup_deadline_s`, or `--startup-deadline-s` on deploy) only when healthy initialization needs more time"
 		case "startup_phase=image_healthcheck":
-			return "The image's command healthcheck did not produce a fresh successful result for this boot or restore. A listening port alone cannot pass this check.", "• run the declared HEALTHCHECK inside the image with its configured user, working directory and environment\n• verify the check executable and required dependencies exist\n• review command timeouts, retries and startup grace; increase `startup_timeout_s` only when healthy initialization needs more time"
+			return "The image's command healthcheck did not produce a fresh successful result for this boot or restore. A listening port alone cannot pass this check.", "• run the declared HEALTHCHECK inside the image with its configured user, working directory and environment\n• verify the check executable and required dependencies exist\n• review command timeouts, retries and startup grace; raise the startup deadline (`startup_deadline_s`, or `--startup-deadline-s` on deploy) only when healthy initialization needs more time"
 
 		}
 	}

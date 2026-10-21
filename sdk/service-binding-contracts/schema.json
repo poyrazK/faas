@@ -1,0 +1,265 @@
+{
+  "schemas": {
+    "AppManifest": {
+      "properties": {
+        "service_binding_transport": {
+          "$ref": "#/components/schemas/ServiceBindingTransport"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "AppResponse": {
+      "properties": {
+        "allowed_service_call_scopes": {
+          "$ref": "#/components/schemas/ServiceCallerScopes"
+        },
+        "allowed_service_callers": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": "array"
+        },
+        "manifest": {
+          "$ref": "#/components/schemas/AppManifest"
+        },
+        "service_binding_fingerprint": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "service_binding_policy": {
+          "$ref": "#/components/schemas/ServiceBindingPolicy"
+        },
+        "service_binding_transport": {
+          "$ref": "#/components/schemas/ServiceBindingTransport"
+        },
+        "service_bindings": {
+          "items": {
+            "$ref": "#/components/schemas/AppServiceBinding"
+          },
+          "type": "array"
+        },
+        "service_reliability": {
+          "$ref": "#/components/schemas/ServiceReliabilityPolicies"
+        }
+      },
+      "required": [
+        "manifest"
+      ],
+      "type": "object"
+    },
+    "AppServiceBinding": {
+      "properties": {
+        "binding": {
+          "pattern": "^GREGALE_SERVICE_[A-Z0-9_]+_URL$",
+          "type": "string"
+        },
+        "service": {
+          "pattern": "^[a-z0-9]([a-z0-9-]{1,61})[a-z0-9]$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding",
+        "service"
+      ],
+      "type": "object"
+    },
+    "CreateAppRequest": {
+      "properties": {
+        "allowed_service_call_scopes": {
+          "$ref": "#/components/schemas/ServiceCallerScopes"
+        },
+        "allowed_service_callers": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": "array"
+        },
+        "service_binding_policy": {
+          "enum": [
+            "account",
+            "declared"
+          ],
+          "type": "string"
+        },
+        "service_binding_targets": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": "array"
+        },
+        "service_binding_transport": {
+          "$ref": "#/components/schemas/ServiceBindingTransport"
+        },
+        "service_reliability": {
+          "$ref": "#/components/schemas/ServiceReliabilityPolicies"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "ServiceBindingPolicy": {
+      "enum": [
+        "account",
+        "declared"
+      ],
+      "type": "string"
+    },
+    "ServiceBindingTransport": {
+      "enum": [
+        "http",
+        "https"
+      ],
+      "type": "string"
+    },
+    "ServiceCallScope": {
+      "properties": {
+        "methods": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "type": "array"
+        },
+        "path_prefixes": {
+          "items": {
+            "maxLength": 1024,
+            "pattern": "^/[^?#]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "methods",
+        "path_prefixes"
+      ],
+      "type": "object"
+    },
+    "ServiceCallerScopes": {
+      "additionalProperties": {
+        "$ref": "#/components/schemas/ServiceCallScope"
+      },
+      "maxProperties": 100,
+      "type": "object"
+    },
+    "ServiceReliabilityPolicies": {
+      "additionalProperties": {
+        "$ref": "#/components/schemas/ServiceReliabilityPolicy"
+      },
+      "maxProperties": 100,
+      "type": "object"
+    },
+    "ServiceReliabilityPolicy": {
+      "properties": {
+        "allow_non_idempotent": {
+          "type": "boolean"
+        },
+        "max_attempts": {
+          "maximum": 3,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_remaining_ms": {
+          "maximum": 30000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_budget_percent": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "maximum": 300000,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "UpdateAppRequest": {
+      "properties": {
+        "allowed_service_call_scopes": {
+          "oneOf": [
+            {
+              "$ref": "#/components/schemas/ServiceCallerScopes"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowed_service_callers": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "expected_service_binding_fingerprint": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "service_binding_policy": {
+          "enum": [
+            "account",
+            "declared",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "service_binding_targets": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "service_binding_transport": {
+          "enum": [
+            "http",
+            "https",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "service_reliability": {
+          "oneOf": [
+            {
+              "$ref": "#/components/schemas/ServiceReliabilityPolicies"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "type": "object"
+    }
+  }
+}

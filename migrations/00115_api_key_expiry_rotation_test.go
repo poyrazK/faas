@@ -75,8 +75,10 @@ func TestMigrations_00115_APIKeyExpiryRotation(t *testing.T) {
 	// api_keys.org_id is NOT NULL with an FK to orgs (column + FK from
 	// 00099, NOT NULL flip in 00134), so every key below needs a live
 	// org parent. 00115 pins expiry / rotation, not org binding — the
-	// org is purely the FK parent that makes these seeds insertable.
-	orgID := seedOrg(t, ctx, pool)
+	// org is purely the FK parent that makes these seeds insertable. Since
+	// #4882 a key bound to a shared org needs a live membership, so bind the
+	// account's own personal org, as every account key is.
+	orgID := seedPersonalOrg(t, ctx, pool, acctID)
 
 	// (2) Insert a pre-migration-style key (no expires_at, no
 	// status override) and a "rotated" pair (newerKey with

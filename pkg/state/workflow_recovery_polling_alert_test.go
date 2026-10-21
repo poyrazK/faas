@@ -148,7 +148,7 @@ func TestWorkflowRecoveryPollingAlerts(t *testing.T) {
 						t.Fatal("unchanged failure replayed or changed recipients")
 					}
 					if pg, ok := s.(*PgStore); ok {
-						s = NewPgStore(pg.pool)
+						s = NewPgStore(pg.pool.Pool)
 					}
 					poll()
 					n, retry = read()
@@ -372,7 +372,7 @@ func TestWorkflowRecoveryPollingAlertCaptureRollback(t *testing.T) {
 		if _, err = pg.pool.Exec(ctx, "ALTER TABLE workflow_recovery_policies DROP CONSTRAINT test_polling_receipt_failure"); err != nil {
 			t.Fatal(err)
 		}
-		pg = NewPgStore(pg.pool)
+		pg = NewPgStore(pg.pool.Pool)
 		if did, e := pg.ProcessNextWorkflowRecoveryAutomaticPolicy(ctx, now); e != nil || !did {
 			t.Fatalf("capture replay %v %v", did, e)
 		}

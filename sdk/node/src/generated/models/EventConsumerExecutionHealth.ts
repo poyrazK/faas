@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventExecutionLineageRetryJobHealth } from './EventExecutionLineageRetryJobHealth.js';
 /**
  * Current retained execution states for admitted application event deliveries and retained handler replays. Attempts and successful completion latency use an immutable, per-subscription outcome ledger with 30-day retention. Window evidence survives source deletion and is independent of retained execution-state truncation. Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and routing failures are excluded. History completeness is established only for fully covered windows of newly instrumented subscriptions; legacy baselines remain unknown and evidence loss is partial.
  */
 export type EventConsumerExecutionHealth = {
+  lineage_retry_jobs?: EventExecutionLineageRetryJobHealth;
   /**
    * Evidence scope for attempt rates and completion latency; current invocation states retain their separate bounded scope.
    */

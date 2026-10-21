@@ -6,6 +6,10 @@
  * Actionable connection health metadata without sealed grants or provider responses.
  */
 export type MCPConnectionHealthIssue = {
+  /**
+   * Environment containing the MCP connection with this health issue. Empty means default.
+   */
+  scope?: string;
   id: string;
   app_id: string;
   app_slug: string;

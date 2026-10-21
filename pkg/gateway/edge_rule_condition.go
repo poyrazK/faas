@@ -63,6 +63,13 @@ type EdgeRuleEvent struct {
 	ClientIP  string
 	Country   string
 	UserAgent string
+	// Outcome, when set, overrides Logged: a kind=waf detection
+	// (EdgeRuleEventDetected, EdgeRuleEventWarned or EdgeRuleEventBlocked).
+	Outcome string
+	// WAF* describe a kind=waf detection (ADR-831 amendment 5).
+	WAFRuleIDs    []int
+	WAFCategories []string
+	WAFScore      int
 }
 
 // EdgeRuleEventSampler is optionally implemented by an EdgeRuleHitRecorder
@@ -118,7 +125,7 @@ func NewEdgeRuleMatchContext(r *http.Request, clientIP net.IP, lookup func(net.I
 	}
 }
 
-func (m *EdgeRuleMatchContext) recordHit(ruleID, appID string, logged bool) {
+func (m *EdgeRuleMatchContext) recordHit(ruleID, appID string, logged, sampleEvent bool) {
 	if m == nil || m.hits == nil || ruleID == "" {
 		return
 	}
@@ -133,6 +140,9 @@ func (m *EdgeRuleMatchContext) recordHit(ruleID, appID string, logged bool) {
 		return
 	}
 	m.hits.RecordEdgeRuleHit(ruleID, appID, logged)
+	if !sampleEvent {
+		return
+	}
 	if s, ok := m.hits.(EdgeRuleEventSampler); ok && s.SampleEdgeRuleEvent(ruleID) {
 		s.RecordEdgeRuleEvent(m.event(ruleID, appID, logged))
 	}
@@ -176,11 +186,13 @@ func ObserveEdgeRuleMatch[T any](ctx context.Context, enforced, logged *T) *T {
 	}
 	if c, ok := any(enforced).(edgeRuleConditional); ok && enforced != nil {
 		id, app := c.edgeRuleIdentity()
-		m.recordHit(id, app, false)
+		_, quiet := any(enforced).(edgeRuleMatchEventsSuppressed)
+		m.recordHit(id, app, false, !quiet)
 	}
 	if c, ok := any(logged).(edgeRuleConditional); ok && logged != nil {
 		id, app := c.edgeRuleIdentity()
-		m.recordHit(id, app, true)
+		_, quiet := any(logged).(edgeRuleMatchEventsSuppressed)
+		m.recordHit(id, app, true, !quiet)
 	}
 	return enforced
 }

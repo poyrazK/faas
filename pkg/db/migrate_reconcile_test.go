@@ -123,6 +123,20 @@ func TestMigrationOptionsForHistoricalGaps(t *testing.T) {
 			wantAllowed: nil,
 		},
 		{
+			// A per-unit release applied expand migrations this older
+			// binary does not embed, then rolled the binary back
+			// (docs/adr/20261018084150-unit-lane-expand-migrations.md).
+			name:    "ledger ahead of the binary is not a gap",
+			current: 20261018000000002,
+			known:   map[int64]struct{}{590: {}, 20261017000000001: {}, 20261018000000001: {}, 20261018000000002: {}},
+			found: goose.Migrations{
+				migration(590, "00590_audit_event_outbox.sql"),
+				migration(20261017000000001, "20261017000000001_previous_release.sql"),
+			},
+			wantOption:  false,
+			wantAllowed: nil,
+		},
+		{
 			name:    "known reservation needs no repair",
 			current: 578,
 			known:   map[int64]struct{}{563: {}},

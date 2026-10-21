@@ -10,7 +10,12 @@
 // the rest up at next `make generate` run.
 package daemonunitspec
 
-import "github.com/onebox-faas/faas/pkg/daemonunit"
+import (
+	"fmt"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
+)
 
 // UnitApid is the canonical unit for faas-apid — public control-plane
 // API (spec §4.1).
@@ -53,18 +58,26 @@ func UnitApid() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:       "notify",
-		User:       "faas-apid",
-		Group:      "faas",
-		ExecStart:  `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,
-		Restart:    "on-failure",
-		RestartSec: "2s",
+		Type: "notify",
+		// `systemctl reload` hands off to a second generation that serves
+		// new connections while this one finishes its own (ADR-1736).
+		NotifyAccess: "main",
+		ExecReload:   handoffReload,
+		OOMPolicy:    "continue",
+		User:         "faas-apid",
+		Group:        "faas",
+		ExecStart:    `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,
+		Restart:      "on-failure",
+		RestartSec:   "2s",
 		// ADR-190: restart when the daemon stops pinging the systemd
 		// watchdog (gated on pkg/wire.Liveness).
 		WatchdogSec: "90s",
 
+		// A reload runs two apid generations in this cgroup (ADR-1736); the
+		// cap fits a spiking successor beside a draining predecessor, and
+		// GOMEMLIMIT keeps each process near half (ADR 20261018132058).
 		Slice:     "faas-cp.slice",
-		MemoryMax: "256M",
+		MemoryMax: fmt.Sprintf("%dM", api.APIDMemoryMaxMB),
 
 		// apid serves unix and high loopback ports; it never needs host
 		// capabilities. Emit an empty bounding set so package defaults cannot
@@ -74,6 +87,26 @@ func UnitApid() daemonunit.Unit {
 
 		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/profiling.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
+			{Key: "GOMEMLIMIT", Value: fmt.Sprintf("%dMiB", api.APIDGoMemLimitMB)},
+			{Key: "FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_PASSWORD_CHANGED_ALERT_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_MFA_DISABLED_ALERT_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_MFA_DISABLE_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_DEPLOYMENT_FAILED_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_SUBSCRIPTION_ENDED_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_QUOTA_WARNING_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_NONPAYMENT_DELETION_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_ACCOUNT_RESTORED_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_PAYMENT_FAILED_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_MFA_ENABLED_ALERT_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_MFA_RECOVERY_ALERT_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH", Value: "%d/faas_mail_verification_identity"},
+			{Key: "FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH", Value: "%d/faas_mail_verification_identity_previous"},
 			{Key: "FAAS_BILLING_MODE", Value: "live"},
 			{Key: "FAAS_SESSION_KEY", Value: "%d/faas_session_key"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_host_age_identity"},
@@ -88,9 +121,23 @@ func UnitApid() daemonunit.Unit {
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
 			{Key: "FAAS_APP_TASK_API_ENABLED", Value: "0"},
 			{Key: "FAAS_EXECUTION_API_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_INTERNAL_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_INTERNAL_ACCOUNTS", Value: ""},
+			{Key: "FAAS_CI_GITHUB_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_GITHUB_CHECKS_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_EXECUTION_CHECKS_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_AUTOMATION_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_DISPATCH_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_WORKER_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_TRANSPORT_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_RETENTION_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_GCS_BUCKET", Value: ""},
+			{Key: "FAAS_CI_RUNTIME_URL", Value: ""},
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
+			{Name: "faas_mail_verification_identity", Path: "/etc/faas/secrets/internal-mail/producer-verification.age", Optional: true},
+			{Name: "faas_mail_verification_identity_previous", Path: "/etc/faas/secrets/internal-mail/producer-verification.age.previous", Optional: true},
 			{Name: "faas_session_key", Path: "/etc/faas/secrets/session.key"},
 			{Name: "faas_host_age_identity", Path: "/etc/faas/secrets/host.age"},
 			{Name: "faas_host_age_identity_previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},

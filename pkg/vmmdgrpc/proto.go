@@ -6,6 +6,7 @@ package vmmdgrpc
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"net/netip"
 	"time"
@@ -87,7 +88,12 @@ func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootReques
 		return fcvm.JobBootRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Invalid job request", "task_timeout_sec exceeds the host limit")
 	}
+	interactive, problem := jobInteractiveFromProto(req)
+	if problem != nil {
+		return fcvm.JobBootRequest{}, problem
+	}
 	return fcvm.JobBootRequest{
+		Interactive:      interactive,
 		Instance:         req.GetInstance(),
 		AccountID:        req.GetAccountId(),
 		NodeID:           req.GetNodeId(),
@@ -105,6 +111,33 @@ func jobBootRequestFromProto(req *vmmdpb.JobColdBootRequest) (fcvm.JobBootReques
 		TaskTimeoutSec:   int(req.GetTaskTimeoutSec()),
 		LeaseToken:       req.GetLeaseToken(),
 	}, nil
+}
+
+// jobInteractiveFromProto validates ADR-1330's attach contract. The token
+// digest stays in vmmd's rendezvous; only the TTY flag and the attach window
+// reach the guest.
+func jobInteractiveFromProto(req *vmmdpb.JobColdBootRequest) (*fcvm.JobInteractive, *api.Problem) {
+	in := req.GetInteractive()
+	if in == nil {
+		return nil, nil
+	}
+	invalid := func(detail string) *api.Problem {
+		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid interactive job", detail)
+	}
+	if len(in.GetAttachTokenSha256()) != sha256.Size {
+		return nil, invalid("attach_token_sha256 must be a SHA-256 digest")
+	}
+	if req.GetTaskTimeoutSec() > fcvm.JobInteractiveMaxTaskTimeoutSec {
+		return nil, invalid("task_timeout_sec exceeds the interactive session limit")
+	}
+	window := fcvm.JobInteractiveDefaultAttachTimeout
+	switch seconds := in.GetAttachTimeoutSeconds(); {
+	case seconds < 0:
+		return nil, invalid("attach_timeout_seconds must not be negative")
+	case seconds > 0:
+		window = min(time.Duration(seconds)*time.Second, fcvm.JobInteractiveMaxAttachTimeout)
+	}
+	return &fcvm.JobInteractive{TTY: in.GetTty(), AttachTimeoutSec: int(window / time.Second)}, nil
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
@@ -339,7 +372,8 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// it was woken for. The scheduler already knows the app
 		// when it calls CreateFromSnapshot; passing it on the wire
 		// means vmmd doesn't have to round-trip back to apid.
-		AppID: app.GetAppId(),
+		AppID:          app.GetAppId(),
+		RehearsalRunID: app.GetRehearsalRunId(),
 		// issue #301 / ADR-044 — Plan + AccountID thread the
 		// apps-row context onto the wire so vmmd can land the VM
 		// under the per-plan cgroup sub-slice
@@ -513,7 +547,8 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// the very first UpdateEgressAllowlist fan-out finds the
 		// instance via m.live[].AppID without a separate
 		// bootstrap path.
-		AppID: app.GetAppId(),
+		AppID:          app.GetAppId(),
+		RehearsalRunID: app.GetRehearsalRunId(),
 		// issue #301 / ADR-044 — see toWakeRequest. Cold-boot
 		// mirrors Plan + AccountID so deploy's first boot on a
 		// fresh VM lands under the per-plan cgroup sub-slice
@@ -757,6 +792,7 @@ func workloadDependenciesFromProto(pbs []*vmmdpb.WorkloadDependency) []api.Workl
 // is inherited from the apps row captured in the original cold boot).
 func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.Instance, requestMethod vmmdpb.WakeMethod) *vmmdpb.WakeResponse {
 	resp := &vmmdpb.WakeResponse{
+		RehearsalRunId:                     inst.Net.RehearsalRunID,
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,

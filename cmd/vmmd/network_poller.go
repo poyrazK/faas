@@ -58,6 +58,7 @@ import (
 	"context"
 	"log/slog"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -140,6 +141,7 @@ func runNetworkEgressPoll(
 	}
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	var failures pollFailureLog
 	for {
 		select {
 		case <-ctx.Done():
@@ -164,14 +166,19 @@ func runNetworkEgressPoll(
 				}
 				rx, err := readRXBytes(vethHost)
 				if err != nil {
-					log.Warn("egress rx_bytes read failed",
-						"instance", instanceID,
-						"veth", vethHost,
-						"err", err)
+					if failures.failed(instanceID+"/rx", err.Error()) {
+						log.Warn("egress rx_bytes read failed",
+							"instance", instanceID,
+							"veth", vethHost,
+							"err", err)
+					}
 					if c := ops.EgressSourceErrors(); c != nil {
 						c.Inc()
 					}
 					continue
+				}
+				if failures.succeeded(instanceID + "/rx") {
+					log.Info("egress rx_bytes read recovered", "instance", instanceID, "veth", vethHost)
 				}
 				// I6 (review): clamp the kernel
 				// counter to math.MaxInt64 before
@@ -206,21 +213,28 @@ func runNetworkEgressPoll(
 				// unaffected.
 				tx, txErr := readTXBytes(vethHost)
 				if txErr != nil {
-					log.Warn("ingress tx_bytes read failed",
-						"instance", instanceID,
-						"veth", vethHost,
-						"err", txErr)
+					if failures.failed(instanceID+"/tx", txErr.Error()) {
+						log.Warn("ingress tx_bytes read failed",
+							"instance", instanceID,
+							"veth", vethHost,
+							"err", txErr)
+					}
 					if c := ops.EgressSourceErrors(); c != nil {
 						c.Inc()
 					}
 					// tx stays 0 — see ADR-048 §3.2 on
 					// tx baseline drop policy.
-				} else if tx > math.MaxInt64 {
-					log.Warn("ingress tx_bytes exceeds int64 range; clamping",
-						"instance", instanceID,
-						"veth", vethHost,
-						"tx", tx)
-					tx = math.MaxInt64
+				} else {
+					if failures.succeeded(instanceID + "/tx") {
+						log.Info("ingress tx_bytes read recovered", "instance", instanceID, "veth", vethHost)
+					}
+					if tx > math.MaxInt64 {
+						log.Warn("ingress tx_bytes exceeds int64 range; clamping",
+							"instance", instanceID,
+							"veth", vethHost,
+							"tx", tx)
+						tx = math.MaxInt64
+					}
 				}
 				cache.Observe(netstats.Observation{
 					InstanceID: instanceID,
@@ -245,6 +259,11 @@ func runNetworkEgressPoll(
 			// tick — bounded by the live set
 			// size.
 			evictStaleCacheEntries(cache, snapshot)
+			failures.retain(func(key string) bool {
+				instanceID, _, _ := strings.Cut(key, "/")
+				_, live := snapshot[instanceID]
+				return live
+			})
 		}
 	}
 }

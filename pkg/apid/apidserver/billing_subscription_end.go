@@ -44,6 +44,9 @@ import (
 // must not downgrade the live subscription. An event without a
 // subscription id (Stripe's legacy payload shape) is trusted.
 func (s *server) applySubscriptionEnded(ctx context.Context, ev billing.Event, acct state.Account, asyncMail bool) error {
+	if s.subscriptionEndedRequested() {
+		return s.endSubscriptionWithNotice(ctx, providerName(s.billingProvider), ev, acct)
+	}
 	if ev.SubscriptionID != "" && acct.StripeSubscriptionItem != "" && ev.SubscriptionID != acct.StripeSubscriptionItem {
 		s.log.Info("apid: subscription_canceled for a superseded subscription; ignoring",
 			"account", acct.ID,

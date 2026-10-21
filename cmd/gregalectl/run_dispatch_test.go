@@ -315,6 +315,7 @@ func TestRun_DispatchesToDispatchConstants(t *testing.T) {
 		"pki",
 		"sign-keys",
 		"node-key",
+		"workload-identity",
 		"backup",
 		"secrets",
 		"compute-nodes",

@@ -107,8 +107,9 @@ def sync_detailed(
     outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained
     roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and
     independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy
-    ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at
-    original event acceptance.
+    ledger baselines remain unknown until requested forward-only reconciliation establishes a new
+    boundary. Counts are not unique event totals. Completion latency starts at original event
+    acceptance.
 
     Args:
         slug (str):
@@ -149,8 +150,9 @@ def sync(
     outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained
     roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and
     independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy
-    ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at
-    original event acceptance.
+    ledger baselines remain unknown until requested forward-only reconciliation establishes a new
+    boundary. Counts are not unique event totals. Completion latency starts at original event
+    acceptance.
 
     Args:
         slug (str):
@@ -186,8 +188,9 @@ async def asyncio_detailed(
     outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained
     roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and
     independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy
-    ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at
-    original event acceptance.
+    ledger baselines remain unknown until requested forward-only reconciliation establishes a new
+    boundary. Counts are not unique event totals. Completion latency starts at original event
+    acceptance.
 
     Args:
         slug (str):
@@ -226,8 +229,9 @@ async def asyncio(
     outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained
     roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and
     independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy
-    ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at
-    original event acceptance.
+    ledger baselines remain unknown until requested forward-only reconciliation establishes a new
+    boundary. Counts are not unique event totals. Completion latency starts at original event
+    acceptance.
 
     Args:
         slug (str):

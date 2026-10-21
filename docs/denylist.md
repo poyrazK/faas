@@ -25,6 +25,8 @@ Enforced by all three sinks: per-netns nftables (table `ip faas` / `ip6 faas`, c
 |------|--------|-----------|----------|
 | `2001::/32` | ADR-034 | Teredo (RFC4380); tunnels IPv6 over UDP/3544 — same lateral-movement risk as 6to4 | `pkg/netns/denylist_external_test.go::TestAllThreeConsumersAgreeOnDenySet` |
 | `2002::/16` | ADR-034 | 6to4 (RFC3056); tunnels IPv6 over IPv4 — lateral movement into 10/8 etc. | `pkg/netns/denylist_external_test.go::TestAllThreeConsumersAgreeOnDenySet` |
+| `64:ff9b:1::/48` | ADR-20261018194214 | NAT64 local-use prefix (RFC8215); may embed a private IPv4 destination | `pkg/netns/denylist_external_test.go::TestAllThreeConsumersAgreeOnDenySet` |
+| `64:ff9b::/96` | ADR-20261018194214 | NAT64 well-known prefix (RFC6052); embeds an IPv4 destination — lateral movement through a translator | `pkg/netns/denylist_external_test.go::TestAllThreeConsumersAgreeOnDenySet` |
 | `::/128` | ADR-023 | IPv6 unspecified; misconfigured or malicious | `pkg/netns/denylist_external_test.go::TestAllThreeConsumersAgreeOnDenySet` |
 | `::1/128` | ADR-023 | IPv6 loopback | `pkg/netns/denylist_external_test.go::TestAllThreeConsumersAgreeOnDenySet` |
 | `fc00::/7` | ADR-023 | IPv6 ULA (RFC4193); control-plane lateral movement | `pkg/netns/denylist_external_test.go::TestAllThreeConsumersAgreeOnDenySet` |

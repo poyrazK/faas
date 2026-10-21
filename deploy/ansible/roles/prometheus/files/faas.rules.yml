@@ -253,7 +253,13 @@ groups:
     interval: 30s
     rules:
       - alert: FaasRequestIDJournalWriteFailures
-        expr: sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m])) > (1 / 60)
+        # ADR-1521: records are written in batches, so one failed batch counts
+        # up to 128 failed records. Alert on a failure share, not a count alone.
+        expr: |
+          sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m])) > (1 / 60)
+          and
+          sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m]))
+            / sum(rate(gateway_request_id_journal_write_total{result=~"recorded|rejected|failed"}[5m])) > 0.05
         for: 2m
         labels:
           severity: warn
@@ -261,7 +267,7 @@ groups:
           family: request_id_journal
         annotations:
           summary: "Exact request-ID journal writes are failing"
-          description: "The gateway's mandatory pre-proxy request-ID journal has failed above 1 write per minute for 2 minutes. Affected requests are rejected with 503 before guest execution; check the apid private gRPC path and Postgres write health."
+          description: "More than 5% of exact request-ID journal records (and more than 1 per minute) failed to reach apid for 2 minutes. Requests are still served (ADR-634), but their public request IDs may not resolve in the debugger; check the apid private gRPC path and Postgres write health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestIDJournalWriteFailures.md"
 
   - name: outbound_webhook_delivery
@@ -414,6 +420,18 @@ groups:
           description: "The gateway served a request whose usage fact could not be appended to its local durable outbox. Preserve the spool and inspect disk health and capacity before trusting usage totals."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
 
+      - alert: FaasUsageCommitAborted
+        expr: increase(gateway_usage_commit_aborts_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: gatewayd-internal
+          family: consumer_usage_delivery
+        annotations:
+          summary: "Monetized responses withheld: usage could not be made durable"
+          description: "The gateway aborted billable responses because their usage events could not be fsynced to the local outbox (ADR-1505). Clients saw failed requests. Check outbox capacity and disk health; readiness should already be draining the node."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+
       - alert: FaasConsumerUsageOutboxNearCapacity
         expr: gateway_consumer_usage_outbox_pending_bytes > 53687091
         for: 2m
@@ -545,6 +563,34 @@ groups:
         annotations:
           summary: "APID emergency canary recovery failed"
           description: "APID could not complete a Safe Deploy emergency sweep or abort. Inspect the active canary and recover traffic manually if its predecessor is still serving."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+      # ADR-1446 verified rollback outcomes. A failed outcome means a plain
+      # rollback (manual, dashboard, or first-wake 5xx auto-rollback) never
+      # served: the release it meant to replace is still live.
+      - alert: FaasRollbackNotRestored
+        expr: increase(apid_rollback_outcomes_total{outcome="failed"}[10m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: apid
+          family: safe_release
+          public_status: degraded
+        annotations:
+          summary: "A rollback did not restore the previous release ({{ $labels.trigger }})"
+          description: "apid verified that a {{ $labels.trigger }} rollback never served. Read the app.rollback_failed audit event or `gregale rollback status <app> --operation <id>` for the error, confirm which release is serving, and retry or roll back with --to."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+
+      - alert: FaasRollbackRecoverySlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(apid_rollback_recovery_seconds_bucket[6h]))) > 60
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: safe_release
+        annotations:
+          summary: "Rollback recovery p95 is above the 60 s scorecard bar"
+          description: "Completed rollbacks took longer than 60 s at p95 over 6 h, measured from request to serving. Check snapshot restore, cold boot, and post-readiness smoke latency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
 
   - name: managed_realtime_channel_routing
@@ -994,6 +1040,61 @@ groups:
           description: "faas-postgres-connection-metrics.timer runs every 30 seconds and only refreshes its textfile after a successful query. A stale file means the database is hung, refusing connections, or the probe timer stopped."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresDown.md"
 
+      # ADR-1344 §8 warm standby. The primary's probe reports its slot only
+      # when the manifest declares postgresql.standby, so these stay silent
+      # on fleets without one.
+      - alert: FaasPostgresStandbyDisconnected
+        expr: faas_postgres_standby_slot_active == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm-standby replica is not streaming from {{ $labels.instance }}"
+          description: "The faas_standby slot has had no WAL receiver for 5 minutes. The primary keeps WAL for it up to max_slot_wal_keep_size; until the standby reconnects, a failover would lose everything written since it left."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+      - alert: FaasPostgresStandbyLagHigh
+        expr: faas_postgres_standby_replay_lag_bytes > 268435456
+        for: 10m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm standby is more than 256 MiB of WAL behind {{ $labels.instance }}"
+          description: "The connected standby has not replayed {{ $value | humanize1024 }}B of WAL for 10 minutes. A failover now would lose that much committed data; check the link between the providers and the standby's disk."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+      - alert: FaasPostgresStandbySlotRetentionHigh
+        expr: faas_postgres_standby_slot_retained_bytes > 0.5 * faas_postgres_standby_slot_keep_size_bytes and faas_postgres_standby_slot_keep_size_bytes > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm standby's slot holds over half of max_slot_wal_keep_size on {{ $labels.instance }}"
+          description: "The primary keeps {{ $value | humanize1024 }}B of WAL for the standby. When it reaches max_slot_wal_keep_size the slot is invalidated and the standby must be reseeded from scratch."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+      - alert: FaasPostgresStandbySlotLost
+        expr: faas_postgres_standby_slot_wal_status{wal_status="lost"} == 1
+        for: 1m
+        labels:
+          severity: page
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm standby can no longer catch up with {{ $labels.instance }}"
+          description: "The faas_standby slot exceeded max_slot_wal_keep_size and the primary removed WAL the standby still needed. There is no usable failover target until the standby is reseeded."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
   # ────────────────────────────────────────────────────────────────────
   # Off-host log pipeline health (issue #274).
   # Promtail exposes its own counters; these recording rules give the
@@ -1188,6 +1289,55 @@ groups:
   - name: faas_compute_metrics_discovery
     interval: 30s
     rules:
+      # apid exports the intended compute job as a metric label. Default
+      # honor_labels=false scraping preserves it as exported_job and replaces
+      # job with apid. Normalize to job-only series before downstream joins.
+      # A gauge must have exactly one source per compute job: adding multiple
+      # apid snapshots would overcount targets and hide missing scrape series.
+      - record: faas_compute_metrics_discovery_targets:by_job
+        expr: |
+          sum by (job) (
+            label_replace(
+              apid_metrics_discovery_targets{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}
+              and on (exported_job)
+              (count by (exported_job) (apid_metrics_discovery_targets{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) == 1),
+              "job", "$1", "exported_job", "(.+)"
+            )
+          )
+
+      - record: faas_compute_metrics_discovery_registry_nodes:by_job
+        expr: |
+          sum by (job) (
+            label_replace(
+              apid_metrics_discovery_registry_nodes{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}
+              and on (exported_job)
+              (count by (exported_job) (apid_metrics_discovery_registry_nodes{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) == 1),
+              "job", "$1", "exported_job", "(.+)"
+            )
+          )
+
+      - record: faas_compute_metrics_discovery_invalid_targets:by_job
+        expr: |
+          sum by (job) (
+            label_replace(
+              apid_metrics_discovery_invalid_targets{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}
+              and on (exported_job)
+              (count by (exported_job) (apid_metrics_discovery_invalid_targets{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) == 1),
+              "job", "$1", "exported_job", "(.+)"
+            )
+          )
+
+      - record: faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job
+        expr: |
+          sum by (job) (
+            label_replace(
+              apid_metrics_discovery_last_success_timestamp_seconds{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}
+              and on (exported_job)
+              (count by (exported_job) (apid_metrics_discovery_last_success_timestamp_seconds{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) == 1),
+              "job", "$1", "exported_job", "(.+)"
+            )
+          )
+
       # `up` is the downstream truth: the HTTP-SD endpoint can return a
       # healthy snapshot while one or more discovered compute endpoints are
       # unreachable. The `or ... * 0` branch preserves a zero-valued job when
@@ -1200,7 +1350,7 @@ groups:
           )
           or on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} * 0
+            faas_compute_metrics_discovery_targets:by_job * 0
           )
 
       - record: faas_compute_metrics_scrape_coverage:by_job
@@ -1209,7 +1359,7 @@ groups:
           /
           on (job)
           clamp_min(
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"},
+            faas_compute_metrics_discovery_targets:by_job,
             1
           )
 
@@ -1220,11 +1370,13 @@ groups:
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 0
+            faas_compute_metrics_discovery_targets:by_job > 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} <= 120
+            (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job >= 0)
+            and (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job <= 120)
+            and (faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job > 0)
           )
         for: 5m
         labels:
@@ -1243,11 +1395,13 @@ groups:
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 0
+            faas_compute_metrics_discovery_targets:by_job > 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} <= 120
+            (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job >= 0)
+            and (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job <= 120)
+            and (faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job > 0)
           )
         for: 5m
         labels:
@@ -1259,14 +1413,31 @@ groups:
           description: "Prometheus cannot scrape the discovered {{ $labels.job }} endpoint for node {{ $labels.node }}. Discovery is still returning a fresh target, so check the node's gateway or Promtail metrics listener, private route, firewall, and service readiness."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
+      # apid preinitializes zero snapshots even for unused HTTP-SD jobs.
+      # Bootstrap zero is a failure only after an observed discovery attempt;
+      # previously successful snapshots retain the normal staleness check.
       - alert: FaasComputeMetricsDiscoveryStale
         expr: |
           (
-            apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} == 0
+            (faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job == 0)
+            and on (job)
+            (
+              sum by (job) (
+                label_replace(
+                  apid_metrics_discovery_requests_total{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"},
+                  "job", "$1", "exported_job", "(.+)"
+                )
+              ) > 0
+            )
           )
           or
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 120
+            (faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job > 0)
+            and (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job > 120)
+          )
+          or
+          (
+            faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job > time()
           )
         for: 5m
         labels:
@@ -1275,21 +1446,23 @@ groups:
           family: compute_metrics_discovery
         annotations:
           summary: "Compute metrics discovery is stale for {{ $labels.job }}"
-          description: "apid has not completed a successful registry-backed HTTP-SD snapshot for {{ $labels.job }} within 120s. Prometheus may still be healthy while compute-node metrics coverage is frozen or missing. Check apid availability, its database pool, and the discovery runbook."
+          description: "apid has not completed a successful registry-backed HTTP-SD snapshot for {{ $labels.job }} within the past 120s, or its refresh timestamp is in the future. Prometheus may still be healthy while compute-node metrics coverage is frozen or missing. Check apid availability, its database pool, and the discovery runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
       - alert: FaasComputeMetricsDiscoveryEmpty
         expr: |
           (
-            apid_metrics_discovery_registry_nodes{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 0
+            faas_compute_metrics_discovery_registry_nodes:by_job > 0
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} == 0
+            faas_compute_metrics_discovery_targets:by_job == 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} <= 120
+            (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job >= 0)
+            and (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job <= 120)
+            and (faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job > 0)
           )
         for: 5m
         labels:
@@ -1302,7 +1475,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
       - alert: FaasComputeMetricsDiscoveryInvalidTargets
-        expr: apid_metrics_discovery_invalid_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 0
+        expr: faas_compute_metrics_discovery_invalid_targets:by_job > 0
         for: 10m
         labels:
           severity: warn
@@ -1312,6 +1485,101 @@ groups:
           summary: "Compute metrics discovery is filtering invalid targets for {{ $labels.job }}"
           description: "apid omitted one or more active compute registry rows from the {{ $labels.job }} HTTP-SD response because the gateway target or stable node name failed validation. Metrics coverage is partial; repair the registry row and verify the next refresh."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+      - alert: FaasComputeMetricsDiscoveryAmbiguous
+        expr: |
+          max by (job) (
+            label_replace(
+              (count by (exported_job) (apid_metrics_discovery_targets{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) > 1)
+              or (count by (exported_job) (apid_metrics_discovery_registry_nodes{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) > 1)
+              or (count by (exported_job) (apid_metrics_discovery_invalid_targets{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) > 1)
+              or (count by (exported_job) (apid_metrics_discovery_last_success_timestamp_seconds{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) > 1),
+              "job", "$1", "exported_job", "(.+)"
+            )
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        annotations:
+          summary: "Compute metrics discovery has multiple sources for {{ $labels.job }}"
+          description: "More than one apid discovery gauge series reports the {{ $labels.job }} snapshot. Per-job counts are unavailable because summing or choosing between producers could misstate scrape coverage. Check duplicate apid scrape targets and producer labels in the discovery runbook."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # ADR-1343 §5: the app edge on each compute node (gatewayd-public in
+  # compute edge mode and its Cloudflare Tunnel connector). Prometheus
+  # scrapes the two jobs only while the cell runs the edge, so these stay
+  # silent on fleets without it. One edge down is lost capacity; Cloudflare
+  # sends its share to the other connectors. All of them down is an outage.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_compute_edge
+    rules:
+      - alert: FaasComputeEdgeUnavailable
+        expr: (sum(up{job="gatewayd-public-edge"}) == 0) or (sum(cloudflared_tunnel_ha_connections) == 0)
+        for: 2m
+        labels:
+          severity: page
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "No compute-node app edge is serving"
+          description: "Every compute edge is down or every Cloudflare Tunnel connector has lost its connections for 2 minutes. App requests routed through the tunnel are failing."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+      - alert: FaasComputeEdgeDown
+        expr: up{job="gatewayd-public-edge"} == 0
+        for: 2m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The app edge on {{ $labels.node }} is not answering"
+          description: "Prometheus cannot scrape gatewayd-public's compute edge on {{ $labels.node }}. Its connector may still take tunnel traffic and fail it; Cloudflare routes away only once the connector disconnects."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+      - alert: FaasComputeEdgeConnectorDisconnected
+        expr: (up{job="cloudflared"} == 0) or (cloudflared_tunnel_ha_connections == 0)
+        for: 2m
+        labels:
+          severity: warn
+          component: cloudflared
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The Cloudflare Tunnel connector on {{ $labels.node }} is not connected"
+          description: "faas-cloudflared on {{ $labels.node }} is down or holds no tunnel connections. The node serves no app traffic until it reconnects; the other connectors carry its share."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+      - alert: FaasComputeEdgeLocalFallback
+        expr: rate(gatewayd_public_edge_local_fallback_total[5m]) > 0.5
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The app edge on {{ $labels.node }} is routing around its own gateway"
+          description: "The compute edge on {{ $labels.node }} sent {{ $value | humanize }} requests/s to the compute pool for 10 minutes because its node's gatewayd-internal failed its health check or refused dials. Traffic still flows, with an extra hop; check gatewayd-internal on that node."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+      - alert: FaasComputeEdgeMisdirected
+        expr: rate(gatewayd_public_edge_misdirected_total[5m]) > 0.2
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The app edge on {{ $labels.node }} is receiving non-app hosts"
+          description: "The compute edge on {{ $labels.node }} answered {{ $value | humanize }} requests/s with 421 for hosts outside the apps domain for 15 minutes. The tunnel's ingress rules likely send platform or custom-domain hosts to the compute edge."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
   # ────────────────────────────────────────────────────────────────────
   # Dead-man's switch. FaasWatchdog fires permanently; Alertmanager routes
@@ -2250,6 +2518,17 @@ groups:
           description: "vmmd cannot accept the required {{ $labels.receiver }} channel through a Firecracker per-instance Unix bridge. The node is not traffic-ready until the receiver recovers."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasVMMDGuestReceiverDown.md"
 
+      - alert: FaasWorkloadIdentityNotConfigured
+        expr: increase(vmmd_workload_identity_tokens_total{result="not_configured"}[15m]) > 0
+        labels:
+          severity: warn
+          component: vmmd
+          family: guest_receiver
+        annotations:
+          summary: "Apps on {{ $labels.instance }} ask for workload tokens but vmmd has no signing key"
+          description: "vmmd answered workload-identity requests with identity_not_configured. Queue-lease consumers, Flags and cloud federation in those apps fail until the cluster workload-identity key is installed (ADR-1141)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWorkloadIdentityNotConfigured.md"
+
       - alert: FaasMeterdFleetEgressStreamsMissing
         expr: meterd_fleet_egress_expected_streams > meterd_fleet_egress_connected_streams
         for: 2m
@@ -2324,8 +2603,12 @@ groups:
       # different hosts (or different daemons on one host) are serving
       # incompatible code. The canonical rollout owns a bounded convergence
       # window; public status must show the mixed fleet while that gate runs.
+      # Per-unit control-plane releases stamp unit-<commit> versions and are
+      # deliberately mixed with their base release until the next full one
+      # (docs/adr/1650-per-unit-control-plane-releases.md); the unit lane
+      # gates each restarted daemon itself, so they are left out here.
       - alert: FaasDeployVersionSkew
-        expr: count(count by (version) ({__name__=~".*_faas_deploy_version"})) > 1
+        expr: count(count by (version) ({__name__=~".*_faas_deploy_version", version!~"unit-.+"})) > 1
         labels:
           severity: warn
           component: platform
@@ -3408,34 +3691,883 @@ groups:
           description: "The nightly cve-check workflow (issue #601 / ADR-131) reported a new CVE ≥ medium severity within the last hour. The metric is meterd_cve_check_total{result=\"new_cve\"}; the GitHub Issue created by the workflow lists the CVE id, severity, and affected dependency. Triage: read the GitHub Issue for the CVE id + dep, check deps.dev / nvd.nist.gov for the affected versions + fixed-in version, decide patch vs. accept-risk posture, ship the patch (or the grype ignore). Recover per docs/ops/FaasNewCve.md."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNewCve.md"
 
-      # ─────────────────────────────────────────────────────────────────
-      # Operator-side observability mega-PR — Commit 7 (P5) —
-      # FaasBuildQueueDepthHigh. Pages when the operator dashboard
-      # `faas_build_queue_depth` gauge (fleet-total queued builds,
-      # bumped every 30s by the apid metrics collector) sustains
-      # > 50 queued for 10m. The threshold deliberately errs loose:
-      # builderd's safe production concurrency budget is one microVM under
-      # the 5 GiB parent cgroup, so a sustained
-      # queue > 50 means the cluster's build throughput is
-      # insufficient for the wake rate. Triage: `gregalectl builds
-      # list --status=queued` for the in-flight builds, the
-      # `/v1/admin/obs/builder-heartbeats` endpoint for live
-      # builderd liveness, then the recovery primitives in the
-      # runbook (drain + scale the affected schedd, or recover
-      # the wedged builderd). Recover per
-      # docs/ops/build-queue-stuck.md.
-      # ─────────────────────────────────────────────────────────────────
-      - alert: FaasBuildQueueDepthHigh
-        expr: faas_build_queue_depth > 50
+      # Each apid independently polls the fleet queue every 30s. Require a
+      # successful scrape and a successful, nonzero, nonfuture read <=120s
+      # old. Missing/failed/expired reads are unavailable, never empty.
+      # Do not sum observations from multiple apids: each counts the fleet.
+      - record: faas_build_queue_observation_healthy
+        expr: |
+          (apid_build_queue_collection_success{job="apid"} == 1)
+          and on (job, instance) (up{job="apid"} == 1)
+          and on (job, instance) (faas_build_queue_depth{job="apid"} >= 0)
+          and on (job, instance) (apid_build_queue_collection_last_success_timestamp_seconds{job="apid"} > 0)
+          and on (job, instance) (time() - apid_build_queue_collection_last_success_timestamp_seconds{job="apid"} >= 0)
+          and on (job, instance) (time() - apid_build_queue_collection_last_success_timestamp_seconds{job="apid"} <= 120)
+          and on (job, instance) (
+            ((faas_build_queue_depth{job="apid"} == 0)
+             and on (job, instance) (faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid"} == 0))
+            or
+            ((faas_build_queue_depth{job="apid"} > 0)
+             and on (job, instance) (faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid"} > 0)
+             and on (job, instance) (time() - faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid"} >= 0))
+          )
+
+      # Keep the original timestamp as input: a waiting build's age must
+      # advance between polls. Healthy empty queues have observed zero wait;
+      # unavailable observations have no wait series.
+      - record: faas_build_queue_oldest_wait_seconds
+        expr: |
+          ((time() - faas_build_queue_oldest_enqueued_timestamp_seconds{job="apid"})
+           and on (job, instance) (faas_build_queue_depth{job="apid"} > 0)
+           and on (job, instance) (faas_build_queue_observation_healthy == 1))
+          or
+          ((faas_build_queue_depth{job="apid"} == 0)
+           and on (job, instance) (faas_build_queue_observation_healthy == 1))
+
+      - alert: FaasBuildQueueOldestWaitHigh
+        expr: faas_build_queue_oldest_wait_seconds > 300
         for: 10m
         labels:
           severity: warn
           component: builderd
           family: build_queue_stuck
+          public_status: internal
+        annotations:
+          summary: "Oldest queued build has waited > 5m"
+          description: "A fresh queue observation has contained a build waiting more than 300 seconds for 10m, even if only one build is queued. The original enqueue time survives requeue. Inspect builder admission, heartbeats, and build state; this observation alone does not prove builder failure."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
+
+      - alert: FaasBuildQueueDepthHigh
+        expr: |
+          (faas_build_queue_depth{job="apid"} > 50)
+          and on (job, instance) (faas_build_queue_observation_healthy == 1)
+        for: 10m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_queue_stuck
+          public_status: internal
         annotations:
           summary: "builderd build queue > 50 queued builds for 10m"
           description: "The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
+
+      - alert: FaasBuildQueueTelemetryUnavailable
+        expr: |
+          (up{job="apid"} == 1)
+          unless on (job, instance) (faas_build_queue_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: build_queue_stuck
+          public_status: internal
+        annotations:
+          summary: "Build queue observation unavailable"
+          description: "A scraped apid has no successful, complete build queue observation at most 120 seconds old for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's successful fleet snapshot cannot establish this collector's health."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
+
+      # Observe claim/admission outcomes without treating saturation as a
+      # failure. A poll includes the full build, so progress budgets differ
+      # between idle and in-flight work. Keep each builder instance separate.
+      - record: builderd_build_queue_observation_healthy
+        expr: |
+          (up{job="builderd"} == 1)
+          and on (job, instance) ((builderd_build_worker_enabled{job="builderd"} == 0) or (builderd_build_worker_enabled{job="builderd"} == 1))
+          and on (job, instance) ((builderd_build_worker_inflight{job="builderd"} == 0) or (builderd_build_worker_inflight{job="builderd"} == 1))
+          and on (job, instance) (builderd_build_worker_started_timestamp_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_worker_started_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_worker_interval_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_worker_busy_allowance_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_slots_limit{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_slots_in_use{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_slots_in_use{job="builderd"} <= builderd_build_slots_limit{job="builderd"})
+          and on (job, instance) (count by (job, instance) (builderd_build_claims_total{job="builderd",source=~"poll|notification",outcome=~"claimed|not_claimed|error|canceled"}) == 8)
+          and on (job, instance) (count by (job, instance) (builderd_build_requeues_total{job="builderd",reason=~"no_slot|source_unavailable|context_canceled|lookup_failure",outcome=~"accepted|not_requeued|error|canceled"}) == 16)
+          and on (job, instance) (count by (job, instance) (builderd_build_slot_decisions_total{job="builderd",outcome=~"granted|limit|policy"}) == 3)
+          and on (job, instance)
+          (((builderd_build_worker_inflight{job="builderd"} == 1)
+            and on (job, instance) (builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"} > 0)
+            and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} <= builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"}))
+           or ((builderd_build_worker_inflight{job="builderd"} == 0)
+               and on (job, instance)
+               (((builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"} == 0)
+                 and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} == 0))
+                or ((builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"} > 0)
+                    and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} >= builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"})))))
+      - record: builderd_build_worker_progress_age_seconds
+        expr: |
+          (((time() - builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"})
+             and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 1))
+           or ((time() - builderd_build_worker_last_completed_timestamp_seconds{job="builderd"})
+               and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 0)
+               and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} > 0))
+           or ((time() - builderd_build_worker_started_timestamp_seconds{job="builderd"})
+               and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 0)
+               and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} == 0)))
+          and on (job, instance) (builderd_build_queue_observation_healthy == 1)
+      - record: builderd_build_worker_progress_allowance_seconds
+        expr: |
+          (((builderd_build_worker_busy_allowance_seconds{job="builderd"}
+              + on (job, instance) 2 * builderd_build_worker_interval_seconds{job="builderd"})
+             and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 1))
+           or ((2 * builderd_build_worker_interval_seconds{job="builderd"})
+               and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 0)))
+          and on (job, instance) (builderd_build_queue_observation_healthy == 1)
+      - alert: FaasBuilderQueueTelemetryUnavailable
+        expr: |
+          (up{job="builderd"} == 1)
+          unless on (job, instance) (builderd_build_queue_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_queue_telemetry
+          public_status: internal
+        annotations:
+          summary: Builder queue diagnostics are unavailable
+          description: The builder is scraped but its worker progress, slot state or bounded claim/requeue counters are
+            missing or inconsistent. Worker and admission health are unknown; inspect instrumentation, clocks and scrape
+            configuration.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
+      - alert: FaasBuilderWorkerStalled
+        expr: |
+          (builderd_build_worker_progress_age_seconds
+           > on (job, instance) builderd_build_worker_progress_allowance_seconds)
+          and on (job, instance) (builderd_build_worker_enabled{job="builderd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_queue_worker
+          public_status: internal
+        annotations:
+          summary: Durable build polling has stopped progressing
+          description: The expected poller has exceeded its progress allowance for 5m. Idle allowance is two poll intervals;
+            an in-flight iteration also receives the effective running-build recovery threshold. Notification work cannot
+            renew poller progress. Capture logs and goroutines before intervening.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
+      - alert: FaasBuilderClaimsFailing
+        expr: |
+          (sum by (job, instance, source) (rate(builderd_build_claims_total{job="builderd",outcome="error"}[5m]))
+           / sum by (job, instance, source) (rate(builderd_build_claims_total{job="builderd",outcome=~"claimed|not_claimed|error"}[5m])) > 0.1)
+          and on (job, instance, source) (sum by (job, instance, source) (increase(builderd_build_claims_total{job="builderd",outcome="error"}[5m])) >= 3)
+          and on (job, instance) (builderd_build_queue_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_queue_worker
+          public_status: internal
+        annotations:
+          summary: Build claims are persistently failing
+          description: Claim errors exceed 10% of completed non-canceled claim calls with at least three errors in each
+            rolling 5m window, sustained for 5m. Not-claimed results include affinity and claim races and do not establish
+            an empty queue.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
+      - alert: FaasBuilderRequeuesFailing
+        expr: |
+          (sum by (job, instance, reason) (rate(builderd_build_requeues_total{job="builderd",outcome="error"}[5m]))
+           / sum by (job, instance, reason) (rate(builderd_build_requeues_total{job="builderd",outcome=~"accepted|error"}[5m])) > 0.1)
+          and on (job, instance, reason) (sum by (job, instance, reason) (increase(builderd_build_requeues_total{job="builderd",outcome="error"}[5m])) >= 3)
+          and on (job, instance) (builderd_build_queue_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_queue_worker
+          public_status: internal
+        annotations:
+          summary: Build requeues are persistently failing
+          description: Requeue errors exceed 10% of accepted/error calls with at least three errors in each rolling 5m
+            window, sustained for 5m. ErrNoSlot can mask a failed requeue at the worker return boundary; inspect durable
+            build state and recovery. Fenced stale claims and cancellation are excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
+
+      # Bounded LISTEN/NOTIFY queues are separate from durable queue state
+      # and DB hub delivery. Dispatch handoff can briefly occupy one ID per
+      # worker outside the buffered channel. Active handlers have no wait age.
+      - record: builderd_notification_queue_observation_healthy
+        expr: |
+          (((builderd_notification_queue_enabled{job="builderd",queue=~"build|cancel"} == 0)
+            or (builderd_notification_queue_enabled{job="builderd",queue=~"build|cancel"} == 1)) * 0 + 1)
+          and on (job, instance) (up{job="builderd"} == 1)
+          and on (job, instance, queue) (builderd_notification_queue_capacity{job="builderd"} > 0)
+          and on (job, instance, queue) (builderd_notification_queue_capacity{job="builderd"} == floor(builderd_notification_queue_capacity{job="builderd"}))
+          and on (job, instance, queue) (builderd_notification_queue_workers{job="builderd"} > 0)
+          and on (job, instance, queue) (builderd_notification_queue_workers{job="builderd"} == floor(builderd_notification_queue_workers{job="builderd"}))
+          and on (job, instance, queue) (builderd_notification_queue_active{job="builderd"} >= 0)
+          and on (job, instance, queue) (builderd_notification_queue_active{job="builderd"} == floor(builderd_notification_queue_active{job="builderd"}))
+          and on (job, instance, queue) (builderd_notification_queue_active{job="builderd"} <= builderd_notification_queue_workers{job="builderd"})
+          and on (job, instance, queue) (builderd_notification_queue_waiting{job="builderd"} >= 0)
+          and on (job, instance, queue) (builderd_notification_queue_waiting{job="builderd"} == floor(builderd_notification_queue_waiting{job="builderd"}))
+          and on (job, instance, queue)
+            ((builderd_notification_queue_waiting{job="builderd"} + builderd_notification_queue_active{job="builderd"})
+             <= (builderd_notification_queue_capacity{job="builderd"} + builderd_notification_queue_workers{job="builderd"}))
+          and on (job, instance, queue) (builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance, queue)
+            (((builderd_notification_queue_waiting{job="builderd"} == 0)
+              and on (job, instance, queue) (builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd"} == 0))
+             or ((builderd_notification_queue_waiting{job="builderd"} > 0)
+                 and on (job, instance, queue) (builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd"} > 0)))
+          and on (job, instance, queue)
+            (count by (job, instance, queue) (builderd_notification_queue_enqueues_total{job="builderd",outcome=~"accepted|coalesced|full|stopping|invalid"} >= 0) == 5)
+      - record: builderd_notification_queue_oldest_wait_seconds
+        expr: |
+          (((time() - builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd"})
+             and on (job, instance, queue) (builderd_notification_queue_waiting{job="builderd"} > 0))
+           or ((builderd_notification_queue_waiting{job="builderd"} == 0) * 0))
+          and on (job, instance, queue) (builderd_notification_queue_observation_healthy == 1)
+      - alert: FaasBuilderNotificationTelemetryUnavailable
+        expr: |
+          (label_replace(up{job="builderd"} == 1, "queue", "build", "job", ".*")
+           or label_replace(up{job="builderd"} == 1, "queue", "cancel", "job", ".*"))
+          unless on (job, instance, queue) (builderd_notification_queue_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_notification_telemetry
+          public_status: internal
+        annotations:
+          summary: Builder notification queue diagnostics are unavailable
+          description: The builder is scraped but its {{ $labels.queue }} notification queue state or initialized enqueue
+            counters are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape
+            configuration. The durable worker and cleanup reaper are independent recovery paths.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+      - alert: FaasBuilderNotificationDropsHigh
+        expr: |
+          (sum by (job, instance, queue) (rate(builderd_notification_queue_enqueues_total{job="builderd",queue=~"build|cancel",outcome="full"}[5m]))
+           / sum by (job, instance, queue) (rate(builderd_notification_queue_enqueues_total{job="builderd",queue=~"build|cancel",outcome=~"accepted|full"}[5m])) > 0.1)
+          and on (job, instance, queue)
+            (sum by (job, instance, queue) (increase(builderd_notification_queue_enqueues_total{job="builderd",outcome="full"}[5m])) >= 3)
+          and on (job, instance, queue) (builderd_notification_queue_observation_healthy == 1)
+          and on (job, instance, queue) (builderd_notification_queue_enabled{job="builderd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_notification_queue
+          public_status: internal
+        annotations:
+          summary: Builder notification queue is persistently dropping hints
+          description: Full-queue drops exceed 10% of accepted/full enqueue attempts for the {{ $labels.queue }} queue,
+            with at least three drops in each rolling 5m window, sustained for 5m. Duplicate coalescing and shutdown
+            are excluded. Verify durable build polling or cancellation cleanup is progressing before intervening.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+      - alert: FaasBuilderNotificationWaitHigh
+        expr: |
+          ((builderd_notification_queue_oldest_wait_seconds{queue="build"} > 300)
+           or (builderd_notification_queue_oldest_wait_seconds{queue="cancel"} > 60))
+          and on (job, instance, queue) (builderd_notification_queue_enabled{job="builderd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_notification_queue
+          public_status: internal
+        annotations:
+          summary: Builder notifications are waiting too long for dispatch
+          description: The oldest waiting {{ $labels.queue }} hint exceeded its dispatch-age threshold for 5m; thresholds
+            are 5m for builds and 1m for cancellation. Active handlers are excluded. This measures fast-path delay and
+            does not establish a lost durable build, a stalled worker or a VM that is still alive.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+
+      # Build success is not image preparation. Observe unconsumed handoffs
+      # independently of synchronous imaging/recovery work. Empty identities
+      # retain legacy routing compatibility, so never sum imaged replicas.
+      - record: imaged_build_handoff_observation_healthy
+        expr: |
+          (imaged_build_handoff_collection_success{job="imaged"} == 1)
+          and on (job, instance) (up{job="imaged"} == 1)
+          and on (job, instance) (imaged_build_handoff_collection_last_success_timestamp_seconds{job="imaged"} > 0)
+          and on (job, instance) (time() - imaged_build_handoff_collection_last_success_timestamp_seconds{job="imaged"} >= 0)
+          and on (job, instance) (time() - imaged_build_handoff_collection_last_success_timestamp_seconds{job="imaged"} <= 120)
+          and on (job, instance) (imaged_build_handoff_pending{job="imaged"} >= 0)
+          and on (job, instance) (imaged_build_handoff_pending{job="imaged"} == floor(imaged_build_handoff_pending{job="imaged"}))
+          and on (job, instance) (imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged"} <= time())
+          and on (job, instance)
+            (((imaged_build_handoff_pending{job="imaged"} == 0)
+              and on (job, instance) (imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged"} == 0))
+             or ((imaged_build_handoff_pending{job="imaged"} > 0)
+                 and on (job, instance) (imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged"} > 0)))
+          and on (job, instance) ((imaged_build_handoff_recovery_enabled{job="imaged"} == 0) or (imaged_build_handoff_recovery_enabled{job="imaged"} == 1))
+          and on (job, instance) ((imaged_build_handoff_recovery_inflight{job="imaged"} == 0) or (imaged_build_handoff_recovery_inflight{job="imaged"} == 1))
+          and on (job, instance) (imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"} >= 0)
+          and on (job, instance) (imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"} <= time())
+          and on (job, instance) (imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged"} >= 0)
+          and on (job, instance) (imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged"} <= time())
+          and on (job, instance)
+            (((imaged_build_handoff_recovery_inflight{job="imaged"} == 1)
+              and on (job, instance) (imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"} > 0)
+              and on (job, instance) (imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged"} <= imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"}))
+             or ((imaged_build_handoff_recovery_inflight{job="imaged"} == 0)
+                 and on (job, instance)
+                   (((imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"} == 0)
+                     and on (job, instance) (imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged"} == 0))
+                    or ((imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"} > 0)
+                        and on (job, instance) (imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged"} >= imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"})))))
+          and on (job, instance) (count by (job, instance) (imaged_build_handoff_recovery_queries_total{job="imaged",source=~"resume|awaiting",outcome=~"success|error|canceled"} >= 0) == 6)
+          and on (job, instance) (count by (job, instance) (imaged_build_handoff_recovery_work_total{job="imaged",source=~"resume|awaiting",outcome=~"returned|retryable|deferred|not_owned|error|canceled"} >= 0) == 12)
+          and on (job, instance) (count by (job, instance) (imaged_image_preparation_commits_total{job="imaged",transition=~"claimed|layer_published|scan_complete|handed_off"} >= 0) == 4)
+      - record: imaged_build_handoff_oldest_wait_seconds
+        expr: |
+          (((time() - imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged"})
+             and on (job, instance) (imaged_build_handoff_pending{job="imaged"} > 0))
+           or ((imaged_build_handoff_pending{job="imaged"} == 0) * 0))
+          and on (job, instance) (imaged_build_handoff_observation_healthy == 1)
+      - alert: FaasBuildImageHandoffTelemetryUnavailable
+        expr: |
+          (up{job="imaged"} == 1)
+          unless on (job, instance)
+            ((imaged_build_handoff_observation_healthy == 1)
+             or (imaged_build_handoff_recovery_enabled{job="imaged"} == 0))
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: build_image_handoff_telemetry
+          public_status: internal
+        annotations:
+          summary: Build-to-image handoff diagnostics are unavailable
+          description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+            minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+            database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+      - alert: FaasBuildImageHandoffWaiting
+        expr: |
+          (imaged_build_handoff_oldest_wait_seconds > 300)
+          and on (job, instance) (imaged_build_handoff_recovery_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: build_image_handoff
+          public_status: internal
+        annotations:
+          summary: Successful builds are waiting for image preparation
+          description: The oldest eligible succeeded build in this imaged recovery scope has waited more than five
+            minutes since build completion, sustained for five minutes. Checkpointed active or resumable preparations
+            are excluded. This measures unconsumed handoff delay, including backlog behind legitimate synchronous work;
+            it does not establish a stalled daemon or deployment readiness failure.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+      - alert: FaasImageHandoffRecoveryQueriesFailing
+        expr: |
+          (sum by (job, instance, source) (rate(imaged_build_handoff_recovery_queries_total{job="imaged",source=~"resume|awaiting",outcome="error"}[5m]))
+           / sum by (job, instance, source) (rate(imaged_build_handoff_recovery_queries_total{job="imaged",source=~"resume|awaiting",outcome=~"success|error"}[5m])) > 0.1)
+          and on (job, instance, source)
+            (sum by (job, instance, source) (increase(imaged_build_handoff_recovery_queries_total{job="imaged",outcome="error"}[5m])) >= 3)
+          and on (job, instance) (imaged_build_handoff_observation_healthy == 1)
+          and on (job, instance) (imaged_build_handoff_recovery_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: build_image_handoff
+          public_status: internal
+        annotations:
+          summary: Image handoff recovery queries are persistently failing
+          description: Errors exceed 10% of non-canceled {{ $labels.source }} recovery list calls, with at least three
+            errors in each rolling five-minute window, sustained for five minutes. The independent observation reader
+            does not establish that recovery queries work. Busy leases, claim fences and customer image failures are
+            separate handler outcomes and do not trigger this warning.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+
+      # Checkpoint age survives token claims and restart. Includes active work
+      # and resume backlog; prolonged phase is a triage signal, not a deadlock.
+      - record: imaged_image_preparation_phase_observation_healthy
+        expr: |
+          ((imaged_image_preparation_pending{job="imaged",phase=~"preparing|layer_published|scan_complete"} >= 0) * 0 + 1)
+          and on (job, instance, phase) (imaged_image_preparation_pending{job="imaged"} < +Inf)
+          and on (job, instance, phase) (imaged_image_preparation_pending{job="imaged"} == floor(imaged_image_preparation_pending{job="imaged"}))
+          and on (job, instance, phase) (imaged_image_preparation_phase_age_unknown{job="imaged"} >= 0)
+          and on (job, instance, phase) (imaged_image_preparation_phase_age_unknown{job="imaged"} == floor(imaged_image_preparation_phase_age_unknown{job="imaged"}))
+          and on (job, instance, phase) (imaged_image_preparation_phase_age_unknown{job="imaged"} <= imaged_image_preparation_pending{job="imaged"})
+          and on (job, instance, phase) (imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged"} <= time())
+          and on (job, instance, phase)
+            (((imaged_image_preparation_pending{job="imaged"} > imaged_image_preparation_phase_age_unknown{job="imaged"})
+              and on (job, instance, phase) (imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged"} > 0))
+             or ((imaged_image_preparation_pending{job="imaged"} == imaged_image_preparation_phase_age_unknown{job="imaged"})
+                 and on (job, instance, phase) (imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged"} == 0)))
+          and on (job, instance) (up{job="imaged"} == 1)
+          and on (job, instance) (imaged_image_preparation_collection_success{job="imaged"} == 1)
+          and on (job, instance) (imaged_image_preparation_collection_last_success_timestamp_seconds{job="imaged"} > 0)
+          and on (job, instance) (time() - imaged_image_preparation_collection_last_success_timestamp_seconds{job="imaged"} >= 0)
+          and on (job, instance) (time() - imaged_image_preparation_collection_last_success_timestamp_seconds{job="imaged"} <= 120)
+          and on (job, instance) ((imaged_image_preparation_observation_enabled{job="imaged"} == 0) or (imaged_image_preparation_observation_enabled{job="imaged"} == 1))
+      - record: imaged_image_preparation_observation_healthy
+        expr: |
+          (count by (job, instance) (imaged_image_preparation_phase_observation_healthy == 1) == 3) / 3
+      - record: imaged_image_preparation_oldest_known_phase_age_seconds
+        expr: |
+          (((time() - imaged_image_preparation_oldest_phase_started_timestamp_seconds{job="imaged"})
+             and on (job, instance, phase) (imaged_image_preparation_pending{job="imaged"} > imaged_image_preparation_phase_age_unknown{job="imaged"}))
+           or ((imaged_image_preparation_pending{job="imaged"} == 0) * 0))
+          and on (job, instance) (imaged_image_preparation_observation_healthy == 1)
+      - alert: FaasImagePreparationTelemetryUnavailable
+        expr: |
+          (up{job="imaged"} == 1)
+          unless on (job, instance)
+            ((imaged_image_preparation_observation_healthy == 1)
+             or (imaged_image_preparation_observation_enabled{job="imaged"} == 0))
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: image_preparation_telemetry
+          public_status: internal
+        annotations:
+          summary: Durable image-preparation diagnostics are unavailable
+          description: Imaged is scraped but its phase snapshot is failed, missing, inconsistent or older than two
+            minutes. Counts and ages are unknown. Inspect the reader, database, clocks and deployed binary. Historical
+            unknown ages are reported separately; intentional observer shutdown is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+      - alert: FaasImagePreparationPhaseProlonged
+        expr: |
+          ((imaged_image_preparation_oldest_known_phase_age_seconds{phase=~"preparing|layer_published"} > 1800)
+           or (imaged_image_preparation_oldest_known_phase_age_seconds{phase="scan_complete"} > 600))
+          and on (job, instance) (imaged_image_preparation_observation_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: image_preparation
+          public_status: internal
+        annotations:
+          summary: Image preparation has remained in one phase for an extended period
+          description: The oldest known {{ $labels.phase }} checkpoint exceeded its phase-age threshold for five
+            minutes. Thresholds are 30m for preparing and layer_published, and 10m for scan_complete. Age includes active
+            execution and waiting to resume; retries do not renew it. This is a triage warning, not proof of a stalled
+            daemon, a failed image or deployment readiness.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+      - alert: FaasImagePreparationPhaseAgeUnknown
+        expr: |
+          (imaged_image_preparation_phase_age_unknown{job="imaged"} > 0)
+          and on (job, instance) (imaged_image_preparation_observation_healthy == 1)
+          and on (job, instance) (imaged_image_preparation_observation_enabled{job="imaged"} == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: imaged
+          family: image_preparation_telemetry
+          public_status: internal
+        annotations:
+          summary: Pending image preparations have unknown historical phase ages
+          description: At least one {{ $labels.phase }} checkpoint has lacked a historical phase-start timestamp for
+            15m in fresh snapshots. Pre-migration checkpoints remain unknown until a real phase transition; repeated
+            claims cannot establish their age. Known rows still contribute to prolonged-phase warnings. Inspect durable
+            work and recovery outcomes without inventing timestamps or forcing a transition.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
+
+      - record: schedd_snapshot_prime_class_observation_healthy
+        expr: |
+          ((schedd_snapshot_prime_pending{job="schedd",class=~"waiting|release_blocked|active|publication_pending|snapshot_recorded|unknown"} >= 0) * 0 + 1)
+          and on (job, instance, class) (schedd_snapshot_prime_pending{job="schedd"} < +Inf)
+          and on (job, instance, class) (schedd_snapshot_prime_pending{job="schedd"} == floor(schedd_snapshot_prime_pending{job="schedd"}))
+          and on (job, instance, class) (schedd_snapshot_prime_age_unknown{job="schedd"} >= 0)
+          and on (job, instance, class) (schedd_snapshot_prime_age_unknown{job="schedd"} == floor(schedd_snapshot_prime_age_unknown{job="schedd"}))
+          and on (job, instance, class) (schedd_snapshot_prime_age_unknown{job="schedd"} <= schedd_snapshot_prime_pending{job="schedd"})
+          and on (job, instance, class) (schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd"} <= time())
+          and on (job, instance, class)
+            (((schedd_snapshot_prime_pending{job="schedd"} > schedd_snapshot_prime_age_unknown{job="schedd"})
+              and on (job, instance, class) (schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd"} > 0))
+             or ((schedd_snapshot_prime_pending{job="schedd"} == schedd_snapshot_prime_age_unknown{job="schedd"})
+                 and on (job, instance, class) (schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd"} == 0)))
+          and on (job, instance) (up{job="schedd"} == 1)
+          and on (job, instance) (schedd_snapshot_prime_collection_success{job="schedd"} == 1)
+          and on (job, instance) (schedd_snapshot_prime_collection_last_success_timestamp_seconds{job="schedd"} > 0)
+          and on (job, instance) (time() - schedd_snapshot_prime_collection_last_success_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (time() - schedd_snapshot_prime_collection_last_success_timestamp_seconds{job="schedd"} <= 120)
+          and on (job, instance) ((schedd_snapshot_prime_observation_enabled{job="schedd"} == 0) or (schedd_snapshot_prime_observation_enabled{job="schedd"} == 1))
+          unless on (job, instance, class) (schedd_snapshot_prime_pending{job="schedd",class="unknown"} != schedd_snapshot_prime_age_unknown{job="schedd",class="unknown"})
+      - record: schedd_snapshot_prime_observation_healthy
+        expr: |
+          (count by (job, instance) (schedd_snapshot_prime_class_observation_healthy == 1) == 6) / 6
+          and on (job, instance) (count by (job, instance) (schedd_snapshot_prime_recovery_queries_total{job="schedd",outcome=~"success|error|canceled"} >= 0) == 3)
+          and on (job, instance) (count by (job, instance) (schedd_snapshot_prime_recovery_candidates_total{job="schedd",outcome=~"not_found|ineligible|release_blocked|grace|not_owned|snapshot_recorded|active|publication_pending|dispatch_requested|error|canceled"} >= 0) == 11)
+      - record: schedd_snapshot_prime_oldest_known_attempt_age_seconds
+        expr: |
+          (((time() - schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd"})
+             and on (job, instance, class) (schedd_snapshot_prime_pending{job="schedd"} > schedd_snapshot_prime_age_unknown{job="schedd"}))
+           or ((schedd_snapshot_prime_pending{job="schedd"} == 0) * 0))
+          and on (job, instance) (schedd_snapshot_prime_observation_healthy == 1)
+      - alert: FaasSnapshotPrimeTelemetryUnavailable
+        expr: |
+          (up{job="schedd"} == 1)
+          unless on (job, instance)
+            ((schedd_snapshot_prime_observation_healthy == 1)
+             or (schedd_snapshot_prime_observation_enabled{job="schedd"} == 0))
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: snapshot_prime_telemetry
+          public_status: internal
+        annotations:
+          summary: Snapshot-prime handoff diagnostics are unavailable
+          description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+            minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+            observer, database, clocks and binary. Intentional observer shutdown is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+      - alert: FaasSnapshotPrimeWaiting
+        expr: |
+          (schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"} > 300)
+          and on (job, instance) (schedd_snapshot_prime_observation_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: snapshot_prime
+          public_status: internal
+        annotations:
+          summary: Snapshot preparation is eligible but has not advanced
+          description: An attempt currently classified waiting has a known boundary older than five minutes,
+            sustained for five minutes. The boundary is no earlier than stage start, release success, runtime
+            invalidation and known instance activity. Release gates, active captures, fresh parked captures and
+            recorded snapshots are separate. This does not prove continuous idle time, a stopped scheduler or readiness failure.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+      - alert: FaasSnapshotPrimeEvidenceUnknown
+        expr: |
+          ((schedd_snapshot_prime_pending{job="schedd",class="unknown"} > 0)
+           or (schedd_snapshot_prime_age_unknown{job="schedd",class="waiting"} > 0))
+          and on (job, instance) (schedd_snapshot_prime_observation_healthy == 1)
+          and on (job, instance) (schedd_snapshot_prime_observation_enabled{job="schedd"} == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: snapshot_prime_telemetry
+          public_status: internal
+        annotations:
+          summary: Snapshot-prime eligibility or timing evidence is incomplete
+          description: Fresh observations have contained {{ $labels.class }} attempts with incomplete eligibility or
+            timing evidence for 15m. Missing, invalid or future stage/activity times cannot establish a wait age.
+            Inspect durable stages, artifacts and release/runtime evidence without rewriting timestamps or bypassing gates.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+      - alert: FaasSnapshotPrimeRecoveryQueriesFailing
+        expr: |
+          (sum by (job, instance) (rate(schedd_snapshot_prime_recovery_queries_total{job="schedd",outcome="error"}[5m]))
+           / sum by (job, instance) (rate(schedd_snapshot_prime_recovery_queries_total{job="schedd",outcome=~"success|error"}[5m])) > 0.1)
+          and on (job, instance) (sum by (job, instance) (increase(schedd_snapshot_prime_recovery_queries_total{job="schedd",outcome="error"}[5m])) >= 3)
+          and on (job, instance) (schedd_snapshot_prime_observation_healthy == 1)
+          and on (job, instance) (schedd_snapshot_prime_observation_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: snapshot_prime
+          public_status: internal
+        annotations:
+          summary: Snapshot-prime recovery listings are persistently failing
+          description: Recovery list errors exceed 10% of non-canceled calls with at least three errors per rolling
+            five-minute window, sustained for five minutes. A healthy observation reader does not prove recovery
+            listings succeed. Candidate gates and active captures are separate decisions.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+
+      - record: imaged_post_capture_class_observation_healthy
+        expr: |
+          ((imaged_post_capture_pending{job="imaged",class=~"publication_pending|activation_pending|dependency_held|compatibility_held|hosting_verifying|hosting_retry|gate_overdue|unknown"} >= 0) * 0 + 1)
+          and on (job, instance, class) (imaged_post_capture_pending{job="imaged"} < +Inf)
+          and on (job, instance, class) (imaged_post_capture_pending{job="imaged"} == floor(imaged_post_capture_pending{job="imaged"}))
+          and on (job, instance, class) (imaged_post_capture_age_unknown{job="imaged"} >= 0)
+          and on (job, instance, class) (imaged_post_capture_age_unknown{job="imaged"} == floor(imaged_post_capture_age_unknown{job="imaged"}))
+          and on (job, instance, class) (imaged_post_capture_age_unknown{job="imaged"} <= imaged_post_capture_pending{job="imaged"})
+          and on (job, instance, class) (imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged"} <= time())
+          and on (job, instance, class)
+            (((imaged_post_capture_pending{job="imaged"} > imaged_post_capture_age_unknown{job="imaged"})
+              and on (job, instance, class) (imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged"} > 0))
+             or ((imaged_post_capture_pending{job="imaged"} == imaged_post_capture_age_unknown{job="imaged"})
+                 and on (job, instance, class) (imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged"} == 0)))
+          and on (job, instance) (up{job="imaged"} == 1)
+          and on (job, instance) (imaged_post_capture_collection_success{job="imaged"} == 1)
+          and on (job, instance) (imaged_post_capture_collection_last_success_timestamp_seconds{job="imaged"} > 0)
+          and on (job, instance) (time() - imaged_post_capture_collection_last_success_timestamp_seconds{job="imaged"} >= 0)
+          and on (job, instance) (time() - imaged_post_capture_collection_last_success_timestamp_seconds{job="imaged"} <= 120)
+          and on (job, instance) ((imaged_post_capture_observation_enabled{job="imaged"} == 0) or (imaged_post_capture_observation_enabled{job="imaged"} == 1))
+          unless on (job, instance, class) (imaged_post_capture_pending{job="imaged",class="unknown"} != imaged_post_capture_age_unknown{job="imaged",class="unknown"})
+      - record: imaged_post_capture_observation_healthy
+        expr: |
+          (count by (job, instance) (imaged_post_capture_class_observation_healthy == 1) == 8) / 8
+          and on (job, instance) (count by (job, instance) (imaged_deployment_activation_attempts_total{job="imaged",input=~"snapshot|ready",phase=~"evidence|dependency|verification|promotion|finalize",outcome=~"success|error|deferred|held|canceled"} >= 0) == 50)
+      - record: imaged_post_capture_oldest_known_boundary_age_seconds
+        expr: |
+          (((time() - imaged_post_capture_oldest_boundary_timestamp_seconds{job="imaged"})
+             and on (job, instance, class) (imaged_post_capture_pending{job="imaged"} > imaged_post_capture_age_unknown{job="imaged"}))
+           or ((imaged_post_capture_pending{job="imaged"} == 0) * 0))
+          and on (job, instance) (imaged_post_capture_observation_healthy == 1)
+      - alert: FaasPostCaptureTelemetryUnavailable
+        expr: |
+          (up{job="imaged"} == 1)
+          unless on (job, instance) ((imaged_post_capture_observation_healthy == 1)
+           or (imaged_post_capture_observation_enabled{job="imaged"} == 0))
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: post_capture_telemetry
+          public_status: internal
+        annotations:
+          summary: Post-capture diagnostics are unavailable
+          description: Imaged is scraped but its post-capture snapshot is missing, failed, inconsistent, older than two minutes,
+            or has incomplete activation counters. Counts and ages are unknown. Check the observer, database, clocks and binary;
+            intentional shutdown is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+      - alert: FaasSnapshotPublicationPending
+        expr: |
+          (imaged_post_capture_oldest_known_boundary_age_seconds{class="publication_pending"} > 300)
+          and on (job, instance) (imaged_post_capture_observation_healthy == 1)
+          and on (job, instance) (imaged_post_capture_observation_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: post_capture
+          public_status: internal
+        annotations:
+          summary: A fresh parked capture still lacks init publication
+          description: A currently unpublished capture has a known parked boundary older than five minutes, held five minutes.
+            Inspect snapshot_written delivery, publication outcomes, runtime receipts and imaged storage/database errors. Parking
+            is evidence of capture, not artifact acceptance or readiness.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+      - alert: FaasDeploymentActivationPending
+        expr: |
+          (imaged_post_capture_oldest_known_boundary_age_seconds{class=~"activation_pending|hosting_verifying|hosting_retry"} > 300)
+          and on (job, instance) (imaged_post_capture_observation_healthy == 1)
+          and on (job, instance) (imaged_post_capture_observation_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: post_capture
+          public_status: internal
+        annotations:
+          summary: A published init snapshot still awaits activation
+          description: A currently {{ $labels.class }} candidate has a known publication or verification boundary older than
+            five minutes, held five minutes. Inspect retained hosting receipts, delivery retries and promotion errors. Age
+            is not continuous class residence; dependency and compatibility holds are separate.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+      - alert: FaasDeploymentActivationGateUnfinalized
+        expr: |
+          (imaged_post_capture_pending{job="imaged",class="gate_overdue"} > 0)
+          and on (job, instance) (imaged_post_capture_observation_healthy == 1)
+          and on (job, instance) (imaged_post_capture_observation_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: post_capture
+          public_status: internal
+        annotations:
+          summary: A failed or expired activation gate remains nonterminal
+          description: A snapshotting candidate retains a failed dependency gate or an expired dependency/hosting retry deadline
+            for five minutes. Inspect imaged replay and terminal-evidence writes. Do not bypass the gate or move the serving
+            pointer manually.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+      - alert: FaasPostCaptureEvidenceUnknown
+        expr: |
+          ((imaged_post_capture_pending{job="imaged",class="unknown"} > 0)
+           or (imaged_post_capture_age_unknown{job="imaged"} > 0))
+          and on (job, instance) (imaged_post_capture_observation_healthy == 1)
+          and on (job, instance) (imaged_post_capture_observation_enabled{job="imaged"} == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: imaged
+          family: post_capture_telemetry
+          public_status: internal
+        annotations:
+          summary: Post-capture classification or timing evidence is incomplete
+          description: Fresh observations have contained incomplete {{ $labels.class }} evidence for 15 minutes. Missing, invalid
+            or future times cannot establish a publication or activation wait. Inspect durable capture, stage, gate and verification
+            evidence without inventing timestamps.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+      - alert: FaasSnapshotPublicationErrors
+        expr: |
+          (sum by (job, instance) (rate(imaged_snapshot_publication_total{job="imaged",outcome=~"write_error|policy_error"}[5m]))
+           / sum by (job, instance) (rate(imaged_snapshot_publication_total{job="imaged",outcome=~"published|duplicate|write_error|policy_error"}[5m])) > 0.1)
+          and on (job, instance) (sum by (job, instance) (increase(imaged_snapshot_publication_total{job="imaged",outcome=~"write_error|policy_error"}[5m])) >= 3)
+          and on (job, instance) (imaged_post_capture_observation_healthy == 1)
+          and on (job, instance) (imaged_post_capture_observation_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: post_capture
+          public_status: internal
+        annotations:
+          summary: Snapshot publication writes or policy reads repeatedly fail
+          description: Publication write_error or policy_error outcomes exceed 10% of publication decisions with at least three
+            errors per rolling five minutes, held five minutes. Inspect database, runtime-policy reads and replay. Stale captures,
+            RAM/policy rejections and customer verification verdicts are excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostCapture.md
+
+      # Recovery is observed separately from queue wait. Fleet gauges are
+      # coherent per apid; never sum replicas. Timing uses effective config
+      # from every discovered builder. Age warnings measure overdue work;
+      # the stalled-loop allowance also includes all serial cleanup timeouts.
+      - record: faas_build_recovery_observation_healthy
+        expr: |
+          (apid_build_recovery_collection_success{job="apid"} == 1)
+          and on (job, instance) (up{job="apid"} == 1)
+          and on (job, instance) (apid_build_recovery_collection_last_success_timestamp_seconds{job="apid"} > 0)
+          and on (job, instance) (time() - apid_build_recovery_collection_last_success_timestamp_seconds{job="apid"} >= 0)
+          and on (job, instance) (time() - apid_build_recovery_collection_last_success_timestamp_seconds{job="apid"} <= 120)
+          and on (job, instance) (faas_build_vm_cleanup_retry_pending{job="apid"} >= 0)
+          and on (job, instance) (faas_build_vm_cleanup_retry_pending{job="apid"} <= faas_build_vm_cleanup_pending{job="apid"})
+          and on (job, instance)
+          (((faas_build_running_count{job="apid"} == 0) and on (job, instance) (faas_build_running_oldest_started_timestamp_seconds{job="apid"} == 0))
+           or ((faas_build_running_count{job="apid"} > 0) and on (job, instance) (faas_build_running_oldest_started_timestamp_seconds{job="apid"} > 0)
+               and on (job, instance) (faas_build_running_oldest_started_timestamp_seconds{job="apid"} <= time())))
+          and on (job, instance)
+          (((faas_build_vm_cleanup_pending{job="apid"} == 0) and on (job, instance) (faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid"} == 0))
+           or ((faas_build_vm_cleanup_pending{job="apid"} > 0) and on (job, instance) (faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid"} > 0)
+               and on (job, instance) (faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid"} <= time())))
+      - record: faas_build_running_oldest_age_seconds
+        expr: |
+          ((time() - faas_build_running_oldest_started_timestamp_seconds{job="apid"})
+           and on (job, instance) (faas_build_running_count{job="apid"} > 0)
+           and on (job, instance) (faas_build_recovery_observation_healthy == 1))
+          or ((faas_build_running_count{job="apid"} == 0)
+              and on (job, instance) (faas_build_recovery_observation_healthy == 1))
+      - record: faas_build_vm_cleanup_oldest_age_seconds
+        expr: |
+          ((time() - faas_build_vm_cleanup_oldest_created_timestamp_seconds{job="apid"})
+           and on (job, instance) (faas_build_vm_cleanup_pending{job="apid"} > 0)
+           and on (job, instance) (faas_build_recovery_observation_healthy == 1))
+          or ((faas_build_vm_cleanup_pending{job="apid"} == 0)
+              and on (job, instance) (faas_build_recovery_observation_healthy == 1))
+      - record: builderd_build_reaper_observation_healthy
+        expr: |
+          (up{job="builderd"} == 1)
+          and on (job, instance) (builderd_build_reaper_started_timestamp_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_reaper_started_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_reaper_interval_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_reaper_threshold_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_reaper_cleanup_budget_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_reaper_last_attempt_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_reaper_last_success_timestamp_seconds{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_reaper_last_success_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_reaper_last_completed_timestamp_seconds{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_reaper_last_completed_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_reaper_last_pass_success{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_reaper_last_pass_success{job="builderd"} <= 1)
+      - record: builderd_build_reaper_progress_allowance_seconds
+        expr: |
+          (2 * builderd_build_reaper_interval_seconds{job="builderd"}
+           + on (job, instance) builderd_build_reaper_cleanup_budget_seconds{job="builderd"})
+          and on (job, instance) (builderd_build_reaper_observation_healthy == 1)
+      - record: faas_build_running_recovery_allowance_seconds
+        expr: |
+          max((builderd_build_reaper_threshold_seconds{job="builderd"} + on (job, instance) 2 * builderd_build_reaper_interval_seconds{job="builderd"}) and on (job, instance) (builderd_build_reaper_observation_healthy == 1))
+          and on () (count(builderd_build_reaper_observation_healthy == 1) == count(up{job="builderd"}))
+      - record: faas_build_vm_cleanup_allowance_seconds
+        expr: |
+          max((2 * builderd_build_reaper_interval_seconds{job="builderd"}) and on (job, instance) (builderd_build_reaper_observation_healthy == 1))
+          and on () (count(builderd_build_reaper_observation_healthy == 1) == count(up{job="builderd"}))
+      - alert: FaasBuildRecoveryTelemetryUnavailable
+        expr: |
+          (up{job="apid"} == 1)
+          unless on (job, instance) (faas_build_recovery_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: build_recovery_telemetry
+          public_status: internal
+        annotations:
+          summary: Build recovery state is unavailable
+          description: The running-build and durable VM cleanup snapshot is missing, failed, inconsistent or older than
+            120 seconds. Backlog state is unknown; inspect apid database access and the observation poller.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+      - alert: FaasBuilderReaperTelemetryUnavailable
+        expr: |
+          (up{job="builderd"} == 1)
+          unless on (job, instance) (builderd_build_reaper_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_recovery_telemetry
+          public_status: internal
+        annotations:
+          summary: Builder recovery loop telemetry is unavailable
+          description: The builder is scraped but its reaper configuration or progress timestamps are missing or invalid.
+            Recovery health and fleet timing allowances are unknown.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+      - alert: FaasBuildRunningOverdue
+        expr: |
+          faas_build_running_oldest_age_seconds
+          > on () group_left faas_build_running_recovery_allowance_seconds
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_recovery
+          public_status: internal
+        annotations:
+          summary: A running build is overdue for recovery
+          description: A running claim has exceeded the largest configured recovery threshold plus two sweep intervals
+            for 5m. Inspect reaper progress and cleanup workload; this is overdue customer work, not proof that its VM
+            is still running.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+      - alert: FaasBuildVMCleanupOverdue
+        expr: |
+          faas_build_vm_cleanup_oldest_age_seconds
+          > on () group_left faas_build_vm_cleanup_allowance_seconds
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_recovery
+          public_status: internal
+        annotations:
+          summary: Builder VM cleanup is overdue
+          description: A durable cleanup obligation has remained outstanding beyond two configured sweep intervals for
+            5m. Age survives retries and live claims. Inspect cancel and result-record errors and batch throughput before
+            intervening.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+      - alert: FaasBuilderReaperFailing
+        expr: |
+          (builderd_build_reaper_last_pass_success{job="builderd"} == 0)
+          and on (job, instance) (builderd_build_reaper_last_completed_timestamp_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_reaper_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_recovery
+          public_status: internal
+        annotations:
+          summary: Builder recovery pass failed
+          description: The latest completed reaper pass has remained unsuccessful for 5m. A successful row sweep does
+            not imply successful VM cleanup or durable result recording. Inspect operation outcomes and logs.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
+      - alert: FaasBuilderReaperStalled
+        expr: |
+          (((time() - builderd_build_reaper_last_success_timestamp_seconds{job="builderd"}
+             > on (job, instance) builderd_build_reaper_progress_allowance_seconds)
+            and on (job, instance) (builderd_build_reaper_last_success_timestamp_seconds{job="builderd"} > 0))
+           or ((time() - builderd_build_reaper_started_timestamp_seconds{job="builderd"}
+                > on (job, instance) builderd_build_reaper_progress_allowance_seconds)
+               and on (job, instance) (builderd_build_reaper_last_success_timestamp_seconds{job="builderd"} == 0)))
+          and on (job, instance) (builderd_build_reaper_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_recovery
+          public_status: internal
+        annotations:
+          summary: Builder recovery has stopped succeeding
+          description: No whole recovery pass has succeeded within two configured intervals plus the full serial cleanup
+            call budget, for 5m. This also detects a loop that never starts on an otherwise idle builder. Capture logs
+            and goroutine evidence before restarting.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildRecovery.md
 
       # Issue #2418: builder VM exports are node-local, transient handoffs.
       # builderd inventories the tree at startup and every five minutes; the
@@ -3726,8 +4858,8 @@ groups:
           family: alert_preset_signals
           preset: spend_eur_20
         annotations:
-          summary: "Account {{ $labels.account_id }} spend > 20 EUR over 24h"
-          description: "meterd_account_spend_eur{account_id=\"{{ $labels.account_id }}\"} has been > 20 EUR over the rolling 24h window for 1h. This is the alert_preset catalog `spend_eur_20` signal. Cross-check the per-account billing panel; the customer may have crossed their plan tier or be experiencing runaway invocations. The 1h `for:` matches the catalog's `default_cooldown_minutes` to avoid re-firing on a single blip."
+          summary: "Account {{ $labels.account_id }} spend > $20 over 24h"
+          description: "meterd_account_spend_eur{account_id=\"{{ $labels.account_id }}\"} has been over $20 (billing currency, ADR-1430) over the rolling 24h window for 1h. This is the alert_preset catalog `spend_eur_20` signal. Cross-check the per-account billing panel; the customer may have crossed their plan tier or be experiencing runaway invocations. The 1h `for:` matches the catalog's `default_cooldown_minutes` to avoid re-firing on a single blip."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSpendEur20.md"
 
       - alert: FaasDeployFailedAccount
@@ -4297,6 +5429,116 @@ groups:
           description: "At least three terminal init snapshot attempts failed in 15m, and failures exceeded 10% of attempts. before_checkpoint_failed is excluded because it is an application callback rejection. Inspect the capture outcome dashboard and schedd/vmmd logs."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInitSnapshotCaptureFailures.md"
 
+  # ADR-1151 pause tiers: the frozen tier and quiet pause. Warnings while the
+  # tiers are in canary; the dashboard is deploy/grafana/frozen-tier.json and
+  # docs/runbooks/FaasFrozenTier.md covers every alert.
+  - name: faas_frozen_tier
+    interval: 30s
+    rules:
+      - alert: FaasFrozenThawFailing
+        expr: |
+          (
+            sum by (instance) (increase(schedd_frozen_thaw_total{outcome="failed"}[15m])) >= 3
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(schedd_frozen_thaw_total{outcome="failed"}[15m]))
+            /
+            clamp_min(sum by (instance) (increase(schedd_frozen_thaw_total[15m])), 1)
+            > 0.1
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: frozen_tier
+        annotations:
+          summary: "Thaws of frozen instances are failing on {{ $labels.instance }}"
+          description: "More than 10% of thaws failed in 15m, at least three. A failed thaw parks the frozen VM and the request restores from the snapshot instead, so wakes are slower but still served. Check vmmd thaw errors and apps whose after_restore hook fails."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasFrozenFreezeErrors
+        expr: |
+          (
+            sum by (instance) (increase(schedd_frozen_total{outcome="error"}[15m])) >= 3
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(schedd_frozen_total{outcome="error"}[15m]))
+            /
+            clamp_min(sum by (instance) (increase(schedd_frozen_total[15m])), 1)
+            > 0.1
+          )
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: frozen_tier
+        annotations:
+          summary: "Idle instances are failing to freeze on {{ $labels.instance }}"
+          description: "More than 10% of idle-timeout freeze attempts errored in 15m, at least three. Those instances park as before, so customers are unaffected, but the frozen tier is not freezing. Check vmmd FreezeInstance errors and vmmd and schedd version skew."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasFrozenMemoryPressureParks
+        expr: |
+          (
+            sum by (instance) (increase(schedd_frozen_parks_total{reason="memory_pressure"}[30m])) >= 10
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(schedd_frozen_parks_total{reason="memory_pressure"}[30m]))
+            /
+            clamp_min(sum by (instance) (increase(schedd_frozen_parks_total[30m])), 1)
+            > 0.5
+          )
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: frozen_tier
+        annotations:
+          summary: "Frozen instances keep being evicted for memory on {{ $labels.instance }}"
+          description: "More than half of the frozen parks in 30m, at least ten, were memory-pressure evictions: frozen VMs are destroyed before a request can thaw them, so they hold memory without saving restores. Check node_frozen_resident_bytes and the node's measured memory; turn frozen_tier_apps off for the node or add capacity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasFrozenThawSlow
+        expr: |
+          (
+            histogram_quantile(0.95, sum by (le, instance) (rate(vmmd_thaw_seconds_bucket[15m]))) > 0.5
+          )
+          and on (instance)
+          (
+            sum by (instance) (increase(vmmd_thaw_seconds_count[15m])) >= 5
+          )
+        for: 15m
+        labels:
+          severity: warn
+          component: vmmd
+          family: frozen_tier
+        annotations:
+          summary: "Thaws of frozen instances are slow on {{ $labels.instance }}"
+          description: "The p95 thaw took longer than 500ms over 15m. A thaw should take milliseconds; slow thaws come from memory faulting back in after reclaim or swap, or from a slow image healthcheck or after_restore hook. Check node_frozen_resident_bytes, host swap activity and the vmmd thaw logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasFrozenNodeNearCap
+        expr: max by (instance) (node_frozen_instances) >= 900
+        for: 15m
+        labels:
+          severity: warn
+          component: vmmd
+          family: frozen_tier
+        annotations:
+          summary: "{{ $labels.instance }} is near the frozen instance cap"
+          description: "The node holds at least 900 frozen instances, close to FrozenMaxPerNode (1000). At the cap, idle instances park instead of freezing. Check that TTL parks are running and why the node holds so many idle instances."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+      - alert: FaasQuietResumeErrors
+        expr: sum by (instance) (increase(vmmd_quiet_resume_errors_total[10m])) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: vmmd
+          family: frozen_tier
+        annotations:
+          summary: "Quiet-paused instances fail to resume on {{ $labels.instance }}"
+          description: "vmmd failed to resume at least three quiet-paused instances in 10m. Each failure fails or retries the request that arrived. Check vmmd logs for ResumeVM errors and the node's Firecracker processes; turning vmmd's quiet_pause off stops new pauses."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFrozenTier.md"
+
   - name: faas_service_rollout_handoff
     interval: 30s
     rules:
@@ -4312,6 +5554,47 @@ groups:
           summary: "A zero-downtime service rollout handoff is blocked"
           description: "schedd recorded a routing or request-drain timeout/error during a service rollout in the last ten minutes. Inspect the deployment's service_rollout_handoff status for the action, generation, missing gateways, retry count, and last error. The predecessor remains live while reconciliation retries."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServiceRolloutHandoffBlocked.md"
+
+  # ADR-20261017223000: fresh persisted observations, with no customer labels.
+  - name: faas_worker_recovery
+    interval: 30s
+    rules:
+      - alert: FaasWorkerPoolUnderCapacity
+        expr: (sum without (state) (schedd_worker_recovery_replicas{state="missing"}) > 0) and (time() - schedd_worker_recovery_observed_timestamp_seconds <= 60)
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: worker_recovery
+          public_status: internal
+        annotations:
+          summary: "Worker pools remain below required capacity on {{ $labels.instance }}"
+          description: "Fresh scheduler observations show missing required workers for ten minutes. Inspect gregale inspect and the recovery ledger for capacity, startup or dependency failures. Intentional zero targets do not contribute a deficit."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md"
+      - alert: FaasWorkerRecoveryStalled
+        expr: (sum without (condition) (schedd_worker_recovery_apps{condition="overdue"}) > 0) and (time() - schedd_worker_recovery_observed_timestamp_seconds <= 60)
+        for: 2m
+        labels:
+          severity: warn
+          component: schedd
+          family: worker_recovery
+          public_status: internal
+        annotations:
+          summary: "Worker reconciliation is overdue on {{ $labels.instance }}"
+          description: "An eligible owned app has exceeded both its retry deadline and reconciliation lease by at least sixty seconds for two minutes. Inspect scheduler work saturation, ownership and dependencies; an active lease or future retry deadline does not count as overdue."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md"
+      - alert: FaasWorkerRecoveryObservationUnavailable
+        expr: (sum without (condition) (schedd_worker_recovery_apps{condition="unknown"}) > 0) or (time() - schedd_worker_recovery_observed_timestamp_seconds > 60)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: worker_recovery
+          public_status: internal
+        annotations:
+          summary: "Worker recovery observations are unavailable on {{ $labels.instance }}"
+          description: "An eligible worker app has no fresh pool observation, or database collection has not succeeded for over sixty seconds, for five minutes. Counts are unknown. Check schedd recovery logs, database connectivity, deployment availability and scheduler version."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md"
 
   - name: faas_durable_queue
     interval: 30s
@@ -4919,7 +6202,11 @@ groups:
           description: "{{ $labels.job }} on {{ $labels.instance }} has subscribers but no hub connection, so FAAS_DB_NOTIFY_HUB=0 is set and each subscriber holds its own LISTEN connection. Not an outage; it consumes the pre-hub connection count against max_connections."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBNotifyHub.md"
       - alert: FaasDBPoolNearCap
-        expr: sum by (job, instance) ({__name__=~".+_db_pool_conns"}) / on (job, instance) max by (job, instance) ({__name__=~".+_db_pool_max_conns"}) > 0.9
+        # Only acquired connections are in use. A grown pool's idle connections
+        # also report under <daemon>_db_pool_conns{state="idle"}; summing every
+        # state read apid's 1 acquired + 11 idle as 12/12 and fired on every
+        # daemon after rc.263 activated this rule.
+        expr: sum by (job, instance) ({__name__=~".+_db_pool_conns",state="acquired"}) / on (job, instance) max by (job, instance) ({__name__=~".+_db_pool_max_conns"}) > 0.9
         for: 10m
         labels:
           severity: warn
@@ -4990,3 +6277,727 @@ groups:
           summary: "schedd instance-stats collection on {{ $labels.instance }} is slow"
           description: "Collecting per-instance stats from vmmd has taken more than 200 ms at p95 for 10m, which points at dialer saturation; scale signals read stale data until it recovers."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddInstanceStatsPartialErrors.md"
+  # ADR-1575: internal CI operational evidence. Fleet gauges repeat across daemons;
+  # aggregate only readable targets with max usage/counts and min limits.
+  # Boot worker switches are independent of heartbeat freshness. All alerts
+  # are internal warnings; disabled worker paths stay quiet. No state is mutated.
+  - name: faas_internal_ci
+    interval: 30s
+    rules:
+      - record: faas_ci:observation_enabled:by_daemon
+        expr: |-
+          max by (daemon) (
+          label_replace(
+          {__name__=~"(apid|githubd)_ci_health_enabled"} and on (job, instance) (up{job=~"apid|githubd"} == 1),
+          "daemon", "$1", "__name__", "(apid|githubd)_ci_health_enabled")
+          )
+      - record: faas_ci:observation_up:by_daemon
+        expr: |-
+          max by (daemon) (
+          label_replace(
+          {__name__=~"(apid|githubd)_ci_health_up"} == 1
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1),
+          "daemon", "$1", "__name__", "(apid|githubd)_ci_health_up")
+          )
+          or on (daemon) ((faas_ci:observation_enabled:by_daemon == 1) * 0)
+      - record: faas_ci:health_readable
+        expr: max(faas_ci:observation_up:by_daemon)
+      - record: faas_ci:observation_status:by_daemon
+        expr: |-
+          ((faas_ci:observation_enabled:by_daemon == 0)) * 0 + 0
+          or on (daemon) ((faas_ci:observation_up:by_daemon == 1)) * 0 + 1
+          or on (daemon) (((faas_ci:observation_enabled:by_daemon == 1) unless on (daemon) (faas_ci:observation_up:by_daemon == 1))) * 0 + 2
+          or on (daemon) label_replace(vector(3), "daemon", "apid", "", "")
+          or on (daemon) label_replace(vector(3), "daemon", "githubd", "", "")
+      - record: faas_ci:worker_enabled:by_worker
+        expr: |-
+          max by (worker) (
+          {__name__=~"(apid|githubd)_ci_worker_enabled"} and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          )
+      - record: faas_ci:queue_worker_enabled:by_queue
+        expr: |-
+          max by (queue) (
+          label_replace(faas_ci:worker_enabled:by_worker{worker="dispatcher"}, "queue", "executions", "", "")
+          or
+          label_replace(faas_ci:worker_enabled:by_worker{worker="retention"}, "queue", "retirement", "", "")
+          or
+          label_replace(faas_ci:worker_enabled:by_worker{worker="execution_checks"}, "queue", "check_retries", "", "")
+          or
+          label_replace(faas_ci:worker_enabled:by_worker{worker=~"metadata_admission|automation_admission|metadata_checks|execution_checks"}, "queue", "$1", "worker", "(.+)")
+          )
+      - record: faas_ci:queue_items:by_queue_condition
+        expr: |-
+          max by (queue, condition) (
+          {__name__=~"(apid|githubd)_ci_queue_items"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:queue_oldest_item_age_seconds:by_queue
+        expr: |-
+          max by (queue) (
+          {__name__=~"(apid|githubd)_ci_queue_oldest_item_age_seconds"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:resource_used:by_resource
+        expr: |-
+          max by (resource) (
+          {__name__=~"(apid|githubd)_ci_resource_used"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:resource_limit:by_resource
+        expr: |-
+          min by (resource) (
+          {__name__=~"(apid|githubd)_ci_resource_limit"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:worker_replicas:by_worker_condition
+        expr: |-
+          max by (worker, condition) (
+          {__name__=~"(apid|githubd)_ci_worker_replicas"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:resource_headroom:by_resource
+        expr: clamp_min(faas_ci:resource_limit:by_resource - faas_ci:resource_used:by_resource, 0)
+      - record: faas_ci:resource_utilization:by_resource
+        expr: faas_ci:resource_used:by_resource / (faas_ci:resource_limit:by_resource > 0)
+      - record: faas_ci:worker_available:by_worker
+        expr: |-
+          ((sum by (worker) (faas_ci:worker_replicas:by_worker_condition{condition=~"healthy|starting"}) > bool 0)
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) * 0))
+          and on () (faas_ci:health_readable == 1)
+      - record: faas_ci:worker_status:by_worker
+        expr: |-
+          (faas_ci:worker_enabled:by_worker == 0)
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="healthy"} > 0)) * 0 + 1
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="starting"} > 0)) * 0 + 2
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="degraded"} > 0)) * 0 + 3
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="blocked"} > 0)) * 0 + 4
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="stalled"} > 0)) * 0 + 5
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="stale"} > 0)) * 0 + 6
+          or on (worker) (faas_ci:worker_enabled:by_worker == 1) * 0 + 7
+          or on (worker) label_replace(vector(7), "worker", "dispatcher", "", "")
+          or on (worker) label_replace(vector(7), "worker", "metadata_admission", "", "")
+          or on (worker) label_replace(vector(7), "worker", "automation_admission", "", "")
+          or on (worker) label_replace(vector(7), "worker", "metadata_checks", "", "")
+          or on (worker) label_replace(vector(7), "worker", "execution_checks", "", "")
+          or on (worker) label_replace(vector(7), "worker", "retention", "", "")
+      - alert: FaasCIHealthUnavailable
+        expr: |-
+          (faas_ci:observation_enabled:by_daemon == 1)
+          unless on (daemon) (faas_ci:observation_up:by_daemon == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: Internal CI health cannot be read
+          description: An observed daemon is configured for CI monitoring but has no successful durable health read. Inspect database access and CI migrations; unavailable evidence must not be interpreted as an empty queue.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+      - alert: FaasCIWorkerUnavailable
+        expr: |-
+          (faas_ci:worker_enabled:by_worker == 1)
+          and on (worker) (faas_ci:worker_available:by_worker == 0)
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: An enabled internal CI worker has no available observation
+          description: No healthy or starting group is observed for an enabled worker. Inspect unknown, stale, stalled, blocked and degraded states, dependency wiring and diagnostic slot capacity before changing work intent.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+      - alert: FaasCILeaseRecoveryStalled
+        expr: |-
+          (faas_ci:queue_items:by_queue_condition{condition="stale_leases"} > 0)
+          and on (queue) (faas_ci:queue_worker_enabled:by_queue == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: Internal CI expired leases are not recovering
+          description: Expired work leases remain while their owning worker is enabled. Inspect worker health and durable execution or delivery state. Preserve attempt identity, fences and native retirement safety; do not force lease or object deletion.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+      - alert: FaasCICheckDeliveryDead
+        expr: |-
+          (faas_ci:queue_items:by_queue_condition{queue=~"metadata_checks|execution_checks",condition="dead"} > 0)
+          and on (queue) (faas_ci:queue_worker_enabled:by_queue == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: Internal CI Check delivery exhausted its retry budget
+          description: A Check outbox contains dead delivery while publication is enabled. Inspect repository authority and the safe failure code. For eligible execution Checks use the bounded audited retry API after fixing the cause; execution work must not be replayed.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+      - alert: FaasCIQuotaPressure
+        expr: |-
+          ((faas_ci:resource_utilization:by_resource{resource=~"active_executions|dispatch_leases"} >= 0.8)
+          and on () (max(faas_ci:worker_enabled:by_worker{worker="dispatcher"}) == 1))
+          or
+          ((faas_ci:resource_utilization:by_resource{resource=~"storage_bytes|storage_objects|storage_journal|storage_io"} >= 0.8)
+          and on () (max(faas_ci:worker_enabled:by_worker{worker=~"dispatcher|retention"}) == 1))
+        for: 10m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: Internal CI global quota is under sustained pressure
+          description: At least 80 percent of an existing global budget is used while its execution or retention path is enabled. Inspect usage and headroom. Permanent storage tombstones remain charged; never delete deduplication or retirement evidence to manufacture capacity.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+
+  - name: faas_app_tasks
+    rules:
+      - record: schedd_app_task_class_observation_healthy
+        expr: |
+          ((schedd_app_task_pending{job="schedd",kind=~"release|manual|cron",class=~"queued|retry_wait|held|deadline_overdue|restoring|running|cancellation_pending|lease_expired|unknown"} >= 0) * 0 + 1)
+          and on (job, instance, kind, class) (schedd_app_task_pending{job="schedd"} < +Inf)
+          and on (job, instance, kind, class) (schedd_app_task_pending{job="schedd"} == floor(schedd_app_task_pending{job="schedd"}))
+          and on (job, instance, kind, class) (schedd_app_task_age_unknown{job="schedd"} >= 0)
+          and on (job, instance, kind, class) (schedd_app_task_age_unknown{job="schedd"} == floor(schedd_app_task_age_unknown{job="schedd"}))
+          and on (job, instance, kind, class) (schedd_app_task_age_unknown{job="schedd"} <= schedd_app_task_pending{job="schedd"})
+          and on (job, instance, kind, class) (schedd_app_task_oldest_boundary_timestamp_seconds{job="schedd"} <= time())
+          and on (job, instance, kind, class)
+            (((schedd_app_task_pending{job="schedd"} > schedd_app_task_age_unknown{job="schedd"})
+              and on (job, instance, kind, class) (schedd_app_task_oldest_boundary_timestamp_seconds{job="schedd"} > 0))
+             or ((schedd_app_task_pending{job="schedd"} == schedd_app_task_age_unknown{job="schedd"})
+                 and on (job, instance, kind, class) (schedd_app_task_oldest_boundary_timestamp_seconds{job="schedd"} == 0)))
+          and on (job, instance) (up{job="schedd"} == 1)
+          and on (job, instance) (schedd_app_task_collection_success{job="schedd"} == 1)
+          and on (job, instance) (schedd_app_task_collection_last_success_timestamp_seconds{job="schedd"} > 0)
+          and on (job, instance) (time() - schedd_app_task_collection_last_success_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (time() - schedd_app_task_collection_last_success_timestamp_seconds{job="schedd"} <= 120)
+          and on (job, instance) ((schedd_app_task_observation_enabled{job="schedd"} == 0) or (schedd_app_task_observation_enabled{job="schedd"} == 1))
+          unless on (job, instance, kind, class) (schedd_app_task_pending{job="schedd",class=~"restoring|retry_wait|held|unknown"} != schedd_app_task_age_unknown{job="schedd",class=~"restoring|retry_wait|held|unknown"})
+      - record: schedd_app_task_observation_healthy
+        expr: |
+          (count by (job, instance) (schedd_app_task_class_observation_healthy == 1) == 27) / 27
+          and on (job, instance) (count by (job, instance) ((schedd_app_task_operations_total{job="schedd",operation=~"claim|sweep|renew|attach_read|restore|running_fence|attach_route|execute|destroy|complete",outcome=~"success|error|canceled|lease_lost|empty|cancellation_pending"} >= 0) and (schedd_app_task_operations_total{job="schedd",operation=~"claim|sweep|renew|attach_read|restore|running_fence|attach_route|execute|destroy|complete",outcome=~"success|error|canceled|lease_lost|empty|cancellation_pending"} < +Inf)) == 60)
+          and on (job, instance) (count by (job, instance) ((schedd_app_task_recovery_total{job="schedd",outcome=~"requeued_restores|failed_runs|cancelled"} >= 0) and (schedd_app_task_recovery_total{job="schedd",outcome=~"requeued_restores|failed_runs|cancelled"} < +Inf)) == 3)
+          and on (job, instance) (count by (job, instance) ((schedd_app_task_results_total{job="schedd",kind=~"release|manual|cron",status=~"succeeded|failed|timed_out|cancelled|queued"} >= 0) and (schedd_app_task_results_total{job="schedd",kind=~"release|manual|cron",status=~"succeeded|failed|timed_out|cancelled|queued"} < +Inf)) == 15)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} >= 0)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} <= 1)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} == floor(schedd_app_task_dispatch_enabled{job="schedd"}))
+          and on (job, instance) (schedd_app_task_runner_running{job="schedd"} >= 0)
+          and on (job, instance) (schedd_app_task_runner_running{job="schedd"} <= 1)
+          and on (job, instance) (schedd_app_task_runner_running{job="schedd"} == floor(schedd_app_task_runner_running{job="schedd"}))
+          and on (job, instance) (schedd_app_task_slots_configured{job="schedd"} >= 1)
+          and on (job, instance) (schedd_app_task_slots_configured{job="schedd"} <= 32)
+          and on (job, instance) (schedd_app_task_slots_configured{job="schedd"} == floor(schedd_app_task_slots_configured{job="schedd"}))
+          and on (job, instance) (schedd_app_task_slots_in_use{job="schedd"} >= 0)
+          and on (job, instance) (schedd_app_task_slots_in_use{job="schedd"} <= 32)
+          and on (job, instance) (schedd_app_task_slots_in_use{job="schedd"} == floor(schedd_app_task_slots_in_use{job="schedd"}))
+          and on (job, instance) (schedd_app_task_slots_in_use{job="schedd"} <= schedd_app_task_slots_configured{job="schedd"})
+          and on (job, instance) (schedd_app_task_claim_last_success_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (schedd_app_task_claim_last_success_timestamp_seconds{job="schedd"} <= time())
+          and on (job, instance) (schedd_app_task_sweep_last_success_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (schedd_app_task_sweep_last_success_timestamp_seconds{job="schedd"} <= time())
+      - record: schedd_app_task_oldest_known_boundary_age_seconds
+        expr: |
+          (((time() - schedd_app_task_oldest_boundary_timestamp_seconds{job="schedd"})
+             and on (job, instance, kind, class) (schedd_app_task_pending{job="schedd"} > schedd_app_task_age_unknown{job="schedd"}))
+           or ((schedd_app_task_pending{job="schedd"} == 0) * 0))
+          and on (job, instance) (schedd_app_task_observation_healthy == 1)
+      - alert: FaasAppTaskTelemetryUnavailable
+        expr: |
+          (up{job="schedd"} == 1)
+          unless on (job, instance)
+            ((schedd_app_task_observation_healthy == 1)
+             or (schedd_app_task_observation_enabled{job="schedd"} == 0))
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_task_telemetry
+          public_status: internal
+        annotations:
+          summary: App-task diagnostics are unavailable
+          description: >-
+            Schedd is scraped but task observations are missing, failed, inconsistent or older than two minutes, or runner gauges and initialized counters are incomplete. Counts and ages are unknown. Check the observer, database, clocks and binary. Intentional observer shutdown is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md
+      - alert: FaasAppTaskRunnerStalled
+        expr: |
+          ((schedd_app_task_runner_running{job="schedd"} == 0)
+           or (time() - schedd_app_task_sweep_last_success_timestamp_seconds{job="schedd"} > 120)
+           or ((schedd_app_task_slots_in_use{job="schedd"} < schedd_app_task_slots_configured{job="schedd"})
+               and on (job, instance) (time() - schedd_app_task_claim_last_success_timestamp_seconds{job="schedd"} > 120)))
+          and on (job, instance) (schedd_app_task_observation_healthy == 1)
+          and on (job, instance) (schedd_app_task_observation_enabled{job="schedd"} == 1)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_task
+          public_status: internal
+        annotations:
+          summary: Enabled app-task runner is not demonstrating progress
+          description: >-
+            Dispatch is enabled but Run is stopped, no successful recovery sweep occurred within two minutes, or free local slots have no successful claim query within two minutes, sustained for five minutes. Empty queries count as success. Fully occupied workers need not claim; they must still sweep. Intentional dispatch opt-out is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md
+      - alert: FaasReleaseTaskQueued
+        expr: |
+          (schedd_app_task_oldest_known_boundary_age_seconds{kind="release",class="queued"} > 300)
+          and on (job, instance) (schedd_app_task_observation_healthy == 1)
+          and on (job, instance) (schedd_app_task_observation_enabled{job="schedd"} == 1)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_task
+          public_status: internal
+        annotations:
+          summary: A claimable release command remains queued
+          description: >-
+            A currently claimable release task has a known eligibility boundary older than five minutes, sustained for five minutes. The boundary includes creation, requeue updates and due retry time. This is not continuous eligibility or a command execution SLO. Retry waits, admission and exclusive holds, running work and disabled dispatch are separate.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md
+      - alert: FaasAppTaskRecoveryOverdue
+        expr: |
+          (schedd_app_task_oldest_known_boundary_age_seconds{class=~"cancellation_pending|lease_expired|deadline_overdue"} > 60)
+          and on (job, instance) (schedd_app_task_observation_healthy == 1)
+          and on (job, instance) (schedd_app_task_observation_enabled{job="schedd"} == 1)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_task
+          public_status: internal
+        annotations:
+          summary: App-task cancellation or lease recovery is overdue
+          description: >-
+            A {{ $labels.kind }} task remains {{ $labels.class }} more than one minute after its durable boundary, sustained for five minutes. Inspect teardown, lease fencing and sweeps. Expired running tasks have uncertain outcomes; do not replay customer commands or bypass their existing work policy.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md
+      - alert: FaasAppTaskEvidenceUnknown
+        expr: |
+          ((schedd_app_task_pending{job="schedd",class="unknown"} > 0)
+           or (schedd_app_task_age_unknown{job="schedd",class=~"queued|running|cancellation_pending|lease_expired|deadline_overdue"} > 0))
+          and on (job, instance) (schedd_app_task_observation_healthy == 1)
+          and on (job, instance) (schedd_app_task_observation_enabled{job="schedd"} == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_task_telemetry
+          public_status: internal
+        annotations:
+          summary: App-task state or timing evidence is incomplete
+          description: >-
+            Fresh observations have contained {{ $labels.kind }} tasks in {{ $labels.class }} with incomplete evidence for 15m. Future, invalid or missing lifecycle times cannot establish age. Expected unknown restoring, retry-wait and held boundaries are excluded. Inspect supported task evidence without rewriting timestamps.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md
+      - alert: FaasAppTaskOperationsFailing
+        expr: |
+          (sum by (job, instance, operation) (rate(schedd_app_task_operations_total{job="schedd",outcome="error"}[5m]))
+           / sum by (job, instance, operation) (rate(schedd_app_task_operations_total{job="schedd",outcome=~"success|empty|error"}[5m])) > 0.1)
+          and on (job, instance, operation) (sum by (job, instance, operation) (increase(schedd_app_task_operations_total{job="schedd",outcome="error"}[5m])) >= 3)
+          and on (job, instance) (schedd_app_task_observation_healthy == 1)
+          and on (job, instance) (schedd_app_task_observation_enabled{job="schedd"} == 1)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_task
+          public_status: internal
+        annotations:
+          summary: App-task coordinator operations are persistently failing
+          description: >-
+            {{ $labels.operation }} errors exceed 10% of non-canceled calls with at least three errors per rolling five-minute window, sustained for five minutes. Customer command exit, timeout and cancellation verdicts are not infrastructure errors. Lease-loss and cancellation-race returns are separate outcomes. Restore errors can include policy or account refusals; inspect bounded logs before assigning cause.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md
+
+  - name: faas_command_cron_admission
+    rules:
+      - record: schedd_command_cron_class_observation_healthy
+        expr: |
+          ((schedd_command_cron_schedules{job="schedd",class=~"due|overlap_due|replacement_wait|deployment_missing|exclusive_due|disabled|suspended|account_held|not_due|unknown"} >= 0) * 0 + 1)
+          and on (job, instance, class) (schedd_command_cron_schedules{job="schedd"} < +Inf)
+          and on (job, instance, class) (schedd_command_cron_schedules{job="schedd"} == floor(schedd_command_cron_schedules{job="schedd"}))
+          and on (job, instance, class) (schedd_command_cron_age_unknown{job="schedd"} >= 0)
+          and on (job, instance, class) (schedd_command_cron_age_unknown{job="schedd"} == floor(schedd_command_cron_age_unknown{job="schedd"}))
+          and on (job, instance, class) (schedd_command_cron_age_unknown{job="schedd"} <= schedd_command_cron_schedules{job="schedd"})
+          and on (job, instance, class) (schedd_command_cron_oldest_due_timestamp_seconds{job="schedd"} <= time())
+          and on (job, instance, class)
+            (((schedd_command_cron_schedules{job="schedd"} > schedd_command_cron_age_unknown{job="schedd"}) and on (job, instance, class) (schedd_command_cron_oldest_due_timestamp_seconds{job="schedd"} > 0))
+             or ((schedd_command_cron_schedules{job="schedd"} == schedd_command_cron_age_unknown{job="schedd"}) and on (job, instance, class) (schedd_command_cron_oldest_due_timestamp_seconds{job="schedd"} == 0)))
+          and on (job, instance) (up{job="schedd"} == 1)
+          and on (job, instance) (schedd_command_cron_collection_success{job="schedd"} == 1)
+          and on (job, instance) (schedd_command_cron_collection_last_success_timestamp_seconds{job="schedd"} > 0)
+          and on (job, instance) (time() - schedd_command_cron_collection_last_success_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (time() - schedd_command_cron_collection_last_success_timestamp_seconds{job="schedd"} <= 120)
+          unless on (job, instance, class) (schedd_command_cron_schedules{job="schedd",class=~"disabled|suspended|account_held|not_due|unknown"} != schedd_command_cron_age_unknown{job="schedd",class=~"disabled|suspended|account_held|not_due|unknown"})
+      - record: schedd_command_cron_observation_healthy
+        expr: |
+          (count by (job, instance) (schedd_command_cron_class_observation_healthy == 1) == 10) / 10
+          and on (job, instance) (count by (job, instance) ((schedd_command_cron_sweeps_total{job="schedd",outcome=~"success|error|canceled"} >= 0) and (schedd_command_cron_sweeps_total{job="schedd",outcome=~"success|error|canceled"} < +Inf)) == 3)
+          and on (job, instance) (count by (job, instance) ((schedd_command_cron_decisions_total{job="schedd",outcome=~"disabled|not_due|account_held|replacement_wait|not_owned|invalid_schedule|lookup_error|store_unavailable|no_live_deployment|canceled|legacy_queued|legacy_skipped|legacy_stale|legacy_error"} >= 0) and (schedd_command_cron_decisions_total{job="schedd",outcome=~"disabled|not_due|account_held|replacement_wait|not_owned|invalid_schedule|lookup_error|store_unavailable|no_live_deployment|canceled|legacy_queued|legacy_skipped|legacy_stale|legacy_error"} < +Inf)) == 14)
+          and on (job, instance) (count by (job, instance) ((schedd_command_cron_admissions_total{job="schedd",outcome=~"queued|exclusive_pending|coalesced|skipped_overlap|missed_deadline|stale|deployment_unavailable|rejected|error|canceled|unknown"} >= 0) and (schedd_command_cron_admissions_total{job="schedd",outcome=~"queued|exclusive_pending|coalesced|skipped_overlap|missed_deadline|stale|deployment_unavailable|rejected|error|canceled|unknown"} < +Inf)) == 11)
+          and on (job, instance) ((schedd_command_cron_observation_enabled{job="schedd"} == 0) or (schedd_command_cron_observation_enabled{job="schedd"} == 1))
+          and on (job, instance) ((schedd_command_cron_sweep_running{job="schedd"} == 0) or (schedd_command_cron_sweep_running{job="schedd"} == 1))
+          and on (job, instance) (schedd_command_cron_sweep_last_start_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_sweep_last_start_timestamp_seconds{job="schedd"} <= time())
+          and on (job, instance) (schedd_command_cron_sweep_last_success_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_sweep_last_success_timestamp_seconds{job="schedd"} <= time())
+          and on (job, instance) (schedd_command_cron_admission_lag_unknown_total{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_admission_lag_unknown_total{job="schedd"} < +Inf)
+          and on (job, instance) (schedd_command_cron_admission_lag_seconds_count{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_admission_lag_seconds_count{job="schedd"} < +Inf)
+          and on (job, instance) (schedd_command_cron_admission_lag_seconds_sum{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_admission_lag_seconds_sum{job="schedd"} < +Inf)
+          and on (job, instance) (schedd_command_cron_sweep_duration_seconds_count{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_sweep_duration_seconds_count{job="schedd"} < +Inf)
+          and on (job, instance) (schedd_command_cron_sweep_duration_seconds_sum{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_sweep_duration_seconds_sum{job="schedd"} < +Inf)
+      - record: schedd_command_cron_oldest_known_due_age_seconds
+        expr: |
+          (((time() - schedd_command_cron_oldest_due_timestamp_seconds{job="schedd"}) and on (job, instance, class) (schedd_command_cron_schedules{job="schedd"} > schedd_command_cron_age_unknown{job="schedd"}))
+           or ((schedd_command_cron_schedules{job="schedd"} == 0) * 0))
+          and on (job, instance) (schedd_command_cron_observation_healthy == 1)
+      - alert: FaasCommandCronTelemetryUnavailable
+        expr: |
+          (up{job="schedd"} == 1)
+          unless on (job, instance) ((schedd_command_cron_observation_healthy == 1) or (schedd_command_cron_observation_enabled{job="schedd"} == 0))
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: command_cron_telemetry
+          public_status: internal
+        annotations:
+          summary: Command-cron admission diagnostics are unavailable
+          description: >-
+            Schedd is scraped but command schedule observations are missing, failed, inconsistent or older than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown. Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+      - alert: FaasCommandCronSweepStalled
+        expr: |
+          (time() - schedd_command_cron_sweep_last_success_timestamp_seconds{job="schedd"} > 180)
+          and on (job, instance) (schedd_command_cron_observation_healthy == 1)
+          and on (job, instance) (schedd_command_cron_observation_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: command_cron
+          public_status: internal
+        annotations:
+          summary: Cron scanning is not demonstrating progress
+          description: >-
+            No actual cron scan with successful enumeration and owner lookups completed within three minutes, sustained for five minutes. Empty scans count as success. Shared scans include inline HTTP cron work; this alone does not identify a command runner failure.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+      - alert: FaasCommandCronDecisionOverdue
+        expr: |
+          (schedd_command_cron_oldest_known_due_age_seconds{class=~"due|overlap_due|deployment_missing|exclusive_due"} > 300)
+          and on (job, instance) (schedd_command_cron_observation_healthy == 1)
+          and on (job, instance) (schedd_command_cron_observation_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: command_cron
+          public_status: internal
+        annotations:
+          summary: A command schedule has unconsumed due history
+          description: >-
+            A {{ $labels.class }} command schedule has a first unconsumed nominal boundary older than five minutes, sustained for five minutes. This is pending admission or a policy decision, not continuous execution eligibility or a missed delivery SLO. Inspect cursor, deadline, overlap, deployment and exclusive policy before acting.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+      - alert: FaasCommandCronReplacementWaiting
+        expr: |
+          (schedd_command_cron_oldest_known_due_age_seconds{class="replacement_wait"} > 300)
+          and on (job, instance) (schedd_command_cron_observation_healthy == 1)
+          and on (job, instance) (schedd_command_cron_observation_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: command_cron
+          public_status: internal
+        annotations:
+          summary: A replacement schedule is waiting on prior work
+          description: >-
+            An unbound replacement schedule still has active prior tasks and old unconsumed due history for five minutes. Age is nominal schedule history, not cancellation duration. Inspect task cancellation, leases and teardown; do not replay commands or bypass fencing.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+      - alert: FaasCommandCronEvidenceUnknown
+        expr: |
+          ((schedd_command_cron_schedules{job="schedd",class="unknown"} > 0) or (schedd_command_cron_age_unknown{job="schedd",class=~"due|overlap_due|replacement_wait|deployment_missing|exclusive_due"} > 0))
+          and on (job, instance) (schedd_command_cron_observation_healthy == 1)
+          and on (job, instance) (schedd_command_cron_observation_enabled{job="schedd"} == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: command_cron_telemetry
+          public_status: internal
+        annotations:
+          summary: Command schedule timing or policy evidence is incomplete
+          description: >-
+            Fresh observations have contained {{ $labels.class }} command schedules with incomplete timing or policy evidence for 15m. Disabled, suspended, held and not-due schedules intentionally have unknown age and are excluded. Inspect supported durable evidence without rewriting cursors.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+      - alert: FaasCommandCronAdmissionErrors
+        expr: |
+          (sum by (job, instance) (increase(schedd_command_cron_admissions_total{job="schedd",outcome="error"}[5m]))
+           + sum by (job, instance) (increase(schedd_command_cron_decisions_total{job="schedd",outcome=~"lookup_error|store_unavailable|legacy_error"}[5m]))) >= 3
+          and on (job, instance) (schedd_command_cron_observation_healthy == 1)
+          and on (job, instance) (schedd_command_cron_observation_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: command_cron
+          public_status: internal
+        annotations:
+          summary: Command-cron admission calls are persistently failing
+          description: >-
+            At least three admission or pre-admission store errors occurred per rolling five-minute window, sustained for five minutes. Policy rejections, overlap skips, coalescing, missed deadlines, deployment-unavailable returns and parent cancellation are separate outcomes. Inspect bounded logs before attributing infrastructure failure.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+
+  # ─────────────────────────────────────────────────────────────────
+  # Account dashboard rollups (hunt #10, 2026-10-15)
+  # ─────────────────────────────────────────────────────────────────
+  #
+  # The account analytics panel sums the gateway request counter and
+  # latency histogram per app over windows up to 15d. The raw series
+  # carry one copy per gateway instance and node; over 24h the latency
+  # buckets (about 11.5k series on production-us) took 17 s on the
+  # 2 vCPU control plane against apid's 5 s budget, so every window
+  # past an hour came back degraded. These rules keep only the labels
+  # the panel groups on. pkg/appmetrics.AccountIncreaseQuery sums the
+  # 5m rollup for 6h and 24h windows and the hourly one for 7d and 15d.
+  # Each evaluation records the increase since the previous one, so a
+  # sum_over_time across a window is the increase over that window.
+  - name: faas_gateway_account_rollups_5m
+    interval: 5m
+    rules:
+      - record: app_class:gateway_request_duration_seconds_count:increase5m
+        expr: sum by (app, class) (increase(gateway_request_duration_seconds_count[5m]))
+      - record: app_class_le:gateway_request_duration_seconds_bucket:increase5m
+        expr: sum by (app, class, le) (increase(gateway_request_duration_seconds_bucket[5m]))
+
+  - name: faas_gateway_account_rollups_1h
+    interval: 1h
+    rules:
+      - record: app_class:gateway_request_duration_seconds_count:increase1h
+        expr: sum by (app, class) (increase(gateway_request_duration_seconds_count[1h]))
+      - record: app_class_le:gateway_request_duration_seconds_bucket:increase1h
+        expr: sum by (app, class, le) (increase(gateway_request_duration_seconds_bucket[1h]))
+
+  # Starter-reported protocol signals, not host-verified authorization outcomes.
+  # No alert is inferred from event silence: idle apps emit no protocol events.
+  - name: faas_mcp_protocol
+    interval: 30s
+    rules:
+      - alert: FaasMCPProtocolHighErrorRate
+        expr: |
+          (
+            sum by (app_id) (increase(vmmd_mcp_protocol_requests_total{outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))
+            / sum by (app_id) (increase(vmmd_mcp_protocol_requests_total[5m]))
+          ) > 0.1
+          and on (app_id) (sum by (app_id) (increase(vmmd_mcp_protocol_requests_total[5m])) >= 20)
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: mcp_protocol
+          public_status: internal
+        annotations:
+          summary: "MCP protocol failures exceed ten percent"
+          description: "Starter-reported RPC/tool failures or timeouts exceed ten percent with at least twenty observed calls in each five-minute window. Cancellations are tracked separately. Review the app's MCP performance dashboard and logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+      - alert: FaasMCPProtocolSlowExecution
+        expr: |
+          histogram_quantile(0.95, sum by (app_id, le) (rate(vmmd_mcp_protocol_execution_seconds_bucket[5m]))) > 5
+          and on (app_id) (sum by (app_id) (increase(vmmd_mcp_protocol_execution_seconds_count[5m])) >= 20)
+        for: 10m
+        labels:
+          severity: warn
+          component: vmmd
+          family: mcp_protocol
+          public_status: internal
+        annotations:
+          summary: "MCP execution p95 exceeds five seconds"
+          description: "At least twenty response-construction measurements per five-minute window show sustained slow execution. This excludes SSE delivery lifetime and background task execution."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+      - alert: FaasMCPProtocolAggregationCapacity
+        expr: sum by (job) (increase(vmmd_mcp_protocol_capacity_dropped_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: vmmd
+          family: mcp_protocol
+          public_status: internal
+        annotations:
+          summary: "MCP protocol aggregation is dropping observations"
+          description: "The bounded per-host app table is full. Performance charts may be incomplete. Inspect active app placement and aggregation capacity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+      - alert: FaasMCPTelemetryHeartbeatLost
+        expr: |
+          (time() - vmmd_mcp_telemetry_heartbeat_timestamp_seconds > 120)
+          and (time() - vmmd_mcp_telemetry_instance_started_timestamp_seconds > 180)
+          and (vmmd_mcp_telemetry_loss_alert_enabled == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: vmmd
+          family: mcp_protocol
+          public_status: internal
+        annotations:
+          summary: "MCP starter telemetry heartbeats stopped"
+          description: "An opted-in executing instance has stopped reporting heartbeats after its startup grace period. This indicates missing process telemetry, independently of MCP readiness and tool success. Paused and retired host log lifecycles are excluded."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+
+  - name: faas-internal-mail
+    rules:
+      - alert: InternalMailMonitoringUnavailable
+        expr: '(maild_mail_monitoring_up == 0) or (time() - maild_mail_monitoring_collected_at_seconds > 120)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail monitoring is unavailable or stale"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailStatisticsUnavailable
+        expr: '(maild_mail_stats_up == 0) or (maild_mail_postfix_stats_up == 0)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail database or Postfix statistics are unavailable"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailQueueStalled
+        expr: '(maild_mail_oldest_pending_seconds > 300) or (max without (kind) (maild_mail_postfix_oldest_seconds{kind="delivery"}) > 900)'
+        for: 5m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail delivery queue is aging"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailReportsStuck
+        expr: '(max without (kind) (maild_mail_postfix_oldest_seconds{kind="report"}) > 120) or (maild_mail_oldest_report_wait_seconds > 7200)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail reports are waiting too long"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailUncertainSubmission
+        expr: 'max without (state) (maild_mail_recipients{state="uncertain"}) > 0'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail has an uncertain SMTP submission"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailBounceRateHigh
+        expr: '(sum without (kind) (maild_mail_outcomes_last_day{kind="bounced"}) / clamp_min(sum without (kind) (maild_mail_outcomes_last_day{kind=~"accepted|bounced"}), 1) > 0.2) and (sum without (kind) (maild_mail_outcomes_last_day{kind=~"accepted|bounced"}) >= 5)'
+        for: 5m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail bounces exceed the pilot threshold"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailComplaint
+        expr: 'sum without (kind) (maild_mail_outcomes_last_day{kind="complained"}) > 0'
+        for: 1m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail received a complaint"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailRetentionFailed
+        expr: 'maild_mail_retention_enabled == 1 and (maild_mail_retention_last_run_up == 0 or maild_mail_retention_stats_up == 0 or time() - maild_mail_retention_last_attempt_seconds > 7200)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail payload retention is failing or stale"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailDKIMRotationFailed
+        expr: |
+          (maild_mail_dkim_rotation_enabled == 1)
+          and on(job,instance)
+          (
+            (maild_mail_domain_lifecycle_stats_up == 0)
+            or (maild_mail_dkim_failed_keys > 0)
+            or (maild_mail_dkim_oldest_staged_seconds > 86400)
+          )
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail DKIM rotation is failing or stalled"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailDomainAuthorizationFailed
+        expr: |
+          (maild_mail_domain_reverify_enabled == 1)
+          and on(job,instance)
+          (
+            (maild_mail_domain_lifecycle_stats_up == 0)
+            or (maild_mail_domain_paused > 0)
+            or (maild_mail_domain_stale > 0)
+            or (maild_mail_domain_lookup_unavailable > 0)
+            or (maild_mail_domain_check_last_run_up == 0)
+            or ((time() - maild_mail_domain_check_last_attempt_seconds) > 180)
+          )
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail domain authorization is failing or stale"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"

@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -20,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|delete|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|cutover>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|delete|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -58,6 +59,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresBindings(args[1:])
 	case "attach", "bind":
 		return cmdPostgresAttach(args[1:])
+	case "live":
+		return cmdPostgresLive(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown postgres subcommand %q\n", args[0])
 		return 1
@@ -71,10 +74,10 @@ func cmdPostgres(args []string) int {
 func cmdPostgresAttach(args []string) int {
 	args = normalizePostgresAttachArgs(args)
 	fs := newFlagSet("postgres attach", flag.ContinueOnError)
-	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise production)")
+	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise default)")
 	environmentKey := fs.String("env", "DATABASE_URL", "environment variable name")
 	fs.Var(newStringAlias(environmentKey), "environment-key", "environment variable name")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|auth")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -91,7 +94,7 @@ func cmdPostgresAttach(args []string) int {
 	}
 	if fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" ||
 		api.ValidateScope(*scope) != nil || api.ValidateEnvKey(*environmentKey) != nil || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration|data_api]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration|data_api|auth]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -187,7 +190,7 @@ func cmdPostgresUsage(args []string) int {
 	}
 	_, _ = fmt.Fprintln(osStdout, "managed postgres usage")
 	_, _ = fmt.Fprintf(osStdout, "  period_start:                 %s\n", result.PeriodStart.UTC().Format("2006-01-02"))
-	_, _ = fmt.Fprintf(osStdout, "  observed_at:                  %s\n", formatPostgresObservedAt(result.ObservedAt))
+	_, _ = fmt.Fprintf(osStdout, "  observed_at:                  %s\n", postgresUsageObservedLabel(result.ObservedAt, result.Fresh))
 	_, _ = fmt.Fprintf(osStdout, "  policy_enabled:               %t\n", result.PolicyEnabled)
 	_, _ = fmt.Fprintf(osStdout, "  fresh:                        %t\n", result.Fresh)
 	_, _ = fmt.Fprintf(osStdout, "  guardrail_state:              %s\n", result.GuardrailState)
@@ -234,6 +237,18 @@ func formatIECBytes(value int64) string {
 		size, unit = size/1024, unit+1
 	}
 	return fmt.Sprintf("%.1f %s", size, units[unit])
+}
+
+// postgresUsageObservedLabel explains a missing observation on a fresh
+// summary: fresh means no observation is overdue, which also holds before the
+// first one, and "never" next to "fresh: true" read as a contradiction
+// (Snapbox SB-12).
+func postgresUsageObservedLabel(observedAt *time.Time, fresh bool) string {
+	label := formatPostgresObservedAt(observedAt)
+	if label == "never" && fresh {
+		return "never (no usage metered yet; nothing is overdue)"
+	}
+	return label
 }
 
 func formatPostgresObservedAt(observedAt *time.Time) string {
@@ -451,7 +466,7 @@ func cmdPostgresBindingsCreate(args []string) int {
 	app := fs.String("app", "", "app ID (required)")
 	scope := fs.String("scope", "", "environment scope (required)")
 	environmentKey := fs.String("environment-key", "", "environment variable name (required)")
-	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api")
+	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api|auth")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -459,7 +474,7 @@ func cmdPostgresBindingsCreate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || *app == "" || *scope == "" || *environmentKey == "" || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --scope SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --scope SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api|auth]", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -513,9 +528,16 @@ func cmdPostgresBindingsRotate(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	before, beforeErr := client.GetManagedPostgresBinding(context.Background(), id)
 	result, err := client.RotateManagedPostgresBinding(context.Background(), id)
 	if err != nil {
-		return printErr("Could not rotate PostgreSQL binding", err)
+		adopted, ok := adoptRotationAfterUncertainError(context.Background(), client, err, id, before, beforeErr)
+		if !ok {
+			return printErr("Could not rotate PostgreSQL binding", err)
+		}
+		result = adopted
+	} else if beforeErr == nil && before.RotationPending && result.CredentialGeneration == before.CredentialGeneration {
+		PrintWarn(osStderr, "A rotation was already in progress (generation %d); this call joined it instead of starting another.", result.CredentialGeneration)
 	}
 	timedOut := false
 	if waitOptions.Wait {
@@ -590,16 +612,25 @@ var postgresFlagVocab = map[string][]string{
 	"access":       {"read_write", "read_only", "migration", "data_api"},
 }
 
+// postgresVocab is a flag's vocabulary. The access mode of application Auth,
+// a dark launch (unreleased.go), joins it only while Auth is turned on.
+func postgresVocab(name string) []string {
+	if name == "access" && applicationAuthCLI() {
+		return append(slices.Clone(postgresFlagVocab[name]), "auth")
+	}
+	return postgresFlagVocab[name]
+}
+
 func postgresServiceClassOK(value string) bool {
-	return slices.Contains(postgresFlagVocab["class"], value)
+	return slices.Contains(postgresVocab("class"), value)
 }
 
 func postgresAvailabilityOK(value string) bool {
-	return slices.Contains(postgresFlagVocab["availability"], value)
+	return slices.Contains(postgresVocab("availability"), value)
 }
 
 func postgresAccessOK(value string) bool {
-	return slices.Contains(postgresFlagVocab["access"], value)
+	return slices.Contains(postgresVocab("access"), value)
 }
 
 // invalidPostgresChoice names the first enumerated flag whose value is outside
@@ -608,7 +639,7 @@ func postgresAccessOK(value string) bool {
 func invalidPostgresChoice(command string, flagValues ...string) bool {
 	for i := 0; i+1 < len(flagValues); i += 2 {
 		name, value := flagValues[i], flagValues[i+1]
-		if vocab := postgresFlagVocab[name]; !slices.Contains(vocab, value) {
+		if vocab := postgresVocab(name); !slices.Contains(vocab, value) {
 			printCommandValidation(os.Stderr, "gregale %s: invalid --%s %q (want %s)\n", command, name, value, strings.Join(vocab, "|"))
 			return true
 		}
@@ -682,4 +713,24 @@ func formatPostgresDuration(seconds int64) string {
 		return strconv.FormatInt(seconds/day, 10) + "d"
 	}
 	return strconv.FormatInt(seconds, 10) + "s"
+}
+
+// adoptRotationAfterUncertainError recovers a rotation whose response was
+// lost. On production-us `bindings rotate --wait` failed with "Could not reach
+// Gregale" after 26.6 s while the rotation had committed and the running app
+// had already switched to the new role (live test 2026-10-14). Only a
+// server-side or transport failure is uncertain; a generation past the one
+// read before the call is this rotation.
+func adoptRotationAfterUncertainError(ctx context.Context, client interface {
+	GetManagedPostgresBinding(context.Context, string) (api.ManagedPostgresBinding, error)
+}, err error, id string, before api.ManagedPostgresBinding, beforeErr error) (api.ManagedPostgresBinding, bool) {
+	var apiErr *APIError
+	if beforeErr != nil || errors.As(err, &apiErr) && apiErr.Problem.Status < 500 {
+		return api.ManagedPostgresBinding{}, false
+	}
+	now, getErr := client.GetManagedPostgresBinding(ctx, id)
+	if getErr != nil || now.CredentialGeneration <= before.CredentialGeneration {
+		return api.ManagedPostgresBinding{}, false
+	}
+	return now, true
 }

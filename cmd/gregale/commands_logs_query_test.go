@@ -52,7 +52,7 @@ func TestCmdLogsHTTPFiltersUseRequestDatabase(t *testing.T) {
 		}
 		gotQuery = r.URL.Query()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"since":"15m","complete":true,"requests":[{"id":"row-1","deployment_id":"dep-1","route":"/checkout","method":"POST","status":500,"latency_ms":123,"count":2,"cold_boot":true,"request_id":"req_28372","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","received_at":"2026-09-22T11:59:00Z"}]}`)
+		_, _ = fmt.Fprint(w, `{"since":"15m","complete":true,"requests":[{"id":"row-1","deployment_id":"dep-1","route":"POST /checkout","method":"POST","status":500,"latency_ms":123,"count":2,"cold_boot":true,"request_id":"req_28372","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","received_at":"2026-09-22T11:59:00Z"}]}`)
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
@@ -63,17 +63,17 @@ func TestCmdLogsHTTPFiltersUseRequestDatabase(t *testing.T) {
 	osStdout = &stdout
 	t.Cleanup(func() { osStdout = oldOut })
 
-	if code := cmdLogs([]string{"myapp", "--status", "500", "--route", "/checkout", "--since", "15m"}); code != 0 {
+	if code := cmdLogs([]string{"myapp", "--status", "500", "--route", "POST /checkout", "--since", "15m"}); code != 0 {
 		t.Fatalf("cmdLogs exit = %d", code)
 	}
 	for key, want := range map[string]string{
-		"status": "500", "route": "/checkout", "since": "15m", "limit": "100",
+		"status": "500", "route": "POST /checkout", "since": "15m", "limit": "100",
 	} {
 		if got := gotQuery.Get(key); got != want {
 			t.Errorf("query %s = %q, want %q", key, got, want)
 		}
 	}
-	for _, want := range []string{"http", "status=500", `route="/checkout"`, "request=req_28372", "trace=4bf92f3577b34da6a3ce929d0e0e4736", "count=2", "cold_boot=true"} {
+	for _, want := range []string{"http", "status=500", `route="POST /checkout"`, "request=req_28372", "trace=4bf92f3577b34da6a3ce929d0e0e4736", "count=2", "cold_boot=true"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("output %q missing %q", stdout.String(), want)
 		}
@@ -83,6 +83,13 @@ func TestCmdLogsHTTPFiltersUseRequestDatabase(t *testing.T) {
 func TestCmdLogsRelativeSinceReachesRuntimeAsTimestamp(t *testing.T) {
 	var gotSince string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// An explicit window first lists instances so parked ones are read
+		// from the retained archive (H10-100); none are parked here.
+		if r.URL.Path == "/v1/apps/myapp/instances" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `[]`)
+			return
+		}
 		if r.URL.Path != "/v1/apps/myapp/logs" {
 			t.Errorf("path = %q, want runtime log endpoint", r.URL.Path)
 		}
@@ -294,6 +301,7 @@ func TestCmdLogsRejectsInvalidHTTPFiltersBeforeNetwork(t *testing.T) {
 		{"myapp", "--trace", "not-a-trace-id"},
 		{"myapp", "--request", "req_1", "--trace", "4bf92f3577b34da6a3ce929d0e0e4736"},
 		{"myapp", "--source", "database"},
+		{"myapp", "--route", "/checkout"},
 	} {
 		if code := cmdLogs(args); code != 2 {
 			t.Errorf("cmdLogs(%v) = %d, want 2", args, code)
@@ -301,5 +309,54 @@ func TestCmdLogsRejectsInvalidHTTPFiltersBeforeNetwork(t *testing.T) {
 	}
 	if got := hits.Load(); got != 0 {
 		t.Fatalf("invalid filters made %d network request(s)", got)
+	}
+}
+
+// TestValidateHTTPLogRouteNamesTheLabelForm covers H10-44: request telemetry
+// stores "METHOD /path" labels, so a bare path matched nothing and the command
+// printed nothing. TestCmdLogsRejectsInvalidHTTPFiltersBeforeNetwork pins the
+// usage exit; this pins the message.
+func TestValidateHTTPLogRouteNamesTheLabelForm(t *testing.T) {
+	for _, route := range []string{"", "GET /orders/{id}", "POST /realtime/connect"} {
+		if err := validateHTTPLogRoute(route); err != nil {
+			t.Errorf("validateHTTPLogRoute(%q) = %v, want nil", route, err)
+		}
+	}
+	err := validateHTTPLogRoute("/realtime/connect")
+	if err == nil {
+		t.Fatal("validateHTTPLogRoute accepted a bare path")
+	}
+	for _, want := range []string{`"GET /realtime/connect"`, `"POST /realtime/connect"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %s", err, want)
+		}
+	}
+}
+
+// TestCmdLogsHTTPEmptyResultSaysSo covers H10-44: a filter that matches no
+// request used to print nothing at all, indistinguishable from a hang or a
+// broken pipe. Text output now says so on stderr; JSON output stays empty.
+func TestCmdLogsHTTPEmptyResultSaysSo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"since":"15m","complete":true,"requests":[]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+
+	var stdout, stderr bytes.Buffer
+	oldOut, oldErr := osStdout, osStderr
+	osStdout, osStderr = &stdout, &stderr
+	t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
+
+	if code := cmdLogs([]string{"myapp", "--status", "418", "--since", "15m"}); code != 0 {
+		t.Fatalf("cmdLogs exit = %d, stderr %q", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "No HTTP requests matched") {
+		t.Errorf("stderr = %q, want the empty-result line", stderr.String())
 	}
 }

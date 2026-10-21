@@ -42,6 +42,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -61,7 +62,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
-	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/edgewaf"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -69,7 +69,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/activity"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
-	"github.com/onebox-faas/faas/pkg/gateway/egressgrpc"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
@@ -654,7 +653,7 @@ func sanitizedReplayForwardHeaders(rule gateway.MirrorRuleRow, metadata map[stri
 	for _, key := range append(append([]string(nil), api.MirrorAlwaysStrippedHeaders...), rule.RedactHeaders...) {
 		blocked[http.CanonicalHeaderKey(key)] = struct{}{}
 	}
-	for _, key := range []string{"Host", "Content-Length", "Transfer-Encoding", "Connection"} {
+	for _, key := range []string{"Host", "Content-Length", "Transfer-Encoding", "Connection", state.EventAcknowledgmentTokenHeader} {
 		blocked[http.CanonicalHeaderKey(key)] = struct{}{}
 	}
 	out := make(map[string]string)
@@ -819,13 +818,20 @@ func (a *synthAdapter) restoreDurableQueueIdentity(ctx context.Context, appID st
 	if stored.ID != inv.ID || stored.AppID != appID ||
 		(stored.Source != state.InvocationQueue && stored.Source != state.InvocationDelayedTask) ||
 		stored.State != state.InvocationDispatching || stored.Attempts != inv.Attempts ||
-		stored.ReplayGeneration != inv.ReplayGeneration || !bytes.Equal(stored.Payload, inv.Payload) {
+		stored.ReplayGeneration != inv.ReplayGeneration || stored.LeaseExpiresAt == nil || !stored.LeaseExpiresAt.After(time.Now()) || !bytes.Equal(stored.Payload, inv.Payload) {
 		return inv, state.ErrConflict
 	}
 	inv.AccountID = stored.AccountID
 	inv.PlatformTenantID = stored.PlatformTenantID
 	inv.DeploymentScope = stored.DeploymentScope
 	inv.QueueBindingID = stored.QueueBindingID
+	// Named bound work must enter the environment resolver as queue work.
+	// The ESM transport omits its queue identity; all claim and payload checks
+	// above apply before recovering the durable origin. Unbound/delayed ESM
+	// deliveries retain their existing transport semantics.
+	if stored.Source == state.InvocationQueue && stored.QueueBindingID != "" {
+		inv.Source, inv.QueueName = state.InvocationQueue, stored.QueueName
+	}
 	return inv, nil
 }
 
@@ -929,6 +935,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
+	applyInvocationAttemptHeaders(req.Header, inv)
 	if state.InvocationHasOperation(inv) {
 		var proof map[string]string
 		if err := json.Unmarshal(inv.Headers, &proof); err != nil {
@@ -1075,6 +1082,9 @@ type runDeps struct {
 	egressGRPC *egressGRPCListener
 	// Tests use a private ledger; an empty value retains the production path.
 	egressPendingPath string
+	// onHandoff stops node-level work run() started before runWithDeps once
+	// a hand-off's successor serves (ADR-1736).
+	onHandoff []func()
 	// lastSeen flushes per-instance last_request_at to schedd (spec §4.1). nil in
 	// tests (the wake/routing path doesn't need it); production wires the
 	// schedFlushSink.
@@ -1339,8 +1349,8 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		listen:       net.Listen,
-		listenPacket: net.ListenPacket,
+		listen:       wire.ListenInherited,
+		listenPacket: wire.ListenPacketInherited,
 		newSrv:       defaultServer,
 		backend:      unwiredBackend{},
 		controlAddr:  controlAddr,
@@ -1435,6 +1445,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd: load schedd TLS: %w", err)
 	}
 	deps := defaultDeps()
+	// handoffCtx carries the work that speaks for this node's gateway rather
+	// than for one request: a hand-off ends it here and the successor takes it
+	// over (ADR-1736). Requests and their sinks keep ctx.
+	handoffCtx, endHandoffWork := context.WithCancel(ctx)
+	defer endHandoffWork()
+	deps.onHandoff = append(deps.onHandoff, endHandoffWork)
 	// Issue #477 / ADR-079: resolve the host key directory the
 	// secretbox unsealer reads from. Mirrors the FAAS_HOST_KEY_PATH
 	// convention cmd/vmmd + cmd/meterd use (same env var so an
@@ -1764,8 +1780,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if runtimeDrainEnabled {
 			repairStore = gatewayconfirmation.DrainRepair{Store: pgStore, Tracker: runtimeActivity}
 		}
-		go gatewayconfirmation.Run(ctx, repairStore, backend, log)
-		go gatewayconfirmation.RunHeartbeat(ctx, pgStore, runtimeGatewaySlot, runtimeGatewaySession, log)
+		go gatewayconfirmation.Run(handoffCtx, repairStore, backend, log)
+		go gatewayconfirmation.RunHeartbeat(handoffCtx, pgStore, runtimeGatewaySlot, runtimeGatewaySession, log)
 	}
 	deps.backend = backend
 	// Flush per-instance last_request_at to schedd so its idle reaper sees
@@ -2077,7 +2093,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// tick, so a durable hot enable takes effect without restarting
 	// gatewayd-internal.
 	renewer := gateway.NewSurfaceCertRenewer(pgStore, log).SetEnabled(tenantSurfacesFlag.Load)
-	go renewer.Run(ctx)
+	go renewer.Run(handoffCtx)
 
 	// ADR-132: routing and certificate lifecycle consume the same durable
 	// runtime flag as apid. The watcher applies only acknowledged values and
@@ -2526,6 +2542,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
+	// handoffCtx carries the work that speaks for this node's gateway rather
+	// than for one request: a hand-off ends it here and the successor takes it
+	// over (ADR-1736). Requests and their sinks keep ctx.
+	handoffCtx, endHandoffWork := context.WithCancel(ctx)
+	defer endHandoffWork()
+	stores := &generationStores{log: log}
+	defer stores.close()
 	var metricsRegisterer prometheus.Registerer
 	var metricPrefix string
 	if deps.opsMetrics != nil {
@@ -2708,14 +2731,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Limiter on its noop backend — behaviour unchanged from
 	// pre-Phase-4. mode = "central" wires the production
 	// PGRateLimitBackend + the LISTEN-side invalidator (C4).
-	if deps.config != nil && deps.config.RateLimit.Mode == "central" {
-		backend, rps := buildCentralRateLimitBackend(deps.pool, log)
-		if backend != nil {
+	if deps.config != nil {
+		leaseCfg, err := deps.config.RateLimit.leaseConfig()
+		if err != nil {
+			return fmt.Errorf("gatewayd-internal: %w", err)
+		}
+		if deps.config.RateLimit.Mode == "central" {
+			backend, rps := buildCentralRateLimitBackend(deps.pool, log)
+			if backend == nil {
+				return fmt.Errorf("gatewayd-internal: [ratelimit] mode = \"central\" requires a Postgres pool")
+			}
 			handler.WithCentralBackend(backend)
+			// ADR-1520: spend central tokens from local leases.
+			if deps.config.RateLimit.Lease {
+				handler.WithRateLimitLeasing(leaseCfg)
+			}
 			log.Info("gatewayd-internal: rate-limit central mode armed",
-				"rps_resolver", rpsKind(rps))
-		} else {
-			return fmt.Errorf("gatewayd-internal: [ratelimit] mode = \"central\" requires a Postgres pool")
+				"rps_resolver", rpsKind(rps), "lease", deps.config.RateLimit.Lease)
 		}
 	}
 	// Exact pre-auth routes opt into a shared source budget independently of
@@ -2899,6 +2931,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if hitStore, ok := any(deps.pgStore).(state.EdgeRuleHitStore); ok && deps.pgStore != nil {
 		hitCounter := newEdgeRuleHitCounter()
 		handler.WithEdgeRuleHitRecorder(hitCounter)
+		// ADR-831 amendment 5: off-path WAF detections become events too.
+		wafInspector.WithEventRecorder(hitCounter)
 		go hitCounter.run(ctx, hitStore, log)
 	}
 	// PR-B — arm the per-rule JSON-Schema validator that
@@ -2960,11 +2994,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if !isUnixSocketPath(egressGRPCSocket) && deps.egressTLS == nil {
 		return fmt.Errorf("gatewayd: egress target %q is non-unix but egress_tls_* is empty (set egress_tls_cert_path / key_path / ca_path or point the target at a unix socket for single-box mode)", egressGRPCSocket)
 	}
-	egressPendingPath := deps.egressPendingPath
-	if egressPendingPath == "" {
-		egressPendingPath = egressgrpc.DefaultPendingPath
-	}
-	egressGRPCSrv, err := egressgrpc.NewPersistentServer(egressSink, log, egressPendingPath)
+	egressPendingPath := gatewayEgressPendingPath(deps.egressPendingPath, osGetenv)
+	egressGRPCSrv, err := stores.openEgress(egressSink, egressPendingPath)
 	if err != nil {
 		return fmt.Errorf("gatewayd: open durable egress replay ledger: %w", err)
 	}
@@ -3052,7 +3083,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Financial usage has a separate, fsynced gateway outbox. Open it before
 	// accepting traffic even when the optional request debugger is disabled.
 	usageRoot := envOrGateway("FAAS_CONSUMER_USAGE_OUTBOX_ROOT", usageoutbox.DefaultRoot)
-	usageQueue, usageErr := usageoutbox.Open(usageRoot, usageoutbox.DefaultMaxBytes)
+	usageQueue, usageErr := stores.openUsage(usageRoot)
 	if usageErr != nil {
 		return fmt.Errorf("gatewayd: open consumer usage outbox: %w", usageErr)
 	}
@@ -3067,7 +3098,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	handler.WithUsageOutbox(usageQueue)
-	go deliverConsumerUsage(ctx, usageQueue, usageTarget, usageTLS, log, handler.Metrics())
+	// The outbox's slot returns home only after delivery stops (stores.close
+	// runs after this defer).
+	usageCtx, stopUsageDelivery := context.WithCancel(ctx)
+	usageDelivered := make(chan struct{})
+	go func() {
+		defer close(usageDelivered)
+		deliverConsumerUsage(usageCtx, usageQueue, usageTarget, usageTLS, log, handler.Metrics())
+	}()
+	defer func() { stopUsageDelivery(); <-usageDelivered }()
+	stores.adopt()
+	go stores.adoptLoop(handoffCtx)
 
 	// ADR-127 production debugger — request_telemetry data plane.
 	// Wires the recorder into Handler.observe + launches the
@@ -3075,9 +3116,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Unix socket; split-box deployments reuse the private mTLS AppErrors
 	// endpoint, which is served by the same apid gRPC server.
 	// The exact request-ID journal is independent of this optional,
-	// sampled telemetry stream. It is written synchronously before guest
-	// work so a debugger-enabled request can always be looked up by its
-	// public x-faas-request-id.
+	// sampled telemetry stream, so a debugger-enabled request can be looked
+	// up by its public x-faas-request-id. It is written asynchronously
+	// (ADR-634) in batches (ADR-1521).
 	journalTarget := cfg.GetRequestTelemetryTarget(osGetenv)
 	journalTLS, journalTLSErr := cfg.LoadAppErrorsTLS()
 	if journalTLSErr != nil {
@@ -3085,29 +3126,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	journalClient, journalDialErr := apidgrpc.DialRequestTelemetry(ctx, journalTarget, journalTLS)
 	if journalDialErr != nil {
-		log.Warn("request ID journal: apid client unavailable; debugger-enabled requests will fail closed", "err", journalDialErr)
+		log.Warn("request ID journal: apid client unavailable; journal records will be counted as failed", "err", journalDialErr)
 	}
 	// ADR-634: the handler only enqueues; a bounded writer pool talks to apid,
-	// so a slow journal never delays or fails a customer request.
-	journalQueue := gateway.NewRequestIDJournalQueue(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
-		if journalClient == nil {
-			return errors.New("request ID journal apid client unavailable")
-		}
-		rpcCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		response, err := journalClient.RecordRequestIDJournal(rpcCtx, &apidpb.RecordRequestIDJournalRequest{
-			RecordId: record.ID, AccountId: record.AccountID, AppId: record.AppID,
-			RequestId: record.RequestID, TraceId: record.TraceID,
-			ReceivedAtUnixMs: record.ReceivedAt.UnixMilli(),
-		})
-		if err != nil {
-			return fmt.Errorf("persist request ID journal: %w", err)
-		}
-		if response == nil || !response.GetRecorded() {
-			return errors.New("apid did not record the request ID journal entry")
-		}
-		return nil
-	}, deps.metrics, log)
+	// so a slow journal never delays or fails a customer request. ADR-1521:
+	// the pool writes batches, one apid RPC and insert per flush.
+	var journalRPC requestIDJournalClient
+	if journalClient != nil {
+		journalRPC = journalClient
+	}
+	journalQueue := gateway.NewRequestIDJournalQueue(newRequestIDJournalWriter(journalRPC, log).Write, deps.metrics, log)
 	go journalQueue.Run(ctx)
 	handler.WithRequestIDJournalWriter(journalQueue.Submit)
 	if journalClient != nil {
@@ -3228,6 +3256,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					GuestOutcome:                         row.GuestOutcome,
 					GuestErrorClass:                      row.GuestErrorClass,
 					FlagEvidenceJson:                     row.FlagEvidenceJSON,
+					ContentOutcome:                       row.ContentOutcome,
 					GuestCpuTimeMs:                       int32(row.GuestCPUTimeMS),
 					GuestPeakRssMb:                       int32(row.GuestPeakRSSMB),
 					GuestResourceUsageAvailable:          row.GuestResourceUsageAvailable,
@@ -3431,10 +3460,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			deps.metrics,
 			log,
 		)
+		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
 		if cfg.NodeName != "" {
 			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
 		}
-		go manager.Run(ctx)
+		go manager.Run(handoffCtx)
 	}
 
 	// Tier A9 / ADR-084: standby write-redirect gate. The gate
@@ -3500,6 +3530,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		attachMux := http.NewServeMux()
 		attachMux.Handle("GET /v1/apps/{slug}/tasks/{id}/attach",
 			&AppTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
+		// ADR-1330: an interactive image run's task uses the same session.
+		attachMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach",
+			&JobTaskAttachHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log})
 		apidHandler = appTaskAttachCarveOut{attach: attachMux, next: apidHandler}
 		// ADR-1163: live job task output follows the task VM on its node.
 		logsMux := http.NewServeMux()
@@ -3759,6 +3792,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reads from the same *Limiter the public edge uses (handler.Limiter()
 	// is the seam) so the snapshot agrees with what Allow consumed.
 	controlMux.HandleFunc("/v1/internal/quota", internalQuotaHandler(handler, log))
+	responsePicker, _ := deps.backend.(deploymentResponsePicker)
+	var responseStore state.Store
+	if deps.pgStore != nil {
+		responseStore = deps.pgStore
+	}
+	var responseForward func(gateway.Target) http.Handler
+	if deps.nodeCache != nil {
+		responseForward = deps.nodeCache.Forwarding()
+	}
+	responseChecker := deploymentResponseChecker{store: responseStore, picker: responsePicker, ensure: handler.EnsureServiceDeploymentCapacity, forward: responseForward, appsDomain: deps.appsDomain}
+	controlMux.HandleFunc(api.DeploymentResponseCheckCapabilitiesControlPath, responseChecker.Capabilities)
 	// ADR-093: mount the per-route observability reader on the
 	// control mux so apid can reverse-proxy
 	// /v1/apps/{slug}/routes → /v1/internal/apps/{slug}/routes
@@ -3791,6 +3835,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			})
 			if strings.HasSuffix(r.URL.Path, "/streaming-cap") {
 				internalStreamingCapHandler(deps.edgeRulesMatcher, resolve, log).ServeHTTP(w, r)
+				return
+			}
+			if strings.HasSuffix(r.URL.Path, "/response-check") {
+				responseChecker.ServeHTTP(w, r)
 				return
 			}
 			if strings.HasSuffix(r.URL.Path, "/service-endpoints") {
@@ -3844,6 +3892,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same endpoint registry, account authorizer, and vmmd transport; the
 	// guest listener adds source-IP instance identity before forwarding.
 	var guestServiceProxy http.Handler
+	// wakeAheadPersisted closes after the ADR-1132 learner snapshot's final
+	// write, so shutdown can wait for it.
+	var wakeAheadPersisted chan struct{}
 	// guestServices is the same proxy, typed, so the ADR-576 TCP path shares
 	// its identity, authorizer, endpoint leases, wake and breaker.
 	var guestServices *gateway.ServiceProxy
@@ -3860,6 +3911,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// gateway. A prediction restores through the same wake path as a
 		// call, with its own trigger and below the fleet residency guard.
 		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics())
+		// ADR-1132: the measured evidence survives restarts and deploys
+		// through a node-local snapshot instead of being relearned.
+		wakeAheadPersisted = make(chan struct{})
+		go func(dir string) {
+			defer close(wakeAheadPersisted)
+			gateway.PersistWakeAhead(handoffCtx, wakeAheadLearner, dir, api.ServiceWakeAheadSnapshotInterval, nil, log)
+		}(envOrGateway("FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR", gateway.DefaultWakeAheadStateDir))
 		handler.SetWakeAhead(gateway.WakeAheadConfig{
 			Learner:   wakeAheadLearner,
 			Enabled:   pgStore.ServiceWakeAheadEnabled,
@@ -3867,6 +3925,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Wake:      newServiceProxyWaker(pgStore, handler.EnsureWakeAheadCapacity),
 		})
 		serviceProxyConfig := gateway.ServiceProxyConfig{
+			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
 			Authorize:                 newServiceProxyAuthorizer(pgStore),
@@ -3890,6 +3949,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Wake:               newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
 			ObserveCall:        handler.ObserveServiceCall,
 			WakeDeployment:     newServiceProxyDeploymentWaker(pgStore, handler.EnsureServiceDeploymentCapacity),
+			EvictEndpoint:      serviceEndpointEvictor(deps.backend),
 			ValidateDeployment: newServiceProxyDeploymentValidator(pgStore),
 			ResolveRelease: func(ctx context.Context, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID string) (string, string, error) {
 				releaseID, deploymentID, err := pgStore.ResolveServiceRelease(ctx, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID)
@@ -3921,7 +3981,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
-			identityResolver.lookup = pgStore.LiveInstancesByHostIP
+			identityResolver.lookup = pgStore.LiveServiceCallersByHostIP
+			if cfg.NodeName != "" {
+				identityResolver.lookup = newServiceProxyLiveLookup(pgStore, deps.nodeCache.cache, newLocalNodeID(pgStore, cfg.NodeName))
+			}
 			serviceProxyConfig.ResolveCallerIdentity = func(ctx context.Context, remote string) (string, string, error) {
 				if err := ordinaryQualificationCallerGuard(ctx, pgStore, cfg.NodeName, remote); err != nil {
 					return "", "", err
@@ -3948,9 +4011,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// them in parallel. sslib guidance is "call Shutdown on each" rather
 	// than Close: Shutdown lets in-flight requests finish; Close does not.
 	errc := make(chan error, 6)
-	var servers []*http.Server
+	var servers []drainedServer
+	// sessionDrains stop raw listeners and wait for their sessions; a
+	// hand-off's old generation runs them (ADR-1736).
+	var sessionDrains []func(context.Context) error
 	var serviceDiscoveryServers []*dns.Server
-	addSrv := func(s *http.Server) { servers = append(servers, s) }
+	addSrv := func(s *http.Server) *wire.HTTPDrain {
+		drain := wire.NewHTTPDrain(s)
+		servers = append(servers, drainedServer{srv: s, drain: drain})
+		return drain
+	}
 
 	// Issue #675: build the unified mux that the unix-socket server
 	// (`deps.synth`) serves. The mux routes:
@@ -4083,7 +4153,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// still hits this cap.
 			public.MaxHeaderBytes = int(api.DefaultMaxHeaderBytes)
 		}
-		addSrv(public)
+		publicDrain := addSrv(public)
 		l, lerr := deps.listen("tcp", listenAddr)
 		if lerr != nil {
 			log.Error("gatewayd public listen failed", "addr", listenAddr, "err", lerr)
@@ -4091,7 +4161,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		go func() {
 			log.Info("gatewayd public listening", "addr", listenAddr)
-			if err := public.Serve(l); err != nil && err != http.ErrServerClosed {
+			if err := publicDrain.ServeErr(public.Serve(publicDrain.Listener(l))); err != nil {
 				errc <- err
 			}
 		}()
@@ -4115,6 +4185,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	serviceProxyAddr := strings.TrimSpace(cfg.ServiceProxyListen)
+	if err := startRehearsalObjectProxy(ctx, deps, serviceProxyAddr, cfg.NodeName, errc); err != nil {
+		return err
+	}
+	if err := startRehearsalPostgresProxy(ctx, deps, serviceProxyAddr, cfg.NodeName, errc); err != nil {
+		return err
+	}
 	serviceProxyTLS, tlsErr := serviceProxyHTTPSConfig(cfg)
 	if tlsErr != nil {
 		return tlsErr
@@ -4126,9 +4202,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if guestServices == nil {
 			return errors.New("gatewayd: service_tcp_listen requires an available guest service proxy")
 		}
-		if err := startServiceTCPProxy(ctx, deps, serviceTCPAddr, guestServices, deps.pgStore, errc, log); err != nil {
+		drainServiceTCP, err := startServiceTCPProxy(ctx, deps, serviceTCPAddr, guestServices, deps.pgStore, errc, log)
+		if err != nil {
 			return err
 		}
+		sessionDrains = append(sessionDrains, drainServiceTCP)
 	}
 	if serviceProxyAddr != "" {
 		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
@@ -4153,14 +4231,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				httpsSrv.Protocols.SetHTTP2(true)
 				httpsSrv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
 				httpsSrv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
-				addSrv(httpsSrv)
+				httpsDrain := addSrv(httpsSrv)
 				httpsListener, listenErr := deps.listen("tcp", httpsAddr)
 				if listenErr != nil {
 					return fmt.Errorf("gatewayd guest service HTTPS listen %s: %w", httpsAddr, listenErr)
 				}
 				go func() {
 					log.Info("gatewayd guest service HTTPS listening", "addr", httpsAddr)
-					if err := httpsSrv.ServeTLS(httpsListener, "", ""); err != nil && err != http.ErrServerClosed {
+					if err := httpsDrain.ServeErr(httpsSrv.ServeTLS(httpsDrain.Listener(httpsListener), "", "")); err != nil {
 						errc <- err
 					}
 				}()
@@ -4169,80 +4247,88 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if bridgeErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS bridge address: %w", bridgeErr)
 			}
-			dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
-			if dnsErr != nil {
-				return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
-			}
-			if chaosMatchRecorder != nil {
-				dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)
-			}
-			// ADR-373: refuse abuse infrastructure at the pinned resolver.
-			// FAAS_DNS_BLOCKLIST_FILE adds operator threat feeds to the
-			// built-in mining-pool list; a configured file that cannot be
-			// read fails startup rather than silently dropping the feed.
-			var extraBlocked map[string]string
-			if path := strings.TrimSpace(os.Getenv("FAAS_DNS_BLOCKLIST_FILE")); path != "" {
-				loaded, loadErr := gateway.LoadDNSBlocklistFile(path)
-				if loadErr != nil {
-					return fmt.Errorf("gatewayd: %w", loadErr)
+			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort} {
+				dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
+				if dnsErr != nil {
+					return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 				}
-				extraBlocked = loaded
-			}
-			blocklist := gateway.NewDNSBlocklist(extraBlocked)
-			dnsHandler.WithBlocklist(blocklist, func(category string) {
-				if c := deps.opsMetrics.DNSBlocked(category); c != nil {
-					c.Inc()
+				if dnsPort == gateway.RehearsalServiceDiscoveryDNSPort {
+					dnsHandler.WithPrivateServiceNamesOnly()
 				}
-			})
-			log.Info("gatewayd: guest DNS blocklist loaded", "domains", blocklist.Len())
-			// ADR-373 DNS-gated egress: report every guest answer to this
-			// node's vmmd before replying, so the guest may connect to it.
-			if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
-				dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName)))
-			}
-			// ADR-576: answer service names with service addresses only once
-			// the TCP proxy behind them is configured.
-			if cfg.ServiceTCPDNS {
-				if strings.TrimSpace(cfg.ServiceTCPListen) == "" || deps.pgStore == nil {
-					return errors.New("gatewayd: service_tcp_dns requires service_tcp_listen and the state store")
+				if chaosMatchRecorder != nil {
+					dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)
 				}
-				dnsHandler.WithServiceAddressLookup(newServiceAddressLookup(deps.pgStore, cfg.NodeName, log))
-				log.Info("gatewayd: service DNS answers private service addresses", "service_address_cidr", api.ServiceAddressCIDR().String())
-			}
-			dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(gateway.ServiceDiscoveryDNSPort))
-			listenPacket := deps.listenPacket
-			if listenPacket == nil {
-				listenPacket = net.ListenPacket
-			}
-			packetConn, packetErr := listenPacket("udp", dnsAddr)
-			if packetErr != nil {
-				return fmt.Errorf("gatewayd: service discovery DNS UDP listen %s: %w", dnsAddr, packetErr)
-			}
-			dnsTCP, tcpErr := deps.listen("tcp", dnsAddr)
-			if tcpErr != nil {
-				_ = packetConn.Close()
-				return fmt.Errorf("gatewayd: service discovery DNS TCP listen %s: %w", dnsAddr, tcpErr)
-			}
-			udpServer := &dns.Server{PacketConn: packetConn, Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
-			tcpServer := &dns.Server{Listener: dnsTCP, Net: "tcp", Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
-			serviceDiscoveryServers = append(serviceDiscoveryServers, udpServer, tcpServer)
-			go func() {
-				log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "udp")
-				if err := udpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
-					errc <- err
+				// ADR-373: refuse abuse infrastructure at the pinned resolver.
+				// FAAS_DNS_BLOCKLIST_FILE adds operator threat feeds to the
+				// built-in mining-pool list; a configured file that cannot be
+				// read fails startup rather than silently dropping the feed.
+				var extraBlocked map[string]string
+				if path := strings.TrimSpace(os.Getenv("FAAS_DNS_BLOCKLIST_FILE")); path != "" {
+					loaded, loadErr := gateway.LoadDNSBlocklistFile(path)
+					if loadErr != nil {
+						return fmt.Errorf("gatewayd: %w", loadErr)
+					}
+					extraBlocked = loaded
 				}
-			}()
-			go func() {
-				log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "tcp")
-				if err := tcpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
-					errc <- err
+				blocklist := gateway.NewDNSBlocklist(extraBlocked)
+				dnsHandler.WithBlocklist(blocklist, func(category string) {
+					if c := deps.opsMetrics.DNSBlocked(category); c != nil {
+						c.Inc()
+					}
+				})
+				log.Info("gatewayd: guest DNS blocklist loaded", "domains", blocklist.Len())
+				// ADR-373 DNS-gated egress: report every guest answer to this
+				// node's vmmd before replying, so the guest may connect to it.
+				if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
+					dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName)))
 				}
-			}()
+				// ADR-576: answer service names with service addresses only once
+				// the TCP proxy behind them is configured.
+				if cfg.ServiceTCPDNS {
+					if strings.TrimSpace(cfg.ServiceTCPListen) == "" || deps.pgStore == nil {
+						return errors.New("gatewayd: service_tcp_dns requires service_tcp_listen and the state store")
+					}
+					dnsHandler.WithServiceAddressLookup(newServiceAddressLookup(deps.pgStore, cfg.NodeName, log))
+					log.Info("gatewayd: service DNS answers private service addresses", "service_address_cidr", api.ServiceAddressCIDR().String())
+				}
+				dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(dnsPort))
+				listenPacket := deps.listenPacket
+				if listenPacket == nil {
+					listenPacket = wire.ListenPacketInherited
+				}
+				packetConn, packetErr := listenPacket("udp", dnsAddr)
+				if packetErr != nil {
+					return fmt.Errorf("gatewayd: service discovery DNS UDP listen %s: %w", dnsAddr, packetErr)
+				}
+				dnsTCP, tcpErr := deps.listen("tcp", dnsAddr)
+				if tcpErr != nil {
+					_ = packetConn.Close()
+					return fmt.Errorf("gatewayd: service discovery DNS TCP listen %s: %w", dnsAddr, tcpErr)
+				}
+				udpServer := &dns.Server{PacketConn: packetConn, Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
+				tcpServer := &dns.Server{Listener: dnsTCP, Net: "tcp", Handler: dnsHandler, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
+				serviceDiscoveryServers = append(serviceDiscoveryServers, udpServer, tcpServer)
+				go func() {
+					log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "udp")
+					if err := udpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
+						errc <- err
+					}
+				}()
+				go func() {
+					log.Info("gatewayd service discovery DNS listening", "addr", dnsAddr, "network", "tcp")
+					if err := tcpServer.ActivateAndServe(); err != nil && ctx.Err() == nil {
+						errc <- err
+					}
+				}()
+			}
 		}
 	}
 	go func() {
 		log.Info("gatewayd control listening", "addr", ctrlAddr)
-		errc <- gateway.RunControlServer(ctx, ctrlAddr, controlMux)
+		// A hand-off ends handoffCtx: the successor answers /metrics and probes.
+		if err := gateway.RunControlServer(handoffCtx, ctrlAddr, controlMux); err != nil {
+			errc <- err
+		}
 	}()
 
 	// Internal unix-socket RPC for schedd's cron dispatch (spec §4.4,
@@ -4255,99 +4341,138 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				"socket", gatewaydInternalSocket, "err", err)
 		}
 	}
+	// faas-gatewayd-internal.socket must only carry addresses this process
+	// serves; anything else would hold its callers' connections forever.
+	if err := wire.RequireInheritedListenersClaimed("gatewayd-internal"); err != nil {
+		return err
+	}
 
-	notifyStop := daemonunit.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
+	notifyStop := wire.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), deps.opsMetrics, log)()
 
-	select {
-	case err := <-errc:
-		return err
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), drain.DrainGrace)
-		defer cancel()
-		for _, s := range serviceDiscoveryServers {
-			//nolint:contextcheck // shutdownCtx intentionally outlives the cancelled run context.
-			_ = s.ShutdownContext(shutdownCtx)
-		}
-		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
-		// Best-effort shutdown of every listener we may have started.
-		// Servers track themselves in `servers`; certmagic owns its renew loop
-		// on a separate goroutine — we Close the bundle now that the public +
-		// ACME servers have drained. The bundle's Close is a no-op against
-		// certmagic v0.25 (no public Stop API) but the seam lets a future
-		// upgrade wire real shutdown without touching call sites.
-		for _, s := range servers {
-			_ = s.Shutdown(shutdownCtx)
-		}
-		// ADR-068 / Tier A7 split: tlsBundle.Close + tlsCertExpiryCancel
-		// moved to gatewayd-public's shutdown path (cmd/gatewayd-public/main.go).
-		if deps.synth != nil {
-			//nolint:contextcheck // same shutdown-ctx contract as public.Shutdown above.
-			_ = deps.synth.Stop(shutdownCtx)
-		}
-		if deps.nodeCache != nil {
-			// Closing every cached *grpc.ClientConn here means
-			// in-flight ForwardHTTPStream RPCs see a "transport
-			// closing" error → handler maps it to 502; the
-			// listener is already draining so no new requests
-			// land.
-			_ = deps.nodeCache.Close()
-		}
-		// Issue #587 / PR-A: wait for the per-request drain
-		// tracker to flush before exiting. shutdownCtx has
-		// already been wired to drain.DrainGrace (25s) — that
-		// sits inside systemd's TimeoutStopSec=30s with 5s
-		// headroom. The drain sets its own internal `draining`
-		// flag so any post-Shutdown stragglers become no-op
-		// Begin closures (pkg/gateway/drain.Drain doc).
-		//
-		// Exit-code discipline (systemd Restart=on-failure
-		// contract, pkg/deploycontroller/controller.go:43-115):
-		//   clean drain → return nil (no restart)
-		//   deadline_exceeded / ctx_cancelled → return ctx.Err()
-		//     so systemd restarts the daemon
-		// Pre-PR-A this branch returned nil unconditionally,
-		// which hid ctx-cancellation bugs from operators. The
-		// PR-A fix surfaces them so a hung drain doesn't quietly
-		// recycle on the next deploy.
-		if deps.drain != nil {
-			drainStart := time.Now()
-			//nolint:contextcheck // shutdownCtx is intentionally
-			// derived from context.Background() (line 1834)
-			// because it must outlive the cancelled caller
-			// ctx — the deadline budget for the drain comes
-			// from drain.DrainGrace, not from the caller's
-			// already-cancelled ctx. The Drain contract is to
-			// honour shutdownCtx's deadline + cancellation;
-			// the `deadline` param on Drain is the
-			// upper-bound knob.
-			outcome, drainErr := deps.drain.Drain(shutdownCtx, drain.DrainGrace)
-			drainElapsed := time.Since(drainStart).Seconds()
-			// Issue #587 / PR-A: record the drain histogram on
-			// every shutdown so an operator can spot a
-			// pattern of forced exits from the dashboard
-			// without re-reading the daemon log. Recorded
-			// against deps.metrics (gateway.Metrics) so the
-			// existing /metrics scrape picks it up alongside
-			// the rest of the gateway_* series.
-			deps.metrics.ObserveDrainWait("gatewayd-internal", string(outcome), drainElapsed)
-			if drainErr != nil {
-				log.Warn("gatewayd-internal drain exited non-clean",
-					"outcome", string(outcome),
-					"max_inflight", deps.drain.MaxInflight(),
-					"err", drainErr)
-				return drainErr
+	handoffs := wire.HandoffRequests(ctx)
+	for {
+		select {
+		case err := <-errc:
+			return err
+		case <-handoffs:
+			if _, err := wire.Handoff(ctx, wire.HandoffOptions{Log: log}); err != nil {
+				log.Warn("gatewayd-internal: hand-off failed; this generation keeps serving", "err", err)
+				continue
 			}
-			if outcome != drain.OutcomeClean {
-				log.Warn("gatewayd-internal drain exited non-clean",
-					"outcome", string(outcome),
-					"max_inflight", deps.drain.MaxInflight())
-				return ctx.Err()
+			stores.markHandedOff()
+			endHandoffWork()
+			for _, stop := range deps.onHandoff {
+				stop()
 			}
+			return drainOldGeneration(ctx, log, servers, serviceDiscoveryServers, sessionDrains, deps)
+		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), drain.DrainGrace)
+			defer cancel()
+			if deps.drain != nil {
+				// SSE and WebSocket sessions end now: their clients reconnect,
+				// and the replacement process cannot start until this one exits.
+				deps.drain.BeginShutdown()
+			}
+			//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
+			shutdownListeners(shutdownCtx, servers, serviceDiscoveryServers, deps.synth)
+			if wakeAheadPersisted != nil {
+				select {
+				case <-wakeAheadPersisted:
+				case <-shutdownCtx.Done():
+				}
+			}
+			// ADR-068 / Tier A7 split: tlsBundle.Close + tlsCertExpiryCancel
+			// moved to gatewayd-public's shutdown path (cmd/gatewayd-public/main.go).
+			if deps.nodeCache != nil {
+				// Closing every cached *grpc.ClientConn here means
+				// in-flight ForwardHTTPStream RPCs see a "transport
+				// closing" error → handler maps it to 502; the
+				// listener is already draining so no new requests
+				// land.
+				_ = deps.nodeCache.Close()
+			}
+			// Issue #587 / PR-A: wait for the per-request drain
+			// tracker to flush before exiting. shutdownCtx has
+			// already been wired to drain.DrainGrace (25s) — that
+			// sits inside systemd's TimeoutStopSec=30s with 5s
+			// headroom. The drain sets its own internal `draining`
+			// flag so any post-Shutdown stragglers become no-op
+			// Begin closures (pkg/gateway/drain.Drain doc).
+			//
+			// Exit-code discipline (systemd Restart=on-failure
+			// contract, pkg/deploycontroller/controller.go:43-115):
+			//   clean drain → return nil (no restart)
+			//   deadline_exceeded / ctx_cancelled → return ctx.Err()
+			//     so systemd restarts the daemon
+			// Pre-PR-A this branch returned nil unconditionally,
+			// which hid ctx-cancellation bugs from operators. The
+			// PR-A fix surfaces them so a hung drain doesn't quietly
+			// recycle on the next deploy.
+			if deps.drain != nil {
+				drainStart := time.Now()
+				//nolint:contextcheck // shutdownCtx is intentionally
+				// derived from context.Background() (line 1834)
+				// because it must outlive the cancelled caller
+				// ctx — the deadline budget for the drain comes
+				// from drain.DrainGrace, not from the caller's
+				// already-cancelled ctx. The Drain contract is to
+				// honour shutdownCtx's deadline + cancellation;
+				// the `deadline` param on Drain is the
+				// upper-bound knob.
+				outcome, drainErr := deps.drain.Drain(shutdownCtx, drain.DrainGrace)
+				drainElapsed := time.Since(drainStart).Seconds()
+				// Issue #587 / PR-A: record the drain histogram on
+				// every shutdown so an operator can spot a
+				// pattern of forced exits from the dashboard
+				// without re-reading the daemon log. Recorded
+				// against deps.metrics (gateway.Metrics) so the
+				// existing /metrics scrape picks it up alongside
+				// the rest of the gateway_* series.
+				deps.metrics.ObserveDrainWait("gatewayd-internal", string(outcome), drainElapsed)
+				if drainErr != nil {
+					log.Warn("gatewayd-internal drain exited non-clean",
+						"outcome", string(outcome),
+						"max_inflight", deps.drain.MaxInflight(),
+						"err", drainErr)
+					return drainErr
+				}
+				if outcome != drain.OutcomeClean {
+					log.Warn("gatewayd-internal drain exited non-clean",
+						"outcome", string(outcome),
+						"max_inflight", deps.drain.MaxInflight())
+					return ctx.Err()
+				}
+			}
+			return nil
 		}
-		return nil
 	}
+}
+
+// shutdownListeners stops every listener at once and waits for their
+// requests within ctx. Stopping them one at a time let the first server's
+// slowest request keep every later listener accepting and spend the grace
+// serially, while connections to the stopped ones queued for the restart.
+func shutdownListeners(ctx context.Context, servers []drainedServer, dnsServers []*dns.Server, synth *gateway.SynthServer) {
+	var wg sync.WaitGroup
+	for _, s := range dnsServers {
+		wg.Go(func() { _ = s.ShutdownContext(ctx) })
+	}
+	for _, s := range servers {
+		wg.Go(func() { _ = s.drain.Shutdown(ctx, s.srv) })
+	}
+	if synth != nil {
+		wg.Go(func() { _ = synth.Stop(ctx) })
+	}
+	wg.Wait()
+}
+
+// drainedServer is an HTTP listener whose stop first lets accepted
+// connections deliver their requests (wire.HTTPDrain).
+type drainedServer struct {
+	srv   *http.Server
+	drain *wire.HTTPDrain
 }
 
 // unwiredBackend routes nothing; every request 404s until the Postgres routing
@@ -4443,7 +4568,7 @@ func assertLoopbackBind(addr string) error {
 
 // startGuestServiceHTTPListeners serves both canonical and persisted URLs
 // through the same authorization handler and transport policy (ADR-384).
-func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Handler, addSrv func(*http.Server), errc chan<- error, log *slog.Logger) error {
+func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Handler, addSrv func(*http.Server) *wire.HTTPDrain, errc chan<- error, log *slog.Logger) error {
 	if err := validateServiceProxyListen(addr); err != nil {
 		return err
 	}
@@ -4459,14 +4584,14 @@ func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Hand
 		srv.Protocols.SetUnencryptedHTTP2(true)
 		srv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
 		srv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
-		addSrv(srv)
+		drain := addSrv(srv)
 		listener, err := deps.listen("tcp", httpAddr)
 		if err != nil {
 			return fmt.Errorf("gatewayd: guest service proxy listen %s: %w", httpAddr, err)
 		}
 		go func() {
 			log.Info("gatewayd guest service proxy listening", "addr", httpAddr)
-			if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+			if err := drain.ServeErr(srv.Serve(drain.Listener(listener))); err != nil {
 				errc <- err
 			}
 		}()

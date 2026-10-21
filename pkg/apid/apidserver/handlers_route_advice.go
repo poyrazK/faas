@@ -180,6 +180,11 @@ func routeAdviceRoutes(rows []sqlc.RouteAdviceRouteStatsRow) []routeadvisor.Rout
 			Requests: row.Requests, AnonymousRequests: row.AnonymousRequests, AnonymousSuccess: row.AnonymousSuccess,
 			ServerErrors: row.ServerErrors, Timeouts: row.Timeouts, ColdBoots: row.ColdBoots,
 			P95LatencyMs: int(row.P95LatencyMs), CacheHits: row.CacheHits, WakesAvoided: row.WakesAvoided,
+			Content: routeadvisor.ContentStats{
+				First: row.ContentFirst, Uncacheable: row.ContentUncacheable,
+				Same:    []int64{row.ContentSame60, row.ContentSame300, row.ContentSame3600},
+				Changed: []int64{row.ContentChanged60, row.ContentChanged300, row.ContentChanged3600},
+			},
 		})
 	}
 	return out

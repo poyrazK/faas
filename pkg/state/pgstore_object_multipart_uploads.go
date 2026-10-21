@@ -76,6 +76,9 @@ func (s *PgStore) ReserveAdmittedObjectMultipartUpload(ctx context.Context, uplo
 }
 
 func (s *PgStore) reserveObjectMultipart(ctx context.Context, upload ObjectMultipartUpload, limit int, policy *api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
+	if !validNodeSettlementEnrollment(upload.ID, upload.QueueNodeSettlement) {
+		return ObjectMultipartUpload{}, ErrConflict
+	}
 	unknownSize := upload.SizeBytes == 0 && upload.PartSizeBytes == 0 && upload.PartCount == 0
 	knownSize := upload.SizeBytes > 0 && upload.PartSizeBytes > 0 && upload.PartCount > 0
 	if !upload.Checksum.Initial() || !upload.Protection.ValidInput() || upload.EncryptionDefaultRevision != 0 || upload.FixedAdmission || policy != nil && !validFixedMultipartLayout(upload) || upload.ID == "" || upload.Key == "" || !unknownSize && !knownSize || upload.SizeBytes < 0 || upload.SizeBytes > api.MaxObjectUploadBytes || upload.PartSizeBytes < 0 || upload.PartSizeBytes > api.MaxObjectSinglePutBytes || upload.PartCount < 0 || upload.PartCount > api.MaxMultipartParts || upload.ExpiresAt.IsZero() || limit < 1 || !emptyInitialMultipartResult(upload) || !upload.Encryption.ValidFor(upload.AccountID) {
@@ -89,7 +92,7 @@ func (s *PgStore) reserveObjectMultipart(ctx context.Context, upload ObjectMulti
 	q := sqlc.New()
 	// Both public and fixed admissions must lock the account before the bucket.
 	// Otherwise insertion's account FK lock can deadlock with configuration.
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(upload.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(upload.AccountID), mustPgUUID(upload.BucketID)); err != nil {
 		return ObjectMultipartUpload{}, mapErr(err)
 	}
 	if policy != nil {
@@ -167,6 +170,9 @@ func (s *PgStore) reserveObjectMultipart(ctx context.Context, upload ObjectMulti
 		if err = admitObjectWriteSourceTx(ctx, tx, out.AccountID, out.BucketID, out.Key, out.SizeBytes, true, *policy, out.ID, false, out.ID); err != nil {
 			return ObjectMultipartUpload{}, err
 		}
+	}
+	if err = enrollObjectNodeSettlementTx(ctx, tx, upload.ID, upload.AccountID, upload.AppID, upload.BucketID, "multipart", upload.QueueNodeSettlement); err != nil {
+		return ObjectMultipartUpload{}, err
 	}
 	return out, mapErr(tx.Commit(ctx))
 }

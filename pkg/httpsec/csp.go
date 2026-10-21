@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 )
 
@@ -78,6 +79,25 @@ var cspFormActionHosts = []string{
 // SVG without an XSS-shaped detour; a future PR can tighten when
 // payment icons land.
 func buildCSP(nonce string) string {
+	return buildCSPWithConnect(nonce, "")
+}
+
+// cspConnectOrigin is an exact HTTPS origin: lowercase DNS labels and an
+// optional port, so it cannot inject another directive or source.
+var cspConnectOrigin = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+(:[0-9]{1,5})?$`)
+
+// CSPWithConnectOrigin returns the dashboard policy with origin added to
+// connect-src, for a page that calls one customer service from the owner's
+// browser (ADR-1190's Auth screens). ok is false for anything but an exact
+// HTTPS origin; the caller then keeps the default policy.
+func CSPWithConnectOrigin(nonce, origin string) (string, bool) {
+	if !cspConnectOrigin.MatchString(origin) {
+		return "", false
+	}
+	return buildCSPWithConnect(nonce, origin), true
+}
+
+func buildCSPWithConnect(nonce, connect string) string {
 	var b strings.Builder
 	b.WriteString("default-src 'self'; ")
 	b.WriteString("script-src 'self' 'nonce-")
@@ -97,7 +117,12 @@ func buildCSP(nonce string) string {
 	}
 	b.WriteString("; ")
 	b.WriteString("img-src 'self' data:; ")
-	b.WriteString("connect-src 'self'; ")
+	b.WriteString("connect-src 'self'")
+	if connect != "" {
+		b.WriteString(" ")
+		b.WriteString(connect)
+	}
+	b.WriteString("; ")
 	b.WriteString("frame-ancestors 'none'; ")
 	b.WriteString("base-uri 'none'; ")
 	b.WriteString("form-action 'self'")

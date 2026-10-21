@@ -19,7 +19,7 @@ func TestCalculateChargeRoundsEachComponentUp(t *testing.T) {
 		RequestCount:    1,
 		EgressBytes:     1,
 	}
-	got, err := CalculateCharge(pricing, usage)
+	got, err := CalculateCharge(pricing, usage, api.ObjectStorageAllowance{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,8 +28,32 @@ func TestCalculateChargeRoundsEachComponentUp(t *testing.T) {
 	}
 }
 
+// adr: 1320 — the plan allowance is removed from each meter before pricing,
+// and usage below the allowance is never charged.
+func TestCalculateChargeRemovesAllowanceBeforePricing(t *testing.T) {
+	pricing := api.ObjectStoragePricing{
+		Currency:                     "EUR",
+		StorageMillicentsPerGiBMonth: 1000,
+		RequestsMillicentsPerMillion: 2000,
+		EgressMillicentsPerGiB:       3000,
+	}
+	gibMonth := int64(1<<30) * api.ObjectStorageBillingHoursPerMonth
+	usage := api.ObjectStorageUsage{StoredByteHours: 3 * gibMonth, RequestCount: 1_500_000, EgressBytes: 1 << 29}
+	allowance := api.ObjectStorageAllowance{StoredByteHours: gibMonth, Requests: 500_000, EgressBytes: 1 << 30}
+	got, err := CalculateCharge(pricing, usage, allowance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StorageMillicents != 2000 || got.RequestsMillicents != 2000 || got.EgressMillicents != 0 || got.TotalMillicents != 4000 {
+		t.Fatalf("charge = %+v, want 2 GiB-months and 1M requests billed, egress inside the allowance", got)
+	}
+	if _, err := CalculateCharge(pricing, usage, api.ObjectStorageAllowance{Requests: -1}); !errors.Is(err, ErrInvalidPricing) {
+		t.Fatalf("negative allowance error = %v", err)
+	}
+}
+
 func TestCalculateChargeZeroUsage(t *testing.T) {
-	got, err := CalculateCharge(api.ObjectStoragePricing{Currency: "EUR"}, api.ObjectStorageUsage{})
+	got, err := CalculateCharge(api.ObjectStoragePricing{Currency: "EUR"}, api.ObjectStorageUsage{}, api.ObjectStorageAllowance{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,16 +63,16 @@ func TestCalculateChargeZeroUsage(t *testing.T) {
 }
 
 func TestCalculateChargeRejectsInvalidInput(t *testing.T) {
-	if _, err := CalculateCharge(api.ObjectStoragePricing{Currency: "eur"}, api.ObjectStorageUsage{}); !errors.Is(err, ErrInvalidPricing) {
+	if _, err := CalculateCharge(api.ObjectStoragePricing{Currency: "eur"}, api.ObjectStorageUsage{}, api.ObjectStorageAllowance{}); !errors.Is(err, ErrInvalidPricing) {
 		t.Fatalf("invalid currency error = %v", err)
 	}
-	if _, err := CalculateCharge(api.ObjectStoragePricing{Currency: "EUR"}, api.ObjectStorageUsage{EgressBytes: -1}); !errors.Is(err, ErrInvalidPricing) {
+	if _, err := CalculateCharge(api.ObjectStoragePricing{Currency: "EUR"}, api.ObjectStorageUsage{EgressBytes: -1}, api.ObjectStorageAllowance{}); !errors.Is(err, ErrInvalidPricing) {
 		t.Fatalf("negative usage error = %v", err)
 	}
 }
 
 func TestCalculateChargeDetectsOverflow(t *testing.T) {
-	_, err := CalculateCharge(api.ObjectStoragePricing{Currency: "EUR", EgressMillicentsPerGiB: api.MaxObjectStoragePolicyValue}, api.ObjectStorageUsage{EgressBytes: api.MaxObjectStoragePolicyValue})
+	_, err := CalculateCharge(api.ObjectStoragePricing{Currency: "EUR", EgressMillicentsPerGiB: api.MaxObjectStoragePolicyValue}, api.ObjectStorageUsage{EgressBytes: api.MaxObjectStoragePolicyValue}, api.ObjectStorageAllowance{})
 	if !errors.Is(err, ErrPricingOverflow) {
 		t.Fatalf("overflow error = %v", err)
 	}

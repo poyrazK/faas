@@ -96,8 +96,8 @@ def sync_detailed(
     plaintext.
 
     Args:
-        body (CreateAccountReleaseWebhookRequest): Subscribe a target to release events emitted by
-            every app owned by the active account. Example: {'target_url':
+        body (CreateAccountReleaseWebhookRequest): Subscribe to account release outcomes and
+            environment GitOps status transitions. Example: {'target_url':
             'https://example.com/releases', 'webhook_secret': 'replace-with-random-secret',
             'event_filter': ['deployment.live', 'deployment.failed'], 'retry_policy': 'default',
             'delivery_format': 'cloudevents', 'enabled': True}.
@@ -132,8 +132,8 @@ def sync(
     plaintext.
 
     Args:
-        body (CreateAccountReleaseWebhookRequest): Subscribe a target to release events emitted by
-            every app owned by the active account. Example: {'target_url':
+        body (CreateAccountReleaseWebhookRequest): Subscribe to account release outcomes and
+            environment GitOps status transitions. Example: {'target_url':
             'https://example.com/releases', 'webhook_secret': 'replace-with-random-secret',
             'event_filter': ['deployment.live', 'deployment.failed'], 'retry_policy': 'default',
             'delivery_format': 'cloudevents', 'enabled': True}.
@@ -163,8 +163,8 @@ async def asyncio_detailed(
     plaintext.
 
     Args:
-        body (CreateAccountReleaseWebhookRequest): Subscribe a target to release events emitted by
-            every app owned by the active account. Example: {'target_url':
+        body (CreateAccountReleaseWebhookRequest): Subscribe to account release outcomes and
+            environment GitOps status transitions. Example: {'target_url':
             'https://example.com/releases', 'webhook_secret': 'replace-with-random-secret',
             'event_filter': ['deployment.live', 'deployment.failed'], 'retry_policy': 'default',
             'delivery_format': 'cloudevents', 'enabled': True}.
@@ -197,8 +197,8 @@ async def asyncio(
     plaintext.
 
     Args:
-        body (CreateAccountReleaseWebhookRequest): Subscribe a target to release events emitted by
-            every app owned by the active account. Example: {'target_url':
+        body (CreateAccountReleaseWebhookRequest): Subscribe to account release outcomes and
+            environment GitOps status transitions. Example: {'target_url':
             'https://example.com/releases', 'webhook_secret': 'replace-with-random-secret',
             'event_filter': ['deployment.live', 'deployment.failed'], 'retry_policy': 'default',
             'delivery_format': 'cloudevents', 'enabled': True}.

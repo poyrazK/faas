@@ -20,6 +20,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -274,6 +275,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	fs.Var(&jwtClaims, "jwt-required-claim", "kind=jwt: required claim (Name=Value; repeat)")
 	jwtTenantExternalRefClaim := fs.String("jwt-platform-tenant-external-ref-claim", "", "kind=jwt: verified custom claim containing the platform tenant external_ref")
 	jwtRequireExp := fs.Bool("jwt-require-exp", false, "kind=jwt: reject tokens without an exp claim")
+	jwtAuth := unreleasedStringFlag(fs, "jwt-auth", "kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp)")
 
 	// ip
 	var ipAllow, ipDeny multiFlag
@@ -423,6 +425,23 @@ func cmdEdgeRulesCreate(args []string) int {
 	matchHeaderMap, err := parseEdgeRuleMatchHeaders(matchHeaders)
 	if err != nil {
 		return printErr("Invalid --match-header", err)
+	}
+	if *jwtAuth != "" {
+		if *kind != "jwt" || *jwtIssuer != "" || *jwtJWKS != "" || len(jwtAudience) > 0 {
+			return printErr("Invalid flags", errors.New("--jwt-auth requires --kind=jwt and replaces --jwt-issuer, --jwt-jwks-url and --jwt-audience"))
+		}
+		client, err := authedClient()
+		if err != nil {
+			return printErr("Not logged in", err)
+		}
+		resolved, err := resolveAuthIssuer(context.Background(), client, *jwtAuth)
+		if err != nil {
+			return printErr("Could not resolve the Auth app", err)
+		}
+		*jwtIssuer, *jwtJWKS, jwtAudience, *jwtRequireExp = resolved.Issuer, resolved.JWKSURL, multiFlag{resolved.Audience}, true
+		if len(jwtAlgorithms) == 0 {
+			jwtAlgorithms = multiFlag{"ES256"}
+		}
 	}
 	actionBytes, err := buildEdgeRuleAction(*kind, edgeRuleActionInputs{
 		RouteTarget:                       *routeTarget,
@@ -1012,11 +1031,15 @@ func cmdEdgeRulesRm(args []string) int {
 	fs := newFlagSet("edge-rules rm", flag.ContinueOnError)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
 	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
-	if err := fs.Parse(args); err != nil {
+	// list requires --app, and `gregale cache` rules are only removable here,
+	// so `rm <id> --app <slug>` failed with "unknown flag --app" (H10-131).
+	// The id is account-scoped; --app only checks the rule's owner.
+	app := fs.String("app", "", "require the rule to belong to this app")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules rm <id> [--yes]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules rm <id> [--app <slug>] [--yes]", "edge-rules")
 		return 1
 	}
 	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
@@ -1033,6 +1056,11 @@ func cmdEdgeRulesRm(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	if *app != "" {
+		if code := requireEdgeRuleOwner(client, id, *app); code != 0 {
+			return code
+		}
+	}
 	if err := client.DeleteEdgeRule(context.Background(), id); err != nil {
 		return printErr("Delete failed", err)
 	}
@@ -1040,6 +1068,23 @@ func cmdEdgeRulesRm(args []string) int {
 		return jsonOut(writeJSON(map[string]string{"id": id, "status": "deleted"}))
 	}
 	PrintOK(osStdout, "Edge rule %s deleted.", id)
+	return 0
+}
+
+// requireEdgeRuleOwner refuses to touch a rule that belongs to another app.
+func requireEdgeRuleOwner(client *Client, id, slug string) int {
+	ctx := context.Background()
+	rule, err := client.GetEdgeRule(ctx, id)
+	if err != nil {
+		return printErr("Could not fetch edge rule", err)
+	}
+	owner, err := client.GetApp(ctx, slug)
+	if err != nil {
+		return printErr("Could not fetch app", err)
+	}
+	if rule.AppID != owner.ID {
+		return printErr("Edge rule not found", fmt.Errorf("edge rule %s does not belong to app %q", id, slug))
+	}
 	return 0
 }
 

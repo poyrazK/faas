@@ -24,7 +24,7 @@ import (
 func (s *Service) PublishEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.PublishEventRequest
 	if err := httpkit.DecodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
+		api.WriteProblem(w, eventDecodeProblem(r, err))
 		return
 	}
 	if req.AccountID != "" && req.AccountID != acct.ID {

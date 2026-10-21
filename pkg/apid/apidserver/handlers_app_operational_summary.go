@@ -8,16 +8,28 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/workerrecovery"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (s *server) getAppOperationalSummary(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if r.URL.RawQuery != "" {
-		api.WriteProblem(w, api.ErrValidation("operational summary does not accept query parameters"))
-		return
-	}
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
+		return
+	}
+	app, env, scope, selected, problem := s.telemetryEnvironment(w, r, acct, app)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if selected {
+		out := s.scopedOperationalSummary(r.Context(), acct, app, env, scope)
+		if problem := s.scopedTelemetryIdentity(r.Context(), acct, app, env); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.appOperationalSummary(r.Context(), acct, app))
@@ -85,6 +97,7 @@ func appOperationalWindows(out *api.AppOperationalMonitoring, report api.RouteMo
 
 func (s *server) appOperationalRecovery(ctx context.Context, acct state.Account, app state.App) api.AppOperationalRecovery {
 	out := api.AppOperationalRecovery{Rollbacks: []api.AppOperationalRollback{}, Restarts: []api.RuntimeConfigRestartStatusResponse{}}
+	out.Workers = workerrecovery.Collect(ctx, s.store, app, acct, "", time.Now().UTC())
 	if store, ok := s.store.(state.AppOperationalStore); ok {
 		rows, err := store.ListAppPendingRollbacks(ctx, acct.ID, app.ID)
 		out.RollbacksAvailable = err == nil

@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.app_release_review import AppReleaseReview
     from ..models.update_deployment_traffic_request_expected_mcp_access_policy import (
         UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy,
     )
@@ -26,6 +27,8 @@ class UpdateDeploymentTrafficRequest:
 
     traffic_percent: int
     """Per-deployment traffic-split weight. 0 = no traffic (used during rollback). 100 = sole live deployment."""
+    expected_review: AppReleaseReview | Unset = UNSET
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
     expected_serving_deployment_id: str | Unset = UNSET
     """Optional 32-hex or dashed deployment id. An explicit empty string requires no live sibling with positive
     traffic, for guarded first deployment promotion. If the condition changes at the transaction boundary, the
@@ -41,6 +44,10 @@ class UpdateDeploymentTrafficRequest:
     def to_dict(self) -> dict[str, Any]:
         traffic_percent = self.traffic_percent
 
+        expected_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.expected_review, Unset):
+            expected_review = self.expected_review.to_dict()
+
         expected_serving_deployment_id = self.expected_serving_deployment_id
 
         expected_mcp_access_policy: dict[str, Any] | Unset = UNSET
@@ -54,6 +61,8 @@ class UpdateDeploymentTrafficRequest:
                 "traffic_percent": traffic_percent,
             }
         )
+        if expected_review is not UNSET:
+            field_dict["expected_review"] = expected_review
         if expected_serving_deployment_id is not UNSET:
             field_dict["expected_serving_deployment_id"] = expected_serving_deployment_id
         if expected_mcp_access_policy is not UNSET:
@@ -63,12 +72,20 @@ class UpdateDeploymentTrafficRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_release_review import AppReleaseReview
         from ..models.update_deployment_traffic_request_expected_mcp_access_policy import (
             UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy,
         )
 
         d = dict(src_dict)
         traffic_percent = d.pop("traffic_percent")
+
+        _expected_review = d.pop("expected_review", UNSET)
+        expected_review: AppReleaseReview | Unset
+        if isinstance(_expected_review, Unset):
+            expected_review = UNSET
+        else:
+            expected_review = AppReleaseReview.from_dict(_expected_review)
 
         expected_serving_deployment_id = d.pop("expected_serving_deployment_id", UNSET)
 
@@ -83,6 +100,7 @@ class UpdateDeploymentTrafficRequest:
 
         update_deployment_traffic_request = cls(
             traffic_percent=traffic_percent,
+            expected_review=expected_review,
             expected_serving_deployment_id=expected_serving_deployment_id,
             expected_mcp_access_policy=expected_mcp_access_policy,
         )

@@ -267,7 +267,12 @@ func newMultipartCopyIntegrationConfigured(t *testing.T, st multipartCopyIntegra
 	if encryption != nil {
 		config.Backends[0].Encryption = encryption(acct.ID, upstream.URL)
 	}
-	registry, err := objectstorage.NewRegistry(config, func(string) string { return "local-provider-test-credential" }, map[string]objectstorage.Factory{"s3": objectstorage.NewS3})
+	registry, err := objectstorage.NewRegistry(config, func(name string) string {
+		if name == "" {
+			return "" // No optional session token was configured.
+		}
+		return "local-provider-test-credential"
+	}, map[string]objectstorage.Factory{"s3": objectstorage.NewS3})
 	if err != nil {
 		t.Fatal(err)
 	}

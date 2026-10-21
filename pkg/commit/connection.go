@@ -7,8 +7,21 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// ErrConnectionAuthentication preserves a useful classification without
+// retaining server messages, addresses, SQL, or connection credentials.
+var ErrConnectionAuthentication = errors.New("commit: database authentication unavailable")
+
+func connectionFailure(err error) error {
+	var authentication *pgconn.PgError
+	if errors.As(err, &authentication) && (authentication.Code == "28P01" || authentication.Code == "28000") {
+		return ErrConnectionAuthentication
+	}
+	return errors.New("commit: database connection unavailable")
+}
 
 // NetworkPolicy is operator-owned, never populated from customer payloads.
 // Exact hostnames prevent using credential registration as an arbitrary
@@ -103,7 +116,7 @@ func OpenPool(ctx context.Context, raw string, policy NetworkPolicy) (*pgxpool.P
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, errors.New("commit: database connection unavailable")
+		return nil, connectionFailure(err)
 	}
 	return pool, nil
 }

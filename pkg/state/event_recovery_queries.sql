@@ -284,7 +284,8 @@ SELECT item.position,acct.plan,
   WHEN event_recipient_delivery_deadline(recipient.value,o.created_at,'{}'::jsonb)<=sqlc.arg(now_at)::timestamptz THEN 'expired'
   ELSE 'eligible' END END::text AS reason,
  (slot.invocation_id IS NOT NULL AND j.selection->>'mode'='execution')::boolean AS capacity_tracked,
- totals.account_count,totals.app_count,coalesce(c.consumer_count,0)::bigint AS consumer_count
+ totals.account_count,totals.app_count,coalesce(c.consumer_count,0)::bigint AS consumer_count,
+ coalesce(capacity_control.max_pending_deliveries,0)::integer AS max_pending_deliveries
 FROM event_recovery_items item JOIN event_recovery_jobs j ON j.id=item.job_id
 JOIN apps app ON app.id=j.app_id AND app.account_id=j.account_id JOIN accounts acct ON acct.id=j.account_id
 LEFT JOIN event_fanout_outbox o ON o.id=item.outbox_id AND o.account_id=j.account_id
@@ -294,6 +295,7 @@ LEFT JOIN invocations inv ON inv.id=(item.expected_progress->>'invocation_id')::
 LEFT JOIN platform_tenants tenant ON tenant.id=inv.platform_tenant_id AND tenant.account_id=j.account_id
 LEFT JOIN event_delivery_slots slot ON slot.invocation_id=inv.id
 LEFT JOIN consumers c ON c.app_id=slot.app_id AND c.subscription_id=slot.subscription_id
+LEFT JOIN event_subscription_delivery_controls capacity_control ON capacity_control.account_id=j.account_id AND capacity_control.app_id=slot.app_id AND capacity_control.subscription_id::text=slot.subscription_id
 CROSS JOIN totals
 WHERE j.id=sqlc.arg(job_id)::uuid AND j.account_id=sqlc.arg(account_id)::uuid AND item.state='pending'
 ORDER BY item.position LIMIT sqlc.arg(page_limit)::integer;

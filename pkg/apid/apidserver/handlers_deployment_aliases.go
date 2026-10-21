@@ -1,7 +1,9 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -57,7 +59,7 @@ func (s *server) setDeploymentAlias(w http.ResponseWriter, r *http.Request, acct
 	}
 	alias, err := store.SetDeploymentAlias(r.Context(), app.ID, name, req.DeploymentID)
 	if errors.Is(err, state.ErrNotFound) {
-		s.notFound(w, "no routable deployment for this app")
+		s.notFound(w, aliasTargetNotRoutableDetail(r.Context(), s.store, app.ID, req.DeploymentID))
 		return
 	}
 	if errors.Is(err, state.ErrInvalidArgument) {
@@ -126,4 +128,16 @@ func deploymentAliasResponse(alias state.DeploymentAlias, appID, domain string) 
 		resp.URL = "https://" + resp.Host
 	}
 	return resp
+}
+
+// aliasTargetNotRoutableDetail says why an alias target was refused. An alias
+// accepts only a live or in-progress deployment of the app; for a superseded,
+// failed or cancelled one the bare "no routable deployment" read as if the
+// revision did not exist (H10-61).
+func aliasTargetNotRoutableDetail(ctx context.Context, store state.Store, appID, deploymentID string) string {
+	dep, err := store.DeploymentByID(ctx, deploymentID)
+	if err != nil || dep.AppID != appID {
+		return "no deployment " + deploymentID + " on this app"
+	}
+	return fmt.Sprintf("deployment v%d is %s; an alias can point only at a live or in-progress deployment (roll back to it or redeploy it first)", dep.Revision, dep.Status)
 }

@@ -5,6 +5,8 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 // Environment GitOps wire contracts. Client methods are inherited from the
 // embedded API client and retain the reviewed digest/generation/plan hash.
 type (
+	PreviewEnvironmentGitPlanResponse      = api.PreviewEnvironmentGitPlanResponse
+	EnvironmentGitOpsChangedWebhookPayload = api.EnvironmentGitOpsChangedWebhookPayload
 	RebindEnvironmentGitSourceRequest      = api.RebindEnvironmentGitSourceRequest
 	DetachEnvironmentGitSourceRequest      = api.DetachEnvironmentGitSourceRequest
 	EnvironmentFieldOwnershipRequest       = api.EnvironmentFieldOwnershipRequest
@@ -14,6 +16,8 @@ type (
 	PreviewEnvironmentGitRevisionResponse  = api.PreviewEnvironmentGitRevisionResponse
 	ApproveEnvironmentGitRevisionRequest   = api.ApproveEnvironmentGitRevisionRequest
 	ApproveEnvironmentGitRevisionResponse  = api.ApproveEnvironmentGitRevisionResponse
+	EnvironmentWorkloadRetirement          = api.EnvironmentWorkloadRetirement
+	EnvironmentWorkloadRetirementImpact    = api.EnvironmentWorkloadRetirementImpact
 	EnvironmentGitOpsStatusResponse        = api.EnvironmentGitOpsStatusResponse
 	AdoptEnvironmentGitOpsRequest          = api.AdoptEnvironmentGitOpsRequest
 	AdoptEnvironmentGitOpsResponse         = api.AdoptEnvironmentGitOpsResponse

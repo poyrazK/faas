@@ -10,13 +10,15 @@ import (
 // EventConsumerDeliveryHealth combines independent routing, execution and
 // oldest-first pending reads. It is not a single database snapshot.
 type EventConsumerDeliveryHealth struct {
-	StartedAt      time.Time                    `json:"started_at"`
-	ObservedAt     time.Time                    `json:"observed_at"`
-	Routing        EventConsumerHealth          `json:"routing"`
-	Execution      EventConsumerExecutionHealth `json:"execution"`
-	WaitingReasons *EventConsumerWaitingReasons `json:"waiting_reasons,omitempty"`
-	CapacityWaits  *EventConsumerCapacityWaits  `json:"capacity_waits,omitempty"`
-	PendingSample  EventConsumerPendingSample   `json:"pending_sample"`
+	Processing       *EventConsumerProcessingHealth `json:"processing,omitempty"`
+	CapacityPressure *EventConsumerCapacityPressure `json:"capacity_pressure,omitempty"`
+	StartedAt        time.Time                      `json:"started_at"`
+	ObservedAt       time.Time                      `json:"observed_at"`
+	Routing          EventConsumerHealth            `json:"routing"`
+	Execution        EventConsumerExecutionHealth   `json:"execution"`
+	WaitingReasons   *EventConsumerWaitingReasons   `json:"waiting_reasons,omitempty"`
+	CapacityWaits    *EventConsumerCapacityWaits    `json:"capacity_waits,omitempty"`
+	PendingSample    EventConsumerPendingSample     `json:"pending_sample"`
 }
 
 // EventConsumerWaitingReasons partitions the complete pending backlog by its
@@ -80,6 +82,32 @@ type EventConsumerCapacityWaits struct {
 	Consumer          int64     `json:"consumer"`
 	App               int64     `json:"app"`
 	Account           int64     `json:"account"`
+}
+
+// Current admission pressure and effective recorded waiting reasons share one
+// snapshot. Oldest age is since acceptance, not continuous capacity-wait duration.
+type EventConsumerCapacityPressure struct {
+	CapacityCommandBudget          *EventSubscriptionCapacityCommandBudget `json:"capacity_command_budget,omitempty"`
+	PlanMaxPendingDeliveries       int                                     `json:"plan_max_pending_deliveries"`
+	AppID                          string                                  `json:"app_id"`
+	SubscriptionID                 string                                  `json:"subscription_id"`
+	ObservedAt                     time.Time                               `json:"observed_at"`
+	Coverage                       string                                  `json:"coverage"`
+	Complete                       bool                                    `json:"complete"`
+	BlockingScope                  string                                  `json:"blocking_scope"`
+	ConfiguredMaxPendingDeliveries int                                     `json:"configured_max_pending_deliveries"`
+	Scopes                         []EventConsumerCapacityScope            `json:"scopes"`
+}
+
+type EventConsumerCapacityScope struct {
+	Scope                   string     `json:"scope"`
+	LiveDeliveries          int64      `json:"live_deliveries"`
+	EffectiveLimit          int        `json:"effective_limit"`
+	AtLimit                 bool       `json:"at_limit"`
+	WaitingRecipients       int64      `json:"waiting_recipients"`
+	OldestWaitingAcceptedAt *time.Time `json:"oldest_waiting_accepted_at,omitempty"`
+	OldestWaitingAgeSeconds float64    `json:"oldest_waiting_age_seconds"`
+	Advice                  string     `json:"advice"`
 }
 
 // WaitingReasons counts sampled pending recipients, never the whole backlog.

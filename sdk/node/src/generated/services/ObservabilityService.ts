@@ -6,6 +6,7 @@ import type { AppLogDrainAnalyticsResponse } from '../models/AppLogDrainAnalytic
 import type { AppLogDrainHealthResponse } from '../models/AppLogDrainHealthResponse.js';
 import type { AppLogDrainResponse } from '../models/AppLogDrainResponse.js';
 import type { CreateAppLogDrainRequest } from '../models/CreateAppLogDrainRequest.js';
+import type { ServiceMapResponse } from '../models/ServiceMapResponse.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { Trace } from '../models/Trace.js';
 import type { UpdateAppLogDrainRequest } from '../models/UpdateAppLogDrainRequest.js';
@@ -300,6 +301,51 @@ export class ObservabilityService {
     });
   }
   /**
+   * Account service map of caller → target app edges.
+   * ADR-1131 internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
+   * otherwise 503 `service_map_unavailable`.
+   *
+   * Built from the unsampled service-proxy edge series. Both the
+   * caller and the target are constrained to the account's apps.
+   * Edges are ranked by call volume and capped at 500
+   * (`truncated: true`). Latency percentiles cover successful calls
+   * only. Prometheus failure returns 200 with null `nodes`/`edges`
+   * and `source: "degraded: <reason>"`, as `/v1/apps/metrics` does.
+   *
+   * @returns ServiceMapResponse The service map.
+   * @throws ApiError
+   */
+  public static getServiceMap({
+    range = '1h',
+  }: {
+    /**
+     * Observation window. Default `1h`.
+     */
+    range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
+  }): CancelablePromise<ServiceMapResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/service-map',
+      query: {
+        'range': range,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * List the canonical wake-timeline frames for one wake.
    * Oldest-first (forward narrative). Returns every typed
    * `wake.*` events row for the given wake_id: queue_accepted
@@ -343,6 +389,8 @@ export class ObservabilityService {
     wakeId,
     since,
     limit = 200,
+    pagination,
+    cursor,
   }: {
     /**
      * App slug (lowercase, kebab-case; per-account unique).
@@ -359,13 +407,21 @@ export class ObservabilityService {
      */
     wakeId: string,
     /**
-     * Only return rows with `at >= since` (RFC 3339).
+     * Exclusive at > since lower bound (RFC3339). Omission reads from retained history. keyset_v1 normalizes to UTC/PostgreSQL microseconds.
      */
     since?: string,
     /**
-     * Max frames to return. Silently capped at 1000.
+     * Max frames to return. Values outside 1..1000 are rejected.
      */
     limit?: number,
+    /**
+     * Opt in to app-scoped timestamp/event-ID keyset pagination. Omit for the unchanged legacy timestamp-hint contract.
+     */
+    pagination?: 'keyset_v1',
+    /**
+     * Opaque page.next_cursor from keyset_v1. Requires pagination=keyset_v1 and the same account, immutable app, wake, normalized since and limit. Selection data, not authorization; pages are live retained reads, not a snapshot.
+     */
+    cursor?: string,
   }): CancelablePromise<WakeTimelineResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -377,6 +433,8 @@ export class ObservabilityService {
       query: {
         'since': since,
         'limit': limit,
+        'pagination': pagination,
+        'cursor': cursor,
       },
       errors: {
         400: `Malformed query parameter on the wake-timeline read — \`since\` not RFC 3339 or \`limit\` out of range.`,

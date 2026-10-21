@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestFullRootfsCommandPATH(t *testing.T) {
@@ -70,7 +71,7 @@ func TestFullRootfsCommandPATH(t *testing.T) {
 			}
 			m := api.AppManifest{Entrypoint: []string{command}, Env: map[string]string{"PATH": "/image/bin"}, EnvSecrets: tc.selected}
 			reads := &launchEnvReadStore{Store: store, failEnv: tc.failEnvRead, failSecret: tc.failSecretRead}
-			got := fullRootfsCommandPATH(ctx, reads, app, state.Deployment{Scope: tc.scope}, m)
+			got := fullRootfsCommandPATH(ctx, statetest.NewStore(reads), app, state.Deployment{Scope: tc.scope}, m)
 			if tc.deferred {
 				if got != nil {
 					t.Fatalf("unknown/unused PATH was read: %q", *got)
@@ -89,7 +90,7 @@ func TestFullRootfsCommandPATH(t *testing.T) {
 }
 
 type launchEnvReadStore struct {
-	state.Store
+	Store               state.Store
 	failEnv, failSecret bool
 	calls               int
 }
@@ -148,7 +149,7 @@ func TestFullRootfsInvalidLaunchPersistsDeploymentFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, nil)
+	err = h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, nil, preparedContainerWorkload{ImageResolution: oci.ImageResolution{Reference: dep.ImageDigest}})
 	if !errors.Is(err, oci.ErrImageManifestInvalid) {
 		t.Fatalf("build error = %v", err)
 	}

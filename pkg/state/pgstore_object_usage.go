@@ -29,16 +29,45 @@ func (s *PgStore) ObjectUsageForPeriod(ctx context.Context, account string, peri
 	return readObjectUsageForPeriod(ctx, s.pool, account, ObjectStoragePeriod(periodStart))
 }
 
+// Lock financial ownership before its retained namespace. All quota, inventory,
+// transfer and configuration writers use this order across legacy namespaces.
+func lockObjectUsageScope(ctx context.Context, tx pgx.Tx, account, bucket pgtype.UUID) (pgtype.UUID, error) {
+	q := sqlc.New()
+	if _, err := q.ObjectStorageLockScope(ctx, tx, sqlc.ObjectStorageLockScopeParams{BucketID: bucket, AccountID: account}); err != nil {
+		return pgtype.UUID{}, mapErr(err)
+	}
+	if err := q.ObjectStorageLockLegacyIdentity(ctx, tx, account); err != nil {
+		return pgtype.UUID{}, mapErr(err)
+	}
+	return q.ObjectUsageLockAccount(ctx, tx, account)
+}
+
+// Storage namespace selects the bucket; financial ownership selects its quota pool.
+func readObjectBucketUsage(ctx context.Context, db sqlc.DBTX, account, bucket string, now time.Time) (ObjectUsageSnapshot, error) {
+	subject, err := sqlc.New().ObjectStorageSubject(ctx, db, sqlc.ObjectStorageSubjectParams{BucketID: mustPgUUID(bucket), AccountID: mustPgUUID(account)})
+	if err != nil {
+		return ObjectUsageSnapshot{}, mapErr(err)
+	}
+	return readObjectUsage(ctx, db, pgUUIDString(subject), now)
+}
+
 func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string, periodStart time.Time) (ObjectUsageSnapshot, error) {
 	q := sqlc.New()
 	out := ObjectUsageSnapshot{}
+	// ADR-1320: checks tighten the operator policy by the plan's ceilings. A
+	// missing account keeps the operator policy, as before.
+	plan, err := q.ObjectUsageAccountPlan(ctx, db, mustPgUUID(account))
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return out, err
+	}
+	out.PlanLimits = objectStoragePlanLimits(api.Plan(plan))
 	rows, err := q.ObjectUsageBuckets(ctx, db, sqlc.ObjectUsageBucketsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(periodStart))})
 	if err != nil {
 		return out, err
 	}
 	for _, r := range rows {
 		out.Buckets = append(out.Buckets, ObjectBucketUsage{
-			Bucket:         ObjectBucket{ID: pgUUIDString(r.ID), AccountID: account, AppID: pgUUIDString(r.AppID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint, PhysicalName: r.PhysicalName, State: r.State, PublicRead: r.PublicRead, ServeAt: r.ServeAt.String, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time},
+			Bucket:         ObjectBucket{ID: pgUUIDString(r.ID), OrgID: pgUUIDString(r.OrgID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint, PhysicalName: r.PhysicalName, State: r.State, PublicRead: r.PublicRead, ServeAt: r.ServeAt.String, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time},
 			MultipartBytes: r.MultipartBytes, InventoryScope: r.InventoryScope.String, BaselineBytes: r.BaselineBytes.Int64, BaselineKeys: r.BaselineKeys.Int64, GrantedBytes: r.GrantedBytes.Int64, GrantedKeys: r.GrantedKeys.Int64,
 			ObservedBytes: r.ObservedBytes.Int64, ObservedKeys: r.ObservedKeys.Int64, ObservedAt: r.ObservedAt.Time, AttemptAt: r.AttemptAt.Time, LeaseUntil: r.InventoryLeaseUntil.Time, Token: r.Token.String,
 			RequestCount: r.GatewayRequestCount, EgressBytes: r.GatewayEgressBytes, GatewayMetricsKnown: true,
@@ -84,7 +113,12 @@ func admitObjectURLTx(ctx context.Context, tx pgx.Tx, account, bucket, key strin
 
 func admitObjectWriteSourceTx(ctx context.Context, tx pgx.Tx, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string, route bool, multipartID string) error {
 	q := sqlc.New()
-	if _, err := q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+	owner, ownerErr := q.ObjectStorageLockOwner(ctx, tx, sqlc.ObjectStorageLockOwnerParams{BucketID: mustPgUUID(bucket), AccountID: mustPgUUID(account)})
+	if ownerErr != nil {
+		return mapErr(ownerErr)
+	}
+	subject := pgUUIDString(owner.Subject)
+	if _, err := lockObjectUsageScope(ctx, tx, mustPgUUID(account), mustPgUUID(bucket)); err != nil {
 		return mapErr(err)
 	}
 	if put {
@@ -93,7 +127,7 @@ func admitObjectWriteSourceTx(ctx context.Context, tx pgx.Tx, account, bucket, k
 		}
 	}
 	now := time.Now().UTC()
-	snapshot, err := readObjectUsage(ctx, tx, account, now)
+	snapshot, err := readObjectUsage(ctx, tx, subject, now)
 	if err != nil {
 		return err
 	}
@@ -150,7 +184,7 @@ func admitObjectWriteSourceTx(ctx context.Context, tx pgx.Tx, account, bucket, k
 			return err
 		}
 	}
-	if err = q.ObjectUsageAuthorize(ctx, tx, sqlc.ObjectUsageAuthorizeParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))}); err != nil {
+	if err = q.ObjectUsageAuthorize(ctx, tx, sqlc.ObjectUsageAuthorizeParams{AccountID: mustPgUUID(subject), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))}); err != nil {
 		return err
 	}
 	return nil
@@ -169,6 +203,12 @@ func (s *PgStore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStora
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
+	if _, err = q.ObjectStorageLockReportingOwners(ctx, tx, mustPgUUID(r.AccountID)); err != nil {
+		return mapErr(err)
+	}
+	if err = q.ObjectStorageLockLegacyIdentity(ctx, tx, mustPgUUID(r.AccountID)); err != nil {
+		return mapErr(err)
+	}
 	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(r.AccountID)); err != nil {
 		return mapErr(err)
 	}
@@ -181,6 +221,13 @@ func (s *PgStore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStora
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
+	}
+	cutover, err := q.ObjectStorageReportCutover(ctx, tx, sqlc.ObjectStorageReportCutoverParams{Subject: mustPgUUID(r.AccountID), Period: objectUsageTime(r.PeriodStart)})
+	if err != nil {
+		return mapErr(err)
+	}
+	if cutover.Valid && r.ObservedAt.Before(cutover.Time) {
+		return ErrConflict
 	}
 	snapshot, err := readObjectUsage(ctx, tx, r.AccountID, r.ObservedAt)
 	if err != nil {
@@ -242,7 +289,7 @@ func (s *PgStore) FinishObjectInventory(ctx context.Context, bucket, token strin
 	if err != nil {
 		return mapErr(err)
 	}
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, account); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, account, mustPgUUID(bucket)); err != nil {
 		return mapErr(err)
 	}
 	// Serialize inventory publication with account-wide quota decisions.

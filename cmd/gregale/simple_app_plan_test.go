@@ -213,3 +213,40 @@ func TestApplyDeployLifecyclePreservesPlanDefaultsWhenFlagsOmitted(t *testing.T)
 		t.Fatalf("explicit flags not applied: %+v", req)
 	}
 }
+
+// deploy --plan must reject a manifest the deploy itself rejects (H10-67).
+func TestDeployPlanRejectsInvalidManifest(t *testing.T) {
+	repo := initZeroConfigRepo(t)
+	for name, body := range map[string]string{
+		"package.json": `{"scripts":{"start":"node server.js"}}`,
+		"server.js":    "require('http').createServer((q, s) => s.end('ok')).listen(process.env.PORT || 3000)\n",
+		"gregale.yaml": "scaling:\n  max_instances: -3\n",
+	} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"add", "."}, {"commit", "-q", "-m", "app with an invalid manifest"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	withCwd(t, repo)
+	t.Setenv("FAAS_TOKEN", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
+
+	var stdout, stderr bytes.Buffer
+	oldOut, oldErr := osStdout, osStderr
+	osStdout, osStderr = &stdout, &stderr
+	defer func() { osStdout, osStderr = oldOut, oldErr }()
+	code := cmdDeployTarball([]string{"--plan", "--name", "demo"})
+	if code == 0 || strings.Contains(stdout.String(), "Simple app plan") {
+		t.Fatalf("plan accepted an invalid manifest: exit=%d stdout=%q", code, stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "max_instances must be >= 0") {
+		t.Fatalf("stderr does not explain the manifest error: %q", stderr.String())
+	}
+}

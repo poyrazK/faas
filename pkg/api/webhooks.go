@@ -116,7 +116,7 @@ var AllowedAppWebhookEvents = []string{
 	"routes.requirements.recovered",
 	"routes.health.blocked", "routes.health.resumed", "routes.health.aborted",
 	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
-	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
+	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.compound_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered",
 	"workflow.finished", "automation.paused",
 	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
 	"event_recovery.execution_attention",
@@ -126,9 +126,11 @@ var AllowedAppWebhookEvents = []string{
 }
 
 // Account receivers intentionally cannot use the app-level all-events
-// wildcard. Their filter is a non-empty subset of these release events.
+// wildcard. Their filter is a non-empty subset of these account release and
+// environment events.
 var AllowedAccountReleaseWebhookEvents = []string{
 	"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted",
+	"environment.gitops.changed",
 }
 
 // DeploymentLiveWebhookPayload is the payload stored for a deployment.live
@@ -161,6 +163,8 @@ type RolloutCompletedWebhookPayload struct {
 	RolloutState   string `json:"rollout_state"`
 	TrafficPercent int    `json:"traffic_percent"`
 	CompletedAt    string `json:"completed_at"`
+	// Decision is the advance evidence that completed the rollout (ADR-1447).
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // RolloutAbortedWebhookPayload is the payload stored for a rollout.aborted
@@ -172,6 +176,9 @@ type RolloutAbortedWebhookPayload struct {
 	TrafficPercent int    `json:"traffic_percent"`
 	Reason         string `json:"reason"`
 	AbortedAt      string `json:"aborted_at"`
+	// Decision is the abort evidence when the circuit breaker or a recorded
+	// manual or lease-expiry transition aborted the rollout (ADR-1447).
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // ErrorNewWebhookPayload is the payload stored for an error.new delivery.
@@ -244,6 +251,10 @@ type APIConsumerUsageStatementFinalizedWebhookPayload struct {
 	Buckets          []APIConsumerUsageStatementBucketResponse `json:"buckets"`
 	AsOf             string                                    `json:"as_of"`
 	FinalizedAt      time.Time                                 `json:"finalized_at"`
+	// Prepaid credit drawn at finalization and what is left to bill
+	// (ADR-1306).
+	CreditAppliedMillicents int64 `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64 `json:"amount_due_millicents"`
 }
 
 // PlatformTenantStatementFinalizedWebhookPayload is the cross-app billing
@@ -411,7 +422,7 @@ type UpdateAppWebhookRequest struct {
 }
 
 // Account routes use the same write fields but require a non-empty subset of
-// release events. Keeping separate DTOs makes that contract explicit in the
+// account events. Keeping separate DTOs makes that contract explicit in the
 // OpenAPI and typed clients.
 type CreateAccountReleaseWebhookRequest struct {
 	TargetURL      string   `json:"target_url"`

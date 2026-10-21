@@ -49,8 +49,10 @@ caps, cost budgets, usage reports and alerts under-count until it recovers.
 1. Check outboundd's logs and Postgres reachability from the control plane.
    `FaasOutboundAdmissionUnavailable` firing at the same time means Postgres
    is down for outboundd, and calls are already refused.
-2. A settlement waits up to 15 s. Lock waits on `outbound_admission_state`
-   rows point at one very busy integration:
+2. A settlement makes up to three attempts of 5 s each, keyed by the call's
+   lease so a retry never counts it twice (ADR-1120). Growing `retried`
+   events with no `state_error` are slow commits that recovered. Lock waits
+   on `outbound_admission_state` rows point at one very busy integration:
 
    ```sql
    SELECT relation::regclass, mode, count(*) FROM pg_locks
@@ -73,6 +75,63 @@ gateway is usually not the cause:
 
 Act only if errors come from the gateway itself, such as
 `outbound_ai_translation_unsupported` after a release.
+
+## Canaries, log export and moderation
+
+These ADR-1340 features are customer settings; none pages.
+
+- **Canary rollbacks.** `outbound_ai_route_canary_rollbacks_total` rising
+  means customers' new models did worse than their current ones. The
+  customer sees the reason in `gregale ai routes canary <route-id>`.
+  Investigate only if every canary on the platform rolls back at once: that
+  points at the gateway, not the models.
+- **Moderation errors.** `outbound_ai_moderation_total{result="error"}` counts
+  checks that failed. They usually come from the customer's check
+  integration: a cap reached, a provider outage, or a deleted integration.
+  - With `on_error: block`, the customer's calls get
+    `503 outbound_ai_moderation_unavailable`. Point them at the check
+    integration's usage and caps.
+  - Errors on many unrelated accounts at once point at the in-process path.
+    Read the outboundd logs.
+- **Export lag.** Lines reach drains through the gateways' drain workers.
+  - A customer missing lines: check the app's drain health
+    (`gregale log-drains`), as for runtime logs.
+  - Lines pile up when no gateway owns the app (an app with no owner node).
+    They expire after 24 hours, so a longer outage loses them.
+
+## Batches, access tokens and evaluations
+
+These ADR-1431 features are customer settings; none pages.
+
+- **Batches.** `outbound_ai_batches_settled_total{outcome="unknown"}` rising
+  means batches reach 72 hours without the provider ending them, or the
+  gateway cannot read their status.
+  - Open batches: `SELECT provider, state, checks, created_at FROM
+    outbound_ai_batches WHERE state <> 'settled' ORDER BY created_at`.
+  - A batch that holds a customer at a cap is released by its settlement.
+    Never delete an open row by hand: its usage would then never be recorded.
+- **Access tokens.** The public listener is off unless `public_listen_addr`
+  is set. A burst of `401 outbound_access_token_invalid` on one host is
+  usually a leaked or stale token; the customer revokes it with
+  `gregale ai tokens revoke`. To close the public host, unset
+  `public_listen_addr` and restart outboundd.
+- **Evaluations.** `outbound_ai_evaluations_total{result="failed"}` counts
+  evaluations that could not run. Most failures name the customer's setup
+  (no captures, a deleted judge integration). Many `outbound_ai_evaluation_interrupted`
+  failures point at outboundd restarts during long evaluations.
+
+## Unmetered calls
+
+ADR-1432 refuses writes the gateway cannot meter; none pages.
+
+- **Refusals.** `outbound_rejections_total{reason="outbound_ai_endpoint_unmetered"}`
+  counts them. A customer whose SDK needs an endpoint outside the lists (the
+  ADR has them) either sets `--allow-unmetered on` or asks for the endpoint to
+  be metered or listed as free. Add a free endpoint only when its provider
+  documents it as free of charge.
+- **Allowed.** `outbound_ai_unmetered_calls_total` counts calls let through.
+  Their spend is outside the caps; a customer surprised by a provider bill
+  should check this first.
 
 ## Failure drills
 
@@ -110,8 +169,24 @@ work; indicative only):
 | 10 | 30 s | 15 | 1.75 s / 7.47 s | **12 of 438 calls lost usage** (2 s settlement timeout) |
 | 10 | 30 s | 46 | 0.47 s / 2.94 s | all settled after raising the timeout to 15 s |
 
-All calls of one integration serialize on its admission-state row, and each
-call commits three times (admission, release, settlement). Throughput per
-integration therefore follows Postgres commit latency rather than pool size.
+All calls of one integration serialize on its admission-state row. On
+2026-10-13 a call took 30.3 Postgres round trips (39.2 with a circuit
+breaker), and most of them were spent holding that row.
+
+ADR-1120 pipelines admission and settlement and folds the breaker and
+cooldown checks into admission. A call now takes 11 round trips, or 12 with a
+breaker; `TestAIGatewayRoundTripBudget` holds that budget. The soak reports
+`postgres round trips: N per call`, and `FAAS_AI_SOAK_CIRCUIT=1` turns the
+breaker on.
+
+Interleaved runs on 2026-10-14 used the same laptop, the same Postgres, pool 2
+and no breaker. Indicative only: other work shared the Postgres lock table, so
+a few calls in both builds got `503` from `out of shared memory`.
+
+| Build | Calls/s | p99 overhead |
+| --- | --- | --- |
+| main (before ADR-1120) | 119–230 | 0.37–3.4 s |
+| ADR-1120 | 168–289 | 45–410 ms |
+
 On the production control plane, watch time to first byte against the
 provider's and the settlement panel during rollout step 1.

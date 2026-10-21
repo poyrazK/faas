@@ -83,6 +83,7 @@ func cloneWorkloadCleanupSHA(row sqlc.ProjectEnvironmentCloneWorkloadCleanup) st
 
 func cloneEnvironmentBorrowerCounts(row sqlc.ReadCloneEnvironmentMetadataBorrowersRow) map[string]int64 {
 	return map[string]int64{
+		"app_environment_route_budgets":           row.AppEnvironmentRouteBudgets,
 		"app_environment_secret_ref_suppressions": row.AppEnvironmentSecretRefSuppressions,
 		"app_environment_secret_refs":             row.AppEnvironmentSecretRefs,
 		"app_environment_workload_intents":        row.AppEnvironmentWorkloadIntents,
@@ -92,7 +93,9 @@ func cloneEnvironmentBorrowerCounts(row sqlc.ReadCloneEnvironmentMetadataBorrowe
 		"environment_git_sources":                 row.EnvironmentGitSources,
 		"environment_managed_fields":              row.EnvironmentManagedFields,
 		"environment_workload_graphs":             row.EnvironmentWorkloadGraphs,
+		"environment_workload_retirements":        row.EnvironmentWorkloadRetirements,
 		"feature_flag_versions":                   row.FeatureFlagVersions,
+		"hosting_sites":                           row.HostingSites,
 		"invocation_environment_queue_admissions": row.InvocationEnvironmentQueueAdmissions,
 		"invocation_work_environment_admissions":  row.InvocationWorkEnvironmentAdmissions,
 		"invocation_work_environment_domains":     row.InvocationWorkEnvironmentDomains,
@@ -103,6 +106,7 @@ func cloneEnvironmentBorrowerCounts(row sqlc.ReadCloneEnvironmentMetadataBorrowe
 		"project_environment_route_policies":      row.ProjectEnvironmentRoutePolicies,
 		"project_environment_workload_specs":      row.ProjectEnvironmentWorkloadSpecs,
 		"project_release_sets":                    row.ProjectReleaseSets,
+		"project_release_stages":                  row.ProjectReleaseStages,
 		"runtime_environment_scaling_states":      row.RuntimeEnvironmentScalingStates,
 	}
 }

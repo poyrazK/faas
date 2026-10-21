@@ -93,7 +93,8 @@ func (b *Builder) WithSigner(s Signer) *Builder {
 
 // BuildInput is one app-layer build.
 type BuildInput struct {
-	// Layers are the above-base OCI layers, bottom-to-top, gzip-compressed.
+	// Layers are the above-base OCI layers for main, or all OCI layers for
+	// an independent sidecar, bottom-to-top and gzip-compressed.
 	Layers []io.Reader
 	// Manifest is the /etc/faas/app.json contract to inject.
 	Manifest api.AppManifest
@@ -182,9 +183,11 @@ type BuildResult struct {
 	ImageKey string
 	// ImagePath is the on-disk path the ext4 was written to, when
 	// OutImage was used. Empty when Storage published the file.
-	ImagePath    string
-	SizeMB       int
-	ContentBytes int64
+	ImagePath      string
+	SizeMB         int
+	ContentBytes   int64
+	ArtifactDigest string
+	ArtifactBytes  int64
 	// SBOMKey is the storage key the CycloneDX SBOM was published
 	// under (issue #299 / ADR-038 Phase 3). Empty when the build
 	// did not configure SBOMRun + SBOMStorageKey, or when the
@@ -194,6 +197,8 @@ type BuildResult struct {
 	// runner bytes copied to /usr/local/bin/faas-runner. Empty when no
 	// function runner was injected.
 	RunnerDigest string
+	// GuestInitDigest covers the exact bytes injected into this app layer.
+	GuestInitDigest string
 }
 
 // Build runs the pipeline. It stages into a temp dir that is always removed.
@@ -240,17 +245,19 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	defer func() { _ = os.RemoveAll(staging) }()
 
 	budget := newExtractionBudget(limits.LayerExtractionBudgetBytes())
+	opaqueRoot := false
 	for i, layer := range in.Layers {
-		// The app artifact becomes overlayfs' upper directory after
-		// stageAppUpper. Preserve OCI whiteouts as overlayfs markers so a
-		// deletion can hide a path supplied by the shared base drive. The
-		// shared base owns guest pseudo-filesystems, so filter image entries
-		// below /dev, /proc, /sys, and /tmp before they can become mounted
-		// staging paths.
-		if err := applyLayerGzForApp(staging, layer, budget); err != nil {
+		// The main workload overlays the shared base: its artifact becomes
+		// overlayfs' upper directory after stageAppUpper, so OCI whiteouts stay
+		// overlayfs markers that can hide paths supplied by the base drive. A
+		// sidecar consumes all OCI layers as an independent root. Both filter
+		// image entries below /dev, /proc, /sys, and /tmp, which the shared base
+		// owns, before they can become mounted staging paths.
+		if err := applyLayerGzForBuild(staging, layer, in.WorkloadManifest != nil, &opaqueRoot, budget); err != nil {
 			return BuildResult{}, layerApplyError(limits, i, err)
 		}
 	}
+
 	// A customer image must not be able to smuggle the full-rootfs marker
 	// into the optimized two-drive artifact and make guest-init bypass the
 	// shared base. Only BuildFullRootfs writes the marker after all layers
@@ -308,7 +315,8 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 			return BuildResult{}, err
 		}
 	}
-	if err := InjectGuestInit(staging, in.GuestInitPath); err != nil {
+	guestInitDigest, err := injectGuestInitWithDigest(staging, in.GuestInitPath)
+	if err != nil {
 		return BuildResult{}, err
 	}
 	if err := InjectManifest(staging, in.Manifest); err != nil {
@@ -387,20 +395,23 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	// carry the assembled app tree under /upper; Linux cannot see drive1's
 	// files until guest-init mounts it, so a root-level app.json would be
 	// invisible after the overlay is assembled.
-	if err := stageAppUpper(staging); err != nil {
+	if err := stageAppUpper(staging, opaqueRoot); err != nil {
 		return BuildResult{}, err
 	}
 
-	sizeMB, err = b.publishExt4(ctx, in, staging, sizeMB, limits)
+	sizeMB, identity, err := b.publishExt4(ctx, in, staging, sizeMB, limits)
 	if err != nil {
 		return BuildResult{}, err
 	}
 
 	res := BuildResult{
-		SizeMB:       sizeMB,
-		ContentBytes: stats.ContentBytes,
-		SBOMKey:      sbomKey,
-		RunnerDigest: runnerDigest,
+		SizeMB:          sizeMB,
+		ContentBytes:    stats.ContentBytes,
+		ArtifactDigest:  identity.Digest,
+		ArtifactBytes:   identity.Bytes,
+		SBOMKey:         sbomKey,
+		RunnerDigest:    runnerDigest,
+		GuestInitDigest: guestInitDigest,
 	}
 	if in.OutImage != "" {
 		res.ImagePath = in.OutImage
@@ -414,37 +425,31 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 // consumed by guest-init's overlay assembly. It preserves a customer image's
 // own top-level "upper" path by treating it as normal app content at
 // /upper/upper inside the artifact.
-func stageAppUpper(staging string) error {
-	upper := filepath.Join(staging, "upper")
-	legacyUpper := filepath.Join(staging, ".faas-app-upper-source")
-	if _, err := os.Lstat(upper); err == nil {
-		if err := os.Rename(upper, legacyUpper); err != nil {
-			return fmt.Errorf("rootfs: preserve app upper path: %w", err)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("rootfs: inspect app upper path: %w", err)
-	}
-	if err := os.Mkdir(upper, 0o755); err != nil {
-		return fmt.Errorf("rootfs: create app upper path: %w", err)
-	}
-	if err := chmodImageDirectory(upper, 0o755); err != nil {
-		return fmt.Errorf("rootfs: app upper permissions: %w", err)
-	}
+func stageAppUpper(staging string, opaqueRoots ...bool) error {
 	entries, err := os.ReadDir(staging)
 	if err != nil {
 		return fmt.Errorf("rootfs: read app staging: %w", err)
 	}
-	for _, entry := range entries {
-		if entry.Name() == "upper" {
-			continue
-		}
-		src := filepath.Join(staging, entry.Name())
-		dst := filepath.Join(upper, entry.Name())
-		if err := os.Rename(src, dst); err != nil {
-			return fmt.Errorf("rootfs: move %s into app upper: %w", entry.Name(), err)
+	upper, err := os.MkdirTemp(staging, ".faas-upper-wrapper-")
+	if err != nil {
+		return fmt.Errorf("rootfs: create app upper wrapper: %w", err)
+	}
+	if err := chmodImageDirectory(upper, 0o755); err != nil {
+		return fmt.Errorf("rootfs: set app upper wrapper mode: %w", err)
+	}
+	if len(opaqueRoots) > 0 && opaqueRoots[0] {
+		// Set metadata while the wrapper is empty; clearing it later would
+		// discard the application content we are about to move.
+		if err := applyOverlayOpaque(upper); err != nil {
+			return fmt.Errorf("rootfs: preserve root opacity: %w", err)
 		}
 	}
-	return nil
+	for _, entry := range entries {
+		if err := os.Rename(filepath.Join(staging, entry.Name()), filepath.Join(upper, entry.Name())); err != nil {
+			return fmt.Errorf("rootfs: move app entry into upper: %w", err)
+		}
+	}
+	return os.Rename(upper, filepath.Join(staging, "upper"))
 }
 
 // ensureWorkloadMountpoints creates the mount targets needed by a sidecar
@@ -507,22 +512,27 @@ func ensureRuntimeDirectory(staging, rel string) error {
 //
 // The temp file is removed before returning; the caller sees no scratch
 // left behind even on error.
-func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string, sizeMB int, limits api.Limits) (int, error) {
+func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string, sizeMB int, limits api.Limits) (int, ArtifactIdentity, error) {
 	if in.OutImage != "" {
 		// Legacy path. Mkfs writes directly to OutImage; the caller's
 		// filesystem already provides atomicity (or it doesn't, and we
 		// honour that — pre-#96 production). Kept for the integration
 		// test.
 		if err := os.MkdirAll(filepath.Dir(in.OutImage), 0o755); err != nil {
-			return 0, fmt.Errorf("rootfs: mkdir out dir: %w", err)
+			return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: mkdir out dir: %w", err)
 		}
-		return b.runAppMkfs(ctx, staging, in.OutImage, sizeMB, limits)
+		sizeMB, err := b.runAppMkfs(ctx, staging, in.OutImage, sizeMB, limits)
+		if err != nil {
+			return 0, ArtifactIdentity{}, err
+		}
+		identity, err := artifactIdentityFromPath(ctx, in.OutImage)
+		return sizeMB, identity, err
 	}
 	// Storage path. Mkfs into a sibling temp file, then Put the bytes
 	// under StorageKey and remove the temp.
 	tmp, err := os.CreateTemp(filepath.Dir(staging), "faas-mkfs-*.ext4")
 	if err != nil {
-		return 0, fmt.Errorf("rootfs: create tmp ext4: %w", err)
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: create tmp ext4: %w", err)
 	}
 	tmpPath := tmp.Name()
 	closed := false
@@ -533,23 +543,24 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 		_ = os.Remove(tmpPath)
 	}()
 	if err := tmp.Close(); err != nil {
-		return 0, fmt.Errorf("rootfs: close tmp ext4: %w", err)
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: close tmp ext4: %w", err)
 	}
 	sizeMB, err = b.runAppMkfs(ctx, staging, tmpPath, sizeMB, limits)
 	if err != nil {
-		return 0, err
+		return 0, ArtifactIdentity{}, err
 	}
 	// nolint:forbidigo // tmpPath is from os.MkdirTemp at the top of
 	// this function — a daemon-internal scratch file the builder just
 	// wrote via MkfsCommand. Not a customer path.
 	f, err := os.Open(tmpPath)
 	if err != nil {
-		return 0, fmt.Errorf("rootfs: open mkfs output: %w", err)
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: open mkfs output: %w", err)
 	}
 	closed = true // release the open file before Put; storage Put closes the file via defer elsewhere
 	defer func() { _ = f.Close() }()
-	if err := in.Storage.Put(ctx, in.StorageKey, f); err != nil {
-		return 0, fmt.Errorf("rootfs: publish %q: %w", in.StorageKey, err)
+	identity, err := publishArtifactIdentity(ctx, in.Storage, in.StorageKey, f)
+	if err != nil {
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: publish %q: %w", in.StorageKey, err)
 	}
 	// ADR-038: sign the published ext4 so schedd's cold-boot verify
 	// (pkg/cosign.LocalVerifier) can detect tampering. Signing
@@ -562,10 +573,10 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 	if b.signer != nil {
 		sigKey := "sigs/" + in.StorageKey + ".sig"
 		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
-			return 0, fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
+			return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
 		}
 	}
-	return sizeMB, nil
+	return sizeMB, identity, nil
 }
 
 // emitSBOM runs the injected SBOM subprocess against the staging
@@ -696,28 +707,33 @@ func validateWorkloadManifestName(name string) error {
 // InjectGuestInit copies the guest-init binary into staging as /sbin/init (PID 1,
 // spec §4.8), executable.
 func InjectGuestInit(staging, guestInitPath string) error {
+	_, err := injectGuestInitWithDigest(staging, guestInitPath)
+	return err
+}
+
+func injectGuestInitWithDigest(staging, guestInitPath string) (string, error) {
 	if guestInitPath == "" {
-		return fmt.Errorf("rootfs: empty guest-init path")
+		return "", fmt.Errorf("rootfs: empty guest-init path")
 	}
 	data, err := os.ReadFile(guestInitPath)
 	if err != nil {
-		return fmt.Errorf("rootfs: read guest-init: %w", err)
+		return "", fmt.Errorf("rootfs: read guest-init: %w", err)
 	}
 	dst := filepath.Join(staging, "sbin", "init")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return "", err
 	}
 	// OCI base images commonly ship /sbin/init as a symlink (for example
 	// Alpine points it at /bin/busybox). Remove the link before writing the
 	// platform PID-1 binary; os.WriteFile follows a symlink and would
 	// overwrite the link target while leaving /sbin/init pointing at it.
 	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("rootfs: remove existing init: %w", err)
+		return "", fmt.Errorf("rootfs: remove existing init: %w", err)
 	}
 	if err := os.WriteFile(dst, data, 0o755); err != nil {
-		return fmt.Errorf("rootfs: write guest-init: %w", err)
+		return "", fmt.Errorf("rootfs: write guest-init: %w", err)
 	}
-	return nil
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(data)), nil
 }
 
 // ApplyTarball unpacks a customer source tarball at /app. Archives produced
@@ -836,7 +852,7 @@ func applyTarballWithCap(dst string, r io.Reader, capBytes int64, prefix string)
 			}
 			written += hdr.Size
 		}
-		archiveName := hdr.Name
+		archiveName := tarball.TrimLeadingDotSlash(hdr.Name)
 		if prefix != "" {
 			archiveName = strings.TrimSuffix(archiveName, "/")
 			if archiveName == prefix {
@@ -1085,14 +1101,27 @@ const fetchHandler = mod.fetch || (defaultExport && typeof defaultExport.fetch =
 if (typeof eventHandler !== "function" && typeof fetchHandler !== "function") {
   throw new Error("handler.js must export handler/default or default { fetch }");
 }
+// A worker serves FAAS_FUNCTION_CONCURRENCY requests at once when the app
+// sets function_concurrency (ADR-1342); requests and every response line
+// then carry the runner's __faas_id.
+const concurrency = process.env.FAAS_PERSISTENT_WORKER === "1"
+  ? Math.min(Math.max(Number.parseInt(process.env.FAAS_FUNCTION_CONCURRENCY || "1", 10) || 1, 1), 256)
+  : 1;
 if (process.env.FAAS_PERSISTENT_WORKER === "1") {
-  process.stdout.write(JSON.stringify({ __faas_ready: true }) + "\n");
+  process.stdout.write(JSON.stringify({ __faas_ready: true, concurrency }) + "\n");
 }
 
 // Response frames (ADR-999): one line is a complete response; a "head" line
-// starts a streamed one that "chunk" lines continue and "end" closes.
-let streaming = false;
-const emit = (frame) => process.stdout.write(JSON.stringify(frame) + "\n");
+// starts a streamed one that "chunk" lines continue and "end" closes. out is
+// one request's output: its id, whether its stream has started, and whether
+// the runner cancelled it.
+const output = (id) => {
+  const out = { streaming: false, cancelled: false, controller: new AbortController() };
+  out.emit = (frame) => {
+    if (!out.cancelled) process.stdout.write(JSON.stringify(id === undefined ? frame : { __faas_id: id, ...frame }) + "\n");
+  };
+  return out;
+};
 const toBuffer = (piece) => Buffer.isBuffer(piece) ? piece
   : piece instanceof Uint8Array ? Buffer.from(piece.buffer, piece.byteOffset, piece.byteLength)
   : Buffer.from(String(piece));
@@ -1108,45 +1137,60 @@ function caseInsensitiveHeaders(raw) {
     has: (target, prop) => typeof prop === "string" ? prop.toLowerCase() in target : prop in target,
   });
 }
-const emitWhole = (status, headers, bytes) => emit({ status, headers, body_b64: bytes.toString("base64") });
-const emitHead = (status, headers) => { streaming = true; emit({ frame: "head", status, headers }); };
-const emitChunk = (bytes) => { if (bytes.length > 0) emit({ frame: "chunk", body_b64: bytes.toString("base64") }); };
+const emitWhole = (out, status, headers, bytes) => out.emit({ status, headers, body_b64: bytes.toString("base64") });
+const emitHead = (out, status, headers) => { out.streaming = true; out.emit({ frame: "head", status, headers }); };
+const emitChunk = (out, bytes) => { if (bytes.length > 0) out.emit({ frame: "chunk", body_b64: bytes.toString("base64") }); };
 const isStreamBody = (body) => body !== null && typeof body === "object" && !Buffer.isBuffer(body) &&
   !(body instanceof Uint8Array) && typeof body[Symbol.asyncIterator] === "function";
-async function streamIterable(status, headers, body) {
-  emitHead(status, headers);
-  for await (const piece of body) emitChunk(toBuffer(piece));
-  emit({ frame: "end" });
+async function streamIterable(out, status, headers, body) {
+  emitHead(out, status, headers);
+  for await (const piece of body) {
+    if (out.cancelled) return;
+    emitChunk(out, toBuffer(piece));
+  }
+  out.emit({ frame: "end" });
 }
 // A Fetch API body already complete within one turn of the event loop is
 // sent as one response, exactly as before; a body still being produced
 // (server-sent events, generated text) is streamed as it arrives.
-async function respondFetchBody(status, headers, body) {
-  if (!body) { emitWhole(status, headers, Buffer.alloc(0)); return; }
+async function respondFetchBody(out, status, headers, body) {
+  if (!body) { emitWhole(out, status, headers, Buffer.alloc(0)); return; }
   const reader = body.getReader();
+  let cancelling;
+  const abort = () => { cancelling ||= reader.cancel().catch(() => {}); };
+  out.controller.signal.addEventListener("abort", abort, { once: true });
+  if (out.controller.signal.aborted) abort();
+  try {
   const pending = Symbol("pending");
   const buffered = [];
   let read = reader.read();
   for (;;) {
     const next = await Promise.race([read, new Promise((resolve) => setImmediate(resolve, pending))]);
     if (next === pending) break;
-    if (next.done) { emitWhole(status, headers, Buffer.concat(buffered)); return; }
+    if (next.done) { emitWhole(out, status, headers, Buffer.concat(buffered)); return; }
     buffered.push(toBuffer(next.value));
     read = reader.read();
   }
-  emitHead(status, headers);
-  emitChunk(Buffer.concat(buffered));
-  for (let next = await read; !next.done; next = await reader.read()) emitChunk(toBuffer(next.value));
-  emit({ frame: "end" });
+  emitHead(out, status, headers);
+  emitChunk(out, Buffer.concat(buffered));
+  for (let next = await read; !next.done; next = await reader.read()) {
+    if (out.cancelled) { abort(); return; }
+    emitChunk(out, toBuffer(next.value));
+  }
+  out.emit({ frame: "end" });
+  } finally {
+    out.controller.signal.removeEventListener("abort", abort);
+    if (cancelling) await cancelling;
+    reader.releaseLock();
+  }
 }
 
-const lines = readlineModule.createInterface({ input: process.stdin, crlfDelay: Infinity });
-for await (const line of lines) {
-  if (!line.trim()) continue;
+// handleOne answers one request: input is the raw line, or the decoded
+// request on a shared worker.
+async function handleOne(input, out) {
   let invocationID = "";
-  streaming = false;
   try {
-  const env = JSON.parse(line);
+  const env = typeof input === "string" ? JSON.parse(input) : input;
   const raw = Buffer.from(env.body_b64 || "", "base64").toString("utf8");
   let body = raw;
   if (raw === "") {
@@ -1156,12 +1200,26 @@ for await (const line of lines) {
   }
   const headers = env.headers || {};
   invocationID = headers["x-faas-invocation-id"] || headers["X-Faas-Invocation-Id"] || "";
+  // One line per call, like the Python adapter: console.error(msg, fields)
+  // printed a multi-line inspect() of the fields, and every line became its
+  // own log record (H10-59).
+  const formatLogArg = (arg) => {
+    if (typeof arg === "string") return arg;
+    if (arg instanceof Error) return arg.stack || String(arg);
+    try {
+      const text = JSON.stringify(arg);
+      if (text !== undefined) return text;
+    } catch (_) {}
+    return String(arg);
+  };
   const log = {};
   for (const level of ["debug", "info", "warn", "error"]) {
-    log[level] = (...args) => console.error(...args);
+    log[level] = (...args) => console.error(args.map(formatLogArg).join(" "));
   }
   const ctx = {
     invocation_id: invocationID,
+    lifecycle_hook: env.lifecycle_hook || "",
+    signal: out.controller.signal,
     log,
     // Workers-style handlers commonly call ctx.waitUntil(). The runner's
     // existing tail host is fed by its runtime shim; keep this adapter
@@ -1178,7 +1236,7 @@ for await (const line of lines) {
     const method = env.method || "POST";
     const requestURL = new URL(env.path || "/", "http://faas.local");
     if (env.query) requestURL.search = env.query.startsWith("?") ? env.query : "?" + env.query;
-    const requestInit = { method, headers };
+    const requestInit = { method, headers, signal: ctx.signal };
     const requestBody = Buffer.from(env.body_b64 || "", "base64");
     if (method !== "GET" && method !== "HEAD" && requestBody.length > 0) requestInit.body = requestBody;
     const request = new Request(requestURL, requestInit);
@@ -1206,8 +1264,8 @@ for await (const line of lines) {
     }
     const cookies = typeof value.headers.getSetCookie === "function" ? value.headers.getSetCookie() : [];
     if (cookies.length > 0) fetchHeaders["set-cookie"] = cookies;
-    await respondFetchBody(value.status, fetchHeaders, value.body);
-    continue;
+    await respondFetchBody(out, value.status, fetchHeaders, value.body);
+    return;
   }
   let status = 200;
   let responseHeaders = {};
@@ -1224,35 +1282,68 @@ for await (const line of lines) {
   }
   // An async iterable body (async generator, Node stream) is streamed.
   if (isStreamBody(responseBody)) {
-    await streamIterable(status, normalizedHeaders, responseBody);
-    continue;
+    await streamIterable(out, status, normalizedHeaders, responseBody);
+    return;
   }
   if (responseBody === undefined || responseBody === null) responseBody = "";
   if (typeof responseBody !== "string" && !Buffer.isBuffer(responseBody)) {
     responseBody = JSON.stringify(responseBody);
   }
-  emitWhole(status, normalizedHeaders, Buffer.from(responseBody));
+  emitWhole(out, status, normalizedHeaders, Buffer.from(responseBody));
   } catch (err) {
+    if (out.cancelled) return;
     const rawMessage = err instanceof Error ? err.message : String(err);
     const message = rawMessage.length > 256 ? rawMessage.slice(0, 256) + "…" : rawMessage;
     console.error(err && err.stack ? err.stack : err);
     // The status is already sent once a stream has started; the error
     // frame tells the runner to abort the response.
-    if (streaming) {
-      emit({ frame: "error", message });
-      continue;
+    if (out.streaming) {
+      out.emit({ frame: "error", message });
+      return;
     }
     const responseBody = JSON.stringify({
       error: "handler_error",
       message,
       invocation_id: invocationID,
     });
-    process.stdout.write(JSON.stringify({
+    out.emit({
       status: 500,
       headers: { "content-type": "application/json; charset=utf-8" },
       body_b64: Buffer.from(responseBody).toString("base64"),
-    }) + "\n");
+    });
   }
+}
+
+// Cancellation suppresses output and aborts the request's I/O signal. Ack only
+// after its handler and stream have actually stopped; the runner retires an
+// uncooperative worker instead of handing its occupied slot to another request.
+const inflight = new Map();
+const lines = readlineModule.createInterface({ input: process.stdin, crlfDelay: Infinity });
+for await (const line of lines) {
+  if (!line.trim()) continue;
+  if (concurrency <= 1) {
+    await handleOne(line, output(undefined));
+    continue;
+  }
+  let request;
+  try { request = JSON.parse(line); } catch (err) { console.error(err); continue; }
+  if (typeof request.__faas_cancel === "string") {
+    const id = request.__faas_cancel;
+    const out = inflight.get(id);
+    if (out) {
+      out.cancelled = true;
+      out.controller.abort();
+      if (!out.cancelling) {
+        out.cancelling = true;
+        void out.done.then(() => process.stdout.write(JSON.stringify({ __faas_cancelled: id }) + "\n"));
+      }
+    } else process.stdout.write(JSON.stringify({ __faas_cancelled: id }) + "\n");
+    continue;
+  }
+  const id = String(request.__faas_id);
+  const out = output(id);
+  inflight.set(id, out);
+  out.done = handleOne(request, out).finally(() => inflight.delete(id));
 }
 })().catch((err) => {
   console.error(err && err.stack ? err.stack : err);
@@ -1263,11 +1354,13 @@ for await (const line of lines) {
 const pythonFunctionAdapter = `# FAAS_PERSISTENT_PROTOCOL_V1
 import asyncio
 import base64
+import concurrent.futures
 import importlib.util
 import inspect
 import json
 import os
 import sys
+import threading
 import traceback
 
 class _Log:
@@ -1297,8 +1390,19 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 handler = getattr(module, "handler", None)
 if not callable(handler): raise RuntimeError("handler.py must define handler(event, ctx)")
+# A worker serves FAAS_FUNCTION_CONCURRENCY requests at once when the app
+# sets function_concurrency (ADR-1342); requests and every response line then
+# carry the runner's __faas_id. An async handler runs each request as a task;
+# a sync handler runs each on its own thread.
+handler_is_async = inspect.iscoroutinefunction(handler)
+concurrency = 1
 if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
-    real_stdout.write(json.dumps({"__faas_ready": True}) + "\n")
+    try:
+        concurrency = min(max(int(os.environ.get("FAAS_FUNCTION_CONCURRENCY", "1")), 1), 256)
+    except ValueError:
+        concurrency = 1
+if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
+    real_stdout.write(json.dumps({"__faas_ready": True, "concurrency": concurrency}) + "\n")
     real_stdout.flush()
 
 # One event loop for the life of the worker. asyncio.run() per request
@@ -1308,6 +1412,13 @@ if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
 # loop" / "Event loop is closed".
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
+
+class _Context:
+    log = _Log()
+    def __init__(self, invocation, cancelled=None, lifecycle_hook=""):
+        self.invocation_id = invocation
+        self.cancelled = cancelled if cancelled is not None else threading.Event()
+        self.lifecycle_hook = lifecycle_hook
 
 # Response frames (ADR-999): one line is a complete response; a "head" line
 # starts a streamed one that "chunk" lines continue and "end" closes.
@@ -1320,14 +1431,14 @@ def _to_bytes(piece):
         return bytes(piece)
     return str(piece).encode("utf-8")
 
-def _emit_chunk(piece):
+def _emit_chunk(piece, emit=_emit):
     data = _to_bytes(piece)
     if data:
-        _emit({"frame": "chunk", "body_b64": base64.b64encode(data).decode("ascii")})
+        emit({"frame": "chunk", "body_b64": base64.b64encode(data).decode("ascii")})
 
-async def _drain_async(body):
+async def _drain_async(body, emit=_emit):
     async for piece in body:
-        _emit_chunk(piece)
+        _emit_chunk(piece, emit)
 
 def _is_stream_body(body):
     # A generator, async generator or other iterator streams; str, bytes,
@@ -1336,103 +1447,252 @@ def _is_stream_body(body):
         return False
     return hasattr(body, "__aiter__") or (hasattr(body, "__iter__") and hasattr(body, "__next__"))
 
-for line in sys.stdin:
-    if not line.strip():
-        continue
+class _Headers(dict):
+    # Lowercase keys, case-insensitive lookups: the envelope carries Go's
+    # canonical names, so headers["x-api-key"] missed (H10-20).
+    def __init__(self, raw):
+        super().__init__((str(k).lower(), v) for k, v in raw.items())
+    def __getitem__(self, key): return super().__getitem__(str(key).lower())
+    def __contains__(self, key): return super().__contains__(str(key).lower())
+    def get(self, key, default=None): return super().get(str(key).lower(), default)
+
+def _event(env):
+    body_b64 = env.get("body_b64", "") or ""
+    # Lossy for non-UTF-8 payloads (matching the Node adapter); the exact
+    # bytes stay available to the handler as event["body_b64"].
+    raw = base64.b64decode(body_b64).decode("utf-8", errors="replace")
+    if raw == "":
+        body = None
+    else:
+        try:
+            body = json.loads(raw)
+        except json.JSONDecodeError:
+            body = raw
+    headers = env.get("headers") or {}
+    invocation_id = headers.get("x-faas-invocation-id", headers.get("X-Faas-Invocation-Id", ""))
+    event = {
+        "method": env.get("method") or "POST",
+        "path": env.get("path") or "/",
+        "headers": _Headers(headers),
+        "query": env.get("query") or "",
+        "body": body,
+        "body_b64": body_b64,
+    }
+    return event, invocation_id
+
+def _shape(result):
+    status = 200
+    response_headers = {}
+    response_body = result
+    if isinstance(result, dict):
+        status = int(result.get("statusCode", result.get("status", 200)))
+        response_headers = result.get("headers") or {}
+        if "body" in result: response_body = result["body"]
+    # A header value may be a list, one line per element (ADR-999).
+    headers_out = {str(k): ([str(x) for x in v] if isinstance(v, (list, tuple)) else str(v))
+                   for k, v in response_headers.items()}
+    return status, headers_out, response_body
+
+def _whole(status, headers_out, response_body):
+    if response_body is None: response_body = ""
+    if not isinstance(response_body, (str, bytes, bytearray)):
+        response_body = json.dumps(response_body)
+    if isinstance(response_body, str): response_body = response_body.encode("utf-8")
+    return {
+        "status": status,
+        "headers": headers_out,
+        "body_b64": base64.b64encode(response_body).decode("ascii"),
+    }
+
+def _error_message(exc):
+    # Python slices str by code point, so this never splits a character.
+    detail = str(exc)
+    return detail if len(detail) <= 256 else detail[:256] + "\u2026"
+
+def _error_envelope(message, invocation_id):
+    error_body = json.dumps({"error": "handler_error", "message": message, "invocation_id": invocation_id})
+    return {
+        "status": 500,
+        "headers": {"content-type": "application/json; charset=utf-8"},
+        "body_b64": base64.b64encode(error_body.encode("utf-8")).decode("ascii"),
+    }
+
+def _serve_lines():
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        invocation_id = ""
+        streaming = False
+        # One failing request must not end the persistent worker. An uncaught
+        # exception used to escape this loop: the worker died, the runner
+        # answered a plain-text 500 that the platform treats as a retryable
+        # infrastructure failure, and the durable queue re-ran the failing
+        # handler. Mirror the Node adapter: a terminal handler_error envelope.
+        try:
+            request = json.loads(line)
+            event, invocation_id = _event(request)
+            result = handler(event, _Context(invocation_id, lifecycle_hook=request.get("lifecycle_hook", "")))
+            if inspect.isawaitable(result): result = loop.run_until_complete(result)
+            status, headers_out, response_body = _shape(result)
+            if _is_stream_body(response_body):
+                streaming = True
+                _emit({"frame": "head", "status": status, "headers": headers_out})
+                if hasattr(response_body, "__aiter__"):
+                    loop.run_until_complete(_drain_async(response_body))
+                else:
+                    for piece in response_body:
+                        _emit_chunk(piece)
+                _emit({"frame": "end"})
+                continue
+            envelope = _whole(status, headers_out, response_body)
+        except Exception as exc:
+            traceback.print_exc()
+            message = _error_message(exc)
+            if streaming:
+                # The status is already sent; the error frame tells the
+                # runner to abort the response.
+                _emit({"frame": "error", "message": message})
+                continue
+            envelope = _error_envelope(message, invocation_id)
+        real_stdout.write(json.dumps(envelope) + "\n")
+        real_stdout.flush()
+
+# Handler threads and the event loop share stdout; one line at a time.
+_stdout_lock = threading.Lock()
+
+def _emit_tagged(frame):
+    line = json.dumps(frame, separators=(",", ":")) + "\n"
+    with _stdout_lock:
+        real_stdout.write(line)
+        real_stdout.flush()
+
+async def _serve_one(request, rid, cancelled):
+    # The id goes first so the runner routes the line without decoding it.
+    def emit(frame):
+        if not cancelled.is_set():
+            _emit_tagged({"__faas_id": rid, **frame})
     invocation_id = ""
     streaming = False
-    # One failing request must not end the persistent worker. An uncaught
-    # exception used to escape this loop: the worker died, the runner
-    # answered a plain-text 500 that the platform treats as a retryable
-    # infrastructure failure, and the durable queue re-ran the failing
-    # handler. Mirror the Node adapter: a terminal handler_error envelope.
     try:
-        env = json.loads(line)
-        body_b64 = env.get("body_b64", "") or ""
-        # Lossy for non-UTF-8 payloads (matching the Node adapter); the exact
-        # bytes stay available to the handler as event["body_b64"].
-        raw = base64.b64decode(body_b64).decode("utf-8", errors="replace")
-        if raw == "":
-            body = None
-        else:
-            try:
-                body = json.loads(raw)
-            except json.JSONDecodeError:
-                body = raw
-        headers = env.get("headers") or {}
-        invocation_id = headers.get("x-faas-invocation-id", headers.get("X-Faas-Invocation-Id", ""))
-
-        class _Headers(dict):
-            # Lowercase keys, case-insensitive lookups: the envelope carries
-            # Go's canonical names, so headers["x-api-key"] missed (H10-20).
-            def __init__(self, raw):
-                super().__init__((str(k).lower(), v) for k, v in raw.items())
-            def __getitem__(self, key): return super().__getitem__(str(key).lower())
-            def __contains__(self, key): return super().__contains__(str(key).lower())
-            def get(self, key, default=None): return super().get(str(key).lower(), default)
-
-        class _Context:
-            log = _Log()
-            def __init__(self, invocation): self.invocation_id = invocation
-
-        event = {
-            "method": env.get("method") or "POST",
-            "path": env.get("path") or "/",
-            "headers": _Headers(headers),
-            "query": env.get("query") or "",
-            "body": body,
-            "body_b64": body_b64,
-        }
-        result = handler(event, _Context(invocation_id))
-        if inspect.isawaitable(result): result = loop.run_until_complete(result)
-
-        status = 200
-        response_headers = {}
-        response_body = result
-        if isinstance(result, dict):
-            status = int(result.get("statusCode", result.get("status", 200)))
-            response_headers = result.get("headers") or {}
-            if "body" in result: response_body = result["body"]
-        # A header value may be a list, one line per element (ADR-999).
-        headers_out = {str(k): ([str(x) for x in v] if isinstance(v, (list, tuple)) else str(v))
-                       for k, v in response_headers.items()}
+        event, invocation_id = _event(request)
+        status, headers_out, response_body = _shape(await handler(event, _Context(invocation_id, cancelled, request.get("lifecycle_hook", ""))))
         if _is_stream_body(response_body):
             streaming = True
-            _emit({"frame": "head", "status": status, "headers": headers_out})
+            emit({"frame": "head", "status": status, "headers": headers_out})
             if hasattr(response_body, "__aiter__"):
-                loop.run_until_complete(_drain_async(response_body))
+                await _drain_async(response_body, emit)
             else:
                 for piece in response_body:
-                    _emit_chunk(piece)
-            _emit({"frame": "end"})
-            continue
-        if response_body is None: response_body = ""
-        if not isinstance(response_body, (str, bytes, bytearray)):
-            response_body = json.dumps(response_body)
-        if isinstance(response_body, str): response_body = response_body.encode("utf-8")
-        envelope = {
-            "status": status,
-            "headers": headers_out,
-            "body_b64": base64.b64encode(response_body).decode("ascii"),
-        }
+                    _emit_chunk(piece, emit)
+            emit({"frame": "end"})
+            return
+        emit(_whole(status, headers_out, response_body))
     except Exception as exc:
         traceback.print_exc()
-        # Python slices str by code point, so this never splits a character.
-        detail = str(exc)
-        message = detail if len(detail) <= 256 else detail[:256] + "\u2026"
-        if streaming:
-            # The status is already sent; the error frame tells the runner
-            # to abort the response.
-            _emit({"frame": "error", "message": message})
+        message = _error_message(exc)
+        emit({"frame": "error", "message": message} if streaming else _error_envelope(message, invocation_id))
+
+async def _await(awaitable):
+    return await awaitable
+
+def _serve_sync(request, rid, cancelled):
+    # Runs on a handler thread. Python cannot interrupt a thread, so a
+    # cancelled request's frames are dropped and a streamed body stops at
+    # its next piece; the request ends when the handler returns.
+    def emit(frame):
+        if not cancelled.is_set():
+            _emit_tagged({"__faas_id": rid, **frame})
+    invocation_id = ""
+    streaming = False
+    try:
+        event, invocation_id = _event(request)
+        result = handler(event, _Context(invocation_id, cancelled, request.get("lifecycle_hook", "")))
+        if inspect.isawaitable(result):
+            result = asyncio.run_coroutine_threadsafe(_await(result), loop).result()
+        status, headers_out, response_body = _shape(result)
+        if _is_stream_body(response_body):
+            streaming = True
+            emit({"frame": "head", "status": status, "headers": headers_out})
+            if hasattr(response_body, "__aiter__"):
+                asyncio.run_coroutine_threadsafe(_drain_async(response_body, emit), loop).result()
+            else:
+                for piece in response_body:
+                    if cancelled.is_set():
+                        break
+                    _emit_chunk(piece, emit)
+            emit({"frame": "end"})
+            return
+        emit(_whole(status, headers_out, response_body))
+    except Exception as exc:
+        traceback.print_exc()
+        message = _error_message(exc)
+        emit({"frame": "error", "message": message} if streaming else _error_envelope(message, invocation_id))
+
+_threads = None
+
+def _start_threaded(request, rid, tasks):
+    cancelled = threading.Event()
+    work = loop.run_in_executor(_threads, _serve_sync, request, rid, cancelled)
+    work.add_done_callback(lambda _done: tasks.pop(rid, None))
+    return work, cancelled
+
+def _cancel_threaded(rid, entry):
+    # Acknowledged only once the handler's thread is free, so the runner
+    # never counts a slot a running handler still holds. A handler that
+    # never returns misses the acknowledgement deadline and the runner
+    # restarts the worker.
+    work, cancelled = entry
+    cancelled.set()
+    work.add_done_callback(lambda _done: _emit_tagged({"__faas_cancelled": rid}))
+
+# Ack cancellation only once async finally blocks or handler threads have
+# completed; a running cleanup still owns its worker slot.
+async def _serve_shared():
+    reader = asyncio.StreamReader(limit=1 << 30)
+    await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
+    tasks = {}
+    while True:
+        line = await reader.readline()
+        if not line:
+            return
+        if not line.strip():
             continue
-        error_body = json.dumps({"error": "handler_error", "message": message, "invocation_id": invocation_id})
-        envelope = {
-            "status": 500,
-            "headers": {"content-type": "application/json; charset=utf-8"},
-            "body_b64": base64.b64encode(error_body.encode("utf-8")).decode("ascii"),
-        }
-    real_stdout.write(json.dumps(envelope) + "\n")
-    real_stdout.flush()
+        try:
+            request = json.loads(line)
+        except ValueError:
+            traceback.print_exc()
+            continue
+        cancel = request.get("__faas_cancel")
+        if cancel is not None:
+            entry = tasks.get(cancel)
+            if entry is not None and entry[1].is_set():
+                continue
+            if entry is not None and not handler_is_async:
+                _cancel_threaded(cancel, entry)
+                continue
+            if entry is not None:
+                work, cancelled = entry
+                cancelled.set()
+                work.cancel()
+                work.add_done_callback(lambda _done, rid=cancel: _emit_tagged({"__faas_cancelled": rid}))
+            else:
+                _emit_tagged({"__faas_cancelled": cancel})
+            continue
+        rid = str(request.get("__faas_id", ""))
+        if handler_is_async:
+            cancelled = threading.Event()
+            work = loop.create_task(_serve_one(request, rid, cancelled))
+            work.add_done_callback(lambda _done, rid=rid: tasks.pop(rid, None))
+            tasks[rid] = (work, cancelled)
+        else:
+            tasks[rid] = _start_threaded(request, rid, tasks)
+
+if concurrency > 1:
+    if not handler_is_async:
+        _threads = concurrent.futures.ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="faas-handler")
+    loop.run_until_complete(_serve_shared())
+else:
+    _serve_lines()
 `
 
 const (

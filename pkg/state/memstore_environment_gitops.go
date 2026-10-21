@@ -12,23 +12,29 @@ import (
 )
 
 type environmentGitOpsMemory struct {
-	source         EnvironmentGitSource
-	revisions      map[string]EnvironmentDesiredRevision
-	runs           map[string]EnvironmentGitOpsRun
-	runTokens      map[string]string
-	next           time.Time
-	lease          *EnvironmentGitOpsLease
-	attempts       int
-	resources      map[string]string
-	queues         map[string]string
-	owners         map[string]environmentsync.Ownership
-	overrides      map[string]environmentsync.Override
-	effects        map[string]EnvironmentGitOpsEffect
-	runtime        map[string]EnvironmentGitOpsRuntimeEffect
-	graphs         map[string]EnvironmentWorkloadGraph
-	qualifications map[string]EnvironmentWorkloadQualificationRequest
-	poll           environmentGitSourcePoll
-	approvals      map[string]EnvironmentGitRevisionApproval
+	retirements        map[string]EnvironmentWorkloadRetirement
+	source             EnvironmentGitSource
+	revisions          map[string]EnvironmentDesiredRevision
+	runs               map[string]EnvironmentGitOpsRun
+	runTokens          map[string]string
+	next               time.Time
+	lease              *EnvironmentGitOpsLease
+	attempts           int
+	resources          map[string]string
+	queues             map[string]string
+	owners             map[string]environmentsync.Ownership
+	overrides          map[string]environmentsync.Override
+	effects            map[string]EnvironmentGitOpsEffect
+	runtime            map[string]EnvironmentGitOpsRuntimeEffect
+	graphs             map[string]EnvironmentWorkloadGraph
+	qualifications     map[string]EnvironmentWorkloadQualificationRequest
+	bindingServices    map[string]EnvironmentQualificationServiceReceipt
+	bindingReleases    map[string]string
+	retirementPolicies map[string]environmentBindingRetirementPolicy
+	bindingRetirements map[string]environmentBindingRetirementPublication
+	poll               environmentGitSourcePoll
+	approvals          map[string]EnvironmentGitRevisionApproval
+	notifications      environmentGitNotificationState
 }
 
 var _ EnvironmentGitOpsStore = (*MemStore)(nil)
@@ -48,7 +54,7 @@ func cloneEnvironmentRun(r EnvironmentGitOpsRun) EnvironmentGitOpsRun {
 	return r
 }
 
-func (m *MemStore) CreateEnvironmentGitSource(_ context.Context, accountID, projectID, environment string, spec EnvironmentGitSourceSpec) (EnvironmentGitSource, error) {
+func (m *MemStore) CreateEnvironmentGitSource(ctx context.Context, accountID, projectID, environment string, spec EnvironmentGitSourceSpec) (EnvironmentGitSource, error) {
 	if spec.Validate() != nil {
 		return EnvironmentGitSource{}, ErrInvalidArgument
 	}
@@ -57,6 +63,9 @@ func (m *MemStore) CreateEnvironmentGitSource(_ context.Context, accountID, proj
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return EnvironmentGitSource{}, err
+	}
 	return m.createEnvironmentGitSourceLocked(accountID, projectID, environment, spec)
 }
 
@@ -291,6 +300,11 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 		}
 	}
 	completed := now.UTC()
+	var notificationPlan api.EnvironmentGitOpsPlan
+	_ = json.Unmarshal(plan, &notificationPlan)
+	if err := m.environmentGitNotificationLocked(memory, "drift", environmentGitReportNotificationStatus(status, notificationPlan), run.ID, errorCode, notificationPlan, now); err != nil {
+		return err
+	}
 	var incomingSteps []EnvironmentGitOpsStep
 	_ = json.Unmarshal(steps, &incomingSteps)
 	if len(incomingSteps) == 0 && len(run.Steps) > 2 {

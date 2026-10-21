@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
@@ -33,6 +34,12 @@ var (
 // window answered "the configured provider is temporarily unavailable" with
 // outage advice (hunt #9, H9-P107).
 var ErrProvisioningClosed = fmt.Errorf("%w: provisioning is not open for this account", ErrUnavailable)
+
+// ErrLineageUnproven reports a restore target whose lineage could not be
+// proven on this observation but may be on a later one: Neon maps a timestamp
+// to a drifting LSN inside the commit-free interval after it (ADR-1259). It
+// wraps ErrUnavailable; the service retries it at the poll interval.
+var ErrLineageUnproven = fmt.Errorf("%w: restore lineage not proven yet", ErrUnavailable)
 
 // ErrNotInPlan refuses a compute target the account's plan does not include
 // (a class or always-on compute). It unwraps to ErrQuotaExceeded for existing
@@ -182,6 +189,42 @@ type ObservedDatabase struct {
 	// isolated stage database. SourceResourceID must identify the exact source
 	// (for example a Neon branch), not a mutable default selector.
 	RestoreLineage *RestoreLineage
+	// RestoreVerification is set when this observation independently verified
+	// the lineage, or confirmed a supplied record (ADR-1259).
+	RestoreVerification *RestoreVerification
+}
+
+// RestoreVerification is durable evidence that an adapter independently
+// verified a restore target's lineage (ADR-1259). Evidence fingerprints the
+// target's immutable provider metadata; it is opaque to the service and never
+// carries credentials. Later observations confirm the fingerprint instead of
+// remapping a historical position that the provider resolves inexactly.
+type RestoreVerification struct {
+	ProviderResourceID string
+	SourceResourceID   string
+	PointInTime        time.Time
+	Evidence           string
+}
+
+// Validate checks the record's shape and that it describes request against
+// providerResourceID. It proves nothing about the provider's current state.
+func (v RestoreVerification) Validate(providerResourceID string, request RestoreRequest) error {
+	if !validOpaqueID(v.ProviderResourceID) || !validOpaqueID(v.SourceResourceID) || v.PointInTime.IsZero() ||
+		v.Evidence == "" || len(v.Evidence) > 1024 || strings.ContainsFunc(v.Evidence, unicode.IsControl) {
+		return ErrInvalid
+	}
+	if v.ProviderResourceID != providerResourceID || v.SourceResourceID != request.SourceResourceID || !v.PointInTime.Equal(request.PointInTime) {
+		return ErrConflict
+	}
+	return nil
+}
+
+// RestoreVerificationStore keeps one verification per restore target. A write
+// needs the target's current provisioning lease; a different record for the
+// same target is ErrConflict.
+type RestoreVerificationStore interface {
+	RecordRestoreVerification(context.Context, Database, RestoreVerification) error
+	GetRestoreVerification(ctx context.Context, accountID, databaseID string) (RestoreVerification, error)
 }
 
 type RestoreLineage struct {
@@ -257,6 +300,9 @@ type RestoreRequest struct {
 	Spec             Spec
 	PointInTime      time.Time
 	IdempotencyKey   string
+	// Verification, when recorded, is confirmed against the target's current
+	// immutable metadata instead of remapping PointInTime (ADR-1259).
+	Verification *RestoreVerification
 }
 
 // RestoreInspector verifies an existing target against its pinned source and
@@ -293,7 +339,21 @@ const (
 	CredentialMigration CredentialAccess = "migration"
 	// Data API logins receive only api-schema DML, without owner memberships.
 	CredentialDataAPI CredentialAccess = "data_api"
+	// Auth logins act as a separate owner of only the auth and gregale_auth
+	// schemas (ADR-1190). GoTrue enables RLS on its tables, so its runtime
+	// must own them; no customer schema is reachable.
+	CredentialAuth CredentialAccess = "auth"
 )
+
+// Known reports whether access is a portable credential mode. Every
+// validation site uses it so a new mode cannot be missed by one of them.
+func (a CredentialAccess) Known() bool {
+	switch a {
+	case CredentialReadWrite, CredentialReadOnly, CredentialMigration, CredentialDataAPI, CredentialAuth:
+		return true
+	}
+	return false
+}
 
 type EndpointRole string
 
@@ -354,6 +414,11 @@ func (c CredentialMaterial) Validate() error {
 
 type CredentialRequest struct {
 	ProviderResourceID string
+	// Nonzero only when a durable capacity reservation bounds this login.
+	ConnectionLimit int64
+	// BindingID identifies owner-approved policies across credential generations.
+	// Standalone provider qualification requests may omit it.
+	BindingID string
 	// IdentityKey is a stable, non-secret identity for one credential
 	// generation. Rotation uses a new key; revocation repeats the key that
 	// created the credential.
@@ -684,7 +749,7 @@ func (c Capabilities) Validate() error {
 		}
 	}
 	for _, access := range c.CredentialAccess {
-		if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI {
+		if !access.Known() {
 			return ErrInvalid
 		}
 	}
@@ -701,7 +766,7 @@ func (c Capabilities) Validate() error {
 // the backend prevents Gregale from reserving work that the provider can never
 // reconcile.
 func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
-	if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI {
+	if !access.Known() {
 		return ErrInvalid
 	}
 	if !contains(c.CredentialAccess, access) {
@@ -788,6 +853,12 @@ type DataAPICredentialProber interface {
 	ProbeDataAPICredentials(context.Context, string) (DataAPICredentialEvidence, error)
 }
 
+// AuthCredentialProber verifies auth-schema ownership, customer-schema
+// isolation, recovery and retirement before the backend can advertise auth.
+type AuthCredentialProber interface {
+	ProbeAuthCredentials(context.Context, string) (AuthCredentialEvidence, error)
+}
+
 // RestoreCredentialIsolationProber verifies that the source login cannot
 // authenticate against the restored target.
 type RestoreCredentialIsolationProber interface {
@@ -815,6 +886,7 @@ type Database struct {
 	Health             *HealthSummary
 	ID                 string
 	AccountID          string
+	OrgID              string
 	Name               string
 	Spec               Spec
 	BackendID          string
@@ -853,8 +925,10 @@ const (
 )
 
 type Binding struct {
+	ConnectionLimit      int64
 	ID                   string
 	AccountID            string
+	DatabaseAccountID    string
 	DatabaseID           string
 	AppID                string
 	Scope                string

@@ -122,11 +122,11 @@ func TestDoctorImageCommand(t *testing.T) {
 		{"json", []string{"--image", "example.com/app", "--json"}, false, 0},
 		{"warnings", []string{"--image", "example.com/app", "--json"}, true, 0},
 		{"strict", []string{"--image", "example.com/app", "--json", "--strict"}, true, 1},
-		{"mixed path", []string{"--image", "example.com/app", "."}, false, 2},
-		{"empty image", []string{"--image", ""}, false, 2},
-		{"url", []string{"--image", "https://example.com/app"}, false, 2},
-		{"missing credential flags", []string{"--image", "example.com/app", "--registry-user", "user"}, false, 2},
-		{"credentials without image", []string{"--registry-user", "user", "--registry-password-stdin"}, false, 2},
+		{"mixed path", []string{"--image", "example.com/app", "."}, false, 1},
+		{"empty image", []string{"--image", ""}, false, 1},
+		{"url", []string{"--image", "https://example.com/app"}, false, 1},
+		{"missing credential flags", []string{"--image", "example.com/app", "--registry-user", "user"}, false, 1},
+		{"credentials without image", []string{"--registry-user", "user", "--registry-password-stdin"}, false, 1},
 		{"authenticated", []string{"--image", "example.com/app", "--json", "--registry-user", "user", "--registry-password-stdin"}, false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -150,7 +150,7 @@ func TestDoctorImageCommand(t *testing.T) {
 			if got := cmdDoctorWithImageInspector(tc.args, f); got != tc.want {
 				t.Fatalf("exit %d want %d: %s", got, tc.want, stderr.String())
 			}
-			if tc.want == 2 {
+			if tc.want == 1 && !tc.warning {
 				if calls != 0 {
 					t.Fatal("invalid usage performed network inspection")
 				}
@@ -309,5 +309,21 @@ func TestDoctorImageExactHealthcheckTiming(t *testing.T) {
 	invalid := doctorImageHealthcheck(&oci.ImageHealthcheck{Test: []string{"CMD", "/probe"}, ImageTiming: &api.OCIHealthcheckTiming{TimeoutNS: 3}})
 	if invalid.Status != "warn" {
 		t.Fatalf("invalid exact timing accepted: %+v", invalid)
+	}
+}
+
+// TestDescribeDoctorImageReportsTheProcessUser covers H10-58: an image without
+// USER runs as root under ADR-1239, but doctor printed the manifest default
+// "app".
+func TestDescribeDoctorImageReportsTheProcessUser(t *testing.T) {
+	for _, tc := range []struct{ user, want string }{
+		{"", "0"},
+		{"1000:1000", "1000:1000"},
+		{"nginx", "nginx"},
+	} {
+		img := describeDoctorImage(oci.ImageInspection{Config: oci.ImageConfig{OS: "linux", Architecture: "amd64", Cmd: []string{"nginx"}, User: tc.user}})
+		if img.User != tc.want {
+			t.Errorf("image USER %q: doctor user = %q, want %q", tc.user, img.User, tc.want)
+		}
 	}
 }

@@ -82,6 +82,38 @@ func TestIsAppTaskAttachPath(t *testing.T) {
 	}
 }
 
+// adr: 1330
+func TestIsJobTaskAttachPath(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/v1/jobs/ir-abc/runs/5f0c/tasks/0/attach":         true,
+		"/v1/jobs/ir-abc/runs/5f0c/tasks/12/attach":        true,
+		"/v1/jobs/ir-abc/runs/5f0c/tasks/0/attach/":        false,
+		"/v1/jobs/ir-abc/runs/5f0c/tasks/0/attach/extra":   false,
+		"/v1/jobs/ir-abc/runs/5f0c/tasks/0":                false,
+		"/v1/jobs/ir-abc/runs/5f0c/tasks/0/logs/stream":    false,
+		"/v1/jobs/ir-abc/runs/5f0c/tasks/0/logs":           false,
+		"/v1/jobs//runs/5f0c/tasks/0/attach":               false,
+		"/v1/jobs/ir-abc/runs//tasks/0/attach":             false,
+		"/v1/jobs/ir-abc/runs/5f0c/tasks//attach":          false,
+		"/v1/jobs/ir-abc/executions/5f0c/tasks/0/attach":   false,
+		"/v1/jobs/ir-abc/runs/5f0c/attempts/0/attach":      false,
+		"/v2/jobs/ir-abc/runs/5f0c/tasks/0/attach":         false,
+		"/v1/apps/ir-abc/tasks/5f0c/attach":                false,
+		"/v1/jobs/ir-abc/runs/5f0c/tasks/0/attach?rows=24": false,
+	} {
+		if got := IsJobTaskAttachPath(path); got != want {
+			t.Fatalf("IsJobTaskAttachPath(%q) = %v, want %v", path, got, want)
+		}
+	}
+	path := JobTaskAttachPath("ir-abc", "5f0c-1", 0)
+	if path != "/v1/jobs/ir-abc/runs/5f0c-1/tasks/0/attach" || !IsJobTaskAttachPath(path) {
+		t.Fatalf("JobTaskAttachPath = %q", path)
+	}
+	if got := JobTaskAttachPath("a b", "run/1", 3); got != "/v1/jobs/a%20b/runs/run%2F1/tasks/3/attach" {
+		t.Fatalf("JobTaskAttachPath escaping = %q", got)
+	}
+}
+
 func TestAppTaskAttachCodec(t *testing.T) {
 	msg := EncodeAppTaskAttachResize(40, 132)
 	if msg[0] != AppTaskAttachResize {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type nodeAppTaskSession struct {
@@ -123,7 +124,7 @@ func TestAppTaskCoordinatorInteractiveWithoutNodeFailsBeforeDispatch(t *testing.
 }
 
 type failingAttachStore struct {
-	*state.MemStore
+	MemStore *state.MemStore
 }
 
 func (failingAttachStore) AppTaskAttachByTask(context.Context, string) (state.AppTaskAttach, error) {
@@ -138,7 +139,7 @@ func TestAppTaskCoordinatorAttachLookupFailureNeverRunsAsBatch(t *testing.T) {
 		restored.Store(true)
 		return nil, errors.New("must not restore")
 	})
-	coordinator := NewAppTaskCoordinator(failingAttachStore{MemStore: store}, backend, appTaskCoordinatorTestConfig(), nil)
+	coordinator := NewAppTaskCoordinator(statetest.NewMem(failingAttachStore{MemStore: store}), backend, appTaskCoordinatorTestConfig(), nil)
 	processed, err := coordinator.ProcessNext(context.Background())
 	if !processed || err == nil || restored.Load() {
 		t.Fatalf("ProcessNext = %v, %v, restored=%v", processed, err, restored.Load())

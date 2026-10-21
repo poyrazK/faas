@@ -7,6 +7,10 @@ import type { MCPCatalogObserverConfig } from './MCPCatalogObserverConfig.js';
  * Server-issued revision and retained settings for a configured MCP catalog role.
  */
 export type MCPCatalogMonitorConfig = {
+  /**
+   * Environment watched by this configured MCP catalog monitor. Defaults to default.
+   */
+  scope?: string;
   observer?: MCPCatalogObserverConfig;
   /**
    * Token environment reference selected by observers; no secret value is retained

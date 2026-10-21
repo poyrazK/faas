@@ -19,8 +19,8 @@
 //     independent source-ref callers.
 //
 // The staging path is stable for the daemon's lifetime (keyed
-// on commit SHA), so a re-push of the same SHA overwrites the
-// tarball in place. The gitfetch temp dir is consumed by the
+// on commit SHA), so a re-push of the same SHA atomically replaces the
+// tarball. The gitfetch temp dir is consumed by the
 // deferred tree.Close() AFTER staging (the staging step happens
 // in the dispatch loop while tree.FS() is still live).
 
@@ -67,8 +67,8 @@ func (s *Service) stageAppSource(ctx context.Context, tree SourceTree, app state
 		return "", 0, "", errors.New("githubd: stageAppSource: nil tree (caller bug)")
 	}
 	// The staging directory is keyed on (account_id, app_id,
-	// commit_sha) so a re-push of the same SHA overwrites the
-	// tarball in place. The slash-separated layout mirrors
+	// commit_sha) so a re-push of the same SHA replaces the tarball
+	// without changing a reader already held by a builder. The layout mirrors
 	// cmd/apid/deploy_inputs.go:192-195 (per-deployment dir
 	// under the spool root).
 	stagingDir := filepath.Join(s.WorkDir, "build-sources", project.AccountID, app.ID, commitSHA)
@@ -79,17 +79,12 @@ func (s *Service) stageAppSource(ctx context.Context, tree SourceTree, app state
 
 	// Honor ctx cancellation by short-circuiting the walk. The
 	// RepackageRepositoryTree walker checks ctx between files (cheap;
-	// inotify-style). A cancelled ctx returns a partial tarball
-	// — the caller logs + skips, the next re-push re-stages.
+	// inotify-style). A cancelled attempt leaves any published tarball
+	// intact so a previously queued build can still consume it.
 	if err := ValidateRootDir(tree.FS(), app.RootDir); err != nil {
 		return "", 0, "", fmt.Errorf("githubd: validate source root: %w", err)
 	}
 	if err := RepackageRepositoryTree(ctx, tree.FS(), dstTarball); err != nil {
-		// Best-effort: don't leave a half-written tarball on
-		// disk (a future EnqueueBuild would pick it up via
-		// the (account, app, sha) cache key and read a
-		// truncated file).
-		_ = os.Remove(dstTarball)
 		return "", 0, "", fmt.Errorf("githubd: repackage repository tree: %w", err)
 	}
 	// Stat the tarball for the size the apid bridge will
@@ -166,18 +161,18 @@ func ValidateRootDir(src fs.FS, rootDir string) error {
 // repackageTree walks walkRoot and writes entries relative to pathBase.
 // Keeping the walk/encoding implementation shared makes the legacy
 // subtree-rebasing path and the workspace-preserving path behave identically
-// for cancellation, directory entries, and file metadata.
+// for cancellation, directory entries, and file metadata. Publish only a
+// complete archive; retries must not truncate an archive a builder is reading.
 func repackageTree(ctx context.Context, src fs.FS, walkRoot, pathBase, dstTarball string) error {
-	dst, err := os.Create(dstTarball) //nolint:gosec // dst is operator-controlled
+	dst, err := os.CreateTemp(filepath.Dir(dstTarball), ".source-*.tar.gz")
 	if err != nil {
 		return fmt.Errorf("create tarball: %w", err)
 	}
-	// Track close-on-error so a partial write doesn't leak
-	// the file descriptor.
 	committed := false
 	defer func() {
+		_ = dst.Close()
 		if !committed {
-			_ = dst.Close()
+			_ = os.Remove(dst.Name())
 		}
 	}()
 	gz := gzip.NewWriter(dst)
@@ -261,8 +256,21 @@ func repackageTree(ctx context.Context, src fs.FS, walkRoot, pathBase, dstTarbal
 	if err := gz.Close(); err != nil {
 		return err
 	}
+	// builderd runs as a separate user in the shared faas group.
+	if err := dst.Chmod(0o640); err != nil {
+		return err
+	}
+	if err := dst.Sync(); err != nil {
+		return err
+	}
 	if err := dst.Close(); err != nil {
 		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.Rename(dst.Name(), dstTarball); err != nil {
+		return fmt.Errorf("publish tarball: %w", err)
 	}
 	committed = true
 	return nil

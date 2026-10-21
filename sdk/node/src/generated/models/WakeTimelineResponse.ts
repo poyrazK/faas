@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { WakeTimelineEvent } from './WakeTimelineEvent.js';
+import type { WakeTimelinePage } from './WakeTimelinePage.js';
 /**
  * Envelope for `GET /v1/apps/{slug}/wakes/{wake_id}/timeline`.
  */
@@ -17,12 +18,13 @@ export type WakeTimelineResponse = {
   app_id: string;
   events: Array<WakeTimelineEvent>;
   /**
-   * Opaque RFC 3339 cursor for the next page. Empty when this is the last page.
+   * Legacy timestamp hint, sent back as since. Can skip equal-time events. keyset_v1 uses page.next_cursor instead.
    */
   next_cursor?: string;
   /**
    * Effective limit applied (always 1..1000).
    */
   limit: number;
+  page?: WakeTimelinePage;
 };
 

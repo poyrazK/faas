@@ -15,6 +15,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type traceIdentityResolver interface {
@@ -116,6 +118,12 @@ func (b *traceBroker) handle(ctx context.Context, instance string, conn net.Conn
 	var outcome string
 	if logs {
 		resp, err := b.client.IngestGuestLogs(requestCtx, req)
+		if status.Code(err) == codes.Unimplemented {
+			// An apid from before log forwarding (release N-1) cannot
+			// ingest logs; a permanent refusal stops the SDK retrying.
+			ack = api.TraceAckRejected
+			return "unsupported", err
+		}
 		if err != nil {
 			return "forward", err
 		}

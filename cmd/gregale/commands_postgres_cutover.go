@@ -47,7 +47,7 @@ func cmdPostgresCutover(args []string) int {
 }
 func cmdPostgresCutoverPrepare(args []string) int {
 	fs := newFlagSet("postgres cutover prepare", flag.ContinueOnError)
-	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise production)")
+	scope := fs.String("scope", "", "environment scope (defaults to linked project environment, otherwise default)")
 	if err := fs.Parse(normalizePostgresAttachArgs(args)); err != nil {
 		return 1
 	}

@@ -15,6 +15,8 @@ import (
 // a reserved platform canary. Revision hashes binding configuration, private
 // credential revision facts and the runtime configuration change stamp.
 type BindingVerificationPin struct {
+	ManagedService       *api.ManagedServiceProbeSpec  `json:"managed_service,omitempty"`
+	TargetDeploymentID   string                        `json:"target_deployment_id,omitempty"`
 	Type                 string                        `json:"type"`
 	Binding              string                        `json:"binding"`
 	Revision             string                        `json:"revision"`
@@ -24,6 +26,7 @@ type BindingVerificationPin struct {
 }
 
 type BindingVerificationTask struct {
+	TaskID                              string
 	Pin                                 BindingVerificationPin
 	DeploymentID, Scope, Status, Stdout string
 	CreatedAt                           time.Time
@@ -40,8 +43,10 @@ type BindingVerificationStore interface {
 // selectors never fall back; default inventory may retain stale prior evidence
 // when the selected deployment has no admitted probe for a binding.
 type BindingVerificationSelection struct {
-	DeploymentID  string
-	AllowFallback bool
+	ManagedService bool
+	ServiceTargets map[string]string
+	DeploymentID   string
+	AllowFallback  bool
 }
 
 func resolveBindingVerificationSelection(selections []BindingVerificationSelection) (BindingVerificationSelection, error) {
@@ -65,7 +70,8 @@ var bindingRevisionPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 func validateBindingVerificationPin(params CreateAppTaskParams) error {
 	pin := params.BindingVerification
 	if pin == nil {
-		if params.RequireLiveDeployment && (params.Kind != AppTaskKindManual || params.ExclusiveOperationID != "" || params.FailureRules != nil || params.OccurrenceID != "" || params.StartDeadlineAt != nil || !api.IsServiceBindingSmokeCommand(params.Command, params.CommandShell)) {
+		_, migration := api.ParseMigrationDependenciesCommand(params.Command, params.CommandShell)
+		if params.RequireLiveDeployment && (params.Kind != AppTaskKindManual || params.ExclusiveOperationID != "" || params.FailureRules != nil || params.OccurrenceID != "" || params.StartDeadlineAt != nil || (!api.IsServiceBindingSmokeCommand(params.Command, params.CommandShell) && !migration)) {
 			return fmt.Errorf("%w: explicit deployment selection requires a verification pin or a reserved service smoke command", ErrAppTaskInvalid)
 		}
 		return nil
@@ -86,6 +92,12 @@ func validateBindingVerificationPin(params CreateAppTaskParams) error {
 		}
 		command, commandLen = api.AppTaskObjectStorageWriteProbeCommand, 3
 	}
+	if pin.TargetDeploymentID != "" {
+		if pin.Type != api.BindingTypeService || !api.IsServiceBindingTargetProbeCommand(params.Command, params.CommandShell) || params.Command[2] != pin.TargetDeploymentID || !params.RequireLiveDeployment {
+			return fmt.Errorf("%w: invalid service target verification pin", ErrAppTaskInvalid)
+		}
+		command, commandLen = api.AppTaskServiceBindingTargetProbeCommand, 3
+	}
 	if pin.Type == api.BindingTypeOutbound {
 		commandLen = 3
 		var spec api.OutboundBindingProbeSpec
@@ -94,6 +106,9 @@ func validateBindingVerificationPin(params CreateAppTaskParams) error {
 		}
 	} else if pin.OutboundProbe != nil {
 		return fmt.Errorf("%w: unexpected outbound verification spec", ErrAppTaskInvalid)
+	}
+	if pin.ManagedService != nil && (!pin.ManagedService.Valid() || pin.Type != api.BindingTypeService || pin.ManagedService.Service != pin.Binding || pin.ManagedService.CallerDeploymentID != params.DeploymentID || pin.ManagedService.TargetDeploymentID != pin.TargetDeploymentID || pin.ManagedService.ContextRevision != pin.Revision || pin.CredentialGeneration != nil || pin.ObjectStorageMode != "") {
+		return fmt.Errorf("%w: invalid managed service verification context", ErrAppTaskInvalid)
 	}
 	if (pin.Type != api.BindingTypeService && pin.Type != api.BindingTypePostgres && pin.Type != api.BindingTypeObjectStorage && pin.Type != api.BindingTypeOutbound) ||
 		pin.Binding == "" || !bindingRevisionPattern.MatchString(pin.Revision) ||
@@ -110,6 +125,10 @@ func cloneBindingVerificationPin(pin *BindingVerificationPin) *BindingVerificati
 		return nil
 	}
 	copy := *pin
+	if pin.ManagedService != nil {
+		spec := *pin.ManagedService
+		copy.ManagedService = &spec
+	}
 	if pin.OutboundProbe != nil {
 		spec := *pin.OutboundProbe
 		copy.OutboundProbe = &spec

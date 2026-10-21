@@ -6,6 +6,7 @@
 package imaged
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,7 +15,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -118,6 +118,9 @@ type Handler struct {
 	// serving VM is booted. It is an exact opt-in while app-task dispatch is
 	// still dark-launched in schedd.
 	releasePhaseEnabled bool
+	// deferLegacyParentBases lets the rolling pre-stage skip child bases the
+	// serving vmmd cannot materialize; the post-switch imaged stages them.
+	deferLegacyParentBases bool
 	// nodeName is the compute_node identity of this imaged process. A
 	// snapshot_boot notification is fleet-wide, while the builder's OCI
 	// export is local to the node that produced it. Named multi-box daemons
@@ -184,7 +187,10 @@ type Handler struct {
 	// OCI pull sites inside aboveBaseLayers + the legacy
 	// PullLayers path, plus imaged_oci_pull_duration_seconds
 	// per-pull op{manifest,config,blob,above_base}.
-	ops *wire.OpsMetrics
+	ops                *wire.OpsMetrics
+	handoffMetrics     *buildImageHandoffMetrics
+	preparationMetrics *imagePreparationProgressMetrics
+	postCaptureMetrics *postCaptureMetrics
 	// audit (issue #470 / PR C / ADR-074) is the imaged-side
 	// audit-log seam used to emit app.warm_snapshot_stale from the
 	// MarkFCSnapshotsStale path. Wired via WithAudit; nil opts
@@ -205,6 +211,16 @@ type Handler struct {
 	// sidecar write at base_stage.go::writeScanSidecar reads the
 	// counts off the struct to build the legacy sidecar JSON.
 	grypeRun func(ctx context.Context, dir string) (*ScanResult, error)
+
+	// runtimeGrypeRun scans the native composed directory without treating a
+	// customer file named rootfs.ext4 as a nested image.
+	runtimeGrypeRun func(context.Context, string) (*ScanResult, error)
+	// Active entries live only for a job; restart reconstructs work from durable
+	// producer selections and scan leases. Storage/native fences remain authoritative.
+	runtimeScanMu     sync.Mutex
+	runtimeScanActive map[string]struct{}
+	runtimeScanParent string // private portable fixture seam; production uses vmmd staging
+
 	// syftRun is the post-build SBOM generator used to populate
 	// build_provenance.sbom_storage_key (issue #299 / ADR-038
 	// Phase 3). Wired via WithSyftRun; nil = default to a
@@ -329,48 +345,55 @@ func (h *Handler) trustedPublishers(ctx context.Context, appID string) ([]cosign
 	return pubs, nil
 }
 
-// checkImageSignature performs a non-mutating provenance check against the
-// current in-memory trust list. It is shared by the deploy gate and the live
-// signer-revocation reconciler; callers decide whether a failure should fail
-// a deployment or quarantine an already-live app.
+// checkImageSignature revalidates against the current stored publisher keys.
+// Live revalidation resolves the app's repository-scoped credentials separately
+// from the deploy gate, which already holds them for image resolution.
 func (h *Handler) checkImageSignature(ctx context.Context, app state.App, ref string) (string, error) {
-	pubs, err := h.trustedPublishers(ctx, app.ID)
+	publishers, err := h.imageSignaturePublishers(ctx, app)
 	if err != nil {
 		return "", err
 	}
-	if len(pubs) == 0 {
-		// Defence-in-depth: apid's pre-flight already gated this
-		// case, but if imaged is called outside the apid pipeline
-		// (a future admin CLI, a live revalidation), refuse the
-		// signature check rather than verify against an empty
-		// allowlist.
+	if len(publishers) == 0 {
 		return "", fmt.Errorf("%w: require_signed=true but no trusted publishers configured", cosign.ErrSignatureInvalid)
 	}
-	if h == nil || h.oci == nil {
-		return "", errors.New("imaged: image signature verifier unavailable")
+	r, err := oci.ParseReference(ref)
+	if err != nil {
+		return "", err
 	}
-	signer, _, err := cosign.VerifyImageSignature(ctx, &ociImageSignaturePuller{oci: h.oci}, ref, pubs)
-	return signer, err
+	auth, err := h.resolveRegistryAuth(ctx, app, r.APIHost())
+	if err != nil {
+		return "", err
+	}
+	if auth != nil {
+		defer func() { auth.Password = "" }()
+	}
+	proof, err := h.checkImageSignatureProof(ctx, app, ref, auth)
+	return proof.PublisherName, err
 }
 
-// verifyImageSignature is the deploy-time verify hook (issue #472 /
-// ADR-054). Branches on apps.require_signed; if true, calls
-// pkg/cosign.VerifyImageSignature against the in-memory trust list
-// and marks the deployment FAILED with the typed failure reason on
-// either ErrSignatureMissing or ErrSignatureInvalid. Returns nil on
-// success so buildImageLayer proceeds to PullDigest.
-//
-// The signatureMissing / signatureInvalid audit events are emitted
-// here (not by apid) because imaged is the surface that observes the
-// verify outcome — apid already emitted app.signed_image_accepted
-// at accept-time (the "request passed the gate" event). The pair
-// answers "request accepted but verify failed in imaged" without
-// re-deriving from deployment status.
-func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep state.Deployment, ref string) error {
-	signer, err := h.checkImageSignature(ctx, app, ref)
+func (h *Handler) checkImageSignatureProof(ctx context.Context, app state.App, ref string, auth *oci.BasicAuth) (cosign.ImageSignatureProof, error) {
+	pubs, err := h.imageSignaturePublishers(ctx, app)
+	if err != nil {
+		return cosign.ImageSignatureProof{}, err
+	}
+	return cosign.VerifyImageSignatureAttachments(ctx, &ociImageSignaturePuller{oci: h.oci, auth: auth}, ref, pubs)
+}
+
+func (h *Handler) imageSignaturePublishers(ctx context.Context, app state.App) ([]cosign.TrustedPublisher, error) {
+	return h.trustedPublishers(ctx, app.ID)
+}
+
+// verifyImageSignature authenticates the exact resolved source before build
+// reads. Only a missing attachment is classified as missing; registry failures
+// remain failures. The signed source may be an index whose verified child is
+// selected by the resolver (ADR-435).
+func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep state.Deployment, ref, expectedDigest string, auth *oci.BasicAuth) (cosign.ImageSignatureProof, error) {
+	proof, err := h.checkImageSignatureProof(ctx, app, ref, auth)
+	if err == nil && proof.SubjectDigest != expectedDigest {
+		err = fmt.Errorf("%w: verified subject differs from selected source", cosign.ErrSignatureInvalid)
+	}
 	if err == nil {
-		h.log.Info("image signature verified", "app", app.Slug, "deployment", dep.ID, "signer", signer, "ref", ref)
-		return nil
+		return proof, nil
 	}
 	switch {
 	case errors.Is(err, cosign.ErrSignatureMissing):
@@ -385,7 +408,7 @@ func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep s
 		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_verify: registry error")
 		h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, ref, "")
 	}
-	return err
+	return cosign.ImageSignatureProof{}, err
 }
 
 // emitSignatureAudit fires the audit row for verify failures. Mirrors
@@ -468,44 +491,6 @@ func (h *Handler) emitSignatureAudit(ctx context.Context, kind string, app state
 	}
 }
 
-// ociImageSignaturePuller adapts oci.Puller to the minimal
-// cosign.ImageSignaturePuller surface. PullDigest / FetchSignature
-// are the two methods VerifyImageSignature needs; FetchSignature
-// type-asserts to oci.ManifestPuller (which production's
-// RegistryClient satisfies — the DefaultPuller used by unit tests
-// does NOT) and falls back to ErrSignatureMissing when the
-// assertion fails. This keeps the test surface green without
-// importing a network into pkg/imaged unit tests.
-type ociImageSignaturePuller struct {
-	oci oci.Puller
-}
-
-func (p *ociImageSignaturePuller) ResolveDigest(ctx context.Context, ref string) (string, error) {
-	return p.oci.PullDigest(ctx, ref)
-}
-
-func (p *ociImageSignaturePuller) FetchSignature(ctx context.Context, ref, digest string) ([]byte, error) {
-	mp, ok := p.oci.(oci.ManifestPuller)
-	if !ok {
-		// DefaultPuller / offline fakes can't fetch cosign sigs.
-		// Return ErrSignatureMissing so the verify hook reports
-		// the customer-facing "no signature" reason rather than a
-		// generic error.
-		return nil, cosign.ErrSignatureMissing
-	}
-	// Cosign v2 signature location: the digest identifies the
-	// well-known sha256-<hex>.sig tag in the same repo as ref.
-	// We pass digest through PullBlob's (repo, digest) signature
-	// unchanged — PullBlob will hit the registry's blob endpoint
-	// for the same content-addressed blob.
-	rc, err := mp.PullBlob(ctx, ref, digest)
-	if err != nil {
-		return nil, errors.Join(cosign.ErrSignatureMissing, err)
-	}
-	defer func() { _ = rc.Close() }()
-	return io.ReadAll(rc)
-}
-
 func (h *Handler) WithFunctionRunnerNode22(p string) *Handler {
 	h.functionRunnerNode22Path = p
 	return h
@@ -538,6 +523,14 @@ func (h *Handler) WithHostingSmokeRequired(required bool) *Handler {
 // opt-in prevents a partially rolled-out fleet from queueing tasks forever.
 func (h *Handler) WithReleasePhaseEnabled(enabled bool) *Handler {
 	h.releasePhaseEnabled = enabled
+	return h
+}
+
+// WithLegacyParentDeferral is for the rolling pre-stage only. A child base
+// whose parent the serving (previous-release) vmmd cannot materialize is left
+// for the serving imaged, which stages it against the new vmmd before ready.
+func (h *Handler) WithLegacyParentDeferral(enabled bool) *Handler {
+	h.deferLegacyParentBases = enabled
 	return h
 }
 
@@ -624,6 +617,13 @@ func (h *Handler) WithBaseArtifactValidator(fn func(context.Context, string, []s
 	return h
 }
 
+// WithValidatorArtifactCheck installs immutable validator-artifact readiness
+// before a deployment is published live.
+func (h *Handler) WithValidatorArtifactCheck(check func(context.Context, string, string) error) *Handler {
+	h.validatorArtifactCheck = check
+	return h
+}
+
 // WithArtifactReplicator installs the optional split-box local artifact
 // handoff. The hook is called only after the layer and its signature have
 // both been written, and before the scheduler notification is sent.
@@ -650,8 +650,29 @@ func (h *Handler) replicateLayer(ctx context.Context, layerKey string) error {
 // PullLayers. Nil-safe (Observe* is no-op on a nil receiver).
 // Mirrors pkg/builderd/builderd.go's WithOpsMetrics (PR #124,
 // ADR-030) and cmd/apid/server.go's WithOpsMetrics (this PR).
+// Wire before Loop.Run; one handler owns handoff diagnostics per registry.
 func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
+	if h.ops == ops {
+		return h
+	}
+	if h.handoffMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.handoffMetrics)
+	}
+	if h.preparationMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.preparationMetrics)
+	}
+	if h.postCaptureMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.postCaptureMetrics)
+	}
 	h.ops = ops
+	h.handoffMetrics = nil
+	h.preparationMetrics = nil
+	h.postCaptureMetrics = nil
+	if ops != nil && ops.Registry() != nil {
+		h.handoffMetrics = newBuildImageHandoffMetrics(ops.Registry())
+		h.preparationMetrics = newImagePreparationProgressMetrics(ops.Registry())
+		h.postCaptureMetrics = newPostCaptureMetrics(ops.Registry())
+	}
 	return h
 }
 
@@ -952,6 +973,9 @@ func scanLayerDeploymentID(slug string, dep state.Deployment) string {
 // has a filesystem path to scan. The legacy appsRootPath is
 // preserved as the SetDeploymentRootfs DB column, untouched.
 func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.Deployment) error {
+	if handled, err := h.routeProducedDeploymentScan(ctx, app, dep); handled {
+		return err
+	}
 	if h.store == nil || h.log == nil {
 		// Defensive: tests that build a Handler without wiring
 		// store/log skip the scan entirely (no row to write, no
@@ -1544,7 +1568,7 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	if err := h.deleteUnretainedJobArtifact(ctx, be, sched.JobLayerKey(jobID)); err != nil && !storage.IsNotFound(err) {
+	if err := h.deleteJobArtifactKey(ctx, be, sched.JobLayerKey(jobID)); err != nil {
 		return err
 	}
 	if lister, ok := be.(storage.LocalArtifactLister); ok {
@@ -1556,12 +1580,32 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 			if foundJobID, valid := jobArtifactJobID(key); !valid || foundJobID != jobID {
 				continue
 			}
-			if err := h.deleteUnretainedJobArtifact(ctx, be, key); err != nil && !storage.IsNotFound(err) {
+			if err := h.deleteJobArtifactKey(ctx, be, key); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func (h *Handler) deleteJobArtifactKey(ctx context.Context, be storage.StorageBackend, key string) error {
+	if retention, ok := h.store.(state.OperationJobImageRetentionStore); ok {
+		retained, err := retention.OperationJobImageRetained(ctx, key)
+		if err != nil {
+			return fmt.Errorf("check operation retention for %s: %w", key, err)
+		}
+		if retained {
+			return nil
+		}
+	}
+	if err := be.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+func imageManifestHealthcheckRequired(check *api.AppManifestHealthcheck) bool {
+	return check != nil && len(check.Test) > 0 && check.Test[0] != "NONE"
 }
 
 // cleanupSupersededJobArtifacts removes build attempts other than the key
@@ -1587,7 +1631,7 @@ func (h *Handler) cleanupSupersededJobArtifacts(ctx context.Context, jobID, keep
 		if !valid || foundJobID != jobID || key == keepKey {
 			continue
 		}
-		if err := h.deleteUnretainedJobArtifact(ctx, be, key); err != nil && !storage.IsNotFound(err) {
+		if err := h.deleteJobArtifactKey(ctx, be, key); err != nil {
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete %s: %w", key, err))
 		}
 	}
@@ -1635,7 +1679,7 @@ func (h *Handler) ReconcileDeletedJobArtifacts(ctx context.Context) error {
 			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s lookup: %w", jobID, err))
 			continue
 		}
-		if err := h.deleteUnretainedJobArtifact(ctx, be, key); err != nil && !storage.IsNotFound(err) {
+		if err := h.deleteJobArtifactKey(ctx, be, key); err != nil {
 			reconcileErrs = append(reconcileErrs, fmt.Errorf("job %s artifact delete: %w", jobID, err))
 		}
 	}
@@ -1680,8 +1724,9 @@ func jobArtifactJobID(key string) (string, bool) {
 // after a Prime/Park writes the blob via vmmd (ADR-018, see pkg/db.NotifyChannels).
 // imaged is the sole writer to the snapshots table, so it records the row.
 type snapshotWrittenPayload struct {
-	DeploymentID     string `json:"deployment_id"`
-	SourceInstanceID string `json:"source_instance_id,omitempty"`
+	DeploymentID                    string `json:"deployment_id"`
+	SourceInstanceID                string `json:"source_instance_id,omitempty"`
+	ApplicationStandardCaptureToken string `json:"application_standard_capture_token,omitempty"`
 	// The source row's started_at can advance after this notification is
 	// emitted, so imaged must compare the captured value to the config stamp.
 	SourceStartedAt time.Time `json:"source_started_at,omitempty"`
@@ -1794,7 +1839,7 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 	if err != nil {
 		return err
 	}
-	acct, err := h.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, h.store, app)
 	if err != nil {
 		return fmt.Errorf("imaged: load account: %w", err)
 	}
@@ -1827,7 +1872,7 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 		if err := h.transitionWithStage(ctx, dep.ID, state.StageDependencyRestore, state.StageSecurityScan, state.DeployImaging, "", hostingFlowForApp(app)); err != nil {
 			return err
 		}
-		if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
+		if err := h.buildFunctionLayer(ctx, app, dep, acct, nil); err != nil {
 			return err
 		}
 	default:
@@ -1848,16 +1893,16 @@ func (h *Handler) handleDeploymentLegacy(ctx context.Context, p deploymentChange
 	// (buildImageLayer/buildFunctionLayer both stamped
 	// SetDeploymentRootfs above) and BEFORE the
 	// pending→snapshotting transition. The scan is
-	// Off/warn apps keep the historical best-effort behavior. In
-	// enforce mode, runDeployScan returns before this transition on
-	// an unavailable, mismatched, or unsafe result.
+	// Deployments without private history retain the legacy scan posture.
+	// Retained producer paths require current composed evidence; enforce
+	// policy also rejects blocking findings before this transition.
 	if scanErr := h.runDeployScan(ctx, app, dep); scanErr != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, scanErr, "verified image scan gate")
 		return scanErr
 	}
 	// Runtime bases are staged on demand so a fresh bare-metal node can
 	// become ready without building every supported runtime at startup.
-	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
+	if err := h.ensureDeploymentRuntimeBase(ctx, app); err != nil {
 		return err
 	}
 
@@ -2192,14 +2237,13 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	// Resolve before verification so a tag names the same immutable source
 	// throughout verification and platform selection. Offline pullers retain
 	// the existing verification/pull sequence.
-	selectedRef, digest, err := h.prepareContainerImage(ctx, app, dep, appAuth)
+	prepared, err := h.prepareContainerWorkloadImage(ctx, app, dep, "", dep.ImageDigest, appAuth)
 	if err != nil {
 		return err
 	}
-	ref = selectedRef
-	// Every subsequent read, including the full-rootfs fallback, uses the
-	// selected immutable child. The durable row retains the signed source.
-	dep.ImageDigest = selectedRef
+	ref, digest := prepared.Reference, prepared.Digest
+	// Keep scan and source metadata aligned with the immutable platform child.
+	dep.ImageDigest = prepared.Reference
 	// Issue #461 / ADR-062: best-effort mark credential used on
 	// successful authenticated pull. Best-effort so a transient
 	// mark-used failure cannot abort an otherwise-successful
@@ -2234,7 +2278,6 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if dep.Handler != "" {
 		manifest.Entrypoint = []string{dep.Handler}
 	}
-	manifest = imageEntrypointForCmdOverride(manifest, imageCfg, dep)
 	// PR-B (issue #460 / ADR-053): layer the deployment's six persisted
 	// override columns onto the OCI-derived manifest before validation. The
 	// helper is a pure function; an error here means a jsonb column failed
@@ -2259,23 +2302,41 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)
 	}
-	requiresImageHealthcheck := manifest.Healthcheck != nil && len(manifest.Healthcheck.Test) > 0 && manifest.Healthcheck.Test[0] != "NONE"
-	if dep.Kind == state.DeploymentKindImage && (requiresImageHealthcheck || (isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0)) {
+	profile := frameworkprofile.Profile{Version: frameworkprofile.Version, Framework: "unknown"}
+	if len(dep.InferredProfile) != 0 {
+		if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil {
+			return fmt.Errorf("imaged: decode image runtime profile: %w", err)
+		}
+	}
+	if profile.Version == "" {
+		profile.Version = frameworkprofile.Version
+	}
+	if profile.Framework == "" {
+		profile.Framework = "unknown"
+	}
+	profileChanged := false
+	if isDirectOCIImage(app, dep) && dep.OverridePort == 0 && manifest.Port != 0 && profile.Port != manifest.Port {
 		// The image config may advertise a single non-8080 TCP port. The
 		// guest manifest already has that port, but schedd reads the durable
 		// deployment row to configure vmmd's host:8080 -> guest:<port> DNAT.
 		// Without this handoff, the guest can listen successfully while every
 		// first-boot readiness probe targets the wrong guest port.
-		profile, marshalErr := json.Marshal(frameworkprofile.Profile{
-			Version: frameworkprofile.Version, Framework: "unknown", Port: manifest.Port,
-			ImageHealthcheckRequired: requiresImageHealthcheck,
-		})
+		profile.Port = manifest.Port
+		profileChanged = true
+	}
+	requiredHealthcheck := imageManifestHealthcheckRequired(manifest.Healthcheck)
+	if profile.ImageHealthcheckRequired != requiredHealthcheck {
+		profile.ImageHealthcheckRequired = requiredHealthcheck
+		profileChanged = true
+	}
+	if profileChanged {
+		runtimeProfile, marshalErr := json.Marshal(profile)
 		if marshalErr != nil {
-			return fmt.Errorf("imaged: encode OCI runtime profile: %w", marshalErr)
+			return fmt.Errorf("imaged: encode image runtime profile: %w", marshalErr)
 		}
-		if err := h.store.SetDeploymentRuntimeProfile(ctx, dep.ID, profile); err != nil {
-			_ = h.markDeployFailed(ctx, dep.ID, err, "persist OCI runtime contract")
-			return fmt.Errorf("imaged: persist OCI runtime contract: %w", err)
+		if err := h.store.SetDeploymentRuntimeProfile(ctx, dep.ID, runtimeProfile); err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "persist image runtime profile")
+			return fmt.Errorf("imaged: persist image runtime profile: %w", err)
 		}
 	}
 
@@ -2310,12 +2371,12 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			// shared runtime base first would make this path depend on an
 			// unrelated registry and turn an unreachable base into a deploy
 			// failure, even though BuildFullRootfs never consumes it.
-			if err := h.dispatchFullRootfs(ctx, app, dep, acct, manifest, appAuth); err != nil {
+			if err := h.dispatchFullRootfs(ctx, app, dep, acct, manifest, appAuth, prepared); err != nil {
 				_ = h.markDeployFailed(ctx, dep.ID, err, "imaged: full-rootfs dispatch")
 				return err
 			}
 		} else {
-			above, diffs, err = h.aboveBaseLayers(ctx, mp, ref, app.Runtime, manifest, appAuth)
+			above, diffs, err = h.aboveBaseLayersVerified(ctx, mp, ref, app.Runtime, manifest, appAuth, prepared)
 		}
 		if err != nil {
 			// ADR-141 §Decision 3 + §Decision 2: when the app image is
@@ -2327,7 +2388,9 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			// (telemetry, retries) cannot bypass the gate.
 			//
 			if errors.Is(err, oci.ErrLayersNotAboveBase) {
-				fullErr := h.dispatchFullRootfs(ctx, app, dep, acct, manifest, appAuth)
+				// Conversion must use the already resolved child. Keep the
+				// stored customer reference for intent and scan attribution.
+				fullErr := h.dispatchFullRootfs(ctx, app, dep, acct, manifest, appAuth, prepared)
 				if fullErr != nil {
 					_ = h.markDeployFailed(ctx, dep.ID, fullErr, "imaged: full-rootfs dispatch")
 					return fullErr
@@ -2383,7 +2446,13 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			// is logged at WARN and the build still succeeds (the SBOM
 			// is observational metadata, schema §4.2).
 			h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-			if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
+			prepared, err = consumedContainerLayers(prepared, above.readers, above.start)
+			if err != nil {
+				_ = h.markDeployFailed(ctx, dep.ID, err, "verify consumed app layers")
+				return err
+			}
+			prepared.BaseProducer = above.baseProducer
+			if err := h.publishContainerRootfs(ctx, app, dep, prepared, "", "app-layer", appsKey, result); err != nil {
 				_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 				return fmt.Errorf("imaged: stamp rootfs: %w", err)
 			}
@@ -2412,11 +2481,17 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// Issue #461 / ADR-062: mark credential used after a
 		// successful M5 fallback layer pull.
 		h.markRegistryCredentialUsed(ctx, app, refHost, appAuth)
+		layerClosers := pulled.Layers
 		defer func() {
-			for _, r := range pulled.Layers {
+			for _, r := range layerClosers {
 				_ = r.Close()
 			}
 		}()
+		pulled.Layers, err = wrapContainerLayerReaders(ctx, prepared, pulled.Layers, 0)
+		if err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "verify app image chain")
+			return err
+		}
 		result, err := h.builder.Build(ctx, rootfs.BuildInput{
 			Layers:        layersAsReaders(pulled.Layers),
 			Manifest:      manifest,
@@ -2434,7 +2509,12 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			return fmt.Errorf("imaged: build app layer: %w", err)
 		}
 		h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-		if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
+		prepared, err = consumedContainerLayers(prepared, layersAsReaders(pulled.Layers), 0)
+		if err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "verify consumed app layers")
+			return err
+		}
+		if err := h.publishContainerRootfs(ctx, app, dep, prepared, "", "app-layer", appsKey, result); err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 			return fmt.Errorf("imaged: stamp rootfs: %w", err)
 		}
@@ -2557,7 +2637,18 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 		// main image, keyed on the sidecar ref's host.
 		var auth *oci.BasicAuth
 		if parsedRef, parseErr := oci.ParseReference(sc.Image); parseErr == nil {
-			auth, _ = h.resolveRegistryAuth(ctx, app, parsedRef.APIHost())
+			auth, parseErr = h.resolveRegistryAuth(ctx, app, parsedRef.APIHost())
+			if parseErr != nil {
+				_ = h.markDeployFailed(ctx, dep.ID, parseErr, "sidecar registry auth")
+				return findings, fmt.Errorf("imaged: sidecar %q registry auth: %w", sc.Name, parseErr)
+			}
+		}
+		if auth != nil {
+			defer func() { auth.Password = "" }()
+		}
+		selected, err := h.prepareContainerWorkloadImage(ctx, app, dep, sc.Name, sc.Image, auth)
+		if err != nil {
+			return findings, fmt.Errorf("imaged: sidecar %q image admission: %w", sc.Name, err)
 		}
 		// Sidecar pull: use the M5 stream path (pullLayersWithAuth)
 		// rather than the two-drive base-diff path. Sidecars are
@@ -2567,17 +2658,23 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 		// in buildImageLayer and keeps the sidecar semantics
 		// independent of the main image's runtime selection.
 		start := time.Now()
-		pulled, err := pullLayersWithAuth(ctx, h.oci, sc.Image, auth)
+		pulled, err := pullLayersWithAuth(ctx, h.oci, selected.Reference, auth)
 		h.ops.ObserveImagedOCIPull("sidecar_blob", pullResult(err), time.Since(start))
 		if err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q pull", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q pull: %w", sc.Name, err)
 		}
+		layerClosers := pulled.Layers
 		defer func() {
-			for _, r := range pulled.Layers {
+			for _, r := range layerClosers {
 				_ = r.Close()
 			}
 		}()
+		pulled.Layers, err = wrapContainerLayerReaders(ctx, selected, pulled.Layers, 0)
+		if err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "verify sidecar image chain")
+			return findings, err
+		}
 		be, err := h.storageFor()
 		if err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, "sidecar storage init")
@@ -2607,13 +2704,12 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q build", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q build: %w", sc.Name, err)
 		}
-		if _, err := h.store.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{
-			DeploymentID:  dep.ID,
-			SidecarName:   sc.Name,
-			StorageKey:    layerKey,
-			Bytes:         result.ContentBytes,
-			ContentDigest: sc.Image,
-		}); err != nil {
+		selected, err = consumedContainerLayers(selected, layersAsReaders(pulled.Layers), 0)
+		if err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "verify consumed sidecar layers")
+			return findings, err
+		}
+		if err := h.publishContainerRootfs(ctx, app, dep, selected, sc.Name, "sidecar-layer", layerKey, result); err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q stamp", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q stamp: %w", sc.Name, err)
 		}
@@ -2716,7 +2812,7 @@ func (h *Handler) sidecarWorkloadManifest(sc api.Sidecar, cfg oci.ImageConfig) (
 // provides (cmd/imaged wires both env-driven). Fails loud when the matching
 // path is empty — silent omission meant production function deploys were
 // shipping a layer without /usr/local/bin/faas-runner (M8 readiness).
-func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account) error {
+func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep state.Deployment, acct state.Account, source *sourceBuildRootfsBinding) error {
 	var frozenErr error
 	app, frozenErr = state.AppForDeploymentRuntime(app, dep)
 	if frozenErr != nil {
@@ -2866,7 +2962,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyAppLifecycle(manifest, app)
+	manifest = applyFunctionConcurrency(applyAppLifecycle(manifest, app), app)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -2889,7 +2985,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	var cleanupBuiltLayers func()
 	if (runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine || runtime == RuntimeBinary) &&
 		dep.RootfsPath != "" && dep.RootfsPath != dep.SourcePath && dep.Kind != state.DeploymentKindImage {
-		_, layers, cleanup, loadErr := loadLocalOCIArchive(dep.RootfsPath)
+		_, layers, cleanup, loadErr := loadLocalOCIArchiveContext(ctx, dep.RootfsPath)
 		if loadErr != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, loadErr, "load source build artifact")
 			return fmt.Errorf("imaged: load source build artifact: %w", loadErr)
@@ -2957,13 +3053,6 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	} else {
 		// Keep the hermetic legacy/test seam. Production handlers always
 		// enable runtime-base staging and therefore take the artifact path.
-		target, err := h.explicitRuntimeUpgradeTarget(ctx, app, dep, runtime)
-		if err != nil {
-			return err
-		}
-		if target != nil {
-			return errors.New("runtime update requires immutable base staging")
-		}
 		buildInput.Layers = builtLayers
 		buildInput.TarballPath = dep.SourcePath
 	}
@@ -2982,14 +3071,14 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	}
 	h.updateBuildProvenanceRunnerDigest(ctx, dep.ID, result.RunnerDigest)
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-	if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
+	if err := h.publishSourceRootfs(ctx, app, dep, appsKey, result, source); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 		return fmt.Errorf("imaged: stamp rootfs: %w", err)
 	}
 	if pinnedRelease != nil {
 		if err := h.store.(state.RuntimeReleaseStore).BindDeploymentRuntimeRelease(ctx, dep.ID, appsKey, pinnedRelease.ID); err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, "bind function runtime")
-			return fmt.Errorf("imaged: bind function runtime: %w", err)
+			return err
 		}
 	}
 	if err := h.replicateLayer(ctx, appsKey); err != nil {
@@ -3204,7 +3293,12 @@ func (h *Handler) rejectEphemeralSnapshot(ctx context.Context, candidate snapsho
 // handleDeploymentActivation is the common post-readiness deployment gate.
 // snapshot is populated for request/service flows; ready is populated for the
 // non-snapshot worker/job flows. Exactly one input must be present.
-func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snapshotWrittenPayload, ready *deploymentReadyPayload) error {
+func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snapshotWrittenPayload, ready *deploymentReadyPayload) (err error) {
+	input, phase := "snapshot", "evidence"
+	if ready != nil {
+		input = "ready"
+	}
+	defer func() { h.postCaptureMetrics.observeAttempt(ctx, input, phase, err) }()
 	deploymentID := snapshot.DeploymentID
 	if ready != nil {
 		deploymentID = ready.DeploymentID
@@ -3254,63 +3348,72 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		if ready.ExecutionMode != mode {
 			return fmt.Errorf("imaged: deployment_ready mode mismatch: payload=%q app=%q", ready.ExecutionMode, mode)
 		}
-		switch mode {
-		case api.ExecutionModeWorker:
-			if ready.NoSnapshotReason != "" {
-				return errors.New("imaged: worker deployment_ready must not carry no_snapshot_reason")
+		if ready.NoSnapshotReason == "rehearsal_cold_start" {
+			if err := h.validateColdStartActivation(ctx, app, dep, *ready); err != nil {
+				return err
 			}
-			if ready.InstanceID == "" {
-				return errors.New("imaged: worker deployment_ready missing instance_id")
+		} else {
+			switch mode {
+			case api.ExecutionModeWorker:
+				if ready.NoSnapshotReason != "" {
+					return errors.New("imaged: worker deployment_ready must not carry no_snapshot_reason")
+				}
+				if ready.InstanceID == "" {
+					return errors.New("imaged: worker deployment_ready missing instance_id")
+				}
+				if dep.Status == state.DeployLive {
+					return nil
+				}
+				ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
+				if instanceErr != nil {
+					return fmt.Errorf("imaged: load ready worker instance: %w", instanceErr)
+				}
+				if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
+					ins.Mode != string(state.InstanceModeWorker) || ins.State != string(state.StateRunning) {
+					return fmt.Errorf("imaged: worker readiness proof does not match a running worker instance")
+				}
+			case api.ExecutionModeJob:
+				if ready.NoSnapshotReason != "" {
+					return errors.New("imaged: job deployment_ready must not carry no_snapshot_reason")
+				}
+				if ready.InstanceID != "" {
+					return errors.New("imaged: job deployment_ready must not carry instance_id")
+				}
+				if dep.Status == state.DeployLive {
+					return nil
+				}
+			case api.ExecutionModeRequest, api.ExecutionModeService:
+				if ready.NoSnapshotReason != "ephemeral_secret" {
+					return fmt.Errorf("imaged: %s deployment_ready requires snapshot activation unless an authorized ephemeral-secret proof is supplied", mode)
+				}
+				if ready.InstanceID == "" {
+					return fmt.Errorf("imaged: %s ephemeral-secret readiness missing instance_id", mode)
+				}
+				if dep.Status == state.DeployLive {
+					return nil
+				}
+				ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
+				if instanceErr != nil {
+					return fmt.Errorf("imaged: load ready ephemeral-secret instance: %w", instanceErr)
+				}
+				wantMode := state.InstanceModeNormal
+				if mode == api.ExecutionModeService {
+					wantMode = state.InstanceModeService
+				}
+				if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
+					ins.Mode != string(wantMode) || ins.State != string(state.StateStopped) {
+					return fmt.Errorf("imaged: ephemeral-secret readiness proof does not match a stopped %s instance", mode)
+				}
+			default:
+				return fmt.Errorf("imaged: execution mode %q requires snapshot activation unless authorized ephemeral-secret readiness is supplied", mode)
 			}
-			if dep.Status == state.DeployLive {
-				return nil
-			}
-			ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
-			if instanceErr != nil {
-				return fmt.Errorf("imaged: load ready worker instance: %w", instanceErr)
-			}
-			if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
-				ins.Mode != string(state.InstanceModeWorker) || ins.State != string(state.StateRunning) {
-				return fmt.Errorf("imaged: worker readiness proof does not match a running worker instance")
-			}
-		case api.ExecutionModeJob:
-			if ready.NoSnapshotReason != "" {
-				return errors.New("imaged: job deployment_ready must not carry no_snapshot_reason")
-			}
-			if ready.InstanceID != "" {
-				return errors.New("imaged: job deployment_ready must not carry instance_id")
-			}
-			if dep.Status == state.DeployLive {
-				return nil
-			}
-		case api.ExecutionModeRequest, api.ExecutionModeService:
-			if ready.NoSnapshotReason != "ephemeral_secret" {
-				return fmt.Errorf("imaged: %s deployment_ready requires snapshot activation unless an authorized ephemeral-secret proof is supplied", mode)
-			}
-			if ready.InstanceID == "" {
-				return fmt.Errorf("imaged: %s ephemeral-secret readiness missing instance_id", mode)
-			}
-			if dep.Status == state.DeployLive {
-				return nil
-			}
-			ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
-			if instanceErr != nil {
-				return fmt.Errorf("imaged: load ready ephemeral-secret instance: %w", instanceErr)
-			}
-			wantMode := state.InstanceModeNormal
-			if mode == api.ExecutionModeService {
-				wantMode = state.InstanceModeService
-			}
-			if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
-				ins.Mode != string(wantMode) || ins.State != string(state.StateStopped) {
-				return fmt.Errorf("imaged: ephemeral-secret readiness proof does not match a stopped %s instance", mode)
-			}
-		default:
-			return fmt.Errorf("imaged: execution mode %q requires snapshot activation unless authorized ephemeral-secret readiness is supplied", mode)
 		}
 	}
 
 	if ready == nil {
+		if err := h.verifyStandardSnapshotWritten(ctx, app, dep, snapshot); err != nil {
+			return err
+		}
 		// The scheduler checks this before capture, but secrets may be
 		// reclassified while vmmd is writing or publishing the artifact. Keep
 		// imaged's sole snapshot-row writer as the final fail-closed fence.
@@ -3329,19 +3432,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		// so validate again at the sole snapshot-row writer rather than relying
 		// only on schedd's pre-capture check. Zero is retained for legacy writers
 		// that did not report mem_bytes.
-		//
-		// The guest's RAM includes explicitly allocated companion RAM, as vmmd
-		// boots it (fcvm.wakeGuestMemoryMiB); production-us rc.251 rejected
-		// every companion deployment's snapshot against the app RAM alone.
-		expectedMemBytes := int64(app.RAMMB) << 20
-		if snapshot.MemBytes > 0 && app.RAMMB > 0 {
-			sidecarMBs, err := h.store.DeploymentSidecarRAMs(ctx, snapshot.DeploymentID)
-			if err != nil {
-				return fmt.Errorf("imaged: snapshot companion RAM for %s: %w", snapshot.DeploymentID, err)
-			}
-			expectedMemBytes = int64(api.BillableRAMMBWithSidecars(app.RAMMB, sidecarMBs)-api.PerVMOverheadMB) << 20
+		sidecarRAMs, ramErr := h.store.DeploymentSidecarRAMs(ctx, dep.ID)
+		if ramErr != nil {
+			h.ops.RecordSnapshotPublication(snapshot.Tier, wire.SnapshotPublicationPolicyError)
+			return fmt.Errorf("imaged: load companion RAM for deployment %s: %w", dep.ID, ramErr)
 		}
-		if snapshot.MemBytes > 0 && app.RAMMB > 0 && snapshot.MemBytes != expectedMemBytes {
+		expectedRAMMB := api.BillableRAMMBWithSidecars(app.RAMMB, sidecarRAMs) - api.PerVMOverheadMB
+		expectedMemBytes := int64(expectedRAMMB) << 20
+		if snapshot.MemBytes > 0 && expectedRAMMB > 0 && snapshot.MemBytes != expectedMemBytes {
 			h.ops.RecordSnapshotPublication(snapshot.Tier, wire.SnapshotPublicationRejectedRAM)
 			if state.IsSnapshotCaptureKey(snapshot.StorageKey) {
 				h.deleteSnapshotPair(ctx, state.Snapshot{StorageKey: snapshot.StorageKey})
@@ -3351,13 +3449,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 
 		snap := state.Snapshot{
-			DeploymentID:     snapshot.DeploymentID,
-			FCVersion:        snapshot.FCVersion,        // pins Firecracker restore compatibility (ADR-005)
-			BaseImageVersion: snapshot.BaseImageVersion, // pins H2C runner/base compatibility
-			StorageKey:       snapshot.StorageKey,       // see snapshotWrittenPayload.StorageKey
-			MemBytes:         snapshot.MemBytes,
-			DiskBytes:        snapshot.VMStateBytes,
-			StoredBytes:      snapshot.StoredBytes,
+			DeploymentID:                    snapshot.DeploymentID,
+			FCVersion:                       snapshot.FCVersion,        // pins Firecracker restore compatibility (ADR-005)
+			BaseImageVersion:                snapshot.BaseImageVersion, // pins H2C runner/base compatibility
+			StorageKey:                      snapshot.StorageKey,       // see snapshotWrittenPayload.StorageKey
+			MemBytes:                        snapshot.MemBytes,
+			DiskBytes:                       snapshot.VMStateBytes,
+			StoredBytes:                     snapshot.StoredBytes,
+			ApplicationStandardCaptureToken: snapshot.ApplicationStandardCaptureToken,
 			// Tier (issue #470 / PR #470-FU-B). Empty payload falls
 			// back to "init" (the DB column default and the legacy
 			// pre-#470 behaviour); warm-tier rows are only ever
@@ -3388,13 +3487,22 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			// never be restored. Keeping it and discarding this capture would
 			// leave the deployment cold-booting on every wake, so retire it
 			// and publish the new capture instead.
-			if state.SnapshotDriveKey(stored) == "" && state.SnapshotDriveKey(snap) != "" {
+			//
+			// The same holds for a live row of another Firecracker version
+			// (ADR-1344 §6): no fleet-wide sweep retires it any more, and
+			// the node that just captured cannot restore it, so the newer
+			// capture replaces it.
+			unrestorable := state.SnapshotDriveKey(stored) == ""
+			otherFC := snap.FCVersion != "" && stored.FCVersion != snap.FCVersion
+			if (unrestorable || otherFC) && state.SnapshotDriveKey(snap) != "" {
 				if markErr := h.store.MarkSnapshotStale(ctx, stored.ID); markErr != nil {
 					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 					return fmt.Errorf("imaged: retire unrestorable snapshot %s: %w", stored.ID, markErr)
 				}
 				h.log.Info("imaged: retired unrestorable snapshot for a new capture",
-					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "retired", stored.ID)
+					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "retired", stored.ID,
+					"missing_drive", unrestorable, "retired_fc_version", stored.FCVersion,
+					"capture_fc_version", snap.FCVersion)
 				retired := stored.ID
 				if stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt); errors.Is(createErr, state.ErrSnapshotRuntimeStale) {
 					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationStaleConfig)
@@ -3490,9 +3598,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 	}
 
+	phase = "dependency"
 	if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
 		return gateErr
 	}
+	phase = "verification"
 	// Snapshot candidates are verified through the gateway's authenticated,
 	// deployment-pinned smoke path before the live pointer moves. Keeping the
 	// predecessor live during this phase is the zero-downtime boundary: a slow
@@ -3516,16 +3626,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// the deployment becomes routable. The gate is dark-launched by default;
 	// when enabled, a production breaking change is a normal deployment
 	// failure with a stable error code and an audit record.
-	contractCtx, contractErr := h.checkAPIContractContext(ctx, dep)
-	if contractErr != nil {
+	if contractErr := h.checkAPIContract(ctx, dep); contractErr != nil {
 		var gateErr *openapidiff.GateError
 		code := api.CodeCapacity
 		if errors.As(contractErr, &gateErr) {
-			if len(gateErr.Diff.Breaks) > 0 {
-				code = api.CodeAPIContractBreakingChange
-			} else if len(gateErr.Diff.Unknowns) > 0 {
-				code = api.CodeAPIContractComparisonIncomplete
-			}
+			code = api.CodeAPIContractBreakingChange
 		}
 		detail := contractErr.Error()
 		_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail)
@@ -3540,8 +3645,6 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		return fmt.Errorf("imaged: api contract gate: %w", contractErr)
 	}
-
-	ctx = contractCtx
 
 	// Remember the current same-scope deployment. After the candidate passes
 	// smoke, MarkDeploymentLive atomically supersedes this row; only then may
@@ -3568,6 +3671,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// actually-superseded predecessor may be drained. Manual traffic splits and
 	// canaries can keep the predecessor live, so confirm its durable state
 	// instead of inferring it from the attempted promotion.
+	phase = "promotion"
 	checkedRollback := false
 	if rollbacks, ok := h.store.(state.CheckedRollbackStore); ok {
 		operation, err := rollbacks.CheckedRollbackForTarget(ctx, dep.ID)
@@ -3576,14 +3680,28 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		checkedRollback = err == nil && operation.Status == "preparing"
 	}
+	// ADR-1446: a plain rollback (manual or first-wake 5xx auto-rollback)
+	// deliberately activates an older revision. Like a checked rollback it
+	// must skip the latest-revision fence and the source-branch freshness
+	// check, which would otherwise supersede every rollback target.
+	if !checkedRollback {
+		if prepared, ok := h.store.(state.RollbackPreparedStore); ok {
+			isPrepared, err := prepared.DeploymentRollbackPrepared(ctx, dep.ID)
+			if err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("imaged: read rollback marker: %w", err)
+			}
+			checkedRollback = isPrepared
+		}
+	}
 
 	if h.validatorArtifactCheck != nil {
 		if err := h.validatorArtifactCheck(ctx, dep.AppID, dep.ID); err != nil {
 			return fmt.Errorf("imaged: validator artifact preflight: %w", err)
 		}
 	}
+
 	var promoteErr error
-	if !checkedRollback && (dep.Kind == state.DeploymentKindGitHub || dep.Kind == state.DeploymentKindImage) && dep.GitHubSourceRef != "" {
+	if !checkedRollback && dep.GitHubSourceRef != "" {
 		stale, verifyErr := h.gitHubSourceRefIsStale(ctx, dep)
 		if stale || verifyErr != nil {
 			code := api.CodeSourceRefStale
@@ -3661,6 +3779,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		return fmt.Errorf("imaged: mark live: %w", promoteErr)
 	}
+	phase = "finalize"
 	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)
 	if previousLiveID != "" {
 		previous, previousErr := h.store.DeploymentByID(ctx, previousLiveID)
@@ -3894,7 +4013,7 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 	if err != nil {
 		return err
 	}
-	acct, err := h.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, h.store, app)
 	if err != nil {
 		return fmt.Errorf("imaged: load account: %w", err)
 	}
@@ -3919,8 +4038,8 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 	// local file.
 	switch dep.Kind {
 	case state.DeploymentKindImage:
-		if app.Type == state.AppTypeFunction || app.Runtime != "" {
-			if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
+		if app.Type == state.AppTypeFunction {
+			if err := h.buildFunctionLayer(ctx, app, dep, acct, nil); err != nil {
 				return err
 			}
 		} else if err := h.buildImageLayer(ctx, app, dep, acct); err != nil {
@@ -3932,11 +4051,7 @@ func (h *Handler) handleSnapshotBootLegacy(ctx context.Context, p snapshotBootPa
 		// produced the OCI source-build tarball. They use the same local
 		// OCI conversion as tarball/dockerfile builds; function apps still
 		// need their runtime runner layered into the result.
-		if app.Type == state.AppTypeFunction || app.Runtime != "" {
-			if err := h.buildFunctionLayer(ctx, app, dep, acct); err != nil {
-				return err
-			}
-		} else if err := h.buildLocalOCIAppLayer(ctx, app, &dep, acct); err != nil {
+		if err := h.consumeSourceBuild(ctx, app, dep, acct); err != nil {
 			return err
 		}
 	default:
@@ -3991,12 +4106,12 @@ func (h *Handler) ensureDeploymentRuntimeBase(ctx context.Context, app state.App
 		return nil
 	}
 	if app.Runtime == "" {
-		if _, err := h.EnsureMinimalBase(ctx, runtime.GOARCH, os.Getenv); err != nil {
+		if _, err := h.EnsureMinimalBase(ctx, oci.ImageArchitecture, os.Getenv); err != nil {
 			return fmt.Errorf("imaged: ensure minimal base: %w", err)
 		}
 		return nil
 	}
-	if _, err := h.EnsureRuntimeBase(ctx, app.Runtime, runtime.GOARCH, os.Getenv); err != nil {
+	if _, err := h.EnsureRuntimeBase(ctx, app.Runtime, oci.ImageArchitecture, os.Getenv); err != nil {
 		return fmt.Errorf("imaged: ensure runtime base %s: %w", app.Runtime, err)
 	}
 	return nil
@@ -4103,8 +4218,8 @@ func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, t
 }
 
 // markDeployFailed transitions a deployment to `failed` with the given
-// RFC 7807 code (or "" if the upstream error didn't map to a sentinel)
-// and a free-text message. The code column carries the stable signal;
+// RFC 7807 code (deploy_failed if the upstream error didn't map to a
+// sentinel, as schedd's prime failure does; H10-107) and a free-text message. The code column carries the stable signal;
 // the message preserves the upstream string for debugging. Returns
 // the mark error so the caller can choose to log-and-continue or
 // bubble it up; in practice callers ignore the mark error (the
@@ -4129,6 +4244,9 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 	}
 	if errors.Is(err, errImageAbuseDetected) {
 		code = api.CodeImageAbuseDetected
+	}
+	if code == "" {
+		code = api.CodeDeployFailed
 	}
 	detail := err.Error()
 	if prefix != "" {
@@ -4241,8 +4359,10 @@ func (h *Handler) markFailedOnUnhandledError(ctx context.Context, depID string, 
 // app image. The Reader side is fed to rootfs.Builder; the Closers slice is
 // closed by the caller in a defer so streaming ReadClosers don't leak.
 type aboveBaseStream struct {
-	readers []io.Reader
-	closers []io.Closer
+	readers      []io.Reader
+	closers      []io.ReadCloser
+	start        int
+	baseProducer state.BaseImageProducer
 }
 
 // aboveBaseLayers is the M6 two-drive seam: given the app's image ref + runtime,
@@ -4265,103 +4385,87 @@ type aboveBaseStream struct {
 // both paths dispatch via PullManifestWithAuth / PullBlobWithAuth;
 // offline DefaultPuller satisfies the interface too (auth
 // ignored).
-func (h *Handler) aboveBaseLayers(ctx context.Context, mp oci.ManifestPuller,
-	appRef, runtime string, _ api.AppManifest, appAuth *oci.BasicAuth) (aboveBaseStream, []string, error) {
-	appRepo := repoWithHost(appRef)
-	if appRepo == "" {
-		return aboveBaseStream{}, nil, fmt.Errorf("imaged: cannot derive repo from %q", appRef)
-	}
+func (h *Handler) aboveBaseLayersVerified(ctx context.Context, mp oci.ManifestPuller,
+	appRef, runtime string, _ api.AppManifest, appAuth *oci.BasicAuth, prepared preparedContainerWorkload) (aboveBaseStream, []string, error) {
 	start := time.Now()
-	appManifest, err := pullManifestWithAuth(ctx, mp, appRef, appAuth)
-	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
+	descriptors, above, baseCount, err := h.aboveBaseLayerSelection(ctx, mp, appRef, runtime, appAuth)
 	if err != nil {
-		return aboveBaseStream{}, nil, fmt.Errorf("manifest: %w", err)
+		return aboveBaseStream{}, nil, err
 	}
-	appCfg, err := h.pullConfig(ctx, mp, appRepo, appManifest.Config.Digest, appAuth)
+	baseProducer, err := h.containerBaseProducer(ctx, prepared, runtime, baseCount)
 	if err != nil {
-		return aboveBaseStream{}, nil, fmt.Errorf("app config: %w", err)
+		return aboveBaseStream{}, nil, err
 	}
-	baseRef := h.deployBaseRefOverride
-	if baseRef == "" {
-		// Per-runtime env var (FAAS_DEPLOY_BASE_REF_<RUNTIME>) is the
-		// production contract. The retired single-string global
-		// FAAS_DEPLOY_BASE_REF is rejected by cmd/imaged/main.go.
-		// Matches the posture of EnsureBases (startup auto-stage).
-		// Unknown runtimes
-		// fall through to baseRefFor's default (BaseRefMinimal for
-		// the "" / customer-uploaded-image case). Same
-		// digest-pin validation as the row-level override gate.
-		resolved, err := resolveDeployBaseRef(runtime, os.Getenv)
+	closers := make([]io.ReadCloser, 0, len(descriptors))
+	for _, desc := range descriptors {
+		pullStart := time.Now()
+		rc, err := pullBlobWithAuth(ctx, mp, repoWithHost(appRef), desc.Digest, appAuth)
+		h.ops.ObserveImagedOCIPull("blob", pullResult(err), time.Since(pullStart))
 		if err != nil {
-			return aboveBaseStream{}, nil, err
-		}
-		baseRef = resolved
-	}
-	baseRepo := repoWithHost(baseRef)
-	if baseRepo == "" {
-		return aboveBaseStream{}, nil, fmt.Errorf("imaged: cannot derive repo from base %q", baseRef)
-	}
-	start = time.Now()
-	// Base manifest stays anonymous — the base is always public
-	// (ghcr.io/onebox-faas/...). Mismatched auth on a public
-	// base pull would break the build path (the base has no
-	// realm challenge, so the realm endpoint would 401).
-	baseManifest, err := pullManifestWithAuth(ctx, mp, baseRef, nil)
-	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
-	if err != nil {
-		return aboveBaseStream{}, nil, fmt.Errorf("base manifest: %w", err)
-	}
-	baseCfg, err := h.pullConfig(ctx, mp, baseRepo, baseManifest.Config.Digest, nil)
-	if err != nil {
-		return aboveBaseStream{}, nil, fmt.Errorf("base config: %w", err)
-	}
-	above, err := oci.LayersAboveBase(baseCfg.DiffIDs, appCfg.DiffIDs)
-	if err != nil {
-		return aboveBaseStream{}, nil, fmt.Errorf("layers above base: %w", err)
-	}
-
-	// Map diff_ids → compressed-blob digest. The manifest's `layers[]` lists
-	// compressed blobs in the same bottom-to-top order as config.diff_ids.
-	if len(appManifest.Layers) != len(appCfg.DiffIDs) {
-		return aboveBaseStream{}, nil, fmt.Errorf("layer count mismatch: manifest=%d config=%d",
-			len(appManifest.Layers), len(appCfg.DiffIDs))
-	}
-	blobByDiff := make(map[string]oci.Descriptor, len(appManifest.Layers))
-	for i, l := range appManifest.Layers {
-		blobByDiff[appCfg.DiffIDs[i]] = l
-	}
-
-	readers := make([]io.Reader, 0, len(above))
-	closers := make([]io.Closer, 0, len(above))
-	for _, diffID := range above {
-		desc, ok := blobByDiff[diffID]
-		if !ok {
-			// Roll back any readers we already opened.
-			for _, c := range closers {
-				_ = c.Close()
-			}
-			return aboveBaseStream{}, nil, fmt.Errorf("imaged: missing blob for diff %s", diffID)
-		}
-		start = time.Now()
-		rc, err := pullBlobWithAuth(ctx, mp, appRepo, desc.Digest, appAuth)
-		h.ops.ObserveImagedOCIPull("blob", pullResult(err), time.Since(start))
-		if err != nil {
-			for _, c := range closers {
-				_ = c.Close()
-			}
+			closeContainerLayers(closers)
 			return aboveBaseStream{}, nil, fmt.Errorf("pull blob %s: %w", desc.Digest, err)
 		}
 		closers = append(closers, rc)
-		readers = append(readers, rc)
 	}
-	// One observation per above-base resolution completing — feeds the
-	// "above_base" bucket of the histogram (the §12 dashboard's
-	// "above-base resolved" panel). Result is "ok" when at least one
-	// layer was streamed; an empty above (zero new layers) still counts
-	// as "ok" — that's the steady-state case where the deploy matches
-	// the base exactly.
+	verified, err := wrapContainerLayerReaders(ctx, prepared, closers, baseCount)
+	if err != nil {
+		closeContainerLayers(closers)
+		return aboveBaseStream{}, nil, err
+	}
+	// Zero above-base layers is a successful resolution as well.
 	h.ops.ObserveImagedOCIPull("above_base", "ok", time.Since(start))
-	return aboveBaseStream{readers: readers, closers: closers}, above, nil
+	return aboveBaseStream{readers: layersAsReaders(verified), closers: closers, start: baseCount, baseProducer: baseProducer}, above, nil
+}
+
+func (h *Handler) aboveBaseLayerSelection(ctx context.Context, mp oci.ManifestPuller, appRef, runtime string, appAuth *oci.BasicAuth) ([]oci.Descriptor, []string, int, error) {
+	appRepo := repoWithHost(appRef)
+	if appRepo == "" {
+		return nil, nil, 0, fmt.Errorf("imaged: cannot derive repo from %q", appRef)
+	}
+	appManifest, appCfg, err := h.pullManifestConfig(ctx, mp, appRef, appRepo, "app", appAuth)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	baseRef := h.deployBaseRefOverride
+	if baseRef == "" {
+		baseRef, err = resolveDeployBaseRef(runtime, os.Getenv)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	}
+	baseRepo := repoWithHost(baseRef)
+	if baseRepo == "" {
+		return nil, nil, 0, fmt.Errorf("imaged: cannot derive repo from base %q", baseRef)
+	}
+	// Public platform-base reads never receive customer registry credentials.
+	_, baseCfg, err := h.pullManifestConfig(ctx, mp, baseRef, baseRepo, "base", nil)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	above, err := oci.LayersAboveBase(baseCfg.DiffIDs, appCfg.DiffIDs)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("layers above base: %w", err)
+	}
+	// Preserve manifest/config positions, including repeated DiffIDs.
+	if len(appManifest.Layers) != len(appCfg.DiffIDs) {
+		return nil, nil, 0, fmt.Errorf("layer count mismatch: manifest=%d config=%d",
+			len(appManifest.Layers), len(appCfg.DiffIDs))
+	}
+	return appManifest.Layers[len(baseCfg.DiffIDs):], above, len(baseCfg.DiffIDs), nil
+}
+
+func (h *Handler) pullManifestConfig(ctx context.Context, mp oci.ManifestPuller, ref, repo, label string, auth *oci.BasicAuth) (oci.Manifest, oci.Config, error) {
+	start := time.Now()
+	manifest, err := pullManifestWithAuth(ctx, mp, ref, auth)
+	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
+	if err != nil {
+		return oci.Manifest{}, oci.Config{}, fmt.Errorf("%s manifest: %w", label, err)
+	}
+	config, err := h.pullConfig(ctx, mp, repo, manifest.Config.Digest, auth)
+	if err != nil {
+		return manifest, config, fmt.Errorf("%s config: %w", label, err)
+	}
+	return manifest, config, nil
 }
 
 // pullResult maps a non-nil error to "err"; nil to "ok". The histogram
@@ -4389,7 +4493,14 @@ func (h *Handler) pullConfig(ctx context.Context, mp oci.ManifestPuller, repo, d
 		return oci.Config{}, err
 	}
 	defer func() { _ = r.Close() }()
-	cfg, perr := oci.ParseConfig(r)
+	body, perr := io.ReadAll(io.LimitReader(r, api.OCIConfigMaxBytes+1))
+	if perr == nil && int64(len(body)) > api.OCIConfigMaxBytes {
+		perr = fmt.Errorf("%w: config exceeds size limit", oci.ErrImageManifestInvalid)
+	}
+	var cfg oci.Config
+	if perr == nil {
+		cfg, perr = oci.ParseConfig(bytes.NewReader(body))
+	}
 	res := pullResult(perr)
 	h.ops.ObserveImagedOCIPull("config", res, time.Since(start))
 	return cfg, perr
@@ -4678,10 +4789,11 @@ func (h *Handler) updateBuildProvenanceRunnerDigest(ctx context.Context, deploym
 
 // --- F2: FC-version startup sweep ------------------------------------------
 
-// MarkFCSnapshotsStale is the F2 sweep body. It is invoked once at imaged
-// startup (cmd/imaged/main.go wires it) and never on a timer — a Firecracker
-// upgrade requires the operator to restart imaged, which matches the
-// "snapshots are cache, not truth" framing (ADR-005). Idempotent.
+// MarkFCSnapshotsStale marks every live snapshot of another Firecracker
+// version stale, fleet-wide. imaged startup no longer calls it (ADR-1344 §6):
+// imaged runs on every compute node, so a startup sweep let one upgraded node
+// retire every other node's warm snapshots in a rolling upgrade. It is for an
+// operator to run once the whole fleet is on fcVersion. Idempotent.
 //
 // Issue #470 / PR C / ADR-074: when n > 0, walk the just-marked-stale
 // rows and emit app.warm_snapshot_stale per affected app. The kind
@@ -4853,6 +4965,7 @@ func (h *Handler) dispatchFullRootfs(
 	acct state.Account,
 	manifest api.AppManifest,
 	appAuth *oci.BasicAuth,
+	prepared preparedContainerWorkload,
 ) error {
 	if dep.FullRootfsOverride != nil && !*dep.FullRootfsOverride {
 		// Force-off: surface today-equivalent failure so pkg/api
@@ -4861,12 +4974,12 @@ func (h *Handler) dispatchFullRootfs(
 	}
 	if dep.FullRootfsOverride != nil && *dep.FullRootfsOverride {
 		// Force-on: honor regardless of plan / AllowAuto.
-		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth)
+		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth, prepared)
 	}
 	if dep.FullRootfsAllowAuto && api.PlanMeetsFullRootfs(acct.Plan) {
 		// Auto-dispatch: paid plans opt-in by default. Free plans
 		// must explicitly opt in via FullRootfsOverride=&true.
-		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth)
+		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth, prepared)
 	}
 	// Default: today-equivalent failure on Free without override
 	// (and on any future plan whose AllowAuto=false without
@@ -4890,17 +5003,19 @@ func (h *Handler) buildFullRootfsLayer(
 	acct state.Account,
 	manifest api.AppManifest,
 	appAuth *oci.BasicAuth,
+	prepared preparedContainerWorkload,
 ) error {
 	mp, ok := h.oci.(oci.ManifestPuller)
 	if !ok {
 		return fmt.Errorf("imaged: full-rootfs requires oci.ManifestPuller; got %T", h.oci)
 	}
-	appRepo := repoWithHost(dep.ImageDigest)
+	ref := prepared.Reference
+	appRepo := repoWithHost(ref)
 	if appRepo == "" {
 		return fmt.Errorf("imaged: cannot derive repo from %q", dep.ImageDigest)
 	}
 	start := time.Now()
-	appManifest, err := pullManifestWithAuth(ctx, mp, dep.ImageDigest, appAuth)
+	appManifest, err := pullManifestWithAuth(ctx, mp, ref, appAuth)
 	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
 	if err != nil {
 		return fmt.Errorf("imaged: full-rootfs manifest: %w", err)
@@ -4910,7 +5025,7 @@ func (h *Handler) buildFullRootfsLayer(
 	// every authenticated pull above this line was either app
 	// manifest, app config, or app blob.
 	refHost := ""
-	if parsedRef, parseErr := oci.ParseReference(dep.ImageDigest); parseErr == nil {
+	if parsedRef, parseErr := oci.ParseReference(ref); parseErr == nil {
 		refHost = parsedRef.APIHost()
 	}
 	h.markRegistryCredentialUsed(ctx, app, refHost, appAuth)
@@ -4918,8 +5033,7 @@ func (h *Handler) buildFullRootfsLayer(
 	if len(appManifest.Layers) == 0 {
 		return fmt.Errorf("imaged: full-rootfs image has zero layers")
 	}
-	readers := make([]io.Reader, 0, len(appManifest.Layers))
-	closers := make([]io.Closer, 0, len(appManifest.Layers))
+	closers := make([]io.ReadCloser, 0, len(appManifest.Layers))
 	for _, l := range appManifest.Layers {
 		start := time.Now()
 		rc, err := pullBlobWithAuth(ctx, mp, appRepo, l.Digest, appAuth)
@@ -4931,7 +5045,6 @@ func (h *Handler) buildFullRootfsLayer(
 			return fmt.Errorf("imaged: full-rootfs pull blob %s: %w", l.Digest, err)
 		}
 		closers = append(closers, rc)
-		readers = append(readers, rc)
 	}
 	defer func() {
 		for _, c := range closers {
@@ -4939,6 +5052,11 @@ func (h *Handler) buildFullRootfsLayer(
 		}
 	}()
 
+	verified, err := wrapContainerLayerReaders(ctx, prepared, closers, 0)
+	if err != nil {
+		return err
+	}
+	readers := layersAsReaders(verified)
 	be, err := h.storageFor()
 	if err != nil {
 		return fmt.Errorf("imaged: full-rootfs storage backend: %w", err)
@@ -4973,7 +5091,12 @@ func (h *Handler) buildFullRootfsLayer(
 		return fmt.Errorf("imaged: build full-rootfs: %w", err)
 	}
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, res.SBOMKey)
-	if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, res.ContentBytes); err != nil {
+	prepared, err = consumedContainerLayers(prepared, readers, 0)
+	if err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "verify consumed full-rootfs layers")
+		return err
+	}
+	if err := h.publishContainerRootfs(ctx, app, dep, prepared, "", "full-rootfs", appsKey, res); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stamp full-rootfs")
 		return fmt.Errorf("imaged: stamp full-rootfs: %w", err)
 	}
@@ -4990,28 +5113,4 @@ func (h *Handler) buildFullRootfsLayer(
 		"plan", string(acct.Plan),
 	)
 	return nil
-}
-
-// WithValidatorArtifactCheck installs immutable artifact readiness before live publication.
-func (h *Handler) WithValidatorArtifactCheck(check func(context.Context, string, string) error) *Handler {
-	h.validatorArtifactCheck = check
-	return h
-}
-
-func (h *Handler) deleteUnretainedJobArtifact(ctx context.Context, be storage.StorageBackend, key string) error {
-	pins, ok := h.store.(state.OperationJobImageRetentionStore)
-	if !ok {
-		if _, native := h.store.(state.JobOperationStore); native {
-			return fmt.Errorf("job operation image retention unavailable")
-		}
-		return be.Delete(ctx, key)
-	}
-	retained, err := pins.OperationJobImageRetained(ctx, key)
-	if err != nil {
-		return err
-	}
-	if retained {
-		return nil
-	}
-	return be.Delete(ctx, key)
 }

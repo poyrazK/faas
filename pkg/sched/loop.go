@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/httpjson"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched/floor"
@@ -128,7 +129,9 @@ type Loop struct {
 	now                         func() time.Time
 	flowCounts                  FlowCounter
 	flowReaderUnavailable       sync.Once
-	ops                         *wire.OpsMetrics                        // issue #171 shared registry; nil safe
+	ops                         *wire.OpsMetrics // issue #171 shared registry; nil safe
+	primeMetrics                *snapshotPrimeMetrics
+	cronMetrics                 *commandCronMetrics
 	audit                       *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
 	watchdog                    *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
 	liveness                    *wire.Liveness                          // ADR-190 main-loop progress beats; nil opts out
@@ -237,6 +240,7 @@ func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 		engine.SetBrokerLagReader(l)
 		engine.mu.Lock()
 		engine.serviceReconcileSubmit = l.submitServiceRecovery
+		engine.workerReconcileSubmit = l.submitWorkerRecovery
 		engine.mu.Unlock()
 	}
 	return l
@@ -605,7 +609,22 @@ func (l *Loop) WithFlowCounter(fc FlowCounter) *Loop {
 // *wire.OpsMetrics to both. Nil is safe — observers no-op on a
 // nil receiver (the loop reads the field defensively too).
 func (l *Loop) WithOpsMetrics(ops *wire.OpsMetrics) *Loop {
+	if l.ops == ops {
+		return l
+	}
+	if l.primeMetrics != nil && l.ops != nil && l.ops.Registry() != nil {
+		l.ops.Registry().Unregister(l.primeMetrics)
+	}
+	if l.cronMetrics != nil && l.ops != nil && l.ops.Registry() != nil {
+		l.ops.Registry().Unregister(l.cronMetrics)
+	}
 	l.ops = ops
+	l.primeMetrics = nil
+	l.cronMetrics = nil
+	if ops != nil && ops.Registry() != nil {
+		l.primeMetrics = newSnapshotPrimeMetrics(ops.Registry())
+		l.cronMetrics = newCommandCronMetrics(ops.Registry())
+	}
 	return l
 }
 
@@ -755,6 +774,10 @@ func (l *Loop) WithInstanceDivergence(r *DeadNodeReconciler) *Loop {
 // Run blocks until ctx is cancelled. It owns three event sources: the LISTEN
 // subscriber, the reaper tick, and the cron tick.
 func (l *Loop) Run(ctx context.Context) error {
+	stopCronObservation := l.startCommandCronObservation(ctx)
+	defer stopCronObservation()
+	stopPrimeObservation := l.startSnapshotPrimeObservation(ctx)
+	defer stopPrimeObservation()
 	// F-11: SubscribeWithReconnect wraps Subscribe with exponential backoff
 	// (100ms → 5s cap) and re-acquires the LISTEN connection across pg
 	// restarts. The outer channel never closes on conn drop — only ctx
@@ -1128,6 +1151,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	primeRecoveryT := time.NewTicker(primeRecoveryInterval)
 	defer primeRecoveryT.Stop()
 	l.dispatchPrimeRecovery(ctx)
+	workerRecoveryT := time.NewTicker(time.Duration(api.WorkerRecoveryPollIntervalSeconds) * time.Second)
+	defer workerRecoveryT.Stop()
+	l.dispatchWorkerRecovery(ctx)
 
 	// Make sure the triggerWakeup channel exists before any
 	// wakeup can race the first select iteration. WakeupTriggers
@@ -1229,6 +1255,8 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-workflowRetentionFirst:
 			l.runWorkflowRetention(ctx)
 			workflowRetentionFirst = nil
+		case <-workerRecoveryT.C:
+			l.dispatchWorkerRecovery(ctx)
 		case <-workflowRetentionTick(workflowRetentionT):
 			l.runWorkflowRetention(ctx)
 		case <-retentionFirst:
@@ -1271,6 +1299,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			// table (42P01) for fresh clusters pre-migration.
 			l.runOperatorIntentCompletenessTick(ctx)
 		case <-triggerT.C:
+			l.dispatchScenarioWorkerFaults(ctx)
+			l.dispatchScenarioSuspendResumes(ctx)
 			// Issue #757 / ADR-100: trigger dispatch tick. 1s
 			// safety cadence; WakeupTriggers advances the
 			// effective interval when a broker ack/nack wakes the
@@ -1654,7 +1684,7 @@ func (l *Loop) runTriggersRetention(ctx context.Context) {
 	if l.triggersRetention == nil {
 		return
 	}
-	deleted, err := l.triggersRetention.SweepOnce(ctx, 1000)
+	deleted, err := l.triggersRetention.SweepOnce(ctx, api.TriggerRetentionBatchMax)
 	if err != nil {
 		l.log.Warn("trigger_records retention: sweep failed", "err", err)
 		return
@@ -2068,9 +2098,10 @@ func (l *Loop) HandleDurableNotification(ctx context.Context, n db.Notification)
 
 func (l *Loop) handleRuntimeConfigRestart(ctx context.Context, n db.Notification) error {
 	var payload struct {
-		AppID  string `json:"app_id"`
-		WakeID string `json:"wake_id"`
-		Scope  string `json:"scope"`
+		AppID    string                                   `json:"app_id"`
+		WakeID   string                                   `json:"wake_id"`
+		Scope    string                                   `json:"scope"`
+		Standard *state.ApplicationStandardRuntimeRefresh `json:"application_standard"`
 	}
 	if err := json.Unmarshal([]byte(n.Payload), &payload); err != nil {
 		return fmt.Errorf("sched: decode runtime config restart payload: %w", err)
@@ -2080,7 +2111,12 @@ func (l *Loop) handleRuntimeConfigRestart(ctx context.Context, n db.Notification
 	}
 	var out CoordOutcome
 	var err error
-	if payload.Scope != "" {
+	if payload.Standard != nil {
+		out, err = l.engine.RefreshApplicationStandard(ctx, state.ApplicationStandardRuntimeRefreshRequest{AppID: payload.AppID, WakeID: payload.WakeID, Standard: *payload.Standard})
+		if errors.Is(err, state.ErrApplicationStandardRefreshDeferred) {
+			err = errors.Join(db.ErrNotificationDeferred, err)
+		}
+	} else if payload.Scope != "" {
 		out, err = l.engine.RefreshRuntimeConfigForEnvironment(ctx, payload.AppID, payload.WakeID, payload.Scope)
 	} else {
 		out, err = l.engine.RefreshRuntimeConfig(ctx, payload.AppID, payload.WakeID)
@@ -2387,7 +2423,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	for _, app := range apps {
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {
-			if account, accountErr := store.AccountByID(ctx, app.AccountID); accountErr == nil {
+			if account, accountErr := state.AppResourceAccount(ctx, store, app); accountErr == nil {
 				mustPark = l.engine.appMustPark(ctx, app, account)
 			} else {
 				l.log.Warn("reaper: account lifecycle lookup", "app", app.ID, "account", app.AccountID, "err", accountErr)
@@ -2441,7 +2477,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		var all []state.Instance
 		var err error
 		if owner := l.engine.OwnerNodeID(); owner != "" {
-			all, err = store.ListInstancesByNodeID(ctx, owner)
+			all, err = store.ListLiveInstancesByNodeID(ctx, owner)
 		} else {
 			all, err = store.ListAllInstances(ctx)
 		}
@@ -2496,7 +2532,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	}
 	for _, a := range apps {
 		plan := api.Plan("")
-		if acct, err := store.AccountByID(ctx, a.AccountID); err == nil {
+		if acct, err := state.AppResourceAccount(ctx, store, a); err == nil {
 			plan = acct.Plan
 		}
 		instances, err := store.ListInstancesForApp(ctx, a.ID)
@@ -2727,7 +2763,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	l.parkExpiredFrozen(ctx, snapshot, now)
 	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
 	for _, id := range SelectEvictions(resident, now, snapshot) {
-		if err := l.engine.Evict(ctx, id); err != nil {
+		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
 			l.log.Warn("reaper: eviction", "instance", id, "err", err)
 			continue
 		}
@@ -3751,6 +3787,12 @@ func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *ht
 		"headers":            headers,
 		"body_b64":           base64.StdEncoding.EncodeToString(inv.Payload),
 	}
+	if inv.Source == state.InvocationAsyncInvoke || inv.Source == state.InvocationReplay {
+		dispatch["invocation_attempt"] = inv.Attempts
+		dispatch["invocation_replay_generation"] = inv.ReplayGeneration
+		dispatch["invocation_replayed_from"] = inv.ReplayedFromInvocationID
+		dispatch["invocation_replay_root"] = inv.ReplayRootInvocationID
+	}
 	if inv.Source == state.InvocationExclusiveOperation {
 		if inv.ExclusiveClaim == nil {
 			return inv, 0, errors.New("sched: exclusive operation dispatch has no ownership claim")
@@ -4120,7 +4162,7 @@ func (l *Loop) runJobsReaperTick(ctx context.Context) {
 func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	l.submitWork(workWorkflowSchedules, "tick", func() {
 		if err := l.runWorkflowSchedulesTick(ctx); err != nil && l.log != nil {
-			l.log.Warn("schedd: workflow schedule tick failed", "error_type", fmt.Sprintf("%T", err))
+			l.log.Warn("schedd: workflow schedule tick failed", "error_type", logsanitize.Field(fmt.Sprintf("%T", err)))
 		}
 	})
 	for slot := range api.WorkflowDispatchSlots {
@@ -4154,6 +4196,9 @@ func (l *Loop) runWorkflowRetention(ctx context.Context) {
 }
 
 func (l *Loop) runCronTick(ctx context.Context) {
+	started := l.cronMetrics.beginSweep()
+	var scanErr error
+	defer func() { l.cronMetrics.finishSweep(ctx, started, scanErr) }()
 	// Phase 2 / Gate A: only dispatch crons on apps this schedd
 	// owns. Without this filter every schedd would fire every
 	// cron and the cron_fired_audit row would diverge from
@@ -4168,6 +4213,7 @@ func (l *Loop) runCronTick(ctx context.Context) {
 		crons, err = store.ListEnabledCrons(ctx)
 	}
 	if err != nil {
+		scanErr = err
 		l.log.Warn("cron: list", "err", err)
 		return
 	}
@@ -4175,10 +4221,17 @@ func (l *Loop) runCronTick(ctx context.Context) {
 	for _, c := range crons {
 		app, appErr := store.AppByID(ctx, c.AppID)
 		if appErr != nil {
+			scanErr = appErr
+			if len(c.Command) > 0 {
+				l.cronMetrics.decisionError(ctx)
+			}
 			l.log.Warn("cron: resolve owner", "cron_id", c.ID, "app_id", c.AppID, "err", appErr)
 			continue
 		}
 		if !l.engine.ownsApp(app) {
+			if len(c.Command) > 0 {
+				l.cronMetrics.decision("not_owned")
+			}
 			continue
 		}
 		l.dispatchOneCron(ctx, c, now)
@@ -4242,10 +4295,16 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 	// Store queries filter disabled rows, but keep the guard at the
 	// dispatch boundary so a stale row can never fire after disable/delete.
 	if !c.Enabled {
+		if len(c.Command) > 0 {
+			l.cronMetrics.decision("disabled")
+		}
 		return
 	}
 	sched, err := ParseScheduleWithTimezone(c.Schedule, c.Timezone)
 	if err != nil {
+		if len(c.Command) > 0 {
+			l.cronMetrics.decision("invalid_schedule")
+		}
 		l.log.Warn("cron: bad schedule", "cron_id", c.ID, "err", err)
 		return
 	}
@@ -4263,6 +4322,9 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 	}
 	scheduledFor := sched.NextFireAt(boundary)
 	if scheduledFor.After(now) {
+		if len(c.Command) > 0 {
+			l.cronMetrics.decision("not_due")
+		}
 		// Already fired in the current window.
 		return
 	}
@@ -4363,7 +4425,7 @@ func (l *Loop) dispatchScheduledHTTPCron(ctx context.Context, c state.Cron, due 
 		l.log.Warn("cron: resolve scheduled app", "cron_id", c.ID, "err", err)
 		return
 	}
-	account, err := store.AccountByID(ctx, app.AccountID)
+	account, err := state.AppResourceAccount(ctx, store, app)
 	if err != nil {
 		l.log.Warn("cron: resolve scheduled account", "cron_id", c.ID, "err", err)
 		return
@@ -4481,30 +4543,40 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 	store := l.engine.Store()
 	app, err := store.AppByID(ctx, c.AppID)
 	if err != nil {
+		l.cronMetrics.decisionError(ctx)
 		l.log.Warn("cron command: resolve app", "cron_id", c.ID, "err", err)
 		return
 	}
-	account, err := store.AccountByID(ctx, app.AccountID)
+	account, err := state.AppResourceAccount(ctx, store, app)
 	if err != nil {
+		l.cronMetrics.decisionError(ctx)
 		l.log.Warn("cron command: resolve account", "cron_id", c.ID, "err", err)
 		return
 	}
 	if !account.Active() {
+		l.cronMetrics.decision("account_held")
 		return
 	}
 	binding, bound, bindingErr := l.exclusiveCronBinding(ctx, c, account.ID)
 	if bindingErr != nil {
+		l.cronMetrics.decisionError(ctx)
 		l.log.Warn("cron command: load exclusive operation binding", "cron_id", c.ID, "err", bindingErr)
 		return
 	}
 	if !bound && c.SchedulePolicy != nil && c.SchedulePolicy.Overlap == "replace" {
 		if err := l.stopPriorScheduledCronTasks(ctx, c, now); err != nil {
+			if errors.Is(err, state.ErrAppTaskCancellationPending) {
+				l.cronMetrics.decision("replacement_wait")
+			} else {
+				l.cronMetrics.decisionError(ctx)
+			}
 			l.log.Debug("cron command: replacement waits for prior task to stop", "cron_id", c.ID, "err", err)
 			return
 		}
 	}
 	commandStore, ok := store.(state.AppTaskStore)
 	if !ok {
+		l.cronMetrics.decision("store_unavailable")
 		l.log.Warn("cron command: app task store is unavailable", "cron_id", c.ID)
 		return
 	}
@@ -4524,6 +4596,7 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 			}
 			_, occurrence, _, recordErr := occurrenceStore.CreateScheduledCronAppTaskOccurrence(ctx, c.ID, expectedLastFiredAt, now,
 				state.CronScheduledOccurrenceOptions{ScheduledFor: missed, ScheduleRevision: c.ScheduleRevision, Disposition: disposition, Reason: reason})
+			l.cronMetrics.occurrence(ctx, occurrence, false, recordErr)
 			if recordErr != nil {
 				l.log.Warn("cron command: record missed occurrence", "cron_id", c.ID, "scheduled_for", missed, "err", recordErr)
 				return
@@ -4537,11 +4610,13 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 		options := state.CronScheduledOccurrenceOptions{ScheduledFor: scheduledFor, ScheduleRevision: c.ScheduleRevision}
 		if bound {
 			if _, ok := store.(state.ExclusiveWorkStore); !ok {
+				l.cronMetrics.decision("store_unavailable")
 				l.log.Warn("cron command: exclusive operation store is unavailable", "cron_id", c.ID)
 				return
 			}
 			admission, admissionErr := exclusiveCommandCronAdmission(binding, c, account.ID, exclusiveCommandCronScheduleIdempotencyKey(c.ID, scheduledFor))
 			if admissionErr != nil {
+				l.cronMetrics.decisionError(ctx)
 				l.log.Warn("cron command: encode exclusive operation request", "cron_id", c.ID, "err", admissionErr)
 				return
 			}
@@ -4549,6 +4624,7 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 		}
 		task, occurrence, created, createErr := occurrenceStore.CreateScheduledCronAppTaskOccurrence(ctx, c.ID, expectedLastFiredAt, now,
 			options)
+		l.cronMetrics.occurrence(ctx, occurrence, created, createErr)
 		if bound && l.ops != nil {
 			outcome := "accepted"
 			switch {
@@ -4589,25 +4665,33 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 	}
 	if c.SchedulePolicy != nil && workpolicy.DeadlineMissed(c.SchedulePolicy.Deadline(due[len(due)-1]), now) {
 		if err := store.MarkCronFired(ctx, c.ID, due[len(due)-1]); err != nil {
+			l.cronMetrics.decisionFailure(ctx, "legacy_error")
 			l.log.Warn("cron command: mark missed occurrence", "cron_id", c.ID, "err", err)
+		} else {
+			l.cronMetrics.decision("legacy_skipped")
 		}
 		return
 	}
 	if c.SkipIfRunning || (c.SchedulePolicy != nil && c.SchedulePolicy.Overlap == "skip") {
 		active, err := commandStore.CountActiveCronAppTasks(ctx, c.ID)
 		if err != nil {
+			l.cronMetrics.decisionError(ctx)
 			l.log.Warn("cron command: count active tasks", "cron_id", c.ID, "err", err)
 			return
 		}
 		if active > 0 {
 			if err := store.MarkCronFired(ctx, c.ID, due[len(due)-1]); err != nil {
+				l.cronMetrics.decisionFailure(ctx, "legacy_error")
 				l.log.Warn("cron command: mark overlap skip", "cron_id", c.ID, "err", err)
+			} else {
+				l.cronMetrics.decision("legacy_skipped")
 			}
 			return
 		}
 	}
 	task, created, err := commandStore.CreateScheduledCronAppTask(ctx, c.ID, expectedLastFiredAt, due[len(due)-1])
 	if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
+		l.cronMetrics.decision("no_live_deployment")
 		if suspender, ok := store.(state.CronSuspensionStore); ok {
 			count, suspendErr := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
 			if suspendErr != nil {
@@ -4619,6 +4703,7 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 		return
 	}
 	if err != nil {
+		l.cronMetrics.decisionFailure(ctx, "legacy_error")
 		l.log.Warn("cron command: create scheduled task", "cron_id", c.ID, "err", err)
 		if markErr := store.MarkCronFired(ctx, c.ID, due[len(due)-1]); markErr != nil {
 			l.log.Warn("cron command: consume failed fire", "cron_id", c.ID, "err", markErr)
@@ -4627,8 +4712,10 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 		return
 	}
 	if !created {
+		l.cronMetrics.decision("legacy_stale")
 		return
 	}
+	l.cronMetrics.decision("legacy_queued")
 	l.log.Info("cron command: scheduled task queued", "cron_id", c.ID, "task_id", task.ID, "deployment_id", task.DeploymentID)
 	l.emitCommandCronFired(ctx, c, account.ID, now, "ok", task.ID, TriggerSchedule)
 }
@@ -4728,7 +4815,7 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		l.log.Warn("cron: app", "cron_id", c.ID, "err", err)
 		return CronRun{}, false
 	}
-	acctRec, err := l.engine.Store().AccountByID(ctx, app.AccountID)
+	acctRec, err := state.AppResourceAccount(ctx, l.engine.Store(), app)
 	if err != nil {
 		l.log.Warn("cron: account", "cron_id", c.ID, "err", err)
 		return CronRun{}, false
@@ -5137,7 +5224,7 @@ func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceIn
 		resident[id] = a.ResidentMB
 	}
 	for _, id := range SelectMemoryEvictions(now, snapshot, used, ceiling, resident) {
-		if err := l.engine.Evict(ctx, id); err != nil {
+		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
 			l.log.Warn("reaper: measured memory eviction", "instance", id, "err", err)
 			continue
 		}

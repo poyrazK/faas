@@ -3,6 +3,10 @@ faas_dev_bridge_enabled: false
 # ADR-740 developer live source patches. Must match vmmd_service's value:
 # apid publishes patches and vmmd serves them to developer environments.
 faas_dev_patch_delivery_enabled: false
+# ADR-1161 `gregale run --image` (POST /v1/image-runs). Enable only once the
+# image-run migration and the imaged that writes image-config columns are
+# deployed.
+faas_image_runs_enabled: false
 faas_dev_bridge_gateway_url: http://127.0.0.1:8080
 faas_dev_bridge_database_url: postgres:///faas?host=/run/postgresql&user=faas
 # Managed meterd configuration is enabled by the manifest-generated
@@ -34,3 +38,17 @@ faas_public_status_launch_at: "2026-09-14T00:00:00Z"
 faas_custom_domain_tls: false
 faas_custom_domain_target: ""
 faas_custom_domain_addresses: []
+
+# ADR-1141 cluster workload-identity trust (tasks/workload_trust.yml). The
+# same controller-side directory as vmmd_service's
+# faas_workload_identity_source_dir installs the JWKS apid verifies workload
+# tokens against; leave it empty to keep an operator-placed JWKS. An empty
+# issuer trusts vmmd's default (https://identity.gregale.dev).
+faas_workload_identity_source_dir: ""
+faas_workload_jwks_path: /etc/faas/workload-identity.jwks.json
+faas_workload_identity_issuer: ""
+# ADR-1736: schedd's listen address, rendered into both schedd's
+# FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket. The split-box manifest sets
+# it from daemons.schedd.bind. Empty keeps schedd.toml in charge and leaves the
+# durable socket off.
+faas_schedd_listen_addr: ""

@@ -654,3 +654,20 @@ func TestResolveDeployShape_NoNestedHintOnExcludedDirs(t *testing.T) {
 		t.Errorf("excluded-dir markers must NOT fire NestedMarkerHintError; got hint %q", hintErr.Hint)
 	}
 }
+
+// TestResolveDeployShape_ComposeHint covers H10-55: `gregale deploy` in a
+// directory holding only a Compose file answered "no deployable source
+// found" without saying that Compose projects deploy with --project.
+func TestResolveDeployShape_ComposeHint(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "compose.yaml", "name: shop\nservices:\n  web:\n    image: nginx\n")
+
+	_, _, _, err := resolveDeployShape(dir, false, false, false)
+	var hintErr *NestedMarkerHintError
+	if !errors.As(err, &hintErr) {
+		t.Fatalf("error chain missing *NestedMarkerHintError; got %T: %v", err, err)
+	}
+	if !strings.Contains(hintErr.Hint, "compose.yaml is a Compose project") || !strings.Contains(hintErr.Hint, "gregale deploy --project") {
+		t.Errorf("hint = %q, want the Compose file and gregale deploy --project", hintErr.Hint)
+	}
+}

@@ -39,9 +39,9 @@ func pgRouteMonitorOwner(ctx context.Context, tx pgx.Tx, accountID, appID string
 	var a, b []byte
 	var err error
 	if lock {
-		a, err = q.LockRoutePolicyAccount(ctx, tx, accountID)
+		a, err = q.LockRoutePolicyAccount(ctx, tx, sqlc.LockRoutePolicyAccountParams{AccountID: accountID, AppID: appID})
 	} else {
-		a, err = q.ReadRoutePolicyAccount(ctx, tx, accountID)
+		a, err = q.ReadRoutePolicyAccount(ctx, tx, sqlc.ReadRoutePolicyAccountParams{AccountID: accountID, AppID: appID})
 	}
 	if err != nil {
 		return RoutePolicySnapshot{}, routePolicyReadError(err)
@@ -178,6 +178,9 @@ func (s *PgStore) SetRouteMonitor(ctx context.Context, accountID, appID string, 
 	return c, tx.Commit(ctx)
 }
 func pgRouteMonitorReport(ctx context.Context, db sqlc.DBTX, owner RoutePolicySnapshot, c api.RouteMonitorConfig, now time.Time, active *api.RouteMonitorIncident, recovery routeMonitorRecoveryState) (api.RouteMonitorReport, routeMonitorRecoveryState, *api.RouteMonitorDeploymentBaseline, error) {
+	return pgRouteMonitorReportScope(ctx, db, owner, c, now, active, recovery, "")
+}
+func pgRouteMonitorReportScope(ctx context.Context, db sqlc.DBTX, owner RoutePolicySnapshot, c api.RouteMonitorConfig, now time.Time, active *api.RouteMonitorIncident, recovery routeMonitorRecoveryState, scope string) (api.RouteMonitorReport, routeMonitorRecoveryState, *api.RouteMonitorDeploymentBaseline, error) {
 	r := routemonitor.NewReport(c, now)
 	var candidateBaseline *api.RouteMonitorDeploymentBaseline
 	unavailable := ""
@@ -190,7 +193,7 @@ func pgRouteMonitorReport(ctx context.Context, db sqlc.DBTX, owner RoutePolicySn
 		unavailable = "account_ineligible"
 	}
 	if unavailable == "" {
-		serving, err := sqlc.New().RouteMonitorServingDeployments(ctx, db, owner.App.ID)
+		serving, err := pgMonitorServingScope(ctx, db, owner, scope)
 		if err != nil {
 			return r, recovery, nil, fmt.Errorf("read monitor serving deployment: %w", err)
 		}
@@ -238,7 +241,7 @@ func pgRouteMonitorReport(ctx context.Context, db sqlc.DBTX, owner RoutePolicySn
 		}
 	}
 	routemonitor.Evaluate(&r, unavailable)
-	if unavailable == "" && r.DeploymentID != "" {
+	if scope == "" && unavailable == "" && r.DeploymentID != "" {
 		if err := pgPooledRouteMonitor(ctx, db, owner.Account.ID, &r); err != nil {
 			return r, recovery, nil, err
 		}

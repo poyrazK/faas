@@ -2,12 +2,19 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationApprovalSpec } from './OperationApprovalSpec.js';
+import type { OperationLimits } from './OperationLimits.js';
 import type { OperationSubjectSpec } from './OperationSubjectSpec.js';
 import type { OperationWorkflowStep } from './OperationWorkflowStep.js';
 /**
- * Resolved immutable contract for an HTTP handler or a named linear HTTP workflow from the same deployment. Workflow definitions require POST ingress, reconciliation recovery and stages matching the steps. Ownership comes from verified authentication. Production admission remains disabled pending qualification.
+ * Resolved immutable contract for an HTTP handler or a named linear workflow from the same deployment. Workflow definitions require POST ingress, reconciliation recovery and stages matching the steps; steps are HTTP actions, fixed timers or declared approvals, ending with an HTTP action. Ownership comes from verified authentication. Production admission remains disabled pending qualification.
  */
 export type OperationDefinitionSpec = {
+  /**
+   * ADR-1194 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the named approver.
+   */
+  approvals?: Array<OperationApprovalSpec>;
+  limits?: OperationLimits;
   /**
    * Declared public milestone names mapped to bundled JSON Schemas. Requires http_transaction_version 1. At most 16 names, with an aggregate 16384 schema bytes.
    */

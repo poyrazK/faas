@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppWakeHistoryPage } from './AppWakeHistoryPage.js';
 import type { WakeTimelineApp } from './WakeTimelineApp.js';
 import type { WakeTimelineJSONRow } from './WakeTimelineJSONRow.js';
 /**
@@ -22,9 +23,10 @@ import type { WakeTimelineJSONRow } from './WakeTimelineJSONRow.js';
  *
  */
 export type AppWakeTimelineResponse = {
+  page?: AppWakeHistoryPage;
   app: WakeTimelineApp;
   /**
-   * Number of instance rows in the trailing 24h window (after the descending-cutoff break; the endpoint examines up to 100 recent rows).
+   * Selected retained instance count; keyset_v1 counts only this page. Legacy mode examines 100 recent candidates before filtering.
    */
   wake_count_24h: number;
   /**
@@ -48,7 +50,7 @@ export type AppWakeTimelineResponse = {
    */
   trigger_class_histogram: Record<string, number>;
   /**
-   * Wake rows in DESC StartedAt order, truncated at the 24h cutoff (descending-cutoff break) and capped at 100 recent rows.
+   * Retained instance records in descending started_at order. keyset_v1 breaks ties by instance ID and filters before limiting; legacy mode filters 100 recent candidates.
    */
   rows: Array<WakeTimelineJSONRow>;
   /**

@@ -8,14 +8,17 @@ StartLimitBurst=5
 
 [Service]
 Type=notify
+NotifyAccess=main
 User=faas
 Group=faas
 ExecStart=/opt/faas/current/bin/gatewayd-internal --config /etc/faas/gatewayd-internal.toml
+ExecReload=/bin/kill -USR2 $MAINPID
 Restart=on-failure
 RestartSec=2s
 WatchdogSec=60s
 Slice=faas-cp.slice
 MemoryMax=512M
+OOMPolicy=continue
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 EnvironmentFile=-/etc/faas/compute-db.env
@@ -47,7 +50,7 @@ ProtectHostname=yes
 ProtectClock=yes
 ProtectProc=invisible
 ReadOnlyPaths=/etc/faas
-ReadWritePaths=/run/faas /var/lib/faas/log-drains /var/lib/faas/egress-meter /var/lib/faas/consumer-usage
+ReadWritePaths=/run/faas /var/lib/faas/log-drains /var/lib/faas/egress-meter /var/lib/faas/consumer-usage /var/lib/faas/wake-ahead
 
 [Install]
 WantedBy=multi-user.target

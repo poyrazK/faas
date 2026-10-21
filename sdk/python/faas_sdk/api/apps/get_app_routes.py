@@ -7,19 +7,36 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.app_routes_response import AppRoutesResponse
+from ...models.get_app_routes_scope import GetAppRoutesScope
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    *,
+    environment: str | Unset = UNSET,
+    scope: GetAppRoutesScope | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    json_scope: str | Unset = UNSET
+    if not isinstance(scope, Unset):
+        json_scope = scope
+
+    params["scope"] = json_scope
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/apps/{slug}/routes".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -74,6 +91,8 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
+    scope: GetAppRoutesScope | Unset = UNSET,
 ) -> Response[AppRoutesResponse | Problem]:
     r"""Per-route breakdown for opt-in apps (ADR-093).
 
@@ -90,6 +109,8 @@ def sync_detailed(
 
     Args:
         slug (str):
+        environment (str | Unset):
+        scope (GetAppRoutesScope | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -101,6 +122,8 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        environment=environment,
+        scope=scope,
     )
 
     response = client.get_httpx_client().request(
@@ -114,6 +137,8 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
+    scope: GetAppRoutesScope | Unset = UNSET,
 ) -> AppRoutesResponse | Problem | None:
     r"""Per-route breakdown for opt-in apps (ADR-093).
 
@@ -130,6 +155,8 @@ def sync(
 
     Args:
         slug (str):
+        environment (str | Unset):
+        scope (GetAppRoutesScope | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -142,6 +169,8 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        environment=environment,
+        scope=scope,
     ).parsed
 
 
@@ -149,6 +178,8 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
+    scope: GetAppRoutesScope | Unset = UNSET,
 ) -> Response[AppRoutesResponse | Problem]:
     r"""Per-route breakdown for opt-in apps (ADR-093).
 
@@ -165,6 +196,8 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
+        environment (str | Unset):
+        scope (GetAppRoutesScope | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,6 +209,8 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        environment=environment,
+        scope=scope,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -187,6 +222,8 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
+    scope: GetAppRoutesScope | Unset = UNSET,
 ) -> AppRoutesResponse | Problem | None:
     r"""Per-route breakdown for opt-in apps (ADR-093).
 
@@ -203,6 +240,8 @@ async def asyncio(
 
     Args:
         slug (str):
+        environment (str | Unset):
+        scope (GetAppRoutesScope | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -216,5 +255,7 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            environment=environment,
+            scope=scope,
         )
     ).parsed

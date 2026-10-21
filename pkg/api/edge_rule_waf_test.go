@@ -58,3 +58,13 @@ func TestEdgeRulesWAFPerAppIsProAndAbove(t *testing.T) {
 		}
 	}
 }
+
+func TestEdgeRuleEventWAFSummary(t *testing.T) {
+	if got := (EdgeRuleEventResponse{Outcome: "matched"}).WAFSummary(); got != "" {
+		t.Errorf("plain event summary = %q, want empty", got)
+	}
+	e := EdgeRuleEventResponse{Outcome: "blocked", WAFRuleIDs: []int{942100, 941100}, WAFCategories: []string{"sqli", "xss"}, WAFScore: 10}
+	if got, want := e.WAFSummary(), "sqli, xss · CRS 942100, 941100 · score 10"; got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+}

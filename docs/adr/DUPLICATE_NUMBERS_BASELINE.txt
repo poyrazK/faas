@@ -174,3 +174,41 @@
 1115
 1116
 1117
+# Refreshed 2026-10-15 from main @ 42e0519585 after the v0.1.18-rc.261 release
+# gate failed on them (rule 1: duplicates main gained independently):
+# ADR-1151..1155, 1161..1163, 1170, 1180 collided when #4689 merged; ADR-1259 across
+# #4688 and #4715; ADR-1237..1258 and 1260 when #4687 merged after #4648 and #4688.
+1151
+1152
+1153
+1154
+1155
+1161
+1162
+1163
+1170
+1180
+1237
+1238
+1239
+1240
+1241
+1242
+1243
+1244
+1245
+1246
+1247
+1248
+1249
+1250
+1251
+1252
+1253
+1254
+1255
+1256
+1257
+1258
+1259
+1260

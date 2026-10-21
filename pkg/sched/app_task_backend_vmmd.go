@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -16,6 +17,7 @@ type ResolvedAppTaskRuntime struct {
 	NodeID  string
 	Spec    AppTaskRestoreSpec
 	release func()
+	publish func(context.Context, *AppTaskRestoreOutcome) error
 }
 
 type AppTaskRuntimeResolver func(context.Context, AppTaskRestoreRequest) (ResolvedAppTaskRuntime, error)
@@ -44,7 +46,7 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 	}
 	resolved, err := b.resolve(ctx, request)
 	if err != nil {
-		return nil, err
+		return nil, withAppTaskStage("resolve", err)
 	}
 	if resolved.NodeID == "" || resolved.Spec.Instance != request.ID || resolved.Spec.DeploymentID != request.DeploymentID {
 		if resolved.release != nil {
@@ -59,9 +61,9 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 			resolved.release()
 		}
 		if cleanupErr != nil {
-			return nil, errors.Join(err, cleanupErr)
+			return nil, withAppTaskStage("vmmd_restore", errors.Join(err, cleanupErr))
 		}
-		return nil, err
+		return nil, withAppTaskStage("vmmd_restore", err)
 	}
 	if outcome == nil || outcome.Instance == "" || outcome.Instance != request.ID {
 		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
@@ -73,6 +75,21 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 			resolved.release()
 		}
 		return nil, identityErr
+	}
+	if resolved.Spec.App.RehearsalRunID != "" {
+		var publishErr error
+		if resolved.publish == nil {
+			publishErr = errors.New("contained command network publisher unavailable")
+		} else {
+			publishErr = resolved.publish(ctx, outcome)
+		}
+		if publishErr != nil {
+			cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
+			if cleanupErr == nil && resolved.release != nil {
+				resolved.release()
+			}
+			return nil, errors.Join(publishErr, cleanupErr)
+		}
 	}
 	return &routedVmmdAppTaskSession{
 		router: b.router, nodeID: resolved.NodeID, instance: outcome.Instance, release: resolved.release,
@@ -99,6 +116,9 @@ func (s *routedVmmdAppTaskSession) Execute(ctx context.Context, request AppTaskE
 		Version: apptaskproto.Version, TaskID: s.instance,
 		Command: append([]string(nil), request.Command...), CommandShell: request.CommandShell,
 		TimeoutSeconds: timeoutSeconds, MaxOutputBytes: request.MaxOutputBytes,
+	}
+	if rehearsalcommand.IsCommand(wireReq.Command) {
+		wireReq.Version = apptaskproto.RehearsalVersion
 	}
 	if err := wireReq.Validate(); err != nil {
 		return AppTaskOutcome{}, err

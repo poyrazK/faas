@@ -20,7 +20,7 @@ func (s *PgStore) lockObjectMultipartResult(ctx context.Context, u ObjectMultipa
 	q := sqlc.New()
 	// Match admission and configuration: account, then bucket, then upload.
 	// Waiting on the account must leave its owner's bucket lock available.
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(u.AccountID)); err == nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(u.AccountID), mustPgUUID(u.BucketID)); err == nil {
 		_, err = q.ObjectVersionBucketOwned(ctx, tx, sqlc.ObjectVersionBucketOwnedParams{ID: mustPgUUID(u.BucketID), AccountID: mustPgUUID(u.AccountID)})
 	}
 	var old ObjectMultipartUpload
@@ -86,6 +86,9 @@ func (s *PgStore) FinishObjectMultipartCompletion(ctx context.Context, u ObjectM
 		return ObjectMultipartUpload{}, err
 	}
 	if err = publishObjectEventTx(ctx, tx, out.AccountID, "multipart:"+out.ID, api.ObjectEventCreated, multipartCompletionEvent(out), out.UpdatedAt); err != nil {
+		return ObjectMultipartUpload{}, err
+	}
+	if err = settleMultipartNodeTx(ctx, tx, out); err != nil {
 		return ObjectMultipartUpload{}, err
 	}
 	return out, tx.Commit(ctx)

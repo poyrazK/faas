@@ -38,7 +38,7 @@ func (s *server) bindingReleaseTrafficObservations(r *http.Request, acct state.A
 		Prior int
 	}, 0, len(rows))
 	for _, d := range rows {
-		if d.ID != target.ID {
+		if d.ID != target.ID && d.Scope == target.Scope {
 			siblings = append(siblings, struct {
 				ID    string
 				Prior int

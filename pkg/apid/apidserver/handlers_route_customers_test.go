@@ -114,10 +114,9 @@ func TestRouteCustomerUsagePlanAndAccountBoundary(t *testing.T) {
 			store := &routeCustomerTestStore{MemStore: (*e.Store())}
 			(*(*e.S()).Store()) = statetest.NewMem(store)
 			res := e.Do(t, "GET", "/v1/apps/foreign-app/analytics/route-customers?deployment_id="+uuid.NewString(), nil, nil)
+			// App access answers a foreign app before any plan gate (#4882), so
+			// every plan sees the same 404 as for a missing app.
 			want := 404
-			if plan == api.PlanFree {
-				want = 402
-			}
 			if res.Code != want || store.calls != 0 {
 				t.Fatalf("%d: %s; queries %d", res.Code, res.Body.String(), store.calls)
 			}

@@ -137,7 +137,9 @@ func TestPgOperationBackendMigrationReplayPreservesHTTPIdentity(t *testing.T) {
 }
 
 func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
-	pool := pgtest.Open(t)
+	// Replay the complete historical schema in a private database: frozen
+	// standards migrations include public-qualified application row types.
+	pool := pgtest.OpenDatabase(t)
 	baseline := fstest.MapFS{}
 	files, err := migrations.FS.ReadDir(".")
 	if err != nil {
@@ -167,9 +169,19 @@ func TestPgOperationBackendUpgradePreservesHTTPIdentity(t *testing.T) {
 	}
 	s := state.NewPgStore(pool)
 	ctx := context.Background()
-	account, err := s.CreateAccount(ctx, "operations@example.com", api.PlanPro)
-	if err != nil {
-		t.Fatal(err)
+	// Current account writers read later organization columns; seed the
+	// account in the pre-identity schema like the deployment below.
+	var account state.Account
+	if err := pool.QueryRow(ctx, `INSERT INTO accounts(email,plan) VALUES($1,$2) RETURNING id::text`,
+		"operations@example.com", api.PlanPro).Scan(&account.ID); err != nil {
+		t.Fatalf("seed legacy account: %v", err)
+	}
+	// The personal org and owner membership as 00105_personal_org_backfill.sql writes them.
+	if _, err := pool.Exec(ctx, `WITH personal AS (INSERT INTO orgs(id,slug,name,personal_org,personal_owner_account_id,plan,status,created_at,updated_at)
+		SELECT gen_random_uuid(),'u-'||substring(replace(a.id::text,'-','') from 1 for 12),'Personal',true,a.id,a.plan,a.status,a.created_at,now()
+		FROM accounts a WHERE a.id=$1 RETURNING id)
+		INSERT INTO org_memberships(org_id,account_id,role) SELECT id,$1,'owner' FROM personal`, account.ID); err != nil {
+		t.Fatalf("seed legacy personal org: %v", err)
 	}
 	app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "operations-test", Type: state.AppTypeApp})
 	if err != nil {

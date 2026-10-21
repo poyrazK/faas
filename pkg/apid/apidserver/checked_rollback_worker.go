@@ -63,7 +63,7 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 		return "failed", problem.Code, nil, nil
 	}
 
-	acct, err := s.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, s.store, app)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -93,6 +93,9 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 	}
 	if errors.Is(err, state.ErrServiceRolloutNotReady) {
 		return "blocked", "service_rollout_not_ready", []api.BindingCheckFinding{{Code: "service_rollout_not_ready", DeploymentID: target.ID, Message: "The rollback target needs ready service capacity before traffic can move."}}, nil
+	}
+	if state.IsMCPReadinessRequired(err) {
+		return "blocked", api.CodeMCPReadinessRequired, []api.BindingCheckFinding{{Code: api.CodeMCPReadinessRequired, DeploymentID: target.ID, Message: "Refresh platform MCP readiness or create an audited emergency override before moving traffic."}}, nil
 	}
 	if errors.Is(err, state.ErrMCPTaskCompatibilityGate) {
 		problem := api.ErrMCPTaskCompatibilityGate(err.Error())

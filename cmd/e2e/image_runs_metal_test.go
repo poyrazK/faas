@@ -43,6 +43,34 @@ func TestImageRunsMetal(t *testing.T) {
 	if status != http.StatusOK || strings.Contains(string(raw), first.Job) {
 		t.Fatalf("GET /v1/jobs listed the runner job: %d %s", status, raw)
 	}
+
+	// Ctrl-C in `gregale run --image` cancels the run; a running task's VM
+	// must stop rather than sleep out its timeout.
+	sleep := []string{"/job-fixture", "sleep", "5m"}
+	third := h.mustStartImageRun(t, api.CreateImageRunRequest{Image: image, Args: &sleep}, time.Minute)
+	h.mustWaitImageRunClaimed(t, third, 2*time.Minute)
+	cancelPath := "/v1/jobs/" + third.Job + "/runs/" + third.RunID + "/cancel"
+	if raw, status, _ := h.request(t, h.defaultKey, http.MethodPost, cancelPath, nil); status != http.StatusOK {
+		t.Fatalf("POST %s: %d %s", cancelPath, status, raw)
+	}
+	h.MustWaitRunTerminal(t, &api.JobRunResponse{ID: third.RunID}, "cancelled", 2*time.Minute)
+}
+
+// mustWaitImageRunClaimed waits until the run's task has been claimed, i.e.
+// its VM is booting or running.
+func (h *MetalJobHarness) mustWaitImageRunClaimed(t *testing.T, resp api.ImageRunResponse, timeout time.Duration) {
+	t.Helper()
+	h.mu.Lock()
+	h.runNames[resp.RunID] = resp.Job
+	h.mu.Unlock()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if task, ok := findTask(h.listTasks(t, &api.JobRunResponse{ID: resp.RunID}), 0); ok && task.Status == "claimed" {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("run %s task was not claimed within %s", resp.RunID, timeout)
 }
 
 // mustStartImageRun repeats POST /v1/image-runs until the image is pulled

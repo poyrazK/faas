@@ -6,8 +6,11 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.app_operational_rollback import AppOperationalRollback
+    from ..models.app_worker_recovery import AppWorkerRecovery
     from ..models.runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 
 
@@ -27,6 +30,11 @@ class AppOperationalRecovery:
     restarts_truncated: bool
     rollbacks: list[AppOperationalRollback]
     restarts: list[RuntimeConfigRestartStatusResponse]
+    workers: AppWorkerRecovery | Unset = UNSET
+    """Read-only app-wide worker retry status and last scheduler pool observations. Environment selection filters
+    pools; retry status remains app-wide. Missing evidence never establishes health."""
+    coverage: str | Unset = UNSET
+    """Explicit scoped summaries include only attributable operations; app-wide restarts are excluded."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,6 +56,12 @@ class AppOperationalRecovery:
             restarts_item = restarts_item_data.to_dict()
             restarts.append(restarts_item)
 
+        workers: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.workers, Unset):
+            workers = self.workers.to_dict()
+
+        coverage = self.coverage
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -60,12 +74,17 @@ class AppOperationalRecovery:
                 "restarts": restarts,
             }
         )
+        if workers is not UNSET:
+            field_dict["workers"] = workers
+        if coverage is not UNSET:
+            field_dict["coverage"] = coverage
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_operational_rollback import AppOperationalRollback
+        from ..models.app_worker_recovery import AppWorkerRecovery
         from ..models.runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 
         d = dict(src_dict)
@@ -91,6 +110,15 @@ class AppOperationalRecovery:
 
             restarts.append(restarts_item)
 
+        _workers = d.pop("workers", UNSET)
+        workers: AppWorkerRecovery | Unset
+        if isinstance(_workers, Unset):
+            workers = UNSET
+        else:
+            workers = AppWorkerRecovery.from_dict(_workers)
+
+        coverage = d.pop("coverage", UNSET)
+
         app_operational_recovery = cls(
             rollbacks_available=rollbacks_available,
             restarts_available=restarts_available,
@@ -98,6 +126,8 @@ class AppOperationalRecovery:
             restarts_truncated=restarts_truncated,
             rollbacks=rollbacks,
             restarts=restarts,
+            workers=workers,
+            coverage=coverage,
         )
 
         app_operational_recovery.additional_properties = d

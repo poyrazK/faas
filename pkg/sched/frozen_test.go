@@ -20,16 +20,32 @@ type frozenFakeVMM struct {
 	freezes, thaws int
 	freezeErr      error
 	thawErr        error
+	thawReqs       []ThawRequest
+	// compresses counts reclaim requests for a frozen instance; they answer
+	// compressReport and compressErr.
+	compresses     int
+	compressReport FreezeReport
+	compressErr    error
+	// skipAfterRestore answers like a vmmd that predates run_after_restore.
+	skipAfterRestore bool
 }
 
-func (f *frozenFakeVMM) FreezeInstance(context.Context, string, string, bool) (FreezeReport, error) {
+func (f *frozenFakeVMM) FreezeInstance(_ context.Context, _, _ string, reclaim bool) (FreezeReport, error) {
+	if reclaim {
+		f.compresses++
+		return f.compressReport, f.compressErr
+	}
 	f.freezes++
 	return FreezeReport{}, f.freezeErr
 }
 
-func (f *frozenFakeVMM) ThawInstance(context.Context, string, string, bool) (bool, error) {
+func (f *frozenFakeVMM) ThawInstance(_ context.Context, _, _ string, req ThawRequest) (ThawResult, error) {
 	f.thaws++
-	return false, f.thawErr
+	f.thawReqs = append(f.thawReqs, req)
+	if f.thawErr != nil {
+		return ThawResult{}, f.thawErr
+	}
+	return ThawResult{HealthcheckVerified: req.ImageHealthcheckRequired, AfterRestoreRan: req.RunAfterRestore && !f.skipAfterRestore}, nil
 }
 
 type frozenFixture struct {
@@ -46,18 +62,27 @@ type frozenFixture struct {
 // init snapshot for its deployment.
 func newFrozenFixture(t *testing.T, withSnapshot bool, appType ...state.AppType) *frozenFixture {
 	t.Helper()
+	return newFrozenFixtureWith(t, withSnapshot, func(app *state.App) {
+		if len(appType) > 0 {
+			app.Type = appType[0]
+		}
+	})
+}
+
+// newFrozenFixtureWith is newFrozenFixture with the app shaped by shape
+// before it is created.
+func newFrozenFixtureWith(t *testing.T, withSnapshot bool, shape func(*state.App)) *frozenFixture {
+	t.Helper()
 	ctx := t.Context()
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "frozen@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	typ := state.AppTypeFunction
-	if len(appType) > 0 {
-		typ = appType[0]
-	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "frozen", Type: typ,
-		RAMMB: 512, MaxConcurrency: 4, IdleTimeoutS: 30})
+	shaped := state.App{AccountID: acct.ID, Slug: "frozen", Type: state.AppTypeFunction,
+		RAMMB: 512, MaxConcurrency: 4, IdleTimeoutS: 30}
+	shape(&shaped)
+	app, err := store.CreateApp(ctx, shaped)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +131,34 @@ func newFrozenFixture(t *testing.T, withSnapshot bool, appType ...state.AppType)
 		t.Fatal(err)
 	}
 	return &frozenFixture{store: store, vmm: vmm, e: e, app: app, dep: dep, ins: ins}
+}
+
+// addPublishedInstance adds a second RUNNING, published instance of the
+// fixture's deployment.
+func (f *frozenFixture) addPublishedInstance(t *testing.T) state.Instance {
+	t.Helper()
+	ctx := t.Context()
+	ins, err := f.store.CreateInstanceWithMode(ctx, f.app.ID, f.dep.ID, string(state.StateWaking), f.app.RAMMB, f.ins.NodeID, uuid.NewString(), string(state.InstanceModeNormal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := f.store.RuntimeAppValuesForDeployment(ctx, f.app.AccountID, f.app.ID, f.dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := state.NewRuntimeAppConfigFence(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins, err = f.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+		AccountID: f.app.AccountID, AppID: f.app.ID, InstanceID: ins.ID, NodeID: ins.NodeID, WakeID: ins.WakeID,
+		ExpectedState: string(state.StateWaking), Fence: fence.SecretFence, ConfigFence: fence,
+		Netns: "fc-" + ins.ID, HostIP: "10.100.0.3", GuestUID: 20002,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ins
 }
 
 func (f *frozenFixture) state(t *testing.T) state.State {
@@ -252,6 +305,194 @@ func TestFailedThawParksAndWakesFromSnapshot(t *testing.T) {
 	}
 	if f.e.Ledger().ResidentFor(f.ins.ID) {
 		t.Fatal("parked frozen instance kept a reservation")
+	}
+}
+
+// A thaw runs the app's after_restore callback when the app declares one,
+// and a vmmd that does not confirm it ran is treated as a failed thaw: the
+// VM parks and the request wakes from the snapshot, whose restore runs it.
+func TestThawRunsAfterRestoreWhenDeclared(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		declared         bool
+		skipAfterRestore bool
+		wantThawed       bool
+	}{
+		{name: "no hook", wantThawed: true},
+		{name: "hook declared", declared: true, wantThawed: true},
+		{name: "vmmd predates run_after_restore", declared: true, skipAfterRestore: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFrozenFixtureWith(t, true, func(app *state.App) {
+				if tc.declared {
+					app.Manifest.AfterRestore = &api.AfterRestoreHook{Path: "/after-restore"}
+				}
+			})
+			f.e.EnableFrozenTier()
+			f.vmm.skipAfterRestore = tc.skipAfterRestore
+			if handled, err := f.e.FreezeIdle(t.Context(), f.ins.ID, 150); err != nil || !handled {
+				t.Fatalf("FreezeIdle: %v, %v", handled, err)
+			}
+			result, err := f.e.Wake(t.Context(), f.app.ID, "", "", "")
+			if err != nil {
+				t.Fatalf("Wake: %v", err)
+			}
+			if len(f.vmm.thawReqs) != 1 || f.vmm.thawReqs[0].RunAfterRestore != tc.declared {
+				t.Fatalf("thaw requests %+v, want one with RunAfterRestore=%v", f.vmm.thawReqs, tc.declared)
+			}
+			if thawed := result.InstanceID == f.ins.ID; thawed != tc.wantThawed {
+				t.Fatalf("woke %s (frozen %s, now %s); want thawed=%v", result.InstanceID, f.ins.ID, f.state(t), tc.wantThawed)
+			}
+			if !tc.wantThawed && f.state(t) != state.StateParked {
+				t.Fatalf("unconfirmed after_restore left the frozen row %s, want parked", f.state(t))
+			}
+		})
+	}
+}
+
+// The pause an app declares and the apps switch decide which tier may
+// pause it: quiet pause only for between_requests, the frozen tier for
+// anything but never, and apps other than functions only with the switch.
+func TestPauseTierEligibility(t *testing.T) {
+	normal := string(state.InstanceModeNormal)
+	for _, tc := range []struct {
+		name       string
+		app        state.App
+		mode, net  string
+		appsSwitch bool
+		wantQuiet  bool
+		wantFrozen bool
+	}{
+		{name: "function default", app: state.App{Type: state.AppTypeFunction}, mode: normal, wantQuiet: true, wantFrozen: true},
+		{name: "function never", app: state.App{Type: state.AppTypeFunction, Manifest: state.AppManifest{Pause: api.PauseNever}}, mode: normal},
+		{name: "function when_idle", app: state.App{Type: state.AppTypeFunction, Manifest: state.AppManifest{Pause: api.PauseWhenIdle}}, mode: normal, wantFrozen: true},
+		{name: "app default, switch off", app: state.App{Type: state.AppTypeApp}, mode: normal},
+		{name: "app default, switch on", app: state.App{Type: state.AppTypeApp}, mode: normal, appsSwitch: true, wantFrozen: true},
+		{name: "app between_requests", app: state.App{Type: state.AppTypeApp, Manifest: state.AppManifest{Pause: api.PauseBetweenRequests}}, mode: normal, appsSwitch: true, wantQuiet: true, wantFrozen: true},
+		{name: "app never", app: state.App{Type: state.AppTypeApp, Manifest: state.AppManifest{Pause: api.PauseNever}}, mode: normal, appsSwitch: true},
+		{name: "grpc app", app: state.App{Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassGRPC}, mode: normal, appsSwitch: true, wantFrozen: true},
+		{name: "worker class", app: state.App{Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker}, mode: normal, appsSwitch: true},
+		{name: "service mode", app: state.App{Type: state.AppTypeApp}, mode: string(state.InstanceModeService), appsSwitch: true},
+		{name: "mirror", app: state.App{Type: state.AppTypeFunction}, mode: string(state.InstanceModeMirror)},
+		{name: "private network", app: state.App{Type: state.AppTypeFunction}, mode: normal, net: "net-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var e Engine
+			if tc.appsSwitch {
+				e.EnableFrozenTierApps()
+			}
+			if got := quietPauseAfterMS(tc.app, tc.mode, tc.net) > 0; got != tc.wantQuiet {
+				t.Errorf("quiet pause = %v, want %v", got, tc.wantQuiet)
+			}
+			if got := e.frozenTierAllows(tc.app, tc.mode, tc.net); got != tc.wantFrozen {
+				t.Errorf("frozen tier = %v, want %v", got, tc.wantFrozen)
+			}
+		})
+	}
+}
+
+func TestFreezeIdleFreezesAppsWithTheAppsSwitch(t *testing.T) {
+	f := newFrozenFixture(t, true, state.AppTypeApp)
+	f.e.EnableFrozenTier()
+	if handled, _ := f.e.FreezeIdle(t.Context(), f.ins.ID, 150); handled || f.vmm.freezes != 0 {
+		t.Fatal("an app froze without the apps switch")
+	}
+	f.e.EnableFrozenTierApps()
+	if handled, err := f.e.FreezeIdle(t.Context(), f.ins.ID, 150); err != nil || !handled || f.state(t) != state.StateFrozen {
+		t.Fatalf("FreezeIdle on an app with the switch = %v, %v, state %s; want frozen", handled, err, f.state(t))
+	}
+}
+
+// A session pinned to a frozen VM thaws that VM even when another frozen VM
+// of the deployment would come first.
+func TestFrozenCandidatesPreferTheSessionInstance(t *testing.T) {
+	f := newFrozenFixture(t, true)
+	other := f.addPublishedInstance(t)
+	for _, id := range []string{f.ins.ID, other.ID} {
+		if err := updateInstanceStateCAS(t.Context(), f.store, id, string(state.StateRunning), string(state.StateFrozen)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plain, err := f.e.frozenCandidates(t.Context(), f.app, f.dep)
+	if err != nil || len(plain) != 2 {
+		t.Fatalf("candidates = %v, %v", plain, err)
+	}
+	last := plain[1].ins.ID
+	hinted, err := f.e.frozenCandidates(WithPreferredInstance(t.Context(), last), f.app, f.dep)
+	if err != nil || len(hinted) != 2 || hinted[0].ins.ID != last || hinted[1].ins.ID != plain[0].ins.ID {
+		t.Fatalf("hinted candidates = %v, %v; want %s first", hinted, err, last)
+	}
+	if got, _ := f.e.frozenCandidates(WithPreferredInstance(t.Context(), "elsewhere"), f.app, f.dep); got[0].ins.ID != plain[0].ins.ID {
+		t.Fatal("a hint naming no candidate reordered them")
+	}
+}
+
+func TestLedgerShrinkFrozenCharge(t *testing.T) {
+	l := NewNodeLedger()
+	if err := l.Admit(Request{Instance: "i1", AppID: "a1", Plan: api.PlanScale, RAMMB: 1024, VCPU: 2,
+		CPUMillicores: 1000, MaxConcurrency: 4, NodeID: "n1"}); err != nil {
+		t.Fatal(err)
+	}
+	if l.ShrinkFrozenCharge("i1", 100) {
+		t.Fatal("a running reservation was rebooked as frozen")
+	}
+	l.Freeze("i1", 500)
+	if !l.ShrinkFrozenCharge("i1", 120) || l.ResidentRAMForNode("n1") != 120 {
+		t.Fatalf("after compression resident = %d MB, want 120", l.ResidentRAMForNode("n1"))
+	}
+	if !l.ShrinkFrozenCharge("i1", 300) || l.ResidentRAMForNode("n1") != 120 {
+		t.Fatal("a compression grew the frozen charge")
+	}
+	if !l.ShrinkFrozenCharge("i1", 1) || l.ResidentRAMForNode("n1") != api.MeasuredChargeFloorMB {
+		t.Fatalf("frozen charge fell below the floor: %d MB", l.ResidentRAMForNode("n1"))
+	}
+}
+
+// Memory pressure compresses a frozen VM into memory-only swap before it
+// parks it (ADR-906 decision 6): a VM that compression shrinks by half stays
+// frozen and books the smaller footprint; anything else parks as before.
+func TestEvictUnderPressureCompressesFrozenInstances(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		report    FreezeReport
+		err       error
+		wantState state.State
+	}{
+		{name: "compressed", report: FreezeReport{ResidentBytesBefore: 400 << 20, ResidentBytesAfter: 80 << 20}, wantState: state.StateFrozen},
+		{name: "barely shrinks", report: FreezeReport{ResidentBytesBefore: 400 << 20, ResidentBytesAfter: 380 << 20}, wantState: state.StateParked},
+		{name: "no memory-only swap", err: api.NewProblem(409, api.CodeFrozenCompressUnavailable, "Compression unavailable", "no zswap"), wantState: state.StateParked},
+		{name: "vmmd error", err: errors.New("vmmd unavailable"), wantState: state.StateParked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFrozenFixture(t, true)
+			f.e.EnableFrozenTier()
+			if handled, err := f.e.FreezeIdle(t.Context(), f.ins.ID, 400); err != nil || !handled {
+				t.Fatalf("FreezeIdle: %v, %v", handled, err)
+			}
+			booked := f.e.Ledger().ResidentRAMForNode(f.ins.NodeID)
+			f.vmm.compressReport, f.vmm.compressErr = tc.report, tc.err
+			if err := f.e.EvictUnderPressure(t.Context(), f.ins.ID); err != nil {
+				t.Fatal(err)
+			}
+			if f.vmm.compresses != 1 || f.state(t) != tc.wantState {
+				t.Fatalf("compresses %d, state %s; want one compression and %s", f.vmm.compresses, f.state(t), tc.wantState)
+			}
+			if tc.wantState == state.StateFrozen {
+				if now := f.e.Ledger().ResidentRAMForNode(f.ins.NodeID); now >= booked || !f.e.Ledger().IsFrozen(f.ins.ID) {
+					t.Fatalf("booked %d MB after compression, %d before; want the smaller footprint", now, booked)
+				}
+			}
+		})
+	}
+}
+
+func TestEvictUnderPressureEvictsRunningInstances(t *testing.T) {
+	f := newFrozenFixture(t, true)
+	if err := f.e.EvictUnderPressure(t.Context(), f.ins.ID); err != nil {
+		t.Fatal(err)
+	}
+	if f.vmm.compresses != 0 || f.state(t) != state.StateStopped {
+		t.Fatalf("compresses %d, state %s; want an ordinary eviction", f.vmm.compresses, f.state(t))
 	}
 }
 

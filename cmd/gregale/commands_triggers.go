@@ -30,6 +30,7 @@ var triggerKindNames = []string{
 	string(api.TriggerKindRedisStreams),
 	string(api.TriggerKindSQSCompat),
 	string(api.TriggerKindQueue),
+	string(api.TriggerKindRealtime),
 }
 
 var triggerBrokerKindNames = []string{
@@ -38,14 +39,15 @@ var triggerBrokerKindNames = []string{
 	string(api.TriggerKindRedisStreams),
 	string(api.TriggerKindSQSCompat),
 	string(api.TriggerKindQueue),
+	string(api.TriggerKindRealtime),
 }
 
 var triggerRecordStateNames = []string{
-	"pending", "claimed", "succeeded", "retry", "dead_letter",
+	"pending", "claimed", "succeeded", "retry", "dead_letter", "superseded",
 }
 
-const triggerKindsUsage = "cron|kafka|nats|redis_streams|sqs_compat|queue"
-const triggerBrokerKindsUsage = "kafka|nats|redis_streams|sqs_compat|queue"
+const triggerKindsUsage = "cron|kafka|nats|redis_streams|sqs_compat|queue|realtime"
+const triggerBrokerKindsUsage = "kafka|nats|redis_streams|sqs_compat|queue|realtime"
 
 func triggerFlagSet(name, usage string) *flag.FlagSet {
 	fs := newFlagSet(name, flag.ContinueOnError)
@@ -219,6 +221,7 @@ func cmdTriggersCreate(args []string) int {
 	maxAttempts := fs.Int("max-attempts", 0, "maximum delivery attempts")
 	payloadMaxBytes := fs.Int("payload-max-bytes", 0, "maximum broker payload size in bytes")
 	poisonStrategy := fs.String("broker-poison-strategy", "", "kafka poison strategy (commit|seek-to-offset)")
+	delivery := fs.String("delivery", "", "record (one invocation per record) or batch (one per dispatch batch)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -281,6 +284,9 @@ func cmdTriggersCreate(args []string) int {
 	if explicit["broker-poison-strategy"] {
 		req.BrokerPoisonStrategy = triggerStringPtr(*poisonStrategy)
 	}
+	if explicit["delivery"] {
+		req.Delivery = triggerStringPtr(*delivery)
+	}
 	trigger, err := client.PostTriggers(ctx, req)
 	if err != nil {
 		return printErr("Could not create trigger", err)
@@ -306,6 +312,7 @@ func cmdTriggersUpdate(args []string) int {
 	maxAttempts := fs.Int("max-attempts", 0, "maximum delivery attempts")
 	payloadMaxBytes := fs.Int("payload-max-bytes", 0, "maximum broker payload size in bytes")
 	poisonStrategy := fs.String("broker-poison-strategy", "", "kafka poison strategy (commit|seek-to-offset)")
+	delivery := fs.String("delivery", "", "record (one invocation per record) or batch (one per dispatch batch)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -362,6 +369,9 @@ func cmdTriggersUpdate(args []string) int {
 	}
 	if explicit["broker-poison-strategy"] {
 		req.BrokerPoisonStrategy = triggerStringPtr(*poisonStrategy)
+	}
+	if explicit["delivery"] {
+		req.Delivery = triggerStringPtr(*delivery)
 	}
 	trigger, err := client.PatchTriggersId(context.Background(), pos[0], req)
 	if err != nil {
@@ -473,9 +483,17 @@ func cmdTriggersRecords(args []string) int {
 		return 0
 	}
 	for _, record := range resp.Records {
-		_, _ = fmt.Fprintf(osStdout, "%-36s %-12s attempts=%-3d item=%s\n", record.ID, record.State, record.Attempts, record.ItemIdentifier)
+		_, _ = fmt.Fprintln(osStdout, triggerRecordLine(record))
 	}
 	return 0
+}
+
+// triggerRecordLine renders one record. A record's attempts count only the
+// deliveries that failed (it dead-letters when that count reaches
+// max_attempts), so a record delivered on its first try has 0; the label
+// says so rather than reading as "never attempted".
+func triggerRecordLine(record api.TriggerRecord) string {
+	return fmt.Sprintf("%-36s %-12s failed_attempts=%-3d item=%s", record.ID, record.State, record.Attempts, record.ItemIdentifier)
 }
 
 func cmdTriggersRecordAction(args []string, retry bool) int {
@@ -660,6 +678,9 @@ func renderTriggerHuman(w io.Writer, trigger api.Trigger) {
 		}
 	}
 	_, _ = fmt.Fprintf(w, "  batch:    %d records / %d ms\n", trigger.BatchSizeMax, trigger.BatchWindowMs)
+	if trigger.Delivery == api.TriggerDeliveryBatch {
+		_, _ = fmt.Fprintln(w, "  delivery: batch (one invocation per dispatch batch)")
+	}
 	_, _ = fmt.Fprintf(w, "  attempts: %d\n", trigger.MaxAttempts)
 }
 

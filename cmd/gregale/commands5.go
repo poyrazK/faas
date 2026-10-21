@@ -238,7 +238,9 @@ func cmdStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%%\n", page.APIAvailabilityPct)
 	if page.WakeP95MS == nil {
-		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (no observations)")
+		// The status query reports a p95 only from 20 platform wakes in 30
+		// minutes, and omits it when Prometheus is unreachable (H10-46).
+		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (fewer than 20 wakes in the last 30 min, or wake metrics unavailable)")
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", *page.WakeP95MS)
 	}
@@ -258,10 +260,14 @@ func cmdStatus(args []string) int {
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale env <create|clone-status|pull|push|diff>", "env")
+		PrintUsage(os.Stderr, "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>", "env")
 		return 1
 	}
 	switch args[0] {
+	case "history":
+		return envHistory(args[1:])
+	case "rollback":
+		return envRollback(args[1:])
 	case "create":
 		return envCreate(args[1:])
 	case "clone-status":
@@ -429,6 +435,7 @@ func envPush(args []string) int {
 	// "SECRET_KEY", not "my live Stripe key". Override with
 	// --secret-scan=off for local-dev sandbox keys (e.g. sk_test_…).
 	secretScan := fs.String("secret-scan", "on", "scan pairs for known credential patterns before pushing (on|off|strict|source-tree; default on)")
+	noGuard := fs.Bool("no-guard", false, "do not open a config guard for these changes (ADR-1451)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -483,8 +490,7 @@ func envPush(args []string) int {
 		// or process substitution. Same line cap (64 KB) — Scale's
 		// SecretValueMaxBytes (32 KB) plus the key name fits, anything
 		// larger truncates and the apid byte cap rejects.
-		scanner := bufio.NewScanner(osStdin)
-		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		scanner := newKeyValueScanner(bufio.NewScanner(osStdin))
 		lineNo := 0
 		for scanner.Scan() {
 			lineNo++
@@ -499,7 +505,7 @@ func envPush(args []string) int {
 			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}
 		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-			return printErr("Read stdin", err)
+			return printErr("Read stdin", keyValueScanErr(err))
 		}
 	} else {
 		f, err := openCustomerFile(*in)
@@ -510,8 +516,7 @@ func envPush(args []string) int {
 		// Reuse parseSecretsPair from commands3.go (single '=' split, same
 		// edge cases). Skip blanks + comments ourselves so the parser sees
 		// only candidate lines.
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		scanner := newKeyValueScanner(bufio.NewScanner(f))
 		lineNo := 0
 		for scanner.Scan() {
 			lineNo++
@@ -526,7 +531,7 @@ func envPush(args []string) int {
 			pairs = append(pairs, pair{k: p.Key, v: p.Value})
 		}
 		if err := scanner.Err(); err != nil {
-			return printErr("Read .env", err)
+			return printErr("Read .env", keyValueScanErr(err))
 		}
 	}
 	if len(pairs) == 0 {
@@ -613,6 +618,9 @@ func envPush(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	if *noGuard {
+		client = client.WithoutConfigGuard()
+	}
 	printMutationTarget(*app, *scope, appSource, scopeSource)
 	receipt := envPushReceipt{
 		AppSlug: *app, Scope: scopeOrDefault(*scope), Result: "applied",
@@ -629,6 +637,7 @@ func envPush(args []string) int {
 			PrintOK(osStdout, "%s set (scope=%s)", p.k, scopeOrDefault(*scope))
 		}
 	}
+	printConfigGuardNotice(context.Background(), client, *app, *scope)
 	if *waitForAck {
 		return finishEnvPushWait(context.Background(), client, receipt, *restart, *timeout)
 	}
@@ -777,7 +786,8 @@ const appScaleUsage = "usage: gregale app <slug> scale [--interactive | --plan [
 // Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
 func cmdAppScale(slug string, args []string) int {
 	if hasHelpFlag(args) {
-		PrintUsage(osStdout, appScaleUsage, "apps")
+		command, _ := lookupCliCommand("app")
+		printManifestHelp(osStdout, command, append([]string{slug, "scale"}, args...))
 		return 0
 	}
 	fs := newFlagSet("app scale", flag.ContinueOnError)
@@ -1103,6 +1113,8 @@ func cmdAppDispatch(args []string) int {
 		switch args[1] {
 		case subHealth:
 			return cmdAppHealth(slug, args[2:])
+		case subChanges:
+			return cmdAppChanges(slug, args[2:])
 		case subScale:
 			return cmdAppScale(slug, args[2:])
 		case "costs":

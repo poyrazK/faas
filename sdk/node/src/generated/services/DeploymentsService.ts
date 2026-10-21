@@ -17,10 +17,14 @@ import type { DeploymentAliasResponse } from '../models/DeploymentAliasResponse.
 import type { DeploymentListResponse } from '../models/DeploymentListResponse.js';
 import type { DeploymentPreviewURL } from '../models/DeploymentPreviewURL.js';
 import type { DeploymentResponse } from '../models/DeploymentResponse.js';
+import type { DeploymentResponseCheckCapabilities } from '../models/DeploymentResponseCheckCapabilities.js';
+import type { DeploymentResponseCheckRequest } from '../models/DeploymentResponseCheckRequest.js';
+import type { DeploymentResponseCheckResult } from '../models/DeploymentResponseCheckResult.js';
 import type { DeploymentRuntimeResponse } from '../models/DeploymentRuntimeResponse.js';
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { ProfileCanaryGateDecision } from '../models/ProfileCanaryGateDecision.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
@@ -34,6 +38,7 @@ import type { SetDeploymentAliasRequest } from '../models/SetDeploymentAliasRequ
 import type { SourceRefDeployRequest } from '../models/SourceRefDeployRequest.js';
 import type { SourceTarballDeployRequest } from '../models/SourceTarballDeployRequest.js';
 import type { UpdateDeploymentTrafficRequest } from '../models/UpdateDeploymentTrafficRequest.js';
+import type { WorkerRolloutObservation } from '../models/WorkerRolloutObservation.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -248,6 +253,7 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: image_egress_denied — registry is in RFC1918 / IMDS / link-local, or blocked egress range; or email_verification_required when the account email is unverified.`,
+        409: `code: application_standards_pending. Inherited application controls must be persisted before this service accepts a deployment. Retry after enrollment completes.`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -481,7 +487,7 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         404: `code: not_found`,
-        409: `code: dev_source_base_missing. Retry with a complete source snapshot.`,
+        409: `code: dev_source_base_missing | application_standards_pending. A missing source base requires a complete snapshot; pending inherited controls require enrollment to finish.`,
         413: `code: source_too_large`,
         422: `code: deploy_failed | image_not_found | image_manifest_invalid | build_oom | build_timeout | stateless_only_violation`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -551,7 +557,8 @@ export class DeploymentsService {
         (code: github_install_not_found).
         `,
         409: `code: source_ref_stale. source_branch no longer points at the
-        requested immutable commit SHA.
+        requested immutable commit SHA. A service awaiting inherited
+        controls instead returns code: application_standards_pending.
         `,
         413: `code: source_too_large`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -663,12 +670,58 @@ export class DeploymentsService {
         on the CLI path is the symptom of a misconfigured
         --name pointing at a row the caller doesn't own.
         `,
+        409: `code: application_standards_pending. Inherited application controls must be persisted before this service accepts a deployment. Retry after enrollment completes.`,
         413: `code: source_too_large`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read a coherent worker-generation residency snapshot
+   * @returns WorkerRolloutObservation Database snapshot of selected and retired worker residents. Does not establish queue processing or external consumer completion.
+   * @returns Problem Generic 503 envelope. Used by the apid capacity gate (e.g.
+   * host age recipient not loaded → registry credential PUT
+   * returns 503 instead of accepting plaintext).
+   *
+   * @throws ApiError
+   */
+  public static getWorkerRolloutObservation({
+    slug,
+    id,
+    environment,
+    scope,
+  }: {
+    /**
+     * Application slug for worker rollout observation.
+     */
+    slug: string,
+    /**
+     * Exact deployment ID for worker rollout observation.
+     */
+    id: string,
+    /**
+     * Selected environment for passive worker generation observations; omit for the default scope.
+     */
+    environment?: string,
+    /**
+     * Explicit default scope. Exactly one selector is required.
+     */
+    scope?: 'default',
+  }): CancelablePromise<WorkerRolloutObservation | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/rollouts/{id}/observation',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'environment': environment,
+        'scope': scope,
       },
     });
   }
@@ -2218,6 +2271,95 @@ export class DeploymentsService {
         \`profile_investigation_limit\`.
         `,
         503: `The SBOM populator has not produced an artefact for this build (code=build_sbom_unavailable), or the storage backend failed (code=capacity_unavailable).`,
+      },
+    });
+  }
+  /**
+   * Read deployment response-check compatibility before deploying.
+   * Requires deployment-write access. This read-only preflight does not require
+   * MFA, resolve an app, allocate capacity, create work, or contact a guest.
+   * Queries the configured gateway control listener with a three-second bound
+   * and returns protocol support and forwarding configuration. An unavailable
+   * gateway is reported in a 200 response with available=false and a stable
+   * unavailable_reason: gateway_unsupported, gateway_unconfigured, or
+   * gateway_unavailable. Account credentials and internal addresses are not
+   * forwarded or returned. A successful preflight is not a capacity or future
+   * availability guarantee. Responses use Cache-Control: no-store.
+   *
+   * @returns DeploymentResponseCheckCapabilities Current API/gateway compatibility; never cached.
+   * @throws ApiError
+   */
+  public static getDeploymentResponseCheckCapabilities(): CancelablePromise<DeploymentResponseCheckCapabilities> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/response-check/capabilities',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Check one GET against an owned deployment.
+   * Requires deployment-write access and MFA. Pins a live deployment, app UUID
+   * and runtime scope; named scopes also require project and environment UUIDs.
+   * Gatewayd may wake that exact deployment through existing scheduler admission.
+   * Sends one GET without forwarding API credentials, cookies, arbitrary headers
+   * or a request body. Does not follow redirects or use public response caches.
+   * Returns the actual application HTTP status, selected identities and a bounded
+   * UTF-8 response preview. A 200 API envelope includes application failures; only
+   * the inner HTTP status describes the workload response. This is owner access,
+   * not proof of public routing or customer authentication. Application-owned
+   * authentication is preserved. Rechecks target identity after forwarding.
+   * Timeout is 20 seconds, path limit 2048 bytes, preview limit 4096 bytes.
+   * Response content and path queries are ephemeral. Responses are not cached.
+   *
+   * @returns DeploymentResponseCheckResult Ephemeral HTTP response evidence; Cache-Control no-store.
+   * @throws ApiError
+   */
+  public static checkDeploymentResponse({
+    slug,
+    deployment,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact accepted deployment UUID; revisions and aliases are not accepted.
+     */
+    deployment: string,
+    requestBody: DeploymentResponseCheckRequest,
+  }): CancelablePromise<DeploymentResponseCheckResult> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/deployments/{deployment}/response-check',
+      path: {
+        'slug': slug,
+        'deployment': deployment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The deployment or catalog lifetime no longer matches the requested target.`,
+        413: `The control request exceeds the 64 KiB envelope limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `The selected deployment could not be reached or evidence was unavailable.`,
       },
     });
   }

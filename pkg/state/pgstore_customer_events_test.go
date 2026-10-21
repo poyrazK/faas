@@ -2,6 +2,7 @@ package state_test
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -80,5 +81,57 @@ func TestPg_ListCustomerEventsUnknownAppReturnsEmpty(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("unknown app rows = %+v, want empty", rows)
+	}
+}
+
+// TestPg_ListCustomerEventsKindPrefixIsExact pins the indexed kind-prefix
+// query (H10-43): the byte-order range may only narrow the scan, never
+// change which rows match. Kinds on either side of the range and a longer
+// kind that shares the prefix all appear in the account's history.
+func TestPg_ListCustomerEventsKindPrefixIsExact(t *testing.T) {
+	store, ctx := pgStore(t)
+	accountID, _, otherAccountID, _ := seedTwoAppsPg(t, store, ctx,
+		"audit-events-prefix@example.com", "audit-events-prefix-other@example.com",
+		"audit-events-prefix", "audit-events-prefix-other")
+
+	kinds := []string{
+		"app.auto_rollback", "app.auto_rollback_on_5xx", "app.auto_rollbackz",
+		"app.auto_rollbac", "app.auto_rollbacl", "app.created", "cron.fired",
+	}
+	for _, kind := range kinds {
+		if err := store.AppendEvent(ctx, "test", kind, &accountID, json.RawMessage(`{}`)); err != nil {
+			t.Fatalf("AppendEvent %s: %v", kind, err)
+		}
+	}
+	if err := store.AppendEvent(ctx, "test", "app.auto_rollback_on_5xx", &otherAccountID, json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("AppendEvent other account: %v", err)
+	}
+
+	for _, tc := range []struct {
+		prefix string
+		want   []string
+	}{
+		{"app.auto_rollback", []string{"app.auto_rollback", "app.auto_rollback_on_5xx", "app.auto_rollbackz"}},
+		{"app.", []string{"app.auto_rollbac", "app.auto_rollback", "app.auto_rollback_on_5xx", "app.auto_rollbackz", "app.auto_rollbacl", "app.created"}},
+		{"cron.fired", []string{"cron.fired"}},
+		{"deploy.", nil},
+		{"", kinds},
+	} {
+		rows, err := store.ListCustomerEvents(ctx, state.CustomerEventFilter{
+			AccountID: accountID, KindPrefix: tc.prefix, Limit: 50,
+		})
+		if err != nil {
+			t.Fatalf("ListCustomerEvents(%q): %v", tc.prefix, err)
+		}
+		got := make([]string, 0, len(rows))
+		for _, row := range rows {
+			got = append(got, row.Kind)
+		}
+		slices.Sort(got)
+		want := slices.Clone(tc.want)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Fatalf("ListCustomerEvents(%q) kinds = %v, want %v", tc.prefix, got, want)
+		}
 	}
 }

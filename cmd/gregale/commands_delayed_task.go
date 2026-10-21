@@ -330,11 +330,19 @@ func cmdDelayedTaskList(args []string) int {
 // GET /v1/delayed-tasks/{id}). Single positional id, --json returns
 // the response, human mode prints every populated field.
 func cmdDelayedTaskGet(args []string) int {
-	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale delayed-task get <id>", "delayed-task")
+	// add and list take --app, so `get <id> --app <slug>` is a natural
+	// spelling; it used to fail with a bare usage line (H10-124). The id is
+	// account-scoped; --app only checks that the task belongs to that app.
+	fs := newFlagSet("delayed-task get", flag.ContinueOnError)
+	app := fs.String("app", "", "require the task to belong to this app")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	id := args[0]
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale delayed-task get <id> [--app <slug>]", "delayed-task")
+		return 1
+	}
+	id := fs.Arg(0)
 	if !delayedTaskIDPattern.MatchString(id) {
 		return printErr("Invalid delayed-task id", fmt.Errorf("must be a 32-hex-char UUID; got %q", id))
 	}
@@ -342,9 +350,19 @@ func cmdDelayedTaskGet(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.GetDelayedTask(context.Background(), id)
+	ctx := context.Background()
+	resp, err := client.GetDelayedTask(ctx, id)
 	if err != nil {
 		return printErr("Could not fetch delayed-task", err)
+	}
+	if *app != "" {
+		owner, err := client.GetApp(ctx, *app)
+		if err != nil {
+			return printErr("Could not fetch app", err)
+		}
+		if owner.ID != resp.AppID {
+			return printErr("Delayed task not found", fmt.Errorf("delayed task %s does not belong to app %q", id, *app))
+		}
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))

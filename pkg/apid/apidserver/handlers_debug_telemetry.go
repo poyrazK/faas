@@ -28,6 +28,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/debugcompare"
 	"github.com/onebox-faas/faas/pkg/debugger"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -2392,7 +2393,7 @@ func formatFloat2(v float64) string {
 // shared time window. Body shape: DebugCompareRequest (source,
 // mirror deployment_ids + optional route filter + optional
 // window bounds). Returns DebugCompareResponse with one row per
-// route that shipped traffic in both deployments.
+// route with retained telemetry in either deployment.
 //
 // PR-B composes two PR-A queries (RequestTelemetryBaselineP95ByRoute)
 // in Go — the CTE-on-CTE shape trips sqlc v1.31's parser (the
@@ -2414,78 +2415,15 @@ func (s *server) debugCompareHandler(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.ErrValidation("invalid compare body"))
 		return
 	}
-	if _, err := uuid.Parse(req.Source); err != nil {
-		api.WriteProblem(w, api.ErrValidation("source must be a deployment id"))
+	out, problem := debugcompare.Build(r.Context(), app.ID, req, limits.DebugTelemetryRetentionDays, time.Now().UTC(),
+		func(ctx context.Context, deploymentID string, from, until time.Time, route string) (map[string]debugcompare.Stats, error) {
+			return s.fetchRouteStats(ctx, app.ID, stringToPgUUID(deploymentID), from, until, route)
+		})
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	if _, err := uuid.Parse(req.Mirror); err != nil {
-		api.WriteProblem(w, api.ErrValidation("mirror must be a deployment id"))
-		return
-	}
-	// Default window: last 1h. Clamp to plan retention.
-	sinceDur := parseDebugSinceFromString(req.Since, 1*time.Hour)
-	capDur := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
-	if capDur > 0 && sinceDur > capDur {
-		sinceDur = capDur
-	}
-	until := time.Now().UTC()
-	if req.Until != "" {
-		if t, err := time.Parse(time.RFC3339, req.Until); err == nil {
-			until = t.UTC()
-		}
-	}
-	from := until.Add(-sinceDur)
-	srcID := stringToPgUUID(req.Source)
-	mirID := stringToPgUUID(req.Mirror)
-
-	// Fetch both distributions. Both calls share one index scan
-	// over request_telemetry_app_dep_received_idx — four
-	// aggregates (p50/p95/p99/represented request count) in a
-	// single pass (Debugger UX v1 stage 3 sqlc rewrite; PR-B
-	// minimum was p95-only and
-	// walked client-side for the others).
-	srcStats, err := s.fetchRouteStats(r.Context(), app.ID, srcID, from, until, req.Route)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("compare source"))
-		return
-	}
-	mirStats, err := s.fetchRouteStats(r.Context(), app.ID, mirID, from, until, req.Route)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("compare mirror"))
-		return
-	}
-	// Merge: union of routes; missing entries render zero stats.
-	// A missing side means zero rows in the window — DO NOT
-	// synthesize percentiles from the other side. Test (b) in
-	// handlers_debug_telemetry_compare_test.go asserts the
-	// N=0/percentiles=0 contract.
-	routes := make(map[string]api.DebugCompareRouteStats, len(srcStats)+len(mirStats))
-	for route, s := range srcStats {
-		routes[route] = api.DebugCompareRouteStats{
-			Route:     route,
-			SourceP50: s.P50, SourceP95: s.P95, SourceP99: s.P99, SourceN: s.N,
-		}
-	}
-	for route, m := range mirStats {
-		existing := routes[route]
-		existing.Route = route
-		existing.MirrorP50 = m.P50
-		existing.MirrorP95 = m.P95
-		existing.MirrorP99 = m.P99
-		existing.MirrorN = m.N
-		routes[route] = existing
-	}
-	// Stable ordering for deterministic dashboard rendering.
-	out := make([]api.DebugCompareRouteStats, 0, len(routes))
-	for _, v := range routes {
-		out = append(out, v)
-	}
-	sortRouteStats(out)
-	writeJSON(w, http.StatusOK, api.DebugCompareResponse{
-		Source: req.Source,
-		Mirror: req.Mirror,
-		Routes: out,
-	})
+	writeJSON(w, http.StatusOK, out)
 }
 
 // routeStats is the per-route aggregate used by the compare
@@ -2494,12 +2432,7 @@ func (s *server) debugCompareHandler(w http.ResponseWriter, r *http.Request, acc
 // from a single index scan; this struct mirrors that shape so
 // the dashboard can render the full latency distribution
 // alongside the represented request count.
-type routeStats struct {
-	P50 int
-	P95 int
-	P99 int
-	N   int64
-}
+type routeStats = debugcompare.Stats
 
 // fetchRouteStats reads the per-route p50/p95/p99 + represented request count
 // for a single deployment in the window. The shape mirrors the
@@ -2536,19 +2469,6 @@ func (s *server) fetchRouteStats(ctx context.Context, appID string, deploymentID
 		}
 	}
 	return out, nil
-}
-
-// sortRouteStats sorts by route name (stable, deterministic
-// output for dashboard diffing).
-func sortRouteStats(stats []api.DebugCompareRouteStats) {
-	// insertion sort — the slice is typically <100 routes
-	for i := 1; i < len(stats); i++ {
-		j := i
-		for j > 0 && stats[j-1].Route > stats[j].Route {
-			stats[j-1], stats[j] = stats[j], stats[j-1]
-			j--
-		}
-	}
 }
 
 // parseDebugSinceFromString is a variant of parseDebugSince that

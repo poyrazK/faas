@@ -1,7 +1,7 @@
 // vmmd — the only root component, owns firecracker+jailer (spec §4.4, ADR-013,
 // ADR-014, ADR-016). RPCs map 1:1 to spec §4.4 line 138. Wire shape
-// stays narrow: the caller resolves `(app)` into AppSpec; vmmd never queries
-// apid or postgres on its own.
+// stays narrow: the caller resolves `(app)` into AppSpec. vmmd never calls
+// apid directly; it reads durable rehearsal network authority before app boot.
 
 syntax = "proto3";
 
@@ -17,6 +17,20 @@ option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1;v
 // auth model (mode 0660 group `faas`, ADR-015) is the only authentication
 // story for v1.0 — Gate-A multi-host replaces it with mTLS.
 service Vmmd {
+  // Dedicated one-shot, networkless repair guests. The first stream message
+  // carries immutable metadata only; following messages carry bounded input.
+  rpc DataRepairRehearsalIdentity(DataRepairRehearsalIdentityRequest) returns (DataRepairRehearsalIdentityResponse);
+  rpc RunDataRepairRehearsal(stream DataRepairRehearsalChunk) returns (DataRepairRehearsalResult);
+  rpc RetireDataRepairRehearsal(RetireDataRepairRehearsalRequest) returns (RetireDataRepairRehearsalResponse);
+  // ADR-20261017201005: old nodes reject these methods before releasing guest code.
+  rpc CreateRehearsalColdBoot(CreateColdBootRequest) returns (WakeResponse);
+  rpc CreateRehearsalFromSnapshot(CreateFromSnapshotRequest) returns (WakeResponse);
+  // Distinct methods fail closed on older nodes before allocating a VM.
+  rpc RuntimeAdmissionIdentity(RuntimeAdmissionIdentityRequest) returns (RuntimeAdmissionIdentityResponse);
+  rpc CreateAdmittedRuntime(CreateAdmittedRuntimeRequest) returns (CreateAdmittedRuntimeResponse);
+  rpc PromoteAdmittedRuntime(PromoteAdmittedRuntimeRequest) returns (PromoteAdmittedRuntimeResponse);
+  // A distinct method refuses older nodes before they can pause a managed VM.
+  rpc CaptureAdmittedRuntime(CaptureAdmittedRuntimeRequest) returns (CaptureAdmittedRuntimeResponse);
   // CreateFromSnapshot wakes an instance by restoring a previously-parked
   // snapshot. Falls back to cold boot if the snapshot is stale, missing, or
   // fails to load (ADR-005: cold boot always works).
@@ -79,6 +93,8 @@ service Vmmd {
   // command data. The command crosses the trust boundary only after schedd
   // has committed the durable running fence.
   rpc RestoreAppTask(RestoreAppTaskRequest) returns (RestoreAppTaskResponse);
+  // ADR-20261017201008: a distinct method refuses mixed-version runtimes before boot.
+  rpc RestoreRehearsalAppTask(RestoreAppTaskRequest) returns (RestoreAppTaskResponse);
 
   // ExecuteAppTask dispatches exactly one command to a restored app-task VM.
   // vmmd tears the disposable VM down before returning the terminal result.
@@ -145,6 +161,9 @@ service Vmmd {
   // only resumes Firecracker and re-attaches its liveness loops.
   rpc ResumeWarmInstance(ResumeWarmInstanceRequest) returns (ResumeWarmInstanceResponse);
 
+  // ADR-20261017201014: atomic, original-owner contained pause/resume rehearsal.
+  rpc RehearseSuspendResume(RehearseSuspendResumeRequest) returns (RehearseSuspendResumeResponse);
+
   // FreezeInstance (ADR-1151) pauses an idle running instance in place for
   // the frozen tier. schedd owns the FROZEN state; vmmd pauses the guest,
   // stops its probes and, only when asked (memory pressure), reclaims its
@@ -154,7 +173,10 @@ service Vmmd {
   // and code instance_not_freezable; an instance serving a request, stream
   // or session fails with FailedPrecondition and code instance_busy, and
   // keeps running. Freezing a frozen instance succeeds without pausing it
-  // again. A forward that reaches a frozen instance fails fast with
+  // again; with reclaim it compresses the frozen guest's memory into
+  // memory-only swap (zswap, ADR-906 decision 6), or fails with
+  // FailedPrecondition and code frozen_compress_unavailable on a host
+  // without it. A forward that reaches a frozen instance fails fast with
   // Unavailable and code instance_frozen.
   rpc FreezeInstance(FreezeInstanceRequest) returns (FreezeInstanceResponse);
 
@@ -191,6 +213,13 @@ service Vmmd {
 
   // Destroy tears down a running instance. Idempotent on unknown instances.
   rpc Destroy(DestroyRequest) returns (DestroyResponse);
+
+  // Operator restart uses a durable operation identity and exact physical VM
+  // generation. Re-entering an uncertain attempt never repeats Destroy.
+  rpc GetOperatorRestartGeneration(GetOperatorRestartGenerationRequest) returns (GetOperatorRestartGenerationResponse);
+  rpc ExecuteOperatorRestartDestroy(ExecuteOperatorRestartDestroyRequest) returns (ExecuteOperatorRestartDestroyResponse);
+  // ADR-1525: one journal-authorized capture/stop of the original VM generation.
+  rpc ExecuteOperatorPark(ExecuteOperatorParkRequest) returns (ExecuteOperatorParkResponse);
 
   // StopInstance is the M-2 / ADR-138 graceful stop sequence: send
   // `signal` to the guest's PID 1, wait up to `grace_period_s`
@@ -263,6 +292,11 @@ service Vmmd {
   // uses pg_notify as the delivery mechanism (cmd/schedd egress
   // drift subscriber, pkg/sched/egress_drift.go).
   rpc UpdateEgressAllowlist(UpdateEgressAllowlistRequest) returns (UpdateEgressAllowlistAck);
+  // A separate method makes old nodes refuse revision-aware updates before
+  // touching the network. Acknowledgments echo the successfully applied revision.
+  rpc UpdateAppEgressPolicy(UpdateAppEgressPolicyRequest) returns (UpdateAppEgressPolicyAck);
+  // Strict current-process acknowledgment for inherited standards.
+  rpc UpdateAdmittedAppEgressPolicy(UpdateAdmittedAppEgressPolicyRequest) returns (UpdateAdmittedAppEgressPolicyAck);
   // AllowResolvedEgress (ADR-373): the node's bridge resolver reports the
   // addresses a guest just resolved; vmmd lets that guest open TCP to them
   // for the answer's TTL before the resolver replies. source_ip is the
@@ -448,6 +482,14 @@ service Vmmd {
   // a missing storage key is NotFound.
   rpc MaterializeParentExt4(MaterializeParentExt4Request) returns (MaterializeParentExt4Response);
 
+  // ADR-435: separate capability; old servers refuse instead of ignoring the
+  // expected complete artifact identity. Receipt follows copy and cleanup.
+  rpc MaterializeVerifiedParentExt4(MaterializeVerifiedParentExt4Request) returns (MaterializeVerifiedParentExt4Response);
+
+  // ADR-435: verified distinct drives, actual read-only composition and bounded
+  // scanner projections. Receipt follows native cleanup; it grants no approval.
+  rpc MaterializeRuntimeScan(MaterializeRuntimeScanRequest) returns (MaterializeRuntimeScanResponse);
+
   // UmountParentExt4 (ADR-053) releases a mount vmmd previously
   // returned from MountParentExt4ReadOnly. Idempotent on an
   // unknown mountpoint — imaged's call-on-error-defer pattern
@@ -517,6 +559,8 @@ service Vmmd {
   // instance's HostIP + GuestUID so schedd can carry them
   // through to the conditional UPDATE at Phase 3.
   rpc AdoptMigratedInstance(AdoptMigratedInstanceRequest) returns (AdoptMigratedInstanceResponse);
+  // Retires only the original admission-backed destination and retains proof.
+  rpc RetireMigrationAdoption(RetireMigrationAdoptionRequest) returns (RetireMigrationAdoptionResponse);
 
   // AcknowledgeMigration (Tier A5 / ADR-065) is Phase 3.5 of
   // the four-phase handoff. Called by the new owner vmmd's
@@ -540,12 +584,21 @@ service Vmmd {
   // Generic Destroy and process inventory cannot acknowledge this contract.
   rpc RetireManagedPostgresDrain(RetireManagedPostgresDrainRequest) returns (RetireManagedPostgresDrainResponse);
 
+  // Fresh host-owned identity for the tenant service listener. App-task VMs
+  // are deliberately absent from serving instances. No guest assertion or
+  // cached address mapping may substitute for this lookup.
+  rpc ResolveServiceCaller(ResolveServiceCallerRequest) returns (ResolveServiceCallerResponse);
+  // Command-free managed probe boot. A distinct method rejects older nodes
+  // before allocating resources or starting a guest.
+  rpc RestoreManagedServiceProbe(RestoreAppTaskRequest) returns (RestoreAppTaskResponse);
 }
 
 // AppSpec flattens what the caller knows about an app. vmmd stores none of
 // it; the proto exists so each request is self-describing and vmmd stays
 // stateless about app config (ADR-014).
 message AppSpec {
+  // Immutable retained network policy, verified by vmmd against durable storage.
+  string rehearsal_run_id = 33;
   // Issue #96 / ADR-025 axis 2 (PR #116): drive0 base + drive1 layer
   // are referenced by StorageBackend keys, not host paths. The wire
   // carries canonical keys (e.g. "base/runtime-node22.ext4",
@@ -919,6 +972,8 @@ message SnapshotRef {
 // NOT receive the inner guest networking — that's identical across instances
 // (ADR-009) and stays implicit.
 message WakeResponse {
+  // Exact run whose containment was installed before guest execution.
+  string rehearsal_run_id = 19;
   // The instance name as it appears in the `instances` table; echoes the
   // request's `instance` field for request logging.
   string instance              = 1;
@@ -1198,6 +1253,18 @@ message JobColdBootRequest {
   // and stages them into this task's private writable layer before boot.
   // Plaintext is never carried through schedd or this RPC.
   repeated SealedSecret sealed_env = 17;
+  // Present only for an interactive image run (ADR-1330): the guest holds the
+  // command until one client attaches through AttachAppTask with the token
+  // whose digest is given here.
+  JobInteractiveAttach interactive = 18;
+}
+
+// JobInteractiveAttach is ADR-1330's per-task attach contract.
+message JobInteractiveAttach {
+  bool tty = 1;
+  bytes attach_token_sha256 = 2;
+  // 0 means the default window (60 s).
+  int32 attach_timeout_seconds = 3;
 }
 
 message JobColdBootResponse {
@@ -1212,6 +1279,10 @@ message JobColdBootResponse {
   // Echoes the distinct held-start RPC contract. The caller validates this
   // before it publishes the instance as runnable.
   bool start_held = 6;
+  // Echoes JobColdBootRequest.interactive (ADR-1330). A vmmd that predates it
+  // leaves this false, and schedd fails the task instead of running the
+  // command without stdin.
+  bool interactive = 7;
 }
 
 message ReleaseJobStartRequest {
@@ -1288,6 +1359,51 @@ message SnapshotResponse {
   // Explicit ACK for an opt-in terminal callback. A new schedd rejects an
   // older vmmd that ignored before_checkpoint on the request.
   bool before_checkpoint_completed = 4;
+  // Versioned native byte evidence. This is neither current publisher/scan
+  // approval nor a restore grant. Legacy captures leave it absent.
+  RuntimeSnapshotCapture capture = 5;
+}
+
+message RuntimeCapturedArtifact {
+  string storage_key = 1;
+  string digest = 2;
+  int64 bytes = 3;
+}
+
+message RuntimeSnapshotCapture {
+  uint32 version = 1;
+  RuntimeBootReceipt parent = 2;
+  RuntimeCapturedArtifact memory = 3;
+  RuntimeCapturedArtifact vmstate = 4;
+  RuntimeCapturedArtifact private_drive = 5;
+  int64 captured_at_unix_nano = 6;
+}
+
+message RuntimeSnapshotGrant {
+  uint32 version = 1;
+  string token = 2;
+  RuntimeBootReceipt parent = 3;
+  string memory_key = 4;
+  string vmstate_key = 5;
+  string private_drive_key = 6;
+  string fc_version = 7;
+  string mode = 8;
+  bool before_checkpoint = 9;
+  int64 source_started_at_unix_nano = 10;
+  int64 issued_at_unix_nano = 11;
+  int64 expires_at_unix_nano = 12;
+}
+
+message RuntimeSnapshotAcknowledgment {
+  RuntimeSnapshotGrant grant = 1;
+  RuntimeSnapshotCapture capture = 2;
+  int64 completed_at_unix_nano = 3;
+}
+
+message CaptureAdmittedRuntimeRequest { RuntimeSnapshotGrant grant = 1; }
+message CaptureAdmittedRuntimeResponse {
+  SnapshotResponse snapshot = 1;
+  RuntimeSnapshotAcknowledgment acknowledgment = 2;
 }
 
 // WarmSnapshotRequest (issue #470 / PR #470-FU-A) is the input
@@ -1344,6 +1460,31 @@ message FrameworkReadyResponse {
 
 message DestroyRequest {
   string instance = 1;
+  // Optional ADR-20261017201012 fault authority. Requires the original held checkpoint;
+  // ordinary Destroy cannot acknowledge a rehearsal worker termination.
+  string rehearsal_worker_fault_id = 2;
+  // ADR-20261017201013 original recorder retirement during preview cold preparation.
+  string rehearsal_cold_preparation_id = 3;
+}
+
+message GetOperatorRestartGenerationRequest { string instance = 1; }
+message GetOperatorRestartGenerationResponse { string generation = 1; }
+message ExecuteOperatorRestartDestroyRequest {
+  string intent_id = 1;
+  string claim_token = 2;
+}
+message ExecuteOperatorRestartDestroyResponse {
+  string phase = 1;
+  bool acknowledged = 2;
+}
+
+message ExecuteOperatorParkRequest {
+  string intent_id = 1;
+  string claim_token = 2;
+}
+message ExecuteOperatorParkResponse {
+  string phase = 1;
+  bool acknowledged = 2;
 }
 
 message DestroyResponse {
@@ -1354,6 +1495,8 @@ message DestroyResponse {
   // build's own exit code; 137 = OOM, 124 = timeout, etc — see
   // pkg/builderd/builderd.go failure-class table). 0 for app VMs.
   int32  exit_code = 2;
+  string rehearsal_worker_fault_id = 3;
+  string rehearsal_cold_preparation_id = 4;
 }
 
 // StopInstanceRequest is the M-2 / ADR-138 graceful-stop input.
@@ -1829,6 +1972,49 @@ message MaterializeParentExt4Request {
 // MaterializeParentExt4Response is the empty success envelope.
 message MaterializeParentExt4Response {}
 
+message MaterializeVerifiedParentExt4Request {
+  string storage_key = 1;
+  string target_dir = 2;
+  string artifact_digest = 3;
+  int64 artifact_bytes = 4;
+}
+
+message MaterializeVerifiedParentExt4Response {
+  string storage_key = 1;
+  string target_dir = 2;
+  string artifact_digest = 3;
+  int64 artifact_bytes = 4;
+}
+
+message MaterializeRuntimeScanRequest {
+  uint32 version = 1;
+  string input_hash = 2;
+  repeated RuntimeArtifactSource sources = 3;
+  string target_dir = 4;
+}
+
+message RuntimeScanTree {
+  uint32 version = 1;
+  string digest = 2;
+  string projection_digest = 3;
+  int64 entries = 4;
+  int64 bytes = 5;
+}
+
+message RuntimeScanView {
+  string workload_name = 1;
+  RuntimeScanTree source_tree = 2;
+  RuntimeScanTree projection_tree = 3;
+}
+
+message MaterializeRuntimeScanResponse {
+  uint32 version = 1;
+  string input_hash = 2;
+  string sources_hash = 3;
+  string target_dir = 4;
+  repeated RuntimeScanView views = 5;
+}
+
 // UmountParentExt4Request is the input to UmountParentExt4.
 // mountpoint is the path MountParentExt4ReadOnly previously
 // returned. Empty → InvalidArgument. Unknown → InvalidArgument
@@ -2097,6 +2283,14 @@ message AdoptMigratedInstanceRequest {
   string fc_version = 9;
   // Destination wake identity, distinct from the source's boot attempt.
   string wake_id = 10;
+  // Required on registered migration receivers (ADR-1529).
+  string admission_id = 11;
+}
+
+message RetireMigrationAdoptionRequest { string admission_id = 1; }
+message RetireMigrationAdoptionResponse {
+  string phase = 1;
+  bool cleaned = 2;
 }
 
 // AdoptMigratedInstanceResponse carries the network identifiers
@@ -2119,6 +2313,7 @@ message AdoptMigratedInstanceResponse {
   bool supports_secret_aliases = 6;
   bool image_healthcheck_verified = 7;
   bool supports_image_healthcheck_monitoring = 8;
+  string admission_id = 9;
 }
 
 // AcknowledgeMigrationRequest (Tier A5 / ADR-065) is the input
@@ -2501,7 +2696,7 @@ message FreezeInstanceRequest {
 // FreezeInstanceResponse (ADR-1151) reports one freeze. Resident bytes are the
 // VM cgroup's memory.current before and after reclaim (equal when no reclaim
 // ran; zero when vmmd could not read the cgroup). All zero when the instance
-// was already frozen.
+// was already frozen and no reclaim was asked for.
 message FreezeInstanceResponse {
   string instance = 1;
   int64 pause_micros = 2;
@@ -2513,16 +2708,22 @@ message FreezeInstanceResponse {
 // ThawInstanceRequest (ADR-1151) names the frozen instance to resume.
 // image_healthcheck_required asks vmmd to confirm the instance's stored boot
 // contract, as ResumeWarmInstance does; the thaw then runs the resume hook and
-// the image healthcheck before it returns.
+// the image healthcheck before it returns. run_after_restore asks vmmd to run
+// the resume hook, and with it the app's after_restore callback, before the
+// thaw returns; a failed callback fails the thaw.
 message ThawInstanceRequest {
   string instance = 1;
   bool image_healthcheck_required = 2;
+  bool run_after_restore = 3;
 }
 
 // ThawInstanceResponse (ADR-1151) acknowledges the in-place resume.
+// after_restore_ran confirms the resume hook ran; a vmmd that predates
+// run_after_restore leaves it false.
 message ThawInstanceResponse {
   string instance = 1;
   bool image_healthcheck_verified = 2;
+  bool after_restore_ran = 3;
 }
 
 // RestoreAppTaskRequest is the command-free preparation envelope for a
@@ -2541,6 +2742,10 @@ message RestoreAppTaskResponse {
   int32 lease_uid = 2;
   WakeMethod method = 3;
   bool supports_secret_aliases = 4;
+  string rehearsal_run_id = 5;
+  string netns = 6;
+  uint32 command_version = 7;
+  string host_ip = 8;
 }
 
 // ExecuteAppTaskRequest contains only dispatch-time data. In particular it
@@ -2633,6 +2838,157 @@ message AllowResolvedEgressAck {
   bool matched = 1;
 }
 
+// Complete app CIDR/extra-port projection, ordered on the node by revision.
+message UpdateAppEgressPolicyRequest {
+  string app_id = 1;
+  int64 revision = 2;
+  repeated string egress_allowlist = 3;
+  repeated uint32 egress_ports = 4;
+}
+
+message UpdateAppEgressPolicyAck { int64 revision = 1; }
+
+// Process identity is produced by the native manager, not echoed from callers.
+message RuntimeAdmissionIdentityRequest {}
+message RuntimeAdmissionIdentityResponse {
+  uint32 protocol_version = 1;
+  string node_id = 2;
+  string incarnation = 3;
+  // Zero means measured snapshot restore is unavailable. Boot protocol stays 2.
+  uint32 snapshot_restore_version = 4;
+}
+
+// Internal schedd grant. Hashes bind private captured inputs and the complete
+// delivered boot envelope; neither secrets nor logging credentials are returned.
+message RuntimeBootBinding {
+  uint32 protocol_version = 1;
+  string token = 2;
+  string instance_id = 3;
+  string app_id = 4;
+  string deployment_id = 5;
+  string account_id = 6;
+  string node_id = 7;
+  string incarnation = 8;
+  int64 desired_revision = 9;
+  string effective_hash = 10;
+  string captured_input_hash = 11;
+  string payload_hash = 12;
+  int64 egress_revision = 13;
+  int64 issued_at_unix_nano = 14;
+  int64 expires_at_unix_nano = 15;
+  // Protocol 2 binds the complete canonical producer source set.
+  string artifact_sources_hash = 16;
+  // Optional coupled pair. Historical capture needs fresh scoped authorization.
+  string snapshot_capture_token = 17;
+  string snapshot_evidence_hash = 18;
+}
+
+message CreateAdmittedRuntimeRequest {
+  RuntimeBootBinding binding = 1;
+  oneof boot {
+    CreateColdBootRequest cold_boot = 2;
+    CreateFromSnapshotRequest restore = 3;
+  }
+  // Complete approved producer blobs. The boot payload hash covers this set.
+  // These are source identities, not snapshot or guest-overlay approval.
+  repeated RuntimeArtifactSource artifact_sources = 4;
+  // Included in the boot payload hash; never authority without its saved grant.
+  RuntimeSnapshotRestoreEvidence snapshot_restore = 5;
+}
+
+message RuntimeSnapshotRestoreEvidence {
+  uint32 version = 1;
+  string capture_token = 2;
+  string fc_version = 3;
+  RuntimeSnapshotCapture capture = 4;
+}
+
+message RuntimeArtifactSource {
+  string kind = 1;
+  string workload_name = 2;
+  string storage_key = 3;
+  string digest = 4;
+  int64 bytes = 5;
+}
+
+// Native boot receipt, not image, log-delivery or live-egress convergence proof.
+message RuntimeBootReceipt {
+  RuntimeBootBinding binding = 1;
+  string native_input_hash = 2;
+  string netns = 3;
+  string host_ip = 4;
+  int32 lease_uid = 5;
+  WakeMethod method = 6;
+  bool paused = 7;
+  int64 completed_at_unix_nano = 8;
+  // Protocol 1 never gains artifact authority from this field.
+  RuntimeArtifactConsumption artifact_consumption = 9;
+  // Shares artifact_consumption's process and exact snapshot load command.
+  RuntimeSnapshotConsumption snapshot_consumption = 10;
+  // Original paused load plus the measured resume under a fresh promotion.
+  RuntimeSnapshotResumeEvidence snapshot_resume_evidence = 11;
+}
+
+message RuntimeSnapshotConsumption {
+  uint32 version = 1;
+  string capture_token = 2;
+  string evidence_hash = 3;
+  RuntimeCapturedArtifact memory = 4;
+  RuntimeCapturedArtifact vmstate = 5;
+  RuntimeCapturedArtifact private_drive = 6;
+  int64 mapped_memory_bytes = 7;
+}
+
+// Nonrecursive lineage: reconstruct the paused parent from these historical
+// identity fields and the serving receipt's unchanged native consumption.
+message RuntimeSnapshotResumeEvidence {
+  uint32 version = 1;
+  RuntimeBootBinding binding = 2;
+  string parent_receipt_hash = 3;
+  string resume_command_hash = 4;
+  string resume_hook_payload_hash = 5;
+  int64 command_completed_at_unix_nano = 6;
+  int64 host_time_unix_nano = 7;
+  int64 hook_completed_at_unix_nano = 8;
+  int64 completed_at_unix_nano = 9;
+  RuntimeBootBinding parent_binding = 10;
+  int64 parent_completed_at_unix_nano = 11;
+}
+
+message RuntimeArtifactConsumption {
+  string config_hash = 1;
+  uint32 process_pid = 2;
+  string process_start = 3;
+  repeated RuntimeConsumedDrive drives = 4;
+}
+
+message RuntimeConsumedDrive {
+  RuntimeArtifactSource source = 1;
+  string drive_id = 2;
+  bool read_only = 3;
+  bool root_device = 4;
+  string producer_digest = 5;
+  int64 producer_bytes = 6;
+  string injected_digest = 7;
+  int64 injected_bytes = 8;
+}
+
+message CreateAdmittedRuntimeResponse {
+  WakeResponse runtime = 1;
+  RuntimeBootReceipt receipt = 2;
+}
+
+// A fresh promotion grant binds the exact paused native lease. The historical
+// boot receipt identifies that lease; it is never fresh resume authority.
+message PromoteAdmittedRuntimeRequest {
+  RuntimeBootBinding binding = 1;
+  RuntimeBootReceipt parent = 2;
+}
+
+message PromoteAdmittedRuntimeResponse {
+  RuntimeBootReceipt receipt = 1;
+}
+
 // ForwardUDPRequestInit targets one admitted instance-local UDP listener.
 // Optional caps may tighten the receiver defaults; they cannot raise them.
 message ForwardUDPRequestInit {
@@ -2660,6 +3016,18 @@ message ForwardUDPResponse {
     ForwardUDPResponseInit init = 1;
     bytes datagram = 2;
   }
+}
+
+// The native backend must apply the exact complete tuple in this process.
+message UpdateAdmittedAppEgressPolicyRequest {
+  RuntimeAdmissionIdentityResponse identity = 1;
+  UpdateAppEgressPolicyRequest policy = 2;
+}
+message UpdateAdmittedAppEgressPolicyAck {
+  RuntimeAdmissionIdentityResponse identity = 1;
+  string app_id = 2;
+  int64 revision = 3;
+  string policy_hash = 4;
 }
 
 // Restore consumes the exact native capture identified by execution and may
@@ -2700,4 +3068,45 @@ message RetireManagedPostgresDrainRequest { ManagedPostgresDrainFrame frame = 1;
 message RetireManagedPostgresDrainResponse {
   ManagedPostgresDrainFrame frame = 1;
   ManagedPostgresDrainProof proof = 2;
+}
+
+message ResolveServiceCallerRequest {
+  string source_ip = 1;
+}
+
+message ResolveServiceCallerResponse {
+  bool matched = 1;
+  string instance_id = 2;
+  string account_id = 3;
+  string app_id = 4;
+  string deployment_id = 5;
+  bool app_task = 6;
+  bool job_task = 7;
+}
+
+message DataRepairRehearsalIdentityRequest {}
+message DataRepairRehearsalIdentityResponse {
+  string node_id = 1;
+  string incarnation = 2;
+  string runner_sha256 = 3;
+}
+message DataRepairRehearsalChunk {
+  bytes frame_json = 1;
+  bytes chunk = 2;
+}
+message DataRepairRehearsalResult { bytes evidence_json = 1; }
+message RetireDataRepairRehearsalRequest { bytes frame_json = 1; }
+message RetireDataRepairRehearsalResponse {
+  bytes frame_json = 1;
+  google.protobuf.Timestamp retired_at = 2;
+}
+
+// ADR-20261017201014: authority names the durable run-owned lifecycle receipt.
+message RehearseSuspendResumeRequest {
+  string instance = 1;
+  string receipt_id = 2;
+}
+message RehearseSuspendResumeResponse {
+  string instance = 1;
+  string receipt_id = 2;
 }

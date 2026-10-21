@@ -59,6 +59,26 @@ func TestColdBootConfigNetworklessOmitsInterfaces(t *testing.T) {
 	}
 }
 
+// An app task boots the deployment's signed, node-cached app layer. Its drive1
+// must be a private copy: a hard link lets the task write into the cached layer,
+// and the next prime on that node refuses the layer as tampered (SB-13).
+func TestColdBootConfigAppTaskKeepsPrivateLayer(t *testing.T) {
+	spec := validColdSpec()
+	spec.SkipReady = true
+	spec.AppTask = true
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("app task cold-boot spec rejected: %v", err)
+	}
+	if cfg := BuildColdBootConfig(spec, 0); cfg.EphemeralWritable {
+		t.Fatal("app task config hard-links the cached app layer; it must stage a private copy")
+	}
+	builder := validColdSpec()
+	builder.SkipReady = true
+	if cfg := BuildColdBootConfig(builder, 0); !cfg.EphemeralWritable {
+		t.Fatal("builder config must keep the scratch-image hard-link optimization")
+	}
+}
+
 // adr: 171 — a networkless execution guest must not reference a netns that
 // was never created, while ordinary app wakes keep the --netns argument.
 func TestJailerCommandNetworklessOmitsNetns(t *testing.T) {

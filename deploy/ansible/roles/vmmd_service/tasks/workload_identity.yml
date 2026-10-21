@@ -1,0 +1,73 @@
+---
+# ADR-1141: the cluster workload-identity signing key. Every vmmd signs the
+# workload tokens it mints for app instances with this one key; apid trusts
+# its public JWKS (control_plane_service). `gregalectl workload-identity
+# init|rotate --out DIR` writes the files; with faas_workload_identity_source_dir
+# set to DIR on the Ansible controller this role installs them, otherwise an
+# operator-placed key is used as is. No key leaves issuance disabled.
+- name: vmmd_service — install the workload-identity signing key (ADR-1141)
+  ansible.builtin.copy:
+    src: "{{ faas_workload_identity_source_dir }}/workload-identity.key"
+    dest: "{{ faas_workload_identity_key_path }}"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  when: faas_workload_identity_source_dir | length > 0
+  notify: restart faas-vmmd
+
+- name: vmmd_service — install the workload-identity key id (ADR-1141)
+  ansible.builtin.copy:
+    src: "{{ faas_workload_identity_source_dir }}/workload-identity.kid"
+    dest: "{{ faas_workload_identity_kid_path }}"
+    owner: root
+    group: root
+    mode: "0444"
+  when: faas_workload_identity_source_dir | length > 0
+  notify: restart faas-vmmd
+
+- name: vmmd_service — inspect the workload-identity key (ADR-1141)
+  ansible.builtin.stat:
+    path: "{{ faas_workload_identity_key_path }}"
+  register: faas_workload_identity_key_stat
+
+- name: vmmd_service — inspect the workload-identity key id (ADR-1141)
+  ansible.builtin.stat:
+    path: "{{ faas_workload_identity_kid_path }}"
+  register: faas_workload_identity_kid_stat
+
+- name: vmmd_service — workload-identity key is root-only and has a key id (ADR-1141)
+  ansible.builtin.assert:
+    that:
+      - faas_workload_identity_key_stat.stat.pw_name == 'root'
+      - faas_workload_identity_key_stat.stat.mode in ['0400', '0600']
+      - faas_workload_identity_kid_stat.stat.exists
+    fail_msg: >-
+      {{ faas_workload_identity_key_path }} must be root-owned 0400 with its key id in
+      {{ faas_workload_identity_kid_path }} (gregalectl workload-identity init writes both)
+  when: faas_workload_identity_key_stat.stat.exists
+
+- name: vmmd_service — read the workload-identity key id (ADR-1141)
+  ansible.builtin.slurp:
+    src: "{{ faas_workload_identity_kid_path }}"
+  register: faas_workload_identity_kid
+  when: faas_workload_identity_key_stat.stat.exists
+
+- name: vmmd_service — install workload-identity drop-in (ADR-1141)
+  ansible.builtin.template:
+    src: 99-faas-workload-identity.conf.j2
+    dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-workload-identity.conf
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    faas_workload_identity_key_id: "{{ faas_workload_identity_kid.content | b64decode | trim }}"
+  when: faas_workload_identity_key_stat.stat.exists
+  notify: restart faas-vmmd
+
+- name: vmmd_service — remove workload-identity drop-in without a key (ADR-1141)
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-vmmd.service.d/99-faas-workload-identity.conf
+    state: absent
+  when: not faas_workload_identity_key_stat.stat.exists
+  notify: restart faas-vmmd

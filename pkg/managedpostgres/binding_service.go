@@ -47,12 +47,13 @@ type BindingService struct {
 }
 
 type CreateBindingRequest struct {
-	AccountID      string
-	DatabaseID     string
-	AppID          string
-	Scope          string
-	EnvironmentKey string
-	Access         CredentialAccess
+	DatabaseAccountID string
+	AccountID         string
+	DatabaseID        string
+	AppID             string
+	Scope             string
+	EnvironmentKey    string
+	Access            CredentialAccess
 }
 
 func NewBindingService(registry *Registry, databases Store, bindings BindingStore, sink CredentialSink, options BindingServiceOptions) (*BindingService, error) {
@@ -118,13 +119,13 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	}
 	if request.AccountID == "" || request.DatabaseID == "" || request.AppID == "" ||
 		!validBindingScope(request.Scope) || !validEnvironmentKey(request.EnvironmentKey) ||
-		(request.Access != CredentialReadWrite && request.Access != CredentialReadOnly && request.Access != CredentialMigration && request.Access != CredentialDataAPI) {
+		!request.Access.Known() {
 		return Binding{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
 		return Binding{}, false, ErrProvisioningClosed
 	}
-	database, err := customerDatabase(ctx, s.databases, request.AccountID, request.DatabaseID)
+	database, err := customerDatabase(ctx, s.databases, bindingRequestNamespace(request), request.DatabaseID)
 	if err != nil {
 		return Binding{}, false, err
 	}
@@ -139,6 +140,7 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	binding, created, err := s.bindings.ReserveBinding(ctx, Binding{
 		ID:                   s.newID(),
 		AccountID:            request.AccountID,
+		DatabaseAccountID:    database.AccountID,
 		DatabaseID:           request.DatabaseID,
 		AppID:                request.AppID,
 		Scope:                request.Scope,
@@ -232,7 +234,7 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 	// A private clone binding is prepared by its owning worker and atomic
 	// receipt sink. Ordinary reconciliation must not issue credentials or
 	// invalidate the source app's runtime configuration while it is pending.
-	if _, err := customerDatabase(ctx, s.databases, accountID, binding.DatabaseID); err != nil {
+	if _, err := customerDatabase(ctx, s.databases, binding.DatabaseNamespace(), binding.DatabaseID); err != nil {
 		return Binding{}, err
 	}
 
@@ -241,7 +243,7 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 	if err != nil {
 		return Binding{}, err
 	}
-	database, err := s.databases.Get(ctx, accountID, binding.DatabaseID)
+	database, err := s.databases.Get(ctx, binding.DatabaseNamespace(), binding.DatabaseID)
 	if err != nil {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "database_unavailable", normalizeProviderError(err), time.Hour)
 	}
@@ -261,7 +263,7 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 
 	credentialRequest := bindingCredentialRequest(binding, databaseDataResource(database))
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
-	material, err := backend.Provider.IssueCredentials(providerContext, credentialRequest)
+	material, err := issueAdmittedCredentials(providerContext, backend.Provider, credentialRequest)
 	cancel()
 	if err != nil {
 		return Binding{}, s.releaseProviderError(ctx, binding, BindingStateFailed, "credential_issue", err)
@@ -300,7 +302,7 @@ func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string
 	if err != nil {
 		return Binding{}, err
 	}
-	database, err := s.databases.Get(ctx, accountID, binding.DatabaseID)
+	database, err := s.databases.Get(ctx, binding.DatabaseNamespace(), binding.DatabaseID)
 	if err != nil {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateDeleting, "database_unavailable", normalizeProviderError(err), time.Hour)
 	}
@@ -356,7 +358,7 @@ func (s *BindingService) ReconcileRotationCleanup(ctx context.Context, accountID
 	if err != nil {
 		return Binding{}, err
 	}
-	database, err := s.databases.Get(ctx, accountID, binding.DatabaseID)
+	database, err := s.databases.Get(ctx, binding.DatabaseNamespace(), binding.DatabaseID)
 	if err != nil {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateRetiring, "database_unavailable", normalizeProviderError(err), time.Hour)
 	}
@@ -382,7 +384,7 @@ func (s *BindingService) Get(ctx context.Context, accountID, bindingID string) (
 	if err != nil {
 		return Binding{}, err
 	}
-	if _, err := customerDatabase(ctx, s.databases, accountID, binding.DatabaseID); err != nil {
+	if _, err := customerDatabase(ctx, s.databases, binding.DatabaseNamespace(), binding.DatabaseID); err != nil {
 		return Binding{}, err
 	}
 	return binding, nil
@@ -453,6 +455,8 @@ func bindingCredentialRequestForGeneration(binding Binding, providerResourceID s
 	identityKey := bindingCredentialIdentity(binding)
 	return CredentialRequest{
 		ProviderResourceID: providerResourceID,
+		ConnectionLimit:    binding.ConnectionLimit,
+		BindingID:          binding.ID,
 		IdentityKey:        identityKey,
 		Access:             binding.Access,
 		IdempotencyKey:     "credentials-" + identityKey,
@@ -462,6 +466,17 @@ func bindingCredentialRequestForGeneration(binding Binding, providerResourceID s
 func bindingCredentialIdentity(binding Binding) string {
 	sum := sha256.Sum256([]byte(binding.ID + "\x00" + strconv.FormatInt(binding.CredentialGeneration, 10)))
 	return "gregale-binding-" + hex.EncodeToString(sum[:20])
+}
+
+func issueAdmittedCredentials(ctx context.Context, provider Provider, request CredentialRequest) (CredentialMaterial, error) {
+	if request.ConnectionLimit == 0 {
+		return provider.IssueCredentials(ctx, request)
+	}
+	bounded, ok := provider.(BoundedCredentialProvider)
+	if !ok {
+		return CredentialMaterial{}, ErrUnsupported
+	}
+	return bounded.IssueBoundedCredentials(ctx, request)
 }
 
 func clearCredentialMaterial(material *CredentialMaterial) {
@@ -475,4 +490,11 @@ func clearCredentialMaterial(material *CredentialMaterial) {
 	material.TLSMode = ""
 	material.RootCertificatePEM = ""
 	material.Endpoints = nil
+}
+
+func bindingRequestNamespace(r CreateBindingRequest) string {
+	if r.DatabaseAccountID != "" {
+		return r.DatabaseAccountID
+	}
+	return r.AccountID
 }

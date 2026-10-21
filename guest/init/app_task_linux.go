@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/jobresult"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"golang.org/x/sys/unix"
 )
 
@@ -188,6 +189,12 @@ func loadAppTaskRuntime(log *slog.Logger) (appTaskRuntime, *apptaskproto.Result)
 }
 
 func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string, stdout, stderr io.Writer) (apptaskproto.Result, error) {
+	if len(req.Command) > 0 && req.Command[0] == api.AppTaskMigrationDependenciesCommand {
+		return executeMigrationDependencies(ctx, req, manifest, secrets, apiEnv, stdout)
+	}
+	if rehearsalcommand.IsCommand(req.Command) {
+		return executeRehearsalCommand(ctx, req, manifest, secrets, apiEnv, stdout)
+	}
 	if isOutboundBindingProbeCommand(req) {
 		return executeOutboundBindingProbeCommand(ctx, req, stdout)
 	}
@@ -241,6 +248,10 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 func prepareAppTaskCommand(req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string) (*exec.Cmd, *syscall.Credential, *apptaskproto.Result) {
 	argv := append([]string(nil), req.Command...)
 	env := BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv)
+	// Like the app process, a task needs a writable HOME: with HOME=/ every
+	// release command logged mise's "failed create_dir_all:
+	// /.local/state/mise/tracked-configs: Permission denied" (SB-10).
+	env = StampDefaultHomeEnv(env)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)

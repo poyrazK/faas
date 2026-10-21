@@ -62,7 +62,226 @@ export function generate(snapshot, hash = fingerprint(snapshot)) {
     `export type CompositeTypes<Name extends keyof Database[S]["CompositeTypes"], S extends keyof Database = ${defaultSchema}> = Database[S]["CompositeTypes"][Name]`,
     ''
   )
+  if(snapshot.version>=4){
+    lines.push('export const tableMetadata = {')
+    for(const schema of snapshot.schemas){
+      lines.push(`  [${JSON.stringify(schema)}]: {`)
+      for(const table of snapshot.tables.filter(t=>t.schema===schema&&!t.view)) lines.push(`    [${JSON.stringify(table.name)}]: ${JSON.stringify({primaryKey:table.primary_key??null,concurrency:table.concurrency??null})},`)
+      lines.push('  },')
+    }
+    lines.push('} as const','')
+  }
   const result = lines.join('\n')
   if (Buffer.byteLength(result) > limits.outputBytes) throw new Error('Generated contract exceeds output limit')
   return result
+}
+
+
+// Validators share the normalized contract but deliberately do not change its
+// fingerprint. Extra catalog rules are opt-in and are checked by --check output.
+export function generateValidators(snapshot, metadata = [], hash = fingerprint(snapshot), modelOnly = false) {
+  const warnings = []
+  const rules = new Map(metadata.map(c => [JSON.stringify([c.schema, c.relation, c.name]), c]))
+  let descriptorNodes=0
+  function descriptor(type, depth = 0) {
+    if(++descriptorNodes>100000) throw new Error('Input schema exceeds validation complexity limits')
+    if (depth > 12) return { kind: 'unsupported' }
+    if (type.endsWith(' | null')) return { kind: 'nullable', value: descriptor(type.slice(0, -7), depth + 1) }
+    if (type.startsWith('(') && type.endsWith(')[]')) return { kind: 'array', value: descriptor(type.slice(1, -3), depth + 1) }
+    if (['string', 'number', 'boolean', 'Json'].includes(type)) return { kind: type }
+    if (type.startsWith('"')) {
+      const labels = type.match(/"(?:[^"\\]|\\.)*"/g) ?? []
+      if (labels.length && labels.join(' | ') === type) return { kind: 'enum', labels: labels.map(JSON.parse) }
+    }
+    const composite = /^Database\[("(?:[^"\\]|\\.)*")\]\["CompositeTypes"\]\[("(?:[^"\\]|\\.)*")\]$/.exec(type)
+    if (composite) {
+      const c = snapshot.composites?.find(c => c.schema === JSON.parse(composite[1]) && c.name === JSON.parse(composite[2]))
+      if (c) return { kind: 'object', fields: c.fields.map(f => ({ name: f.name, optional: false, nullable: f.nullable, value: descriptor(f.type, depth + 1) })) }
+    }
+    const row = /^Database\[("(?:[^"\\]|\\.)*")\]\[("Tables"|"Views")\]\[("(?:[^"\\]|\\.)*")\]\['Row'\]$/.exec(type)
+    if (row) {
+      const table = snapshot.tables.find(t => t.schema === JSON.parse(row[1]) && t.name === JSON.parse(row[3]) && t.view === (JSON.parse(row[2]) === 'Views'))
+      if (table) return { kind: 'object', fields: table.columns.map(c => ({ name: c.name, optional: false, nullable: c.nullable, value: descriptor(c.type, depth + 1) })) }
+    }
+    return { kind: 'unsupported' }
+  }
+  function unsupported(d) { return d.kind === 'unsupported' || d.value && unsupported(d.value) || d.fields?.some(f => unsupported(f.value)) }
+  const specs = [], exports = [], formExports = [], models = []
+  for (const schema of snapshot.schemas) {
+    exports.push(`  [${JSON.stringify(schema)}]: {`)
+    formExports.push(`  [${JSON.stringify(schema)}]: {`)
+    for (const table of snapshot.tables.filter(t => t.schema === schema && !t.view)) {
+      exports.push(`    [${JSON.stringify(table.name)}]: {`)
+      formExports.push(`    [${JSON.stringify(table.name)}]: {`)
+      for (const kind of ['Insert', 'Update']) {
+        const fields = table.columns.filter(c => kind === 'Insert' ? c.insertable : c.updatable).map(c => {
+          const value = descriptor(c.type), rule = rules.get(JSON.stringify([schema, table.name, c.name]))
+          if (kind === 'Insert' || !c.insertable) {
+            if (unsupported(value)) warnings.push({ relation: `${schema}.${table.name}`, column: c.name, reason: 'unsupported_type' })
+            if (rule?.domain) warnings.push({ relation: `${schema}.${table.name}`, column: c.name, reason: 'domain_rules_require_review' })
+            if (rule?.checks) warnings.push({ relation: `${schema}.${table.name}`, column: c.name, reason: 'check_constraints_require_review' })
+            if (rule?.typmod >= 0 && !(rule.type === 'varchar' && value.kind === 'string' && !rule.domain)) warnings.push({ relation: `${schema}.${table.name}`, column: c.name, reason: 'type_modifier_requires_review' })
+            if (rule?.type.startsWith('_')) warnings.push({ relation: `${schema}.${table.name}`, column: c.name, reason: 'array_element_rules_require_review' })
+          }
+          if (rule && !rule.domain) {
+            if (value.kind === 'string' && rule.type === 'varchar' && rule.typmod >= 4) value.maxLength = rule.typmod - 4
+            if (value.kind === 'number' && ['int2', 'int4', 'int8', 'oid'].includes(rule.type)) {
+              value.integer = true
+              ;[value.min, value.max] = { int2: [-32768, 32767], int4: [-2147483648, 2147483647], int8: [-Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER], oid: [0, 4294967295] }[rule.type]
+              if (kind === 'Insert' && rule.type === 'int8') warnings.push({ relation: `${schema}.${table.name}`, column: c.name, reason: 'int8_requires_safe_javascript_integer' })
+            }
+          }
+          return { name: c.name, optional: kind === 'Update' || c.optional, nullable: c.nullable, value }
+        })
+        const formFields = fields.map(field => {
+          const d = field.value, rule = rules.get(JSON.stringify([schema, table.name, field.name]))
+          const control = d.kind === 'enum' ? 'select' : d.kind === 'string' ? 'text' : d.kind === 'number' ? 'number' : d.kind === 'boolean' ? 'checkbox' : 'custom'
+          return { name: field.name, control, required: !field.optional, nullable: field.nullable,
+            ...(d.labels ? { options: d.labels } : {}), ...(d.maxLength !== undefined ? { maxLength: d.maxLength, lengthUnit: 'unicode_code_points' } : {}),
+            ...(d.integer ? { step: 1 } : {}), ...(d.min !== undefined ? { min: d.min, max: d.max } : {}),
+            requiresReview: control === 'custom' || Boolean(rule?.checks || rule?.domain || rule?.type === 'int8' || rule?.typmod >= 0 && !(rule.type === 'varchar' && d.kind === 'string')) }
+        })
+        formExports.push(`      ${kind.toLowerCase()}: ${JSON.stringify(formFields)},`)
+        const index = specs.push({ kind: 'object', fields }) - 1
+        if(kind==='Insert') models.push({schema,table:table.name,fields:formFields,spec:specs[index],primaryKey:table.primary_key??null,concurrency:table.concurrency??null})
+        else Object.assign(models.at(-1),{updateFields:formFields,updateSpec:specs[index]})
+        exports.push(`      ${kind.toLowerCase()}: (input: unknown): Database[${JSON.stringify(schema)}]["Tables"][${JSON.stringify(table.name)}][${JSON.stringify(kind)}] => parseInput(input, inputSpecs[${index}]) as Database[${JSON.stringify(schema)}]["Tables"][${JSON.stringify(table.name)}][${JSON.stringify(kind)}],`)
+      }
+      exports.push('    },')
+      formExports.push('    },')
+    }
+    exports.push('  },')
+    formExports.push('  },')
+  }
+  const rpcExports = []
+  for (const schema of snapshot.schemas) {
+    rpcExports.push(`  [${JSON.stringify(schema)}]: {`)
+    for (const fn of (snapshot.functions ?? []).filter(f => f.schema === schema)) {
+      const fields = fn.args.map(arg => {
+        const value = descriptor(arg.type)
+        if (unsupported(value)) warnings.push({ function: `${schema}.${fn.name}`, argument: arg.name, reason: 'unsupported_type' })
+        // PostgreSQL arguments accept explicit NULL independently of defaults.
+        return { name: arg.name, optional: arg.optional, nullable: true, value }
+      })
+      warnings.push({ function: `${schema}.${fn.name}`, reason: 'rpc_database_rules_require_review' })
+      const index = specs.push({ kind: 'object', fields }) - 1
+      const args = `Database[${JSON.stringify(schema)}]["Functions"][${JSON.stringify(fn.name)}]["Args"]`
+      rpcExports.push(`    [${JSON.stringify(fn.name)}]: { parse: (input: unknown): ${args} => parseInput(input, inputSpecs[${index}]) as ${args} },`)
+    }
+    rpcExports.push('  },')
+  }
+  if(modelOnly) {
+    if(Buffer.byteLength(JSON.stringify(models))>limits.outputBytes) throw new Error('Inspector input model exceeds output limit')
+    return {tables:models,revision:fingerprint(models)}
+  }
+  const runtime = String.raw`
+export type DataAPIInputIssueCode = 'required' | 'null_not_allowed' | 'invalid_type' | 'invalid_enum' | 'not_finite' | 'invalid_integer' | 'out_of_range' | 'too_long' | 'unknown_field' | 'invalid_json' | 'cyclic_input' | 'input_too_complex' | 'unsupported_object'
+export type DataAPIInputIssue = Readonly<{ code: DataAPIInputIssueCode; path: readonly (string | number)[] }>
+export class DataAPIInputError extends Error {
+  readonly code = 'invalid_input'
+  readonly issues: readonly DataAPIInputIssue[]
+  constructor(issue: DataAPIInputIssue = { code: 'invalid_type', path: [] }) {
+    super('Input does not match the generated database contract')
+    this.name = 'DataAPIInputError'
+    this.issues = Object.freeze([Object.freeze({ code: issue.code, path: Object.freeze([...issue.path]) })])
+  }
+}
+export type DataAPIRowIssue = Readonly<{ row: number; code: DataAPIInputIssueCode | 'invalid_input'; path: readonly (string | number)[] }>
+export type DataAPIRowValidation<T> =
+  | Readonly<{ ok: true; rows: readonly T[]; total: number; valid: number; invalid: 0; errors: readonly DataAPIRowIssue[]; truncated: false }>
+  | Readonly<{ ok: false; total: number; valid: number; invalid: number; errors: readonly DataAPIRowIssue[]; truncated: boolean }>
+/** Row numbers are one-based. Failed batches expose no partial payloads. */
+export function validateInputRows<T extends object>(rows: readonly unknown[], parse: ((input: unknown) => T) & (Extract<T, PromiseLike<unknown>> extends never ? unknown : never), options: { maxErrors?: number } = {}): DataAPIRowValidation<T> {
+  const maxErrors = options.maxErrors ?? 100
+  if (!Array.isArray(rows) || rows.length > 1000 || !Number.isSafeInteger(maxErrors) || maxErrors < 1 || maxErrors > 1000) throw new RangeError('Use at most 1,000 rows and one to 1,000 reported errors')
+  const parsed: T[] = [], errors: DataAPIRowIssue[] = []
+  let invalid = 0
+  for (let index = 0; index < rows.length; index++) {
+    try {
+      const value = parse(rows[index])
+      if (value !== null && (typeof value === 'object' || typeof value === 'function') && typeof (value as { then?: unknown }).then === 'function') {
+        void Promise.resolve(value).catch(() => {})
+        throw new Error()
+      }
+      parsed.push(value)
+    } catch (error) {
+      invalid++
+      if (errors.length < maxErrors) {
+        const issue = error instanceof DataAPIInputError ? error.issues[0] : undefined
+        errors.push(Object.freeze({ row: index + 1, code: issue?.code ?? 'invalid_input', path: Object.freeze([...(issue?.path ?? [])]) }))
+      }
+    }
+  }
+  if (invalid) return Object.freeze({ ok: false, total: rows.length, valid: rows.length - invalid, invalid, errors: Object.freeze(errors), truncated: errors.length < invalid })
+  return Object.freeze({ ok: true, rows: Object.freeze(parsed), total: rows.length, valid: rows.length, invalid: 0, errors: Object.freeze(errors), truncated: false })
+}
+type InputSpec = { kind: string; value?: InputSpec; fields?: { name: string; optional: boolean; nullable: boolean; value: InputSpec }[]; labels?: string[]; maxLength?: number; integer?: boolean; min?: number; max?: number }
+function parseInput(input: unknown, spec: InputSpec): unknown {
+  let nodes = 0
+  const active = new Set<object>()
+  const fail = (code: DataAPIInputIssueCode, path: readonly (string | number)[]): never => { throw new DataAPIInputError({ code, path }) }
+  function visit(value: unknown, rule: InputSpec, depth: number, path: readonly (string | number)[]): unknown {
+    if (++nodes > 100000 || depth > 64) return fail('input_too_complex', path)
+    if (rule.kind === 'nullable') return value === null ? null : visit(value, rule.value!, depth + 1, path)
+    if (rule.kind === 'string' || rule.kind === 'boolean' || rule.kind === 'number' || rule.kind === 'enum') {
+      if (rule.kind === 'enum') {
+        if (typeof value !== 'string') return fail('invalid_type', path)
+        if (!rule.labels!.includes(value)) return fail('invalid_enum', path)
+      } else if (typeof value !== rule.kind) return fail('invalid_type', path)
+      if (typeof value === 'number') {
+        if (!Number.isFinite(value)) return fail('not_finite', path)
+        if (rule.integer && !Number.isSafeInteger(value)) return fail('invalid_integer', path)
+        if (rule.min !== undefined && value < rule.min || rule.max !== undefined && value > rule.max) return fail('out_of_range', path)
+      }
+      if (typeof value === 'string' && rule.maxLength !== undefined && [...value].length > rule.maxLength) return fail('too_long', path)
+      return value
+    }
+    const json = rule.kind === 'Json' || rule.kind === 'unsupported'
+    if (json && (value === null || typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value))) return value
+    if (typeof value !== 'object' || value === null) return fail(json ? 'invalid_json' : 'invalid_type', path)
+    if (active.has(value)) return fail('cyclic_input', path)
+    active.add(value)
+    try {
+      if (Array.isArray(value)) {
+        if (!json && rule.kind !== 'array') return fail('invalid_type', path)
+        const entries = Object.getOwnPropertyDescriptors(value as object)
+        if (Object.getOwnPropertySymbols(value).length || Object.keys(entries).some(key => key !== 'length' && (!/^(0|[1-9][0-9]*)$/.test(key) || !('value' in entries[key]) || !entries[key].enumerable))) return fail('unsupported_object', path)
+        return Array.from({ length: entries.length.value }, (_, index) => visit(entries[String(index)]?.value, json ? { kind: 'Json' } : rule.value!, depth + 1, json ? path : [...path, index]))
+      }
+      if (!json && rule.kind !== 'object') return fail('invalid_type', path)
+      if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return fail('unsupported_object', path)
+      const descriptors = Object.getOwnPropertyDescriptors(value)
+      if (Object.getOwnPropertySymbols(value).length) return fail('unsupported_object', path)
+      const output: Record<string, unknown> = {}
+      const fields = rule.fields ?? []
+      for (const key of Object.keys(descriptors)) {
+        const field = fields.find(f => f.name === key)
+        // Unknown field names and arbitrary JSON keys may themselves be private.
+        if (!json && !field) return fail('unknown_field', path)
+        const fieldPath = json ? path : [...path, field!.name]
+        const descriptor = descriptors[key]
+        if (!('value' in descriptor) || !descriptor.enumerable) return fail('unsupported_object', fieldPath)
+        const raw = descriptor.value
+        if (!json && raw === null && !field!.nullable) return fail('null_not_allowed', fieldPath)
+        // Explicit undefined is never a JSON input. Omit optional keys instead.
+        const parsed = field?.nullable && raw === null ? null : visit(raw, json ? { kind: 'Json' } : field!.value, depth + 1, fieldPath)
+        Object.defineProperty(output, key, { value: parsed, enumerable: true, writable: true, configurable: true })
+      }
+      for (const field of fields) if (!field.optional && !Object.hasOwn(descriptors, field.name)) return fail('required', [...path, field.name])
+      return output
+    } finally { active.delete(value) }
+  }
+  return visit(input, spec, 0, [])
+}
+`
+  const result = generate(snapshot, hash) + '\n// Runtime input validation is advisory; PostgreSQL constraints and RLS remain authoritative.\n' +
+    `export const inputValidationWarnings = ${JSON.stringify(warnings)} as const\n` + runtime +
+    `\nconst inputSpecs: InputSpec[] = ${JSON.stringify(specs)}\nexport const inputValidators = {\n${exports.join('\n')}\n}\nexport const rpcValidators = {\n${rpcExports.join('\n')}\n}\nexport const formMetadata = {\n${formExports.join('\n')}\n} as const\n`
+  if (Buffer.byteLength(result) > limits.outputBytes) throw new Error('Generated validators exceed output limit')
+  return result
+}
+
+// Structured rules for the capability-protected local inspector.
+export function inputModel(snapshot, metadata = []) {
+  return generateValidators(snapshot, metadata, fingerprint(snapshot), true)
 }

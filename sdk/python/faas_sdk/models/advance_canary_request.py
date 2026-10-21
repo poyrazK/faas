@@ -10,6 +10,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.profile_gate_override import ProfileGateOverride
+    from ..models.rollout_decision import RolloutDecision
 
 
 T = TypeVar("T", bound="AdvanceCanaryRequest")
@@ -29,6 +30,9 @@ class AdvanceCanaryRequest:
     to promotion when gate context changes."""
     profile_gate_override: ProfileGateOverride | Unset = UNSET
     """Audited customer exception bound to the current profiling policy revision."""
+    decision: RolloutDecision | Unset = UNSET
+    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was
+    aborted. Aggregates only; no request payloads, routes, URLs or customer text."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -39,6 +43,10 @@ class AdvanceCanaryRequest:
         profile_gate_override: dict[str, Any] | Unset = UNSET
         if not isinstance(self.profile_gate_override, Unset):
             profile_gate_override = self.profile_gate_override.to_dict()
+
+        decision: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.decision, Unset):
+            decision = self.decision.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -51,12 +59,15 @@ class AdvanceCanaryRequest:
             field_dict["profile_gate_rollback"] = profile_gate_rollback
         if profile_gate_override is not UNSET:
             field_dict["profile_gate_override"] = profile_gate_override
+        if decision is not UNSET:
+            field_dict["decision"] = decision
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.profile_gate_override import ProfileGateOverride
+        from ..models.rollout_decision import RolloutDecision
 
         d = dict(src_dict)
         expected_step = d.pop("expected_step")
@@ -70,10 +81,18 @@ class AdvanceCanaryRequest:
         else:
             profile_gate_override = ProfileGateOverride.from_dict(_profile_gate_override)
 
+        _decision = d.pop("decision", UNSET)
+        decision: RolloutDecision | Unset
+        if isinstance(_decision, Unset):
+            decision = UNSET
+        else:
+            decision = RolloutDecision.from_dict(_decision)
+
         advance_canary_request = cls(
             expected_step=expected_step,
             profile_gate_rollback=profile_gate_rollback,
             profile_gate_override=profile_gate_override,
+            decision=decision,
         )
 
         advance_canary_request.additional_properties = d

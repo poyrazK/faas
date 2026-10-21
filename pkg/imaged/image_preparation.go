@@ -25,6 +25,8 @@ type imagePreparationClaim struct {
 type imagePublication struct {
 	deploymentID, path, key string
 	bytes                   int64
+	source                  *state.SourceBuildRootfsInput
+	registry                *state.DeploymentRegistryRootfsInput
 }
 
 // Defer the rootfs stamp until the entire layer assembly (including sidecars
@@ -84,6 +86,7 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, payload snapshotBootPa
 	if err != nil {
 		return imageRecoveryError(err)
 	}
+	h.handoffMetrics.commit("claimed")
 	defer func() {
 		if ctx.Err() == nil && !errors.Is(err, errImagePreparationRecovery) &&
 			!errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrInvalidStateTransition) {
@@ -151,7 +154,7 @@ func (h *Handler) prepareImageLayer(ctx context.Context, images state.Deployment
 	if err := h.openImagePreparationStage(ctx, app, dep); err != nil {
 		return err
 	}
-	acct, err := h.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, h.store, app)
 	if err != nil {
 		return err
 	}
@@ -163,9 +166,10 @@ func (h *Handler) prepareImageLayer(ctx context.Context, images state.Deployment
 	if publication.path == "" || publication.key == "" {
 		return errors.New("imaged: image assembly did not produce a rootfs publication")
 	}
-	if err := images.PublishImagePreparationLayer(ctx, dep.ID, p.ClaimToken, publication.path, publication.key, publication.bytes); err != nil {
+	if err := h.publishPreparedImage(ctx, images, p, publication); err != nil {
 		return imageRecoveryError(err)
 	}
+	h.handoffMetrics.commit("layer_published")
 	return nil
 }
 
@@ -196,14 +200,11 @@ func (h *Handler) buildSnapshotBootLayer(ctx context.Context, app state.App, dep
 	switch dep.Kind {
 	case state.DeploymentKindImage:
 		if app.Type == state.AppTypeFunction {
-			return h.buildFunctionLayer(ctx, app, dep, acct)
+			return h.buildFunctionLayer(ctx, app, dep, acct, nil)
 		}
 		return h.buildImageLayer(ctx, app, dep, acct)
 	case state.DeploymentKindTarball, state.DeploymentKindDockerfile, state.DeploymentKindGitHub, state.DeploymentKindPreview:
-		if app.Type == state.AppTypeFunction || app.Runtime != "" {
-			return h.buildFunctionLayer(ctx, app, dep, acct)
-		}
-		return h.buildLocalOCIAppLayer(ctx, app, &dep, acct)
+		return h.consumeSourceBuild(ctx, app, dep, acct)
 	default:
 		return fmt.Errorf("imaged: snapshot_boot: unknown deployment kind %q", dep.Kind)
 	}
@@ -238,6 +239,7 @@ func (h *Handler) prepareImageScan(ctx context.Context, images state.DeploymentI
 	if err := images.AdvanceImagePreparation(ctx, dep.ID, p.ClaimToken, state.ImageLayerPublished, state.ImageScanComplete); err != nil {
 		return imageRecoveryError(err)
 	}
+	h.handoffMetrics.commit("scan_complete")
 	return nil
 }
 
@@ -293,6 +295,7 @@ func (h *Handler) finishImageHandoff(ctx context.Context, images state.Deploymen
 	if err := images.AdvanceImagePreparation(ctx, dep.ID, p.ClaimToken, state.ImageScanComplete, state.ImageHandedOff); err != nil {
 		return imageRecoveryError(err)
 	}
+	h.handoffMetrics.commit("handed_off")
 	return nil
 }
 

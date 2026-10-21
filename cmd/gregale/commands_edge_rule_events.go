@@ -15,7 +15,7 @@ func cmdEdgeRulesEvents(args []string) int {
 	fs := newFlagSet("edge-rules events", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	rule := fs.String("rule", "", "only this rule id")
-	outcome := fs.String("outcome", "", "matched or logged")
+	outcome := fs.String("outcome", "", "matched, logged, or a kind=waf detection: detected, warned, blocked")
 	since := fs.String("since", "24h", "how far back, e.g. 1h, 24h, 7d (clamped to the plan window)")
 	limit := fs.Int("limit", 50, "events per page (1..200)")
 	cursor := fs.String("cursor", "", "continue from a previous page's next cursor")
@@ -23,7 +23,7 @@ func cmdEdgeRulesEvents(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules events --app <slug> [--rule ID] [--outcome matched|logged] [--since 24h] [--limit N] [--cursor C]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules events --app <slug> [--rule ID] [--outcome matched|logged|detected|warned|blocked] [--since 24h] [--limit N] [--cursor C]", "edge-rules")
 		return 1
 	}
 	client, err := authedClient()
@@ -57,6 +57,9 @@ func printEdgeRuleEvents(slug string, out api.EdgeRuleEventsResponse) {
 		_, _ = fmt.Fprintf(osStdout, "%-20s %-8s %-24s %-7s %-39s %-3s %s\n",
 			e.OccurredAt.Local().Format("2006-01-02 15:04:05"), e.Outcome, truncate(rule, 24), e.Method,
 			e.ClientIP, e.Country, truncate(e.Host+e.Path, 80))
+		if waf := e.WAFSummary(); waf != "" {
+			_, _ = fmt.Fprintf(osStdout, "%-20s waf: %s\n", "", waf)
+		}
 	}
 	if out.NextCursor != "" {
 		_, _ = fmt.Fprintf(osStdout, "more: --cursor %s\n", out.NextCursor)

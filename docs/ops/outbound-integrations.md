@@ -467,6 +467,11 @@ AI metrics keep the bounded integration label and never include model names:
 OpenTelemetry GenAI attributes (`gen_ai.system`, `gen_ai.response.model` and
 `gen_ai.usage.*`).
 
+A call's usage settles once, keyed by its admission lease: outboundd makes up
+to three 5-second attempts, and a retry after a commit that landed changes
+nothing. `outbound_ai_usage_record_events_total` counts `recorded`, `retried`,
+`state_error` (every attempt failed) and `unavailable` (ADR-1120).
+
 Apps reach these integrations through the app relay below, so stock SDKs work
 with only a base URL:
 
@@ -574,15 +579,71 @@ call:
 - **Retries:** `max_retries` and the retry budget also apply to these calls,
   on the usual transient failures. Every retry happens before any response
   byte reaches the caller.
-- **Cache:** with `response_cache_ttl_seconds` set, an identical
-  non-streaming JSON request (same body, caller and headers) is served from
-  the cache when the provider returned `200`. A cache hit costs no tokens.
+- **Cache:** with `response_cache_ttl_seconds` set, an identical JSON
+  request (same body, caller and headers) is served from the cache when the
+  provider returned `200`. Streams are cached too (ADR-1440): the stream is
+  copied into the cache as it is forwarded and kept only when it ends cleanly
+  within 1 MiB, and a hit replays it at once. Each outboundd process holds at
+  most 32 MiB of entries.
+- **Cache hits** cost no tokens. Each settles as one of the caller's and
+  model's `cached_requests` and adds the cost the provider call would have had,
+  priced from the cached response, to `cache_saved_millicents`.
+  `outbound_ai_response_cache_saved_millicents_total` counts it.
+- **Prompt-cache savings:** every call also adds
+  `prompt_cache_saved_millicents`: its cost with cached reads and cache
+  writes priced as plain input, minus its cost. It is negative when cache
+  writes outweighed reads. `gregale ai usage` shows both savings.
 - **OpenAI stream usage:** the gateway turns on
   `stream_options.include_usage` for OpenAI streaming completions. It records
   the extra usage chunk, then removes it from the stream the caller sees, so
   these calls no longer count as unknown usage.
 
 Larger bodies stream exactly as before, without these features.
+
+## AI automatic prompt caching
+
+`gregale ai policy <id> --prompt-cache on` (or `auto_prompt_cache` in the AI
+policy) lets the gateway add prompt-cache breakpoints to Claude requests that
+carry none (ADR-1437). It covers:
+
+- the Anthropic Messages API;
+- Vertex AI's Anthropic endpoints;
+- Bedrock InvokeModel and Converse for Claude models;
+- OpenAI-format routes to any of these.
+
+A request that sets its own `cache_control`, or `cachePoint` on Converse, is
+left as it is.
+
+The gateway adds at most two breakpoints, both with the default five-minute
+lifetime:
+
+- **Prefix:** at the end of the system prompt, or of the tool list when there
+  is no system prompt. It is added when the prefix is at least about 1,024
+  tokens (4 KiB). The same tools and system prompt for the same model must
+  have been seen on the integration in the last five minutes, or the call
+  must name `X-Gregale-AI-Session`. A prompt sent once is never marked.
+- **Conversation:** at the last eligible block of the last message, when the
+  request carries earlier turns or names `X-Gregale-AI-Session`, and the
+  whole prompt is at least about 1,024 tokens. The next turn reads the
+  conversation from the cache. Thinking blocks are never marked.
+
+The response names what was added in `X-Gregale-AI-Prompt-Cache:
+prefix,conversation`, and `outbound_ai_prompt_cache_marks_total` counts the
+marks.
+
+**Costs:**
+
+- A cache write costs 1.25 times the input price and a read 0.1 times or less.
+  Usage reports cached and cache-write tokens and prices them from the price
+  list.
+- A conversation that stops after one more turn, or a prefix seen twice and
+  never again, pays the write premium once without a read.
+- Each outboundd process tracks repeated prefixes on its own, so with several
+  replicas a prefix may need one more call per replica before it is marked.
+
+OpenAI and Gemini cache prompts without markers, so the setting changes
+nothing for them. A marked body is re-encoded as JSON: key order changes, the
+content does not.
 
 ## AI fallback routes
 
@@ -821,6 +882,56 @@ Python offers `ai_gateway_url`, `ai_gateway_headers` and `opaque_ai_user_id`
 from `faas_sdk`. `opaqueAIUserId` turns an e-mail address into a stable
 `u_…` ID. Pass a secret so the ID cannot be traced back to the address.
 
+## AI usage tags
+
+An AI call can name up to five tags with `X-Gregale-AI-Tags:
+feature=search,tier=free` (ADR-1436):
+
+- A key is 1 to 32 lowercase letters, digits, `_`, `.` or `-` that starts with
+  a letter. A value is 1 to 64 letters, digits or `. _ : @ + / -`.
+- Keys must be distinct, and the whole list goes in one header. A malformed
+  header gets `400 outbound_ai_tags_invalid`. The gateway never forwards it.
+- Like end-user IDs, tag values are stored for 31 days in the rollup and, with
+  the request log on, in the log. Do not put personal data in them.
+
+**Usage.** `gregale ai tags <id> [--date D] [--key K]` (or
+`GET .../ai-usage/tags`) lists a day's tags by cost, with each tag's limit.
+
+- Each integration tracks up to 1,000 distinct tags per UTC day. Later new
+  tags add to their key's overflow row, `<key>=~other`, so each key keeps a
+  total. A tag with a limit always keeps its own row.
+- Request-log entries carry `tags`. The log-export line carries a `tags`
+  object, and OTLP drains get `gregale.ai.tags`.
+
+**Limits.** `gregale ai tag-limits <id> --set feature=search:20` (or `PUT
+.../ai-tag-limits`) caps one exact tag's UTC-day cost. An integration holds up
+to 20 limits; `--remove` drops one and `--clear` drops them all.
+
+- A call carrying a limited tag is refused when the tag's settled cost today,
+  plus the reservations of the tag's in-flight calls, plus the call's own
+  reservation, would pass the limit. It gets `429` with
+  `X-Gregale-Outbound-Rejection: tag_daily_cost_limit` until the next UTC day.
+- Calls without the tag are unaffected. To cap each customer instead of one
+  tag, use the per-end-user limits above.
+
+**Alerts.** A tag with a limit alerts at 80% and 100% of it, once per tag, UTC
+day and threshold (ADR-1438):
+
+- the budget is `tag_daily_cost`, and the alert names the `tag`;
+- the `outbound.ai_budget.threshold` webhook carries `tag` and goes only to
+  the app whose call crossed the threshold;
+- `gregale ai alerts` shows the tag;
+- these alerts are kept for 31 days. Overflow rows never alert.
+
+**Export.** `gregale ai tags export <id> --from 2026-10-01 --to 2026-10-31
+--key customer > ai-tags.csv` (or `GET .../ai-usage/tags/export?from=&to=&key=&format=csv`)
+streams every tag row of each day in the range, ordered by day and tag. The
+columns are `usage_date, tag, requests, error_requests, input_tokens,
+output_tokens, tokens, cost_millicents`. The API's default format is NDJSON.
+
+The tag check joins admission's existing database read, so it adds no round
+trip.
+
 ## Provider key pools
 
 `gregale ai keys add <id> --label second --from-stdin` adds an extra sealed
@@ -893,6 +1004,79 @@ unencrypted, like app logs, so do not turn capture on for traffic you may not
 store. E-mail addresses, payment cards, IBANs and secrets in captures are
 always replaced with `[REDACTED:kind]` (ADR-997).
 
+## AI unmetered calls
+
+A hard cap holds only for calls the gateway meters, so a write on an AI
+integration goes through only when the gateway meters its endpoint or knows it
+to be free (ADR-1432).
+
+- **Metered:** chat completions, Responses, completions, embeddings, images,
+  audio, batches, and Veo video generation.
+- **Known free:** file uploads, token counting, OpenAI moderation,
+  cancellations, conversation items and stored-completion updates. The ADR
+  lists them per provider.
+- **Refused:** any other `POST`, and every `PUT` or `PATCH`, with
+  `403 outbound_ai_endpoint_unmetered`. Examples:
+  - realtime client secrets and calls, which let a browser spend with the
+    provider directly;
+  - vector stores and containers, billed by storage and session;
+  - fine-tuning jobs (OpenAI is winding its fine-tuning platform down);
+  - Gemini context caches and batch mode, and Vertex batch and tuning jobs;
+  - Bedrock `async-invoke`;
+  - any endpoint a provider adds later.
+- **Unchanged:** reads (`GET`, `HEAD`) and `DELETE`.
+
+`gregale ai policy <id> --allow-unmetered on` (or `"allow_unmetered": true`)
+lets refused calls through as before. They carry `X-Gregale-AI-Unmetered:
+allowed`, their spend is outside the integration's caps, and
+`outbound_ai_unmetered_calls_total` counts them by integration. Operator
+integrations take `ai_allow_unmetered` in `outboundd.toml`.
+
+## AI built-in tool fees
+
+Providers bill some built-in tools per use, on top of tokens. The gateway
+counts these uses from each response, prices them, and reserves them before the
+call (ADR-1433).
+
+| Tool | Counted from | Typical price |
+| --- | --- | --- |
+| OpenAI web search | Responses `web_search_call` items, or one per chat completion on a search model | $10 per 1,000 calls, $25 for `web_search_preview` on non-reasoning models |
+| OpenAI file search | Responses `file_search_call` items | $2.50 per 1,000 calls |
+| OpenAI code interpreter | Responses `code_interpreter_call` containers | $0.03 per GB per 20-minute session |
+| Anthropic web search | `usage.server_tool_use.web_search_requests` | $10 per 1,000 searches |
+| Gemini Google Search | `groundingMetadata.webSearchQueries` | Gemini 3 and newer: $14 per 1,000 queries; Gemini 2.5: $35 per 1,000 grounded prompts |
+
+- **Prices.** The catalog prices web search per model, and file search and
+  containers on OpenAI and Azure OpenAI models. A price list overrides them
+  with `web-search`, `file-search` and `code-session-gb`:
+
+  ```sh
+  gregale ai prices set <id> --price model=gpt-5,input=1.25,output=10,web-search=0.01,file-search=0.0025,code-session-gb=0.03
+  ```
+- **Reservation.** A request that declares a tool reserves its fee before
+  admission, so a cost cap holds ahead of the call:
+  - web search: Anthropic's `max_uses`, else 5 (one for a chat search model
+    or a Gemini 2.5 grounded prompt);
+  - file search: 2;
+  - code interpreter: one session at the container's `memory_limit` (default
+    1 GB).
+- **Containers** are charged once per 20-minute session window per outboundd
+  process. A conversation that reuses a container is not charged again within
+  the window.
+- **Not covered:**
+  - free allowances (Gemini's daily or monthly free grounding), which the
+    gateway charges like the rest;
+  - Anthropic code execution, billed by container hour;
+  - Google Maps grounding.
+- **Search content tokens** are in the providers' token counts and priced as
+  tokens. With OpenAI's generally available `web_search` tool on a
+  non-reasoning model, the catalog's preview price overstates each search
+  until a price list corrects it.
+
+`gregale ai usage` shows web searches, file searches and GB code sessions in
+its MEDIA column. `outbound_ai_tool_uses_total` counts them by integration and
+tool.
+
 ## AI media metering
 
 See [ADR-997](../adr/997-ai-gateway-media-metering-content-guardrails-replay.md).
@@ -908,13 +1092,17 @@ like chat calls:
   per audio second (Whisper) or in tokens (gpt-4o-transcribe).
 - **Speech:** `audio/speech`, billed per input character (tts-1) or settled
   at its reservation when the model has no character price.
+- **Video:** Veo `predictLongRunning` on Gemini and Vertex AI (ADR-1432),
+  billed per second of generated video at the price for its resolution.
 
 Price lists take media prices next to token prices:
 
 - `input-image` and `output-image` per million image tokens;
 - `image` per image;
 - `audio-minute` per minute of input audio;
-- `characters` per million characters.
+- `characters` per million characters;
+- `video-second` per second of video. A `model=<model>@<resolution>` entry,
+  such as `veo-3.1-generate-001@4k`, prices one resolution apart.
 
 For example:
 
@@ -924,8 +1112,9 @@ gregale ai prices set <id> --price model=dall-e-3,image=0.04 \
 ```
 
 The built-in catalog carries these prices for the image, transcription and
-speech models LiteLLM lists. `gregale ai usage` shows images, audio seconds and
-characters in its MEDIA column.
+speech models LiteLLM lists, and Veo's per-second prices by resolution.
+`gregale ai usage` shows images, audio seconds, characters and video seconds in
+its MEDIA column.
 
 Reservations use the unit a model is priced in:
 
@@ -933,6 +1122,14 @@ Reservations use the unit a model is priced in:
   token-priced model reserves 8,192 output tokens per image.
 - **Transcription:** the upload's estimated duration at 16 kbit/s.
 - **Speech:** the input characters.
+- **Video:** `durationSeconds` (default 8) times the videos asked for
+  (`numberOfVideos`, or Vertex's `sampleCount`, default 1), at `resolution`
+  (default `720p`). A successful creation settles at that amount: the provider
+  bills the seconds it was asked for, and the operation it returns reports no
+  usage. A video whose operation later fails is still counted.
+  - **Unmetered video:** a request the gateway cannot read (over 32 MiB), whose
+    parameters are out of range, or whose model has no price per second.
+    Unmetered video is refused unless the integration allows unmetered calls.
 
 ## AI content guardrails
 
@@ -965,8 +1162,79 @@ long base64 payloads, and the text fields of forms:
   refused. That covers bodies over 4 MiB, including large audio uploads, and
   JSON that does not parse.
 
-Responses are not checked. `outbound_ai_content_findings_total` counts
-findings by detector and action.
+Responses are checked only by the policy's `response` section; see [AI
+response guardrails](#ai-response-guardrails).
+`outbound_ai_content_findings_total` counts request findings by detector and
+action.
+
+## AI response guardrails
+
+`gregale ai content-policy <id> --response-email redact --response-secrets
+block --response-terms block --response-moderation flag` (or `response` in
+`PUT .../ai-content-policy`) checks what the model sends back before the
+caller sees it (ADR-1435):
+
+- **Detectors:** `email`, `payment_card`, `iban` and `secret` redact or block
+  as on requests.
+- **Terms:** `blocked_terms: block` refuses a response that contains one of
+  the policy's blocked terms.
+- **Moderation:** `flag` or `block` runs the policy's moderation check on the
+  response, with every category but `prompt_injection`, and a prompt about
+  text an AI produced. The check's settings stay stored while requests are
+  not moderated (`--moderation off`).
+
+**What is checked:** the generated text of successful generation and
+transcription calls:
+
+- OpenAI chat and text completions, Responses API messages and refusals, and
+  transcriptions;
+- Anthropic text blocks;
+- Gemini and Vertex text parts;
+- Bedrock Converse text and Bedrock invoke model output.
+
+Tool call arguments, thinking and reasoning text, citations, embeddings,
+images, speech, video and batch results are not checked. Neither are
+replays or the gateway's own checks.
+
+**Whole responses** (JSON or text) are read in full first, up to 4 MiB:
+
+- Redactions rewrite the text and send `X-Gregale-AI-Response-Redactions:
+  email=1`. The JSON is re-encoded, so key order and spacing can change.
+- A block answers `422 outbound_ai_response_blocked`, or `422
+  outbound_ai_response_flagged` after moderation. A flag sends
+  `X-Gregale-AI-Response-Moderation: flagged=<categories>`.
+- A failed moderation check under `--moderation-on-error block` answers `503
+  outbound_ai_moderation_unavailable`. A response the gateway cannot read or
+  that is over 4 MiB answers `502 outbound_ai_response_unchecked`.
+- Gemini's `streamGenerateContent` without `alt=sse` is a JSON array, so it
+  is checked whole and arrives at the end.
+
+**Streams** (server-sent events and Bedrock event streams) keep streaming:
+
+- The gateway keeps each choice's, output part's or content block's text and
+  releases an event once 512 more bytes of that text have arrived, or the
+  stream ends. Each scan reads 8 KiB back, so a finding split across events
+  is caught.
+- Redactions rewrite the held events. A block ends the stream with `event:
+  error` and `{"type":"error","error":{"code":"outbound_ai_response_blocked",...}}`,
+  which OpenAI's and Anthropic's SDKs raise, or a Bedrock exception frame.
+  OpenAI-format routes send an OpenAI error event.
+- With `--response-moderation flag`, the check runs when the stream ends.
+  With `block`, the stream is held until the check passes, so it arrives at
+  the end.
+
+**Billing:** a blocked response's tokens are still billed by the provider and
+settle as usual. A stream the gateway ended settles like an aborted stream.
+
+AI calls no longer forward the caller's `Accept-Encoding`: the gateway
+negotiates compression with the provider and reads plain bytes, so usage is
+read from every response.
+
+`outbound_ai_response_checks_total` counts checks by result (`passed`,
+`redacted`, `flagged`, `error`, `unchecked` or `blocked`), and
+`outbound_ai_response_findings_total` counts findings by detector and action.
+The log-export line carries `response_check`, `response_findings` and
+`response_moderation_categories`.
 
 ## AI replay
 
@@ -993,6 +1261,139 @@ reads a replay again. The API is
 - **Limits:** at most 100 replays per integration per UTC day
   (`429 outbound_ai_replay_limit`). Replays are kept for 3 days.
 
+## AI model canaries
+
+`gregale ai routes canary <route-id> --position 2 --percent 10
+--max-latency-increase 50` (or `PUT /v1/outbound/ai-routes/{route}/canary`)
+sends 10% of the route's calls to its second target first (ADR-1340). The rest
+of the route's order is unchanged, so a failing canary call still falls back.
+
+- **Choice:** a call with `X-Gregale-AI-Session`, or else `X-Gregale-AI-User`,
+  always gets the same answer for the route, so one conversation stays on one
+  model. Other calls are chosen at random. A canary call carries
+  `X-Gregale-AI-Route-Canary: 1`.
+- **Counts:** while the canary is active, every settled attempt of the route
+  adds to a per-minute row for its target: calls, errors (provider status 400
+  or above), time to first byte of successful attempts, and cost. Gateway
+  refusals (caps, open breakers, cooldowns) are not counted.
+- **Rollback:** every 30 seconds outboundd compares the canary with the first
+  target over the window (default 30 minutes), once the canary has `min_calls`
+  attempts (default 50). It rolls the canary back when:
+  - its error rate is worse by more than `max_error_rate_increase` points
+    (default 5); or
+  - its mean time to first byte is worse by more than
+    `max_latency_increase_percent` (unset by default).
+
+  A rolled-back canary keeps its settings and receives no more calls.
+- **Commands:** `gregale ai routes canary <route-id>` shows both targets'
+  counts; `promote` moves the canary target to the front of the route; `stop`
+  ends the canary. Replacing a route's targets also ends its canary.
+
+`outbound_ai_route_canary_calls_total` counts calls by the target tried first;
+`outbound_ai_route_canary_rollbacks_total` counts rollbacks by reason.
+Per-minute rows are kept for 48 hours.
+
+## AI route strategies
+
+`gregale ai routes set <route-id> --target <a> --target <b> --strategy latency`
+(or `strategy` in `PUT /v1/outbound/ai-routes/{route}/targets`) picks the
+target each call tries first (ADR-1434). The other targets follow in route
+order as fallbacks.
+
+- **`ordered`:** the default; route order.
+- **`weighted`:** `--weights 70,30` gives each target, in order, a weight from
+  0 to 100. The first target is drawn by weight. A call with
+  `X-Gregale-AI-Session`, or else `X-Gregale-AI-User`, always draws the same
+  target. A weight of 0 makes a target a fallback only.
+- **`latency`:** the target with the lowest mean time to first byte goes
+  first.
+- **`cost`:** the target with the lowest mean cost per successful attempt
+  goes first. With `--max-ttfb-ms`, targets slower on average go after the
+  ones within it.
+
+For `latency` and `cost`:
+
+- **Data:** settled attempts over the last 15 minutes, from the per-minute
+  rows canaries use. Rows are written for these routes even without a canary.
+  The route query outboundd already runs for each call reads the sums.
+- **Order:** targets with at least 10 attempts and an error rate of at most
+  25%, best first; then targets with fewer attempts, in route order; then
+  targets above 25% errors.
+- **Exploration:** 5% of calls put a target with fewer than 10 attempts
+  first, so every target keeps current numbers. A new route routes in order,
+  apart from exploration, until its targets have data.
+- **Cost is measured,** including cache hits and tool fees, not list prices.
+
+An active canary still sends its share to its target first; the strategy
+orders the rest. Replacing a route's targets, or starting, stopping or
+promoting a canary, resets its numbers.
+`gregale ai routes stats <route-id>` (or
+`GET /v1/outbound/ai-routes/{route}/stats`) shows each target's attempts,
+errors, mean time to first byte and mean cost.
+`outbound_ai_route_calls_total{strategy,pick}` counts calls by how the first
+target was picked: `ordered`, `weighted`, `best`, `explore` or `canary`.
+
+## AI log export
+
+`gregale ai policy <id> --log-export on` (or `"log_export": true` in the AI
+policy) sends each settled call of an app to that app's log drains (ADR-1340).
+Calls of Runs, replays and moderation checks are not exported.
+
+- **Line:** one JSON line on stream `ai_gateway`, with the model, status,
+  outcome, tokens, cost, duration, time to first byte, attempts, route and
+  canary, end user and moderation result. It never holds prompts or
+  completions.
+- **OTLP:** OTLP drains also get `gen_ai.system`, `gen_ai.response.model`,
+  `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` as attributes.
+- **Path:** settlement writes the line to `outbound_ai_log_exports` in the
+  transaction it already sends. The gateway that delivers the app's runtime
+  logs reads lines at least 15 seconds old and queues them in each drain's
+  durable sender, as source `ai-gateway` with the row ID as its sequence.
+- **Delivery:** drain health, retries and dead letters cover these lines like
+  runtime lines. A drain new to a gateway starts 30 seconds back, so an
+  ownership handoff can repeat or skip that interval.
+- **Retention:** lines are kept for 24 hours; a drain down for longer loses
+  the older ones.
+
+`outbound_ai_log_exports_total` counts lines written by integration.
+
+## AI moderation
+
+`gregale ai content-policy <id> --moderation block --moderation-kind
+classifier --moderation-integration <check-id> --moderation-model gpt-5-nano
+--moderation-categories prompt_injection,harassment` adds a model-based check
+to the content policy (ADR-1340).
+
+- **Kinds:**
+  - `openai_moderation` calls OpenAI's `/v1/moderations` (default model
+    `omni-moderation-latest`) on an OpenAI integration.
+  - `classifier` asks any chat model, through the route translators, which
+    categories apply.
+- **Categories:** `prompt_injection`, `harassment`, `hate`, `self_harm`,
+  `sexual`, `violence` and `illicit`. `openai_moderation` cannot check
+  `prompt_injection`.
+- **Actions:**
+  - `flag` lets the call through with `X-Gregale-AI-Moderation:
+    flagged=<categories>`.
+  - `block` refuses it with `400 outbound_ai_content_flagged`, which names the
+    categories but never the content.
+
+  A passed check sends `X-Gregale-AI-Moderation: passed`.
+- **Failures:** a check that fails (timeout, provider error, a reply without a
+  verdict, a deleted check integration, a body over 4 MiB the gateway cannot
+  read) sends `X-Gregale-AI-Moderation: error`. `--moderation-on-error block` then refuses the call with `503
+  outbound_ai_moderation_unavailable`; the default `allow` lets it through.
+- **What is checked:** the text of user, tool and input content, never system,
+  developer or assistant turns, and at most 32 KiB of it, latest first.
+  Responses are checked only with `--response-moderation`.
+- **When:** after admission, so a call the caps refuse never pays for a check,
+  and before the provider call.
+- **Cost:** the check runs through the check integration in process, so its
+  caps, rate limits and price list apply. It appears in usage under the caller
+  `moderation`. Moderation and replay calls are never moderated.
+
+`outbound_ai_moderation_total` counts checks by integration and result.
+
 **Dashboard.** `deploy/grafana/ai-gateway.json` charts:
 
 - calls, tokens and cost;
@@ -1000,6 +1401,144 @@ reads a replay again. The API is
 - budget rejections and alerts;
 - route fallbacks and translations;
 - key pool events.
+
+## AI batches
+
+OpenAI and Azure OpenAI `POST .../batches` and Anthropic
+`POST .../v1/messages/batches` are AI calls (ADR-1431). Before ADR-1431 they
+passed through unmetered, so batch spend skipped every cap.
+
+- **Estimate:** each request counts its body bytes at 4 bytes per token, plus
+  its output ceiling (`max_completion_tokens`, `max_output_tokens` or
+  `max_tokens`, else 4,096 tokens for a generation call). It is priced at 50%
+  of the price list, the providers' batch price.
+  - Anthropic's requests are read from the creation body (at most 32 MiB).
+  - For OpenAI, the gateway reads the input file from the provider
+    (`GET .../files/{id}/content`, at most 256 MiB), so the integration must
+    allow `GET` under that path.
+- **Refusals:** the provider is not called when the batch cannot be sized or
+  kept.
+
+  | Response | Reason |
+  | --- | --- |
+  | `400 outbound_ai_batch_unreadable` | The input file or body cannot be read or parsed. |
+  | `413 outbound_ai_batch_too_large` | The input passes the sizes above, or the estimate passes one reservation's bound. |
+  | `429` | The reservation passes a cap, as for any call. |
+- **Reservation:** the batch is admitted like a call, then kept in
+  `outbound_ai_batches` until it settles. Admission counts open batches in the
+  statement that already totals leases, so later calls see the batch's spend.
+  - A provider refusal releases the reservation.
+  - A creation response without a batch ID settles at the reservation as
+    unknown usage.
+  - A reservation the provider never confirmed is released after 60 minutes.
+- **Settlement:** outboundd checks open batches every 60 seconds, the first
+  time 60 seconds after creation. When the provider ends a batch (completed,
+  failed, expired or cancelled; Anthropic `ended`):
+  1. it reads the results file;
+  2. it records each model's usage at the batch price, under the batch's
+     caller and keyed by the batch and the model, so a retry counts once;
+  3. it releases the reservation.
+
+  A batch without a successful result settles as an error with no usage. A
+  batch still open after 72 hours settles at its reservation as unknown
+  usage. Settled rows are kept for 7 days.
+- **Content:** the content policy checks Anthropic's inline requests like
+  any body, but an OpenAI input file is only sized, never scanned. Batches are
+  not moderated, and their results are not captured or exported.
+
+`outbound_ai_batches_settled_total` counts settled batches by outcome.
+
+## AI access tokens
+
+An access token lets a caller outside Gregale act as one app on the AI gateway:
+local development, CI or a notebook (ADR-1431).
+`gregale ai tokens create --app my-api --name laptop --expires-in-hours 24`
+(or `POST /v1/apps/{slug}/ai-access-tokens`) issues one.
+
+- **Secret:** `ggai_` and 43 characters, shown once. Gregale keeps only its
+  SHA-256 hash and its first 12 characters, to recognise it.
+- **Use:** set the SDK's base URL to the public host, with
+  `/i/<integration-id>` or `/r/<route-id>` (for OpenAI, append `/v1`). Put the
+  token where the SDK puts its API key: `Authorization: Bearer`, `x-api-key`,
+  `x-goog-api-key` or `api-key`.
+- **Headers removed:** every such key header, a Gemini `?key=` parameter and
+  every Gregale identity header, before the provider credential is added.
+- **Scope:** the app's bound AI integrations and the account's routes, or only
+  the integrations listed with `--integration`. A token call is the app's call:
+  its bindings, guardrails, caps, content policy and usage apply.
+- **Limits:**
+  - 20 live tokens per app;
+  - a lifetime of 1 to 2,160 hours (default 168);
+  - a revoked token works for at most 30 more seconds (outboundd caches
+    lookups);
+  - `last_used_at` is updated at most once a minute;
+  - expired and revoked tokens are deleted after 30 days.
+- **Errors:**
+  - `401 outbound_access_token_invalid`: missing, unknown, revoked or expired;
+  - `403 outbound_access_token_not_allowed`: the integration is outside the
+    token's scope;
+  - `503 outbound_access_token_unavailable`: the lookup failed.
+
+**Operator setup.** The public listener is off by default.
+
+1. Set `public_listen_addr = "127.0.0.1:8097"` in `/etc/faas/outboundd.toml`
+   and restart outboundd. The address must be loopback; outboundd refuses
+   others. The listener serves only `/i/` and `/r/` paths, with no metrics or
+   readiness endpoints.
+2. Set `faas_ai_gateway_public_enabled: true` for the `public_edge` role. It
+   adds a Caddy site for `faas_ai_gateway_public_host` (default
+   `ai.<domain>`, covered by the Origin CA wildcard) that proxies to
+   `faas_ai_gateway_public_upstream`.
+3. Add a proxied Cloudflare DNS record for the host.
+
+## AI evaluations
+
+`gregale ai evaluate <route-id> --position 2 --judge <id> --judge-model gpt-5
+--canary-percent 10` (or `POST /v1/outbound/ai-routes/{route}/evaluations`)
+evaluates a route target against the route's first target before any user
+sees it (ADR-1431). It waits for the verdict; `gregale ai evaluate show
+<evaluation-id>` reads it again and `gregale ai evaluate list <route-id>` lists
+a route's evaluations.
+
+- **Samples:** the latest captured calls of the first target's integration
+  (default 20, at most 50):
+  - with a 2xx status and a whole capture;
+  - OpenAI chat completions or Responses calls;
+  - sent by apps or Runs, not by replays, moderation checks or evaluations.
+
+  The first target must be an OpenAI or Azure OpenAI integration with
+  `request_log_content` on.
+- **Candidate:** each sample replays on the target, with its model, without
+  streaming, translated for its provider.
+- **Judge:** the judge integration's model receives the request's user text
+  (as moderation reads it) and both answers, in a random order. It replies
+  `{"winner": "A"|"B"|"tie"}`.
+- **Verdict:** each sample is a `win`, `tie`, `loss`, `candidate_error`
+  (counted as a loss) or `judge_error` (counted as a tie). The evaluation
+  passes when losses and candidate errors are at most `max_loss_rate` percent
+  of the sample (default 20).
+- **Canary:** a passing evaluation starts its canary, unless the route already
+  has an active canary or the target changed since the evaluation started.
+  `canary_started` says whether it did.
+- **Failures:** an evaluation fails, without a verdict, with one of:
+
+  | Code | Reason |
+  | --- | --- |
+  | `outbound_ai_evaluation_no_captures` | No sample matched. |
+  | `outbound_ai_evaluation_unsupported` | The first target is not an OpenAI or Azure OpenAI integration. |
+  | `outbound_ai_evaluation_target_unavailable` | The target's integration is gone. |
+  | `outbound_ai_evaluation_judge_unavailable` | The judge's integration is gone. |
+  | `outbound_ai_evaluation_judge_failed` | More than half the samples got no verdict. |
+  | `outbound_ai_evaluation_interrupted` | It ran for more than 90 minutes. |
+- **Cost:** candidate and judge calls run in process through their
+  integrations, so caps, rate limits and price lists apply. They appear in
+  usage under the caller `evaluation`. Four samples run at a time, and each
+  call has 120 seconds.
+- **Limits:** 20 evaluations per route per UTC day
+  (`429 outbound_ai_evaluation_limit`). Evaluations are kept for 30 days.
+
+`outbound_ai_evaluations_total` counts finished evaluations by result (`pass`,
+`fail` or `failed`).
 
 ## Runs
 

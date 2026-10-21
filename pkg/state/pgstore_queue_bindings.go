@@ -27,6 +27,9 @@ func queueBindingIdentity(accountID, appID, id string) (pgtype.UUID, pgtype.UUID
 // CreateQueueBinding is the legacy intent-only seam. Consumer publication uses
 // CreateQueueBindingWithConsumer; retirement always uses its atomic counterpart.
 func (s *PgStore) CreateQueueBinding(ctx context.Context, in QueueBinding) (QueueBinding, error) {
+	if err := s.validateQueueBindingOrg(ctx, in); err != nil {
+		return QueueBinding{}, err
+	}
 	if in.EnvironmentID != "" {
 		if _, err := uuid.Parse(in.EnvironmentID); err != nil {
 			return QueueBinding{}, ErrInvalidArgument
@@ -150,3 +153,17 @@ func (s *PgStore) DeleteQueueBinding(ctx context.Context, accountID, appID, id s
 }
 
 var _ QueueBindingHistoryStore = (*PgStore)(nil)
+
+func (s *PgStore) validateQueueBindingOrg(ctx context.Context, in QueueBinding) error {
+	if in.OrgID == "" {
+		return nil
+	}
+	app, err := s.AppByID(ctx, in.AppID)
+	if err != nil {
+		return err
+	}
+	if app.OrgID != in.OrgID {
+		return ErrConflict
+	}
+	return nil
+}

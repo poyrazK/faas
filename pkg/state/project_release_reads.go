@@ -98,6 +98,11 @@ func (s *PgStore) ListProjectReleaseSetsBefore(ctx context.Context, accountID, p
 
 // Return detached data: callers must not mutate membership or expiry in memory.
 func cloneProjectReleaseSet(release ProjectReleaseSet) ProjectReleaseSet {
+	if release.Deactivation != nil {
+		receipt := *release.Deactivation
+		receipt.FallbackMembers = append([]api.ProjectReleaseSetMemberResponse(nil), receipt.FallbackMembers...)
+		release.Deactivation = &receipt
+	}
 	release.Members = append([]ProjectReleaseMember{}, release.Members...)
 	sort.Slice(release.Members, func(i, j int) bool { return release.Members[i].AppID < release.Members[j].AppID })
 	if release.ExpiresAt != nil {

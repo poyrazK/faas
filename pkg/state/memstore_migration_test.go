@@ -88,8 +88,12 @@ func TestMemStore_ListExpiredMigrations(t *testing.T) {
 		t.Fatalf("Abort(empty lease) should be rejected")
 	}
 	// 1 row in 'migrating' with no lease — must be dropped.
+	account, err := m.CreateAccount(ctx, "lease-less@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
 	leaseLessApp, err := m.CreateApp(ctx, App{
-		AccountID: "00000000-0000-0000-0000-000000000777",
+		AccountID: account.ID,
 		Slug:      "recon-leak-" + uuid.NewString(),
 		NodeID:    nodeID, Status: AppActive, RAMMB: 256,
 	})

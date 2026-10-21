@@ -156,6 +156,9 @@ func renderRouteAdvice(w io.Writer, a api.RouteAdviceResponse) {
 		_, _ = fmt.Fprintf(w, "\n[%s] %s — %s\n", s.ID, s.Kind, s.Title)
 		_, _ = fmt.Fprintf(w, "  Why:     %s\n", s.Rationale)
 		_, _ = fmt.Fprintf(w, "  Impact:  %s\n", s.Impact.Summary)
+		if line := routeAdviceContentLine(s.Evidence); line != "" {
+			_, _ = fmt.Fprintf(w, "  Content: %s\n", line)
+		}
 		for _, c := range s.Cautions {
 			_, _ = fmt.Fprintf(w, "  Caution: %s\n", c)
 		}
@@ -170,4 +173,19 @@ func renderRouteAdvice(w io.Writer, a api.RouteAdviceResponse) {
 		_, _ = fmt.Fprintf(w, "  Rules:   %d (%s)\n", len(s.Rules), strings.Join(hosts, ", "))
 	}
 	_, _ = fmt.Fprintf(w, "\nApply one with `gregale routes advise %s --apply ID` (same --since and --cache-max-age); rules are created disabled unless you add --enable, and settings take effect at once.\n", a.Slug)
+}
+
+// routeAdviceContentLine summarizes learned cacheability evidence (ADR-1188).
+func routeAdviceContentLine(e api.RouteAdviceEvidence) string {
+	if e.ContentObserved == 0 {
+		return ""
+	}
+	line := fmt.Sprintf("%d responses compared; %d repeats, %d changed", e.ContentObserved, e.ContentRepeats, e.ContentChanges)
+	if e.ContentUncacheable > 0 {
+		line += fmt.Sprintf(", %d not storable", e.ContentUncacheable)
+	}
+	if e.SafeMaxAgeSeconds > 0 {
+		return line + fmt.Sprintf("; safe max-age %ds", e.SafeMaxAgeSeconds)
+	}
+	return line + "; not enough repeats to measure a safe max-age yet"
 }

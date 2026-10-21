@@ -65,6 +65,11 @@ func TestEvaluate(t *testing.T) {
 			wantDetected: true, wantCategory: "xss"},
 		{name: "path traversal", s: sample(http.MethodGet, "/download?file=../../../../etc/passwd", nil, ""),
 			wantDetected: true, wantCategory: "lfi"},
+		// platformOverrides keeps 921150 on query argument names.
+		{name: "CR/LF in query argument name", s: sample(http.MethodGet, "/api/items?a%0d%0ab=1", nil, ""),
+			wantDetected: true, wantCategory: "protocol", wantRule: 921150},
+		{name: "unknown method", s: sample("PROPFIND", "/api/items", nil, ""),
+			wantDetected: true, wantCategory: "generic", wantRule: 911100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res, err := evaluate(waf, tc.s)

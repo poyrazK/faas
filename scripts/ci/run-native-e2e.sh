@@ -374,7 +374,7 @@ metal_test_count="$(printf '%s\n' "${metal_tests}" | wc -l | tr -d ' ')"
 # Every required test must be in the derived set. A required test that loses its
 # metal tag would otherwise silently stop being run AND stop being required.
 for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
-  printf '%s\n' "${metal_tests}" | grep -qx "${required}" ||
+  grep -qx "${required}" <<<"${metal_tests}" ||
     die "required test ${required} is not in the metal-tagged set; it lost its //go:build metal tag or was renamed"
 done
 

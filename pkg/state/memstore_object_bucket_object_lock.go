@@ -27,15 +27,25 @@ func (m *MemStore) ownedObjectBucketObjectLockLocked(account, app, bucket string
 	return cloneObjectBucketObjectLock(j), nil
 }
 
-func (m *MemStore) GetObjectBucketObjectLock(_ context.Context, account, app, bucket string) (ObjectBucketObjectLock, error) {
+func (m *MemStore) GetObjectBucketObjectLock(ctx context.Context, account, app, bucket string) (ObjectBucketObjectLock, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketObjectLock
+		return zero0, err
+	}
+
 	return m.ownedObjectBucketObjectLockLocked(account, app, bucket)
 }
 
-func (m *MemStore) RequestObjectBucketObjectLock(_ context.Context, account, app, bucket string, c api.ObjectBucketObjectLockConfiguration) (ObjectBucketObjectLock, error) {
+func (m *MemStore) RequestObjectBucketObjectLock(ctx context.Context, account, app, bucket string, c api.ObjectBucketObjectLockConfiguration) (ObjectBucketObjectLock, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketObjectLock
+		return zero0, err
+	}
+
 	j, err := m.ownedObjectBucketObjectLockLocked(account, app, bucket)
 	if err != nil {
 		return j, err
@@ -67,9 +77,14 @@ func (m *MemStore) RequestObjectBucketObjectLock(_ context.Context, account, app
 	return cloneObjectBucketObjectLock(j), nil
 }
 
-func (m *MemStore) ObserveObjectBucketObjectLock(_ context.Context, account, app, bucket string, revision int64, c api.ObjectBucketObjectLockConfiguration, known bool) (ObjectBucketObjectLock, error) {
+func (m *MemStore) ObserveObjectBucketObjectLock(ctx context.Context, account, app, bucket string, revision int64, c api.ObjectBucketObjectLockConfiguration, known bool) (ObjectBucketObjectLock, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketObjectLock
+		return zero0, err
+	}
+
 	j, err := m.ownedObjectBucketObjectLockLocked(account, app, bucket)
 	if err != nil {
 		return j, err
@@ -95,12 +110,17 @@ func (m *MemStore) ObserveObjectBucketObjectLock(_ context.Context, account, app
 	return cloneObjectBucketObjectLock(j), nil
 }
 
-func (m *MemStore) DueObjectBucketObjectLock(_ context.Context, limit int32) ([]ObjectBucketObjectLock, error) {
+func (m *MemStore) DueObjectBucketObjectLock(ctx context.Context, limit int32) ([]ObjectBucketObjectLock, error) {
 	if limit < 1 || limit > api.ObjectBucketObjectLockBatch {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectBucketObjectLock
+		return zero0, err
+	}
+
 	jobs := []ObjectBucketObjectLock{}
 	for _, j := range m.objectBucketObjectLock {
 		if objectLockActive(j) && !j.LeaseUntil.After(m.clock()) && !j.RetryAt.After(m.clock()) {
@@ -129,18 +149,28 @@ func (m *MemStore) mutateObjectBucketObjectLockLocked(bucket string, fn func(Obj
 	return cloneObjectBucketObjectLock(j), err
 }
 
-func (m *MemStore) ClaimObjectBucketObjectLock(_ context.Context, bucket, token string) (ObjectBucketObjectLock, error) {
+func (m *MemStore) ClaimObjectBucketObjectLock(ctx context.Context, bucket, token string) (ObjectBucketObjectLock, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketObjectLock
+		return zero0, err
+	}
+
 	return m.mutateObjectBucketObjectLockLocked(bucket, func(j ObjectBucketObjectLock, v ObjectBucketVersioning) (ObjectBucketObjectLock, error) {
 		pending, unsafe, multipart, _ := m.capacityReadinessLocked(bucket)
 		return claimObjectBucketObjectLock(j, token, objectLockVersioningReady(v), pending, unsafe, multipart, m.activeCapacityLocked(bucket), m.clock())
 	})
 }
 
-func (m *MemStore) DispatchObjectBucketObjectLock(_ context.Context, bucket, token string) (ObjectBucketObjectLock, error) {
+func (m *MemStore) DispatchObjectBucketObjectLock(ctx context.Context, bucket, token string) (ObjectBucketObjectLock, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketObjectLock
+		return zero0, err
+	}
+
 	return m.mutateObjectBucketObjectLockLocked(bucket, func(j ObjectBucketObjectLock, v ObjectBucketVersioning) (ObjectBucketObjectLock, error) {
 		pending, unsafe, multipart, _ := m.capacityReadinessLocked(bucket)
 		if !validObjectLockLease(j, token, m.clock()) || j.DesiredConfiguration == nil || !objectLockVersioningReady(v) || pending > 0 || unsafe || multipart || m.activeCapacityLocked(bucket) {
@@ -151,9 +181,14 @@ func (m *MemStore) DispatchObjectBucketObjectLock(_ context.Context, bucket, tok
 	})
 }
 
-func (m *MemStore) FinishObjectBucketObjectLock(_ context.Context, bucket, token string, c api.ObjectBucketObjectLockConfiguration) (ObjectBucketObjectLock, error) {
+func (m *MemStore) FinishObjectBucketObjectLock(ctx context.Context, bucket, token string, c api.ObjectBucketObjectLockConfiguration) (ObjectBucketObjectLock, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketObjectLock
+		return zero0, err
+	}
+
 	return m.mutateObjectBucketObjectLockLocked(bucket, func(j ObjectBucketObjectLock, v ObjectBucketVersioning) (ObjectBucketObjectLock, error) {
 		pending, unsafe, multipart, _ := m.capacityReadinessLocked(bucket)
 		if objectLockNeedsDrain(j) && (pending > 0 || unsafe || multipart || m.activeCapacityLocked(bucket)) {
@@ -163,9 +198,13 @@ func (m *MemStore) FinishObjectBucketObjectLock(_ context.Context, bucket, token
 	})
 }
 
-func (m *MemStore) RetryObjectBucketObjectLock(_ context.Context, bucket, token, code string) error {
+func (m *MemStore) RetryObjectBucketObjectLock(ctx context.Context, bucket, token, code string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	_, err := m.mutateObjectBucketObjectLockLocked(bucket, func(j ObjectBucketObjectLock, _ ObjectBucketVersioning) (ObjectBucketObjectLock, error) {
 		return retryObjectBucketObjectLock(j, token, code, m.clock())
 	})

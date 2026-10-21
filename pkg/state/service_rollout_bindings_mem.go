@@ -48,8 +48,18 @@ func (m *MemStore) prepareServiceBindingLocked(ctx context.Context, target Deplo
 	}
 	if requestID, _ := ctx.Value(serviceBindingRequestKey{}).(string); requestID != "" {
 		desired := 1
-		if action == ServiceRolloutActionPromote && m.apps[target.AppID].Manifest.ServiceReplicas != nil {
-			desired = m.apps[target.AppID].Manifest.ServiceReplicas.Desired
+		if action == ServiceRolloutActionPromote {
+			manifest := m.apps[target.AppID].Manifest
+			if specID := m.projectEnvironmentWorkloadDeploymentSpecs[recipientID]; specID != "" {
+				spec, ok := m.projectEnvironmentWorkloadSpecs[specID]
+				if !ok || spec.AppID != target.AppID || spec.EnvironmentSlug != workloadEnvironmentSlug(target.Scope) {
+					return target, ErrConflict
+				}
+				manifest = spec.Settings.Manifest
+			}
+			if manifest.ServiceReplicas != nil {
+				desired = manifest.ServiceReplicas.Desired
+			}
 		}
 		ready := 0
 		for _, instance := range m.instances {
@@ -94,7 +104,7 @@ func (m *MemStore) UpdateServiceRolloutBindingStatus(_ context.Context, id, requ
 	return nil
 }
 
-func (m *MemStore) RequestServiceRolloutAbort(_ context.Context, appID, id, predecessorID, reason string) (Deployment, int64, error) {
+func (m *MemStore) RequestServiceRolloutAbort(ctx context.Context, appID, id, predecessorID, reason string) (Deployment, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	target, rows, err := m.serviceRolloutTargetLocked(id)
@@ -103,6 +113,15 @@ func (m *MemStore) RequestServiceRolloutAbort(_ context.Context, appID, id, pred
 			err = ErrNotFound
 		}
 		return target, 0, err
+	}
+	if expected, ok := serviceRecoveryReview(ctx); ok {
+		current, err := m.releaseReviewLocked(appID, normalizedDeploymentScope(target.Scope))
+		if err != nil {
+			return target, 0, err
+		}
+		if err := checkServiceRecoveryReview(expected, current); err != nil {
+			return target, 0, err
+		}
 	}
 	previous, found := previousMemServiceRolloutRow(target, rows)
 	if !found || previous.id != predecessorID {

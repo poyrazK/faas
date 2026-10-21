@@ -1,5 +1,30 @@
 import { createDataClient, cursorPage as sdkCursorPage, cursorFrom, type DataClientOptions } from '@gregale/data'
 import type { Database } from './database.types.js'
+import * as contract from './database.types.js'
+import type { NoteBatchOperation } from './note-batch.js'
+import { NOTE_CHANGE_FEED_LIMITS, noteChangeCursor, noteChangePageSize } from './note-changes.js'
+import { noteSearchCursor, noteSearchPageSize, noteSearchText } from './note-search.js'
+
+// --validators is opt-in; plain generated type files remain supported.
+const inputValidators = ('inputValidators' in contract ? contract.inputValidators : undefined) as
+  { api: { notes: { insert(input: unknown): Database['api']['Tables']['notes']['Insert']; update(input: unknown): Database['api']['Tables']['notes']['Update'] } } } | undefined
+
+const InputError = ('DataAPIInputError' in contract ? contract.DataAPIInputError : undefined) as
+  (new (...args: never[]) => Error & { readonly issues: readonly { code: string; path: readonly (string | number)[] }[] }) | undefined
+
+export function noteInputFeedback(error: unknown): Partial<Record<'body' | 'tags', string>> | undefined {
+  if (!InputError || !(error instanceof InputError)) return undefined
+  const issue = error.issues?.[0]
+  if (!issue || issue.path[0] !== 'body') return undefined
+  const messages: Record<string, string> = {
+    required: 'Enter a note body.',
+    null_not_allowed: 'Enter a note body.',
+    invalid_type: 'Enter the note body as text.',
+    invalid_enum: 'Choose an allowed note body.',
+    too_long: 'This note is too long.',
+  }
+  return { body: messages[issue.code] ?? 'The note does not match the database input rules.' }
+}
 
 type NoteBatchItem = Pick<Database['api']['Tables']['notes']['Insert'], 'body' | 'priority'>
 type DetailBatchItem = Pick<Database['api']['Tables']['note_details']['Insert'], 'note_id' | 'summary'>
@@ -10,6 +35,7 @@ const noteOrder = [
 ] as const
 
 export type NoteCursor = Pick<Database['api']['Tables']['notes']['Row'], 'created_at' | 'id'>
+export type NotePatch = { body?: string; priority?: number }
 
 // Keep fractional seconds intact: Date.toISOString() would lose PG microseconds.
 export function noteCursor(row: NoteCursor): NoteCursor {
@@ -28,7 +54,29 @@ export function noteCursor(row: NoteCursor): NoteCursor {
 
 export function notesClient(options: DataClientOptions & { subject: string }) {
   const db = createDataClient<Database>(options).schema('api')
+  const subject = options.subject
   return {
+    get subject() { return subject },
+    search: (text: string, { after, size = 20 }: { after?: string; size?: number } = {}) => db.rpc('search_notes', {
+      search_text: noteSearchText(text), page_size: noteSearchPageSize(size), ...(after === undefined ? {} : { after_cursor: noteSearchCursor(after) }),
+    }).retry(false),
+    startSync: () => db.rpc('start_note_sync').retry(false),
+    readChanges: (afterCursor: string, size = NOTE_CHANGE_FEED_LIMITS.maxPageSize) => db.rpc('read_note_changes', {
+      after_cursor: noteChangeCursor(afterCursor), page_size: noteChangePageSize(size),
+    }).retry(false),
+    syncRows: ({ afterID = 0, size = NOTE_CHANGE_FEED_LIMITS.maxPageSize }: { afterID?: number; size?: number } = {}) => {
+      if (!Number.isInteger(afterID) || afterID < 0 || afterID > 2147483647) throw new RangeError('Sync row cursor must be a nonnegative PostgreSQL integer')
+      return db.from('notes').select('id,body,priority,created_at,version').order('id').gt('id', afterID).limit(noteChangePageSize(size)).retry(false)
+    },
+    applyBatchOnceV2: (key: string, operations: readonly NoteBatchOperation[]) => db.rpc('apply_note_batch_once_v2', { idempotency_key: key, operations: operations.map(item => item.operation === 'update' ? { ...item, patch: { ...item.patch } } : { ...item }) }).retry(false),
+    readBatchReceiptV2: (key: string, operations: readonly NoteBatchOperation[]) => db.rpc('read_note_batch_receipt_v2', { idempotency_key: key, operations: operations.map(item => item.operation === 'update' ? { ...item, patch: { ...item.patch } } : { ...item }) }).retry(false),
+    updateOnceV2: (key: string, id: number, expectedVersion: number, patch: NotePatch) => db.rpc('update_note_once_v2', { idempotency_key: key, note_id: id, expected_version: expectedVersion, note_patch: { ...patch } }).retry(false),
+    removeOnceV2: (key: string, id: number, expectedVersion: number) => db.rpc('delete_note_once_v2', { idempotency_key: key, note_id: id, expected_version: expectedVersion }).retry(false),
+    readUpdateReceiptV2: (key: string, id: number, expectedVersion: number, patch: NotePatch) => db.rpc('read_note_update_receipt_v2', { idempotency_key: key, note_id: id, expected_version: expectedVersion, note_patch: { ...patch } }).retry(false),
+    readDeleteReceiptV2: (key: string, id: number, expectedVersion: number) => db.rpc('read_note_delete_receipt_v2', { idempotency_key: key, note_id: id, expected_version: expectedVersion }).retry(false),
+    readCreateReceiptV2: (key: string, body: string, tags: readonly string[]) => db.rpc('read_note_create_receipt_v2', { idempotency_key: key, note_body: body, tag_names: [...tags] }).retry(false),
+    createWithTagsOnceV2: (key: string, body: string, tags?: string[]) => db.rpc('create_note_with_tags_once_v2', { idempotency_key: key, note_body: body, ...(tags === undefined ? {} : { tag_names: tags }) }).retry(false),
+    readCreateReceipt: (key: string, body: string, tags: readonly string[]) => db.rpc('read_note_create_receipt', { idempotency_key: key, note_body: body, tag_names: [...tags] }).retry(false),
     createWithTagsOnce: (key: string, body: string, tags?: string[]) => {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) throw new TypeError('A canonical UUID idempotency key is required')
       return db.rpc('create_note_with_tags_once', { idempotency_key: key, note_body: body, ...(tags === undefined ? {} : { tag_names: tags }) }).retry(false)
@@ -67,10 +115,16 @@ export function notesClient(options: DataClientOptions & { subject: string }) {
       if (!rows.length) throw new RangeError('Batch upsert requires at least one row')
       return db.from('note_details').upsert(rows.map(row => ({ ...row, subject: options.subject })), { onConflict: 'subject,note_id' }).select().retry(false)
     },
+    validateDraft: (body: string) => {
+      inputValidators?.api.notes.insert({ subject: options.subject, body })
+    },
     create: (body: string, priority = 0) => db.from('notes').insert({ subject: options.subject, body, priority }).select().single(),
-    update: async (id: number, expectedVersion: number, patch: { body?: string; priority?: number }) => {
+    validateEdit: (patch: unknown) => inputValidators?.api.notes.update(patch),
+    update: async (id: number, expectedVersion: number, patch: { body?: string; priority?: number }, signal?: AbortSignal) => {
       if (!Number.isInteger(expectedVersion) || expectedVersion < 1 || expectedVersion > 2147483647) throw new RangeError('Expected version must be a positive PostgreSQL integer')
-      const result = await db.from('notes').update(patch).eq('id', id).eq('version', expectedVersion).select().maybeSingle().retry(false)
+      let query = db.from('notes').update(patch).eq('id', id).eq('version', expectedVersion).select().retry(false)
+      if (signal) query = query.abortSignal(signal)
+      const result = await query.maybeSingle()
       if (result.error || result.data) return result
       return { ...result, status: 409, statusText: 'Conflict', data: null, error: { code: 'update_conflict', message: 'Note changed or is unavailable; reload before saving', details: '', hint: '' } }
     },

@@ -9,7 +9,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -322,6 +324,34 @@ func TestBuild_PublishesViaStorage(t *testing.T) {
 	if !bytes.Equal(got, run.fill) {
 		t.Fatalf("content mismatch: got %q, want %q", got, run.fill)
 	}
+	if res.ArtifactDigest != fmt.Sprintf("sha256:%x", sha256.Sum256(got)) || res.ArtifactBytes != int64(len(got)) {
+		t.Fatalf("builder returned a different published byte identity: %+v", res)
+	}
+	if res.GuestInitDigest != fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("INIT"))) {
+		t.Fatal("builder omitted injected guest-init identity")
+	}
+}
+
+func TestBuildGuestInitDigestRetainsInjectedBytesAfterSourceChanges(t *testing.T) {
+	guest := filepath.Join(t.TempDir(), "guest-init")
+	original := []byte("original init")
+	if err := os.WriteFile(guest, original, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mkfs := &mkfsFakeRunner{fill: []byte("fixture ext4")}
+	run := runnerFunc(func(ctx context.Context, argv []string) error {
+		if err := os.WriteFile(guest, []byte("replaced init"), 0755); err != nil {
+			return err
+		}
+		return mkfs.Run(ctx, argv)
+	})
+	result, err := NewBuilder(run).Build(t.Context(), BuildInput{Storage: newTestStorage(t), StorageKey: "apps/test/ext4", GuestInitPath: guest, Plan: api.PlanFree, Manifest: api.AppManifest{Entrypoint: []string{"/app/server"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GuestInitDigest != fmt.Sprintf("sha256:%x", sha256.Sum256(original)) {
+		t.Fatal("digest re-read replaced source instead of injected bytes")
+	}
 }
 
 // TestBuild_LegacyOutImageStillWorks covers the deprecation path:
@@ -333,7 +363,7 @@ func TestBuild_LegacyOutImageStillWorks(t *testing.T) {
 	if err := os.WriteFile(gi, []byte("INIT"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	run := &fakeRunner{}
+	run := &mkfsFakeRunner{fill: []byte("FAKE-EXT4")}
 	b := NewBuilder(run)
 	out := filepath.Join(t.TempDir(), "layer.ext4")
 	res, err := b.Build(context.Background(), BuildInput{

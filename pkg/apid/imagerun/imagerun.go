@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -39,9 +40,21 @@ type Store interface {
 	JobRunCreate(ctx context.Context, jobID, accountID, triggerKind string, parallelism, retryMaxOverride, taskTimeoutOverride *int, envOverrides json.RawMessage, tasks int, options ...state.JobRunOptions) (state.JobRun, []state.JobTask, error)
 }
 
+// InteractiveEnvGate is the apid operator gate for interactive image runs
+// (ADR-1330), on top of EnvGate.
+const InteractiveEnvGate = "FAAS_INTERACTIVE_IMAGE_RUNS"
+
+// InteractiveEnabledFromEnv reports whether the operator enabled
+// interactive image runs.
+func InteractiveEnabledFromEnv(getenv func(string) string) bool {
+	return getenv(InteractiveEnvGate) == "1"
+}
+
 // Handler serves POST /v1/image-runs.
 type Handler struct {
 	Enabled bool
+	// InteractiveEnabled admits `interactive: true` (ADR-1330).
+	InteractiveEnabled bool
 	// Store is nil when the configured store cannot hold runner jobs.
 	Store  Store
 	Audit  func(ctx context.Context, kind string, accountID *string, data map[string]any)
@@ -68,6 +81,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	var body api.CreateImageRunRequest
 	if !httpkit.DecodeJSONLimit(w, r, &body, requestMaxBytes) {
+		return
+	}
+	if body.Interactive && !h.InteractiveEnabled {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotImplemented, api.CodeNotImplemented,
+			"Interactive runs unavailable", "interactive image runs are not enabled on this control-plane host"))
 		return
 	}
 	req, prob := resolve(acct, body)
@@ -99,9 +117,20 @@ func (h *Handler) startRun(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Invalid command", fmt.Sprintf("the resolved command has %d entries; at most %d are allowed", len(argv), api.ImageRunArgvMax)))
 		return
 	}
+	opts := state.JobRunOptions{CommandArgs: &argv}
+	token := ""
+	if req.raw.Interactive {
+		var prob *api.Problem
+		if token, prob = apptaskattach.Mint(true); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		digest := sha256.Sum256([]byte(token))
+		opts.Attach = &state.JobRunAttach{TTY: req.raw.TTY, TokenSHA256: digest[:], AttachTimeoutSec: api.ImageRunAttachTimeoutSec}
+	}
 	one, zero, timeout := 1, 0, req.ensure.TaskTimeoutSec
 	run, _, err := h.Store.JobRunCreate(r.Context(), job.ID, acct.ID, "manual", &one, &zero, &timeout,
-		req.env, 1, state.JobRunOptions{CommandArgs: &argv})
+		req.env, 1, opts)
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
@@ -112,10 +141,19 @@ func (h *Handler) startRun(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"the run could not be created", "retry the request", err))
 		return
 	}
-	h.Audit(r.Context(), "image_run.created", &acct.ID, map[string]any{"job_id": job.ID, "run_id": run.ID, "image": job.ImageRef})
+	h.Audit(r.Context(), "image_run.created", &acct.ID, map[string]any{"job_id": job.ID, "run_id": run.ID, "image": job.ImageRef,
+		"interactive": req.raw.Interactive})
 	h.notify(r.Context(), fmt.Sprintf(`{"kind":"run_created","job_id":"%s","run_id":"%s","account_id":"%s"}`, job.ID, run.ID, acct.ID))
 	resp := response(job, api.ImageRunStatusQueued)
 	resp.RunID, resp.Command = run.ID, argv
+	if token != "" {
+		// The token is shown once, so the response must never be cached or
+		// stored for Idempotency-Key replay.
+		w.Header().Set("Cache-Control", "no-store")
+		httpkit.SkipIdempotentReplay(w)
+		resp.Attach = &api.AppTaskAttachInfo{Token: token, Path: api.JobTaskAttachPath(job.Name, run.ID, 0),
+			Subprotocol: api.AppTaskAttachSubprotocol}
+	}
 	httpkit.WriteJSON(w, http.StatusCreated, resp)
 }
 
@@ -193,6 +231,9 @@ func resolve(acct state.Account, body api.CreateImageRunRequest) (request, *api.
 	if prob != nil {
 		return request{}, prob
 	}
+	if prob := validateInteractive(body, timeoutSec); prob != nil {
+		return request{}, prob
+	}
 	env, prob := encodeEnv(acct.Plan, body.Env)
 	if prob != nil {
 		return request{}, prob
@@ -222,6 +263,20 @@ func validateArgv(field string, argv *[]string) *api.Problem {
 			return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid "+field, field+" entries must be UTF-8 without NUL bytes")
 		}
+	}
+	return nil
+}
+
+// validateInteractive applies ADR-1330: a tty needs an interactive run, and
+// the task timeout is the session limit.
+func validateInteractive(body api.CreateImageRunRequest, timeoutSec int) *api.Problem {
+	if body.TTY && !body.Interactive {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid tty", "tty requires interactive")
+	}
+	if body.Interactive && timeoutSec > api.ImageRunInteractiveMaxTimeoutSec {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid timeout",
+			fmt.Sprintf("an interactive run's timeout_sec is at most %d", api.ImageRunInteractiveMaxTimeoutSec))
 	}
 	return nil
 }

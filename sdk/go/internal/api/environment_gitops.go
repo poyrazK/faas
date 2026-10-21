@@ -44,8 +44,9 @@ type ApproveEnvironmentGitRevisionResponse struct {
 }
 
 type EnvironmentGitOpsStatusResponse struct {
-	Source EnvironmentGitSource   `json:"source"`
-	Runs   []EnvironmentGitOpsRun `json:"runs"`
+	WorkloadRetirements []EnvironmentWorkloadRetirement `json:"workload_retirements,omitempty"`
+	Source              EnvironmentGitSource            `json:"source"`
+	Runs                []EnvironmentGitOpsRun          `json:"runs"`
 }
 
 type AdoptEnvironmentGitOpsRequest struct {
@@ -142,15 +143,16 @@ type EnvironmentGitOpsChange struct {
 }
 
 type EnvironmentGitOpsPlan struct {
-	Manager         string                    `json:"manager"`
-	Revision        string                    `json:"revision"`
-	CommitSHA       string                    `json:"commit_sha,omitempty"`
-	Generation      int64                     `json:"generation"`
-	DesiredDigest   string                    `json:"desired_digest"`
-	ObservedVersion int64                     `json:"observed_version"`
-	Hash            string                    `json:"plan_hash"`
-	Changes         []EnvironmentGitOpsChange `json:"changes"`
-	BlockingReasons []string                  `json:"blocking_reasons"`
+	RetirementImpacts []EnvironmentWorkloadRetirementImpact `json:"retirement_impacts,omitempty"`
+	Manager           string                                `json:"manager"`
+	Revision          string                                `json:"revision"`
+	CommitSHA         string                                `json:"commit_sha,omitempty"`
+	Generation        int64                                 `json:"generation"`
+	DesiredDigest     string                                `json:"desired_digest"`
+	ObservedVersion   int64                                 `json:"observed_version"`
+	Hash              string                                `json:"plan_hash"`
+	Changes           []EnvironmentGitOpsChange             `json:"changes"`
+	BlockingReasons   []string                              `json:"blocking_reasons"`
 }
 
 func (p EnvironmentGitOpsPlan) CanApply() bool { return len(p.BlockingReasons) == 0 }
@@ -249,4 +251,20 @@ type EnvironmentFieldOwnershipRequest struct {
 }
 type EnvironmentFieldOwnershipResponse struct {
 	Status string `json:"status"`
+}
+
+// EnvironmentWorkloadRetirementImpact is a review-time inventory. Work counts
+// are informational and can grow before cutover; identities and retained
+// configuration remain bound by the plan's normal freshness hash.
+type EnvironmentWorkloadRetirementImpact struct {
+	Resource            string          `json:"resource"`
+	AppID               string          `json:"app_id"`
+	Routes              []DeclaredRoute `json:"routes,omitempty"`
+	QueueBindingIDs     []string        `json:"queue_binding_ids,omitempty"`
+	ConsumerIDs         []string        `json:"consumer_ids,omitempty"`
+	JobID               string          `json:"job_id,omitempty"`
+	PendingInvocations  int64           `json:"pending_invocations"`
+	InFlightInvocations int64           `json:"in_flight_invocations"`
+	QueuedTasks         int64           `json:"queued_tasks"`
+	InFlightTasks       int64           `json:"in_flight_tasks"`
 }

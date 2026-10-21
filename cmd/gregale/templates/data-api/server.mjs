@@ -1,15 +1,33 @@
 import http from 'node:http'
 import { refreshStatusReader, refreshTokenHash } from './refresh.mjs'
-import { spawn } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
-import { traceRequest, markRequest, requestID, runtimeFailure } from './logging.mjs'
+import { traceRequest, markRequest, markQueryShape, markDatabaseTimings, requestID, runtimeFailure } from './logging.mjs'
+import { parseDatabaseTimings, unknownDatabaseTimings } from './database-timing.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
 import { runtimeConfig, servingContracts, limits } from './config.mjs'
+import { createAdmission } from './admission.mjs'
+import { createHealth } from './health.mjs'
+import { createDeadline } from './deadline.mjs'
+import { checkSQLDeadlineConnection } from './sql-deadline.mjs'
+import { streamResponse } from './response-limit.mjs'
+import { createRateLimiter, admitRateLimit } from './rate-limit.mjs'
+import { createUserConcurrency, admitUserConcurrency } from './user-concurrency.mjs'
+import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
+import { createPoolObservation } from './pool.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
   const acceptedFingerprints = servingContracts(config)
+  const health = createHealth(config, upstreamPort, readyPort)
+  const rateLimiter = createRateLimiter(config.rateLimit)
+  const userConcurrency = createUserConcurrency(config.userConcurrency, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
+  const admitted = createAdmission(config.coordinatedRefresh ? limits.pool - 1 : limits.pool, res => {
+    res.setHeader('Retry-After', String(limits.overloadRetrySeconds))
+    problem(res, 503, 'data_api_overloaded')
+  })
   return http.createServer(async (req, res) => {
     const guarded = /^\/__gregale\/contract\/([a-f0-9]{64})(\/rest\/v1\/.*)$/.exec(req.url)
     if (guarded) req.url = guarded[2]
@@ -18,18 +36,18 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     if (origin && config.origins.includes(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Vary', 'Origin')
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id')
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id,Retry-After')
     }
     if (req.method === 'OPTIONS') {
       if (!origin || !config.origins.includes(origin)) return problem(res, 403, 'origin_not_allowed')
       res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET,HEAD,POST,PATCH,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type,Prefer,Range,Range-Unit,Accept-Profile,Content-Profile', 'Access-Control-Max-Age': '600' })
       return res.end()
     }
+    if (req.url === '/livez' && req.method === 'GET') return healthResponse(res, 200, { version: 1, live: true })
     if (req.url === '/healthz' && req.method === 'GET') {
-      try {
-        const gate = config.refreshStatus ? await config.refreshStatus() : null
-        return readiness(res, readyPort, gate ? { refresh_paused: gate.paused } : {})
-      } catch { return problem(res, 503, 'data_api_refresh_unavailable') }
+      const report = await health.snapshot(admitted.snapshot)
+      if (!report.ready) markRequest(res, report.checks.refresh === 'unavailable' ? 'data_api_refresh_unavailable' : 'data_api_unavailable')
+      return healthResponse(res, report.ready ? 200 : 503, report)
     }
     if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
     let rpc
@@ -50,49 +68,81 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     if (['/__gregale/schema', '/openapi.json'].includes(req.url) && req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
     const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1]
     if (!token) return problem(res, 401, 'token_required')
-    let payload
-    try { payload = await verify(token) } catch { return problem(res, 401, 'token_invalid') }
-    if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
-    if (guarded) {
-      if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
-      if (guarded[1] !== servingFingerprint && !acceptedFingerprints.has(guarded[1])) return problem(res, 409, 'schema_contract_mismatch')
-      if (rpc && !config.functions?.some(f => f.schema === rpc.schema && f.name === rpc.name)) return problem(res, 404, 'not_found')
-    }
-    if (req.url === '/__gregale/schema') {
-      if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
+    const declared = Number(req.headers['content-length'] ?? 0)
+    if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
+    return admitted(req, res, async () => {
+      const deadline = createDeadline(req, res, () => {
+        if (!res.headersSent) res.setHeader('Connection', 'close')
+        problem(res, 504, 'request_deadline_exceeded')
+      })
+      let userLease
       try {
-        const gate = config.refreshStatus ? await config.refreshStatus(req.headers['x-gregale-refresh-token']) : null
-        return readiness(res, readyPort, { version: 1, fingerprint: servingFingerprint, ...(gate ? { refresh_protocol: 1, refresh_paused: gate.paused, refresh_verified: gate.owns_pause === true, refresh_fingerprint: gate.fingerprint } : {}) })
-      } catch { return problem(res, 503, 'data_api_refresh_unavailable') }
-    }
-    if (!await admitRefreshRequest(config, req, res)) return
-    try {
-      // Only the binding login may become the SQL role. External role claims
-      // cannot select an administrator, owner or another application's role.
-      const claims = { ...payload, role: config.role }
-      // Never accept reserved coordination claims from an application JWT.
-      if (config.coordinatedRefresh) {
-        delete claims.gregale_refresh_hash
-        delete claims.gregale_serving_fingerprint
-        claims.gregale_serving_fingerprint = servingFingerprint
-        const refreshHash = refreshTokenHash(req.headers['x-gregale-refresh-token'])
-        if (refreshHash) claims.gregale_refresh_hash = refreshHash
-      }
-      const internal = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(config.secret.toString('base64url')))
-      if (res.destroyed || req.aborted) return
-      proxy(req, res, internal, upstreamPort, config, guarded ? `/__gregale/contract/${guarded[1]}/rest/v1` : '/rest/v1')
-    } catch { problem(res, 503, 'data_api_unavailable') }
+        let payload
+        try { payload = await verify(token) } catch {
+          if (deadline.check()) problem(res, 401, 'token_invalid')
+          return
+        }
+        if (!deadline.check()) return
+        if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
+        if (payload.gregale_read_only !== undefined && typeof payload.gregale_read_only !== 'boolean') return problem(res, 401, 'token_invalid')
+        if (!admitRateLimit(rateLimiter, payload.sub, res, problem)) return
+        if ((config.readOnly === true || payload.gregale_read_only === true) && !['GET','HEAD'].includes(req.method)) return problem(res, 403, 'read_only_identity')
+        if (guarded) {
+          if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
+          if (guarded[1] !== servingFingerprint && !acceptedFingerprints.has(guarded[1])) return problem(res, 409, 'schema_contract_mismatch')
+          if (rpc && !config.functions?.some(f => f.schema === rpc.schema && f.name === rpc.name)) return problem(res, 404, 'not_found')
+        }
+        userLease = admitUserConcurrency(userConcurrency, payload.sub, req, res, problem)
+        if (userLease === false) return
+        if (req.url.startsWith('/rest/v1/')) markQueryShape(req, res, config)
+        if (req.url === '/__gregale/schema') {
+          if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
+          try {
+            if (!deadline.enter('refresh')) return
+            if (config.refreshStatus) userLease?.dispatched()
+            const gate = config.refreshStatus ? await config.refreshStatus(req.headers['x-gregale-refresh-token']) : null
+            userLease?.completed()
+            if (!deadline.enter('readiness')) return
+            return await readiness(res, health, { version: 1, fingerprint: servingFingerprint, ...(gate ? { refresh_protocol: 1, refresh_paused: gate.paused, refresh_verified: gate.owns_pause === true, refresh_fingerprint: gate.fingerprint } : {}) }, deadline, userLease)
+          } catch { return problem(res, 503, 'data_api_refresh_unavailable') }
+        }
+        if (!await admitRefreshRequest(config, req, res, deadline, userLease)) return
+        if (!deadline.enter('signing')) return
+        // Only the binding login may become the SQL role. External role claims
+        // cannot select an administrator, owner or another application's role.
+        const claims = { ...payload, role: config.role }
+        // A caller cannot extend or enable the internal SQL retry deadline.
+        delete claims.gregale_sql_deadline
+        if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: deadline.expiresAt, coordinated_refresh: config.coordinatedRefresh === true }
+        // Never accept reserved coordination claims from an application JWT.
+        if (config.coordinatedRefresh) {
+          delete claims.gregale_refresh_hash
+          delete claims.gregale_serving_fingerprint
+          claims.gregale_serving_fingerprint = servingFingerprint
+          const refreshHash = refreshTokenHash(req.headers['x-gregale-refresh-token'])
+          if (refreshHash) claims.gregale_refresh_hash = refreshHash
+        }
+        const internal = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(new TextEncoder().encode(config.secret.toString('base64url')))
+        if (!deadline.check()) return
+        proxy(req, res, internal, upstreamPort, config, guarded ? `/__gregale/contract/${guarded[1]}/rest/v1` : '/rest/v1', deadline, userLease)
+      } catch { problem(res, 503, 'data_api_unavailable') }
+      finally { if (userLease) userLease.settled() }
+    })
   })
 }
 
 // A deliberate pause is an admission decision, not an engine failure.
 // PostgREST recovers its pool/schema cache for HTTP 503 responses, so block
 // known paused traffic here. Its SQL pre-request hook still fences races.
-async function admitRefreshRequest(config, req, res) {
+async function admitRefreshRequest(config, req, res, deadline, userLease) {
   if (!config.coordinatedRefresh) return true
   try {
+    if (!deadline.enter('refresh')) return false
     if (typeof config.refreshStatus !== 'function') throw new Error('Refresh reader unavailable')
+    userLease?.dispatched()
     const gate = await config.refreshStatus(req.headers['x-gregale-refresh-token'])
+    userLease?.completed()
+    if (!deadline.check()) return false
     if (!gate || typeof gate.paused !== 'boolean' || !/^[a-f0-9]{64}$/.test(gate.fingerprint ?? '')) throw new Error('Invalid refresh state')
     if (gate.paused && gate.owns_pause !== true) {
       problem(res, 503, 'data_api_refresh_paused')
@@ -105,25 +155,31 @@ async function admitRefreshRequest(config, req, res) {
   }
 }
 
-function problem(res, status, code) {
+function problem(res, status, code, extra = {}) {
+  if (res.destroyed || res.writableEnded) return
   markRequest(res, code)
   if (res.headersSent) { res.destroy(); return }
   res.writeHead(status, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store' })
-  res.end(JSON.stringify({ type: 'about:blank', title: code, status, code, request_id: requestID(res) }))
+  res.end(JSON.stringify({ type: 'about:blank', title: code, status, code, request_id: requestID(res), ...extra }))
 }
 
-function readiness(res, port, contract = {}) {
-  const request = http.get({ hostname: '127.0.0.1', port, path: '/ready', timeout: 2000 }, upstream => {
-    upstream.resume()
-    if (upstream.statusCode !== 200) markRequest(res, 'data_api_unavailable')
-    res.writeHead(upstream.statusCode === 200 ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-    res.end(JSON.stringify({ ready: upstream.statusCode === 200, ...(upstream.statusCode === 200 ? contract : {}) }))
-  })
-  request.on('timeout', () => request.destroy())
-  request.on('error', () => problem(res, 503, 'data_api_unavailable'))
+function healthResponse(res, status, body) {
+  if (res.destroyed || res.writableEnded) return
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+  res.end(JSON.stringify(body))
 }
 
-function proxy(req, res, token, port, config, restBasePath) {
+async function readiness(res, health, contract = {}, deadline, userLease) {
+  userLease?.dispatched()
+  const sql = await health.sql()
+  if (sql !== 'unknown') userLease?.completed()
+  const ready = sql === 'ready'
+  if (deadline && !deadline.check()) return
+  if (!ready) markRequest(res, 'data_api_unavailable')
+  return healthResponse(res, ready ? 200 : 503, { ready, ...(ready ? contract : {}) })
+}
+
+function proxy(req, res, token, port, config, restBasePath, deadline, userLease) {
   const declared = Number(req.headers['content-length'] ?? 0)
   if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
   const headers = { authorization: `Bearer ${token}` }
@@ -131,14 +187,19 @@ function proxy(req, res, token, port, config, restBasePath) {
   // identity, proxy credentials or hop-by-hop headers.
   for (const name of ['accept', 'content-type', 'prefer', 'range', 'range-unit', 'accept-profile', 'content-profile']) if (req.headers[name]) headers[name] = req.headers[name]
   const path = req.url === '/openapi.json' ? '/' : req.url.slice('/rest/v1'.length)
-  const upstream = http.request({ hostname: '127.0.0.1', port, path, method: req.method, headers, timeout: limits.queryMs }, response => {
-    if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config, restBasePath)
+  if (!deadline.enter('upstream') || !deadline.dispatch()) return
+  userLease?.dispatched()
+  markDatabaseTimings(res, unknownDatabaseTimings('no_response'))
+  // The total deadline owns expiry and aborts this request. A second socket
+  // timer can fire early and preempt its stable response and deadline evidence.
+  const upstream = http.request({ hostname: '127.0.0.1', port, path, method: req.method, headers, signal: deadline.signal }, response => {
+    userLease?.completed()
+    if (!deadline.enter('streaming')) { response.destroy(); return }
+    markDatabaseTimings(res, parseDatabaseTimings(response.headers['server-timing']))
+    response.on('data', () => deadline.check())
+    if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config, restBasePath, deadline)
     if (response.statusCode >= 400) markRequest(res, 'upstream_error')
-    const out = {}
-    for (const name of ['content-type', 'content-range', 'preference-applied', 'location']) if (response.headers[name]) out[name] = response.headers[name]
-    res.writeHead(response.statusCode, { ...out, 'Cache-Control': 'no-store' })
-    response.pipe(res)
-    response.on('error', () => { markRequest(res, 'data_api_unavailable'); res.destroy() })
+    streamResponse(response, res, req.method, deadline, problem)
   })
   let bytes = 0
   req.on('data', chunk => {
@@ -147,22 +208,22 @@ function proxy(req, res, token, port, config, restBasePath) {
   })
   req.on('aborted', () => upstream.destroy())
   res.on('close', () => { if (!res.writableEnded) upstream.destroy() })
-  upstream.on('timeout', () => { problem(res, 504, 'query_timeout'); upstream.destroy() })
-  upstream.on('error', () => { if (!res.writableEnded) problem(res, 503, 'data_api_unavailable') })
+  upstream.on('error', () => { if (deadline.check()) problem(res, 503, 'data_api_unavailable') })
   req.pipe(upstream)
 }
 
-function openAPISpec(response, res, config, restBasePath) {
+function openAPISpec(response, res, config, restBasePath, deadline) {
   let bytes = 0
   const chunks = []
   response.on('data', chunk => {
+    if (!deadline.check()) return
     bytes += chunk.length
     if (bytes > limits.outputBytes) { problem(res, 503, 'schema_document_too_large'); response.destroy(); return }
     chunks.push(chunk)
   })
   response.on('error', () => { if (!res.writableEnded) problem(res, 503, 'data_api_unavailable') })
   response.on('end', () => {
-    if (res.writableEnded) return
+    if (!deadline.check()) return
     try {
       const document = JSON.parse(Buffer.concat(chunks).toString('utf8'))
       // Swagger 2 defaults an omitted host/scheme to the document's origin.
@@ -177,6 +238,7 @@ function openAPISpec(response, res, config, restBasePath) {
       }
       const output = JSON.stringify(enrichOpenAPI(document, config.snapshot, schema))
       if (Buffer.byteLength(output) > limits.outputBytes) return problem(res, 503, 'schema_document_too_large')
+      if (!deadline.check()) return
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       res.end(output)
     } catch { problem(res, 503, 'data_api_unavailable') }
@@ -185,6 +247,11 @@ function openAPISpec(response, res, config, restBasePath) {
 
 export async function main(env = process.env) {
   const config = runtimeConfig(env)
+  if (config.connectionObservation || config.sqlDeadline) {
+    const { stdout } = await promisify(execFile)(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', ['--version'], { timeout: limits.connectionReportMs, maxBuffer: limits.healthBytes })
+    if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
+  }
+  if (config.sqlDeadline) await checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh })
   const snapshot = await inspect(config.connection, config.schemas)
   config.snapshot = snapshot
   config.functions = snapshot.functions
@@ -199,11 +266,14 @@ export async function main(env = process.env) {
     config.refreshStatus = refresh.read
   }
   const jwks = createRemoteJWKSet(config.auth.jwks, { timeoutDuration: 3000, cacheMaxAge: 300000 })
+  config.poolObservation = createPoolObservation(3001, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
   const verify = tokenVerifier(config.auth, jwks)
   // Avoid inheriting arbitrary PGRST_* overrides from application secrets.
   const childEnv = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith('PGRST_')))
   const child = spawn(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', [], { env: { ...childEnv, ...config.postgrestEnv }, stdio: ['ignore', 'ignore', 'ignore'] })
   const server = createServer(config, verify)
+  const stopReporting = startConnectionReporter(config)
+  server.on('close', stopReporting)
   server.on('close', () => { void refresh?.close() })
   let stopping = false
   server.requestTimeout = limits.queryMs + 5000

@@ -15,6 +15,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	canarycatalog "github.com/onebox-faas/faas/pkg/api/canary"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -50,6 +51,11 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	decision, problem := advanceDecision(req, d, requireWorkerLease)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	current, next, problem := canaryStagesForAdvance(d, req.ExpectedStep)
 	if problem != nil {
 		if problem.Status >= http.StatusInternalServerError {
@@ -78,6 +84,7 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
+	audit.Data = state.WithAuditDecision(audit.Data, decision)
 	profileIntent, problem := s.profileGateAdvanceIntent(r, acct, app, d, req, requireWorkerLease, next.Percent)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -101,11 +108,12 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 			ProfileGateDecision: &profileDecision, ProfileGateOverride: req.ProfileGateOverride, ProfileGateRollback: profileIntent == 0,
 			RequireSafeReleaseLease:   requireWorkerLease,
 			RequireCanaryStageElapsed: requireWorkerLease,
-			CanaryStageDuration:       current.Duration,
+			CanaryStageDuration:       release.StageDwell(current, req.Decision),
 			Audit:                     audit,
 			RouteCheckFingerprint:     s.routeGateFingerprint,
 			RouteGateDecision:         &gateDecision,
 			RouteHealthDecision:       &healthDecision,
+			Decision:                  decision,
 		})
 		return writeErr
 	})
@@ -120,6 +128,23 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, api.CanaryAdvanceResponse{
 		Deployment: s.deploymentResponse(r.Context(), updated, app), AuditID: int64ToAuditIDString(auditID), RouteGate: &gateDecision, RouteHealth: &healthDecision, ProfileGate: &profileDecision,
 	})
+}
+
+// advanceDecision is the ADR-1447 record for an advance: meterd's validated
+// evidence on the worker route, or advance_manual for a person's request.
+// Customer requests cannot supply evidence.
+func advanceDecision(req api.AdvanceCanaryRequest, d state.Deployment, worker bool) (json.RawMessage, *api.Problem) {
+	if !worker {
+		if req.Decision != nil {
+			return nil, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid canary advance", "decision is reserved for Gregale's Safe Deploy worker")
+		}
+		return release.ManualDecision(api.RolloutRuleAdvanceManual, d, time.Now()), nil
+	}
+	decision, err := release.WorkerDecision(req.Decision, api.RolloutDecisionAdvance)
+	if err != nil {
+		return nil, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid rollout decision", err.Error())
+	}
+	return decision, nil
 }
 
 func (s *server) loadCanaryDeployment(w http.ResponseWriter, r *http.Request, acct state.Account) (state.Deployment, state.App, bool) {
@@ -206,6 +231,8 @@ func (s *server) writeCanaryAdvanceError(ctx context.Context, w http.ResponseWri
 	var routeBlocked *state.RouteGateBlockedError
 	var healthBlocked *state.RouteHealthBlockedError
 	switch {
+	case state.IsMCPReadinessRequired(err):
+		api.WriteProblem(w, api.NewProblem(409, api.CodeMCPReadinessRequired, "MCP readiness required", "Refresh deployment readiness before increasing traffic."))
 	case errors.As(err, &profileBlocked):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProfileGateBlocked, "Canary profiling gate held", profileBlocked.Decision.Reason).WithHint("Inspect GET /v1/deployments/"+id+"/canary/profile-gate for the exact stage, baseline, route and code evidence. A customer may explicitly override this profile gate with the current policy revision and a reason."))
 	case errors.Is(err, state.ErrInvalidArgument):

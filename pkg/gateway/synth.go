@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // batchDispatchStatus values are the per-record terminal states the
@@ -144,8 +145,10 @@ type SynthServer struct {
 	dispatcher SynthDispatcher
 	log        *slog.Logger
 	srv        *http.Server
-	mux        *http.ServeMux
-	calls      atomic.Int64
+	// drain lets connections accepted before Stop deliver their requests.
+	drain *wire.HTTPDrain
+	mux   *http.ServeMux
+	calls atomic.Int64
 	// internalSvcVerifier (ADR-119) is the per-service
 	// public-key allowlist consulted by the synth-side gate
 	// (synth_internal_only.go). nil = gate disabled; an
@@ -293,6 +296,17 @@ func (s *SynthServer) Start() error {
 	if s.srv == nil {
 		return fmt.Errorf("gateway synth: server not configured (call NewSynthServer first)")
 	}
+	// Production inherits the socket from faas-gatewayd-internal.socket, which
+	// keeps it open across restarts so gatewayd-public's connections queue
+	// for the replacement instead of failing. The unit sets mode 0660.
+	inherited, ok, err := inheritedSynthListener("unix", s.socketPath)
+	if err != nil {
+		return fmt.Errorf("gateway synth: %w", err)
+	}
+	if ok {
+		s.serve(inherited)
+		return nil
+	}
 	// Remove any stale socket from a previous run (server crashed, etc).
 	// The platform treats the socket as owned by this process; recreate
 	// is safer than failing on EADDRINUSE.
@@ -311,19 +325,33 @@ func (s *SynthServer) Start() error {
 		_ = lis.Close()
 		return fmt.Errorf("gateway synth: chmod: %w", err)
 	}
+	wire.Share(lis) // a hand-off successor serves the same socket (ADR-1736)
+	s.serve(lis)
+	return nil
+}
+
+func (s *SynthServer) serve(lis net.Listener) {
 	s.log.Info("gateway synth: listening", "socket", s.socketPath)
+	s.drain = wire.NewHTTPDrain(s.srv)
+	lis = s.drain.Listener(lis)
 	go func() {
-		if err := s.srv.Serve(lis); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := s.drain.ServeErr(s.srv.Serve(lis)); err != nil {
 			s.log.Warn("gateway synth: serve", "err", err)
 		}
 	}()
-	return nil
 }
+
+// inheritedSynthListener is wire.InheritedListener; tests substitute a
+// socket they hold open across a simulated restart.
+var inheritedSynthListener = wire.InheritedListener
 
 // Stop tears down the listener. Idempotent.
 func (s *SynthServer) Stop(ctx context.Context) error {
 	if s.srv == nil {
 		return nil
+	}
+	if s.drain != nil {
+		return s.drain.Shutdown(ctx, s.srv)
 	}
 	return s.srv.Shutdown(ctx)
 }
@@ -471,13 +499,17 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 // function can branch on shape without re-parsing the dispatch
 // response.
 type invocationDispatchRequest struct {
-	PlatformTenantID string            `json:"platform_tenant_id,omitempty"`
-	InvocationID     string            `json:"invocation_id"`
-	AppID            string            `json:"app_id"`
-	Source           string            `json:"source"` // async_invoke|queue|delayed_task|cron
-	Method           string            `json:"method"`
-	Path             string            `json:"path"`
-	Headers          map[string]string `json:"headers,omitempty"`
+	InvocationAttempt          int               `json:"invocation_attempt,omitempty"`
+	InvocationReplayGeneration int64             `json:"invocation_replay_generation,omitempty"`
+	InvocationReplayedFrom     string            `json:"invocation_replayed_from,omitempty"`
+	InvocationReplayRoot       string            `json:"invocation_replay_root,omitempty"`
+	PlatformTenantID           string            `json:"platform_tenant_id,omitempty"`
+	InvocationID               string            `json:"invocation_id"`
+	AppID                      string            `json:"app_id"`
+	Source                     string            `json:"source"` // async_invoke|queue|delayed_task|cron
+	Method                     string            `json:"method"`
+	Path                       string            `json:"path"`
+	Headers                    map[string]string `json:"headers,omitempty"`
 	// BodyB64 is base64-encoded so JSON encoding stays trivial and
 	// the cron path (no body) ships an empty string by default.
 	BodyB64 string `json:"body_b64,omitempty"`
@@ -507,6 +539,10 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	}
 	if req.AppID == "" || req.InvocationID == "" {
 		http.Error(w, "app_id + invocation_id required", http.StatusBadRequest)
+		return
+	}
+	if err := validateInvocationAttemptMetadata(req); err != nil {
+		http.Error(w, "invocation attempt metadata invalid", http.StatusBadRequest)
 		return
 	}
 	workflowOperationAccount := ""
@@ -581,6 +617,10 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		payload = dec
 	}
 	inv := state.Invocation{
+		Attempts:                   req.InvocationAttempt,
+		ReplayGeneration:           req.InvocationReplayGeneration,
+		ReplayedFromInvocationID:   req.InvocationReplayedFrom,
+		ReplayRootInvocationID:     req.InvocationReplayRoot,
 		PlatformTenantID:           req.PlatformTenantID,
 		ID:                         req.InvocationID,
 		AppID:                      req.AppID,
@@ -692,6 +732,9 @@ type batchDispatchRequest struct {
 	Source       string                `json:"source"`
 	TriggerID    string                `json:"trigger_id"`
 	Records      []batchDispatchRecord `json:"records"`
+	// Delivery "batch" invokes the function once for every record
+	// (ADR-1321); empty keeps one invocation per record.
+	Delivery string `json:"delivery,omitempty"`
 }
 
 // batchDispatchRecord is one trigger-delivered record's envelope.
@@ -893,7 +936,13 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 	defer cancel()
 
 	results := make([]batchDispatchResult, 0, len(req.Records))
-	for _, rec := range req.Records {
+	// Batch delivery (ADR-1321) answers every record with one invocation;
+	// otherwise each record is invoked on its own below.
+	perRecord := req.Records
+	if batchDeliveryEligible(req) {
+		results, perRecord = s.dispatchBatchAsOneInvocation(ctx, req, recordTimeout), nil
+	}
+	for _, rec := range perRecord {
 		if ctx.Err() != nil {
 			// Total-batch timeout fired (or client disconnected).
 			// Mark every remaining record with batch_timeout so

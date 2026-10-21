@@ -55,7 +55,18 @@ test('request logs correlate success, auth and rejection without recording calle
     assert.equal(record.code, item.code)
     assert.ok(Number.isFinite(record.duration_ms) && record.duration_ms >= 0)
     assert.ok(Number.isFinite(Date.parse(record.time)))
-    assert.deepEqual(Object.keys(record).sort(), ['code', 'duration_ms', 'event', 'level', 'method', 'outcome', 'request_id', 'route', 'status', 'time'])
+    const fields = ['code', 'duration_ms', 'event', 'level', 'method', 'outcome', 'request_id', 'route', 'status', 'time']
+    if (item.headers.Authorization && item.route !== 'unknown') {
+      fields.push('admission', 'timings')
+      assert.equal(record.admission.outcome, 'admitted')
+      assert.ok(record.admission.wait_ms >= 0)
+    }
+    if (item.status === 200 || item.code === 'upstream_error') {
+      fields.push('database_timings')
+      assert.equal(record.database_timings.state, 'unknown')
+      assert.equal(record.database_timings.reason, 'missing_header')
+    }
+    assert.deepEqual(Object.keys(record).sort(), fields.sort())
   }
   assert.doesNotMatch(JSON.stringify(logs), /sentinel|postgres:|Bearer/)
 })
@@ -87,4 +98,29 @@ test('default writer emits JSON lines and redacts runtime failure inputs', async
   assert.equal(JSON.parse(lines[0]).request_id, response.headers.get('x-request-id'))
   assert.equal(JSON.parse(lines[1]).event, 'data_api_postgrest_start_failed')
   assert.equal(JSON.parse(lines[2]).event, 'data_api_runtime_failed')
+})
+
+test('opt-in query shapes use catalog metadata and redact values, claims, bodies and unknown fields', async t => {
+ const config = runtimeConfig({ DATABASE_URL: 'postgres://restricted:p@localhost/db', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes', DATA_API_QUERY_SHAPES: '1' })
+ config.fingerprint = 'a'.repeat(64)
+ config.snapshot = { tables: [{ schema: 'api', name: 'notes', columns: [{name:'id'},{name:'body'}] }] }
+ config.functions = [{ schema: 'api', name: 'count_notes', args: [] }]
+ const logs = []
+ const upstream = http.createServer((req,res) => { res.writeHead(req.method==='PATCH'?409:200);res.end('[]') })
+ await new Promise(resolve=>upstream.listen(0,'127.0.0.1',resolve))
+ const server = createServer(config, async()=>({sub:'private-subject',exp:9999999999}),upstream.address().port,undefined,record=>logs.push(record))
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
+ t.after(()=>{server.closeAllConnections();server.close();upstream.closeAllConnections();upstream.close()})
+ const base=`http://127.0.0.1:${server.address().port}`
+ for (const path of ['/rest/v1/notes?body=eq.private-a&select=id,body&order=id.desc&limit=20','/rest/v1/notes?body=eq.private-b&select=body,id&order=id.desc&limit=200','/rest/v1/notes?private-key=eq.private-value&or=(body.eq.private-data)&select=private-field','/rest/v1/private-table','/rest/v1/rpc/count_notes']) {
+  const response=await fetch(base+path,{method:path.includes('/rpc/')?'POST':'GET',headers:{Authorization:'Bearer private-token'}});await response.text();await new Promise(setImmediate)
+ }
+ assert.equal(logs[0].operation,'api.notes');assert.equal(logs[0].query_shape_id,logs[1].query_shape_id)
+ assert.equal(logs[0].query_shape.order[0].nulls_first,true)
+ assert.equal(logs[2].query_shape.complex,true);assert.equal(logs[3].operation,undefined)
+ assert.equal(logs[4].operation_kind,'rpc')
+ assert.doesNotMatch(JSON.stringify(logs),/private-|Bearer/)
+ const response=await fetch(base+'/rest/v1/notes');await response.text();await new Promise(setImmediate)
+ assert.equal(logs.at(-1).operation,undefined)
+ assert.throws(()=>runtimeConfig({ DATABASE_URL:'postgres://restricted:p@localhost/db',DATA_API_ISSUER:'https://issuer.example',DATA_API_JWKS_URL:'https://issuer.example/jwks',DATA_API_AUDIENCE:'notes',DATA_API_QUERY_SHAPES:'anything' }))
 })

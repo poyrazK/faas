@@ -33,8 +33,11 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 func UnitSchedd() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description: "onebox-faas schedd — scheduler + lifecycle owner",
-		After:       []string{"network.target", "postgresql.service", "faas-cp.slice", "faas-brokerq.slice"},
-		Wants:       []string{"faas-cp.slice", "faas-brokerq.slice"},
+		// faas-schedd.socket is opt-in: the control-plane role adds
+		// Wants=/After= on it, with the matching listen address, in a
+		// drop-in when faas_schedd_listen_addr is set (ADR-1736).
+		After: []string{"network.target", "postgresql.service", "faas-cp.slice", "faas-brokerq.slice"},
+		Wants: []string{"faas-cp.slice", "faas-brokerq.slice"},
 		// PostgreSQL is local on the control plane and remote on
 		// compute-node schedds. Readiness owns the DATABASE_URL
 		// dependency, so a missing local postgres unit must not prevent
@@ -103,6 +106,12 @@ func UnitSchedd() daemonunit.Unit {
 			// and CLI advertise. The vmmd JobColdBoot RPC and durable workflow
 			// executor are both wired before the loop starts.
 			{Key: "FAAS_JOBS_DISPATCH", Value: "1"},
+			{Key: "FAAS_CI_INTERNAL_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_INTERNAL_ACCOUNTS", Value: ""},
+			{Key: "FAAS_CI_GITHUB_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_DISPATCH_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_TRANSPORT_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_RUNTIME_URL", Value: ""},
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
 		},
 		LoadCredential: []daemonunit.LoadCred{

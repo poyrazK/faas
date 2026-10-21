@@ -71,6 +71,23 @@ func TestLoadConfig_RoutingEnvironmentOverrides(t *testing.T) {
 	}
 }
 
+// The listen address the unit renders wins over the TOML, so the durable
+// socket rendered from the same variable always matches (ADR-1736).
+func TestLoadConfig_ListenAddrEnvironmentOverridesTOML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "schedd.toml")
+	if err := os.WriteFile(path, []byte("listen_addr = \"unix:///run/faas/schedd.sock\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAAS_SCHEDD_LISTEN_ADDR", "tcp://0.0.0.0:9091")
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := cfg.ResolveListenTarget(); got != "tcp://0.0.0.0:9091" {
+		t.Fatalf("listen target = %q, want the unit's tcp://0.0.0.0:9091", got)
+	}
+}
+
 func TestLoadConfig_OverridesFromTOML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "schedd.toml")
 	body := `
@@ -308,6 +325,80 @@ func TestLoadConfig_FrozenTier(t *testing.T) {
 	t.Setenv("FAAS_FROZEN_TIER", "maybe")
 	if _, err := LoadConfig(tomlPath); err == nil {
 		t.Fatal("FAAS_FROZEN_TIER=maybe accepted")
+	}
+}
+
+// ADR-1740: the frozen fast path is off by default; frozen_fast_path or
+// FAAS_FROZEN_FAST_PATH turns it on, and the env wins.
+func TestLoadConfig_FrozenFastPath(t *testing.T) {
+	t.Setenv("FAAS_FROZEN_FAST_PATH", "")
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil || cfg.FrozenFastPath {
+		t.Fatalf("default FrozenFastPath = %v, %v; want off", cfg != nil && cfg.FrozenFastPath, err)
+	}
+	tomlPath := filepath.Join(t.TempDir(), "schedd.toml")
+	if err := os.WriteFile(tomlPath, []byte("frozen_fast_path = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(tomlPath); err != nil || !cfg.FrozenFastPath {
+		t.Fatalf("frozen_fast_path = true: FrozenFastPath = %v, %v", cfg != nil && cfg.FrozenFastPath, err)
+	}
+	t.Setenv("FAAS_FROZEN_FAST_PATH", "false")
+	if cfg, err = LoadConfig(tomlPath); err != nil || cfg.FrozenFastPath {
+		t.Fatalf("FAAS_FROZEN_FAST_PATH=false over TOML: FrozenFastPath = %v, %v", cfg != nil && cfg.FrozenFastPath, err)
+	}
+	t.Setenv("FAAS_FROZEN_FAST_PATH", "maybe")
+	if _, err := LoadConfig(tomlPath); err == nil {
+		t.Fatal("FAAS_FROZEN_FAST_PATH=maybe accepted")
+	}
+}
+
+// ADR-1741: the owner cache is off by default; owner_cache or
+// FAAS_OWNER_CACHE turns it on, and the env wins.
+func TestLoadConfig_OwnerCache(t *testing.T) {
+	t.Setenv("FAAS_OWNER_CACHE", "")
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil || cfg.OwnerCache {
+		t.Fatalf("default OwnerCache = %v, %v; want off", cfg != nil && cfg.OwnerCache, err)
+	}
+	tomlPath := filepath.Join(t.TempDir(), "schedd.toml")
+	if err := os.WriteFile(tomlPath, []byte("owner_cache = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(tomlPath); err != nil || !cfg.OwnerCache {
+		t.Fatalf("owner_cache = true: OwnerCache = %v, %v", cfg != nil && cfg.OwnerCache, err)
+	}
+	t.Setenv("FAAS_OWNER_CACHE", "false")
+	if cfg, err = LoadConfig(tomlPath); err != nil || cfg.OwnerCache {
+		t.Fatalf("FAAS_OWNER_CACHE=false over TOML: OwnerCache = %v, %v", cfg != nil && cfg.OwnerCache, err)
+	}
+	t.Setenv("FAAS_OWNER_CACHE", "maybe")
+	if _, err := LoadConfig(tomlPath); err == nil {
+		t.Fatal("FAAS_OWNER_CACHE=maybe accepted")
+	}
+}
+
+// ADR-1151 step 3: frozen_tier_apps extends the tier to apps, off by default.
+func TestLoadConfig_FrozenTierApps(t *testing.T) {
+	t.Setenv("FAAS_FROZEN_TIER_APPS", "")
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil || cfg.FrozenTierApps {
+		t.Fatalf("default FrozenTierApps = %v, %v; want off", cfg != nil && cfg.FrozenTierApps, err)
+	}
+	tomlPath := filepath.Join(t.TempDir(), "schedd.toml")
+	if err := os.WriteFile(tomlPath, []byte("frozen_tier_apps = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = LoadConfig(tomlPath); err != nil || !cfg.FrozenTierApps {
+		t.Fatalf("frozen_tier_apps = true: FrozenTierApps = %v, %v", cfg != nil && cfg.FrozenTierApps, err)
+	}
+	t.Setenv("FAAS_FROZEN_TIER_APPS", "false")
+	if cfg, err = LoadConfig(tomlPath); err != nil || cfg.FrozenTierApps {
+		t.Fatalf("FAAS_FROZEN_TIER_APPS=false over TOML: FrozenTierApps = %v, %v", cfg != nil && cfg.FrozenTierApps, err)
+	}
+	t.Setenv("FAAS_FROZEN_TIER_APPS", "maybe")
+	if _, err := LoadConfig(tomlPath); err == nil {
+		t.Fatal("FAAS_FROZEN_TIER_APPS=maybe accepted")
 	}
 }
 

@@ -407,20 +407,21 @@ func TestRenderDeploymentRow_PinsColumnLayout(t *testing.T) {
 }
 
 // TestRenderDeploymentRowWide_PinsColumnLayout mirrors the above for
-// the --wide annotation layout (issue #977 / ADR-116). 9 columns
-// total: id / app / status / kind / by / pr / tag / reason /
-// created. We pin via %-verb count in the format string rather than
+// the --wide annotation layout (issue #977 / ADR-116). 10 columns
+// total: id / revision (ADR-198) / app / status / kind / by / pr /
+// tag / reason / created. We pin via %-verb count in the format string rather than
 // strings.Fields on the rendered line — the wide format pads each
 // column with spaces so strings.Fields collapses the leading-pad
 // columns into the data column. Format-string count is the canonical
 // tripwire.
 func TestRenderDeploymentRowWide_PinsColumnLayout(t *testing.T) {
-	if got, want := countFormatVerbs(deploymentRowFmtWide), 9; got != want {
+	if got, want := countFormatVerbs(deploymentRowFmtWide), 10; got != want {
 		t.Fatalf("deploymentRowFmtWide has %d %% verbs, want %d", got, want)
 	}
 	var buf bytes.Buffer
 	renderDeploymentRowWide(&buf, api.DeploymentResponse{
 		ID:          "0123456789abcdef0123456789abcdef",
+		Revision:    7,
 		AppID:       "fedcba9876543210fedcba9876543210",
 		ImageDigest: "sha256:abc123",
 		Kind:        "app",
@@ -434,7 +435,7 @@ func TestRenderDeploymentRowWide_PinsColumnLayout(t *testing.T) {
 	line := strings.TrimRight(buf.String(), "\n")
 	// Sanity-check the rendered line carries the four annotation
 	// tokens (by / pr / tag / reason).
-	for _, want := range []string{"poyraz", "977", "hotfix", "Emergency rollback after payment provide…"} {
+	for _, want := range []string{" v7 ", "poyraz", "977", "hotfix", "Emergency rollback after payment provide…"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("rendered line missing %q: %q", want, line)
 		}
@@ -460,8 +461,8 @@ func TestRenderDeploymentRowWide_EmptyAnnotationsRendersDash(t *testing.T) {
 	// Each annotation column contributes one dash; columns are
 	// space-padded so the dash rides at the right edge of the pad.
 	dashCount := strings.Count(line, " -")
-	if dashCount < 4 {
-		t.Errorf("expected ≥4 ' -' (annotation dashes), got %d in %q", dashCount, line)
+	if dashCount < 5 {
+		t.Errorf("expected ≥5 ' -' (revision and annotation dashes), got %d in %q", dashCount, line)
 	}
 }
 

@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -84,6 +86,15 @@ type BackendConfig struct {
 	SecretEnv map[string]string `json:"secret_env,omitempty"`
 	// DataAPIEnabled changes the qualified credential contract, not placement.
 	DataAPIEnabled bool `json:"data_api_enabled,omitempty"`
+	// AuthEnabled advertises the ADR-1190 auth credential mode under the same
+	// rule: a fresh qualification report must carry its evidence.
+	AuthEnabled bool `json:"auth_enabled,omitempty"`
+	// LiveHubURL enables ADR-20261016151947 live queries on this backend's databases:
+	// the ws:// or wss:// URL of the livequeryd hub serving a database, where
+	// {database_id} stands for the database's ID. Empty leaves live queries
+	// off. Neon backends cannot set it: a replication consumer would keep
+	// their computes awake.
+	LiveHubURL string `json:"live_hub_url,omitempty"`
 }
 
 type Backend struct {
@@ -93,6 +104,17 @@ type Backend struct {
 	Fingerprint  string
 	Capabilities Capabilities
 	Provider     Provider
+	// LiveHubURL is BackendConfig.LiveHubURL; see LiveHub.
+	LiveHubURL string
+}
+
+// LiveHub returns the hub serving databaseID's live queries, or "" when the
+// backend has none.
+func (b Backend) LiveHub(databaseID string) string {
+	if b.LiveHubURL == "" {
+		return ""
+	}
+	return strings.ReplaceAll(b.LiveHubURL, "{database_id}", url.PathEscape(databaseID))
 }
 
 type Factory func(BackendConfig, func(string) string) (Provider, error)
@@ -145,6 +167,9 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 				return nil, errors.New("managed postgres: invalid secret environment mapping")
 			}
 		}
+		if err := validateLiveHubURL(backendConfig); err != nil {
+			return nil, err
+		}
 		factory, ok := factories[backendConfig.Driver]
 		if !ok {
 			return nil, fmt.Errorf("managed postgres: unknown driver %s", backendConfig.Driver)
@@ -164,6 +189,7 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 			Fingerprint:  fingerprint(backendConfig),
 			Capabilities: capabilities,
 			Provider:     provider,
+			LiveHubURL:   backendConfig.LiveHubURL,
 		}
 	}
 	for region, backendID := range config.Defaults {
@@ -246,10 +272,25 @@ func (r *Registry) Regions() []string {
 	return regions
 }
 
+func validateLiveHubURL(config BackendConfig) error {
+	if config.LiveHubURL == "" {
+		return nil
+	}
+	if config.Driver == "neon" {
+		return fmt.Errorf("managed postgres: backend %s: live queries need a native database; neon backends cannot set live_hub_url", config.ID)
+	}
+	u, err := url.Parse(strings.ReplaceAll(config.LiveHubURL, "{database_id}", "x"))
+	if err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("managed postgres: backend %s: live_hub_url must be a ws:// or wss:// URL without credentials, query or fragment", config.ID)
+	}
+	return nil
+}
+
 func fingerprint(config BackendConfig) string {
 	// SecretEnv is intentionally excluded: credential rotation or renaming an
-	// environment variable must not change placement. DataAPIEnabled is a
-	// rollout capability, fenced by qualification's credential-access equality.
+	// environment variable must not change placement. DataAPIEnabled and
+	// AuthEnabled are rollout capabilities, fenced by qualification's
+	// credential-access equality.
 	// Namespace and all non-secret settings fail closed if a backend is
 	// accidentally repurposed.
 	payload := struct {

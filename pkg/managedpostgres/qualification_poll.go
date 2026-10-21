@@ -38,6 +38,10 @@ func qualifyProviderReadyWithRestore(ctx context.Context, provider Provider, res
 		if observed.ProviderResourceID != resourceID {
 			return observed, ErrUnavailable
 		}
+		if restore != nil && restore.Verification == nil && observed.RestoreVerification != nil {
+			verification := *observed.RestoreVerification
+			restore.Verification = &verification
+		}
 		switch observed.Status {
 		case ProviderStatusReady:
 			if restore != nil {

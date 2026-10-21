@@ -19,6 +19,18 @@
 //	                      report host migration actions without mutating state
 //	legacy-import <release-id> <commit-sha>
 //	                      copy legacy binaries into a verified release baseline
+//	unit-overlay --release-id <id> --expect-current <id> --commit <sha> <path>=<staged-file>...
+//	                      install a per-unit release: the active release
+//	                      hard-linked, with the named files replaced
+//	deploy [--only a,b] [--expect-current <release-id>] <release-id>
+//	                      activate a release; --only restarts just those
+//	                      services, --expect-current refuses unless that
+//	                      release is still active (per-unit releases)
+//	rollback [--only a,b] activate the newest other verified release
+//	restart-changed [--only a,b] [--dry-run] [--json]
+//	                      restart, one at a time to readiness, the active
+//	                      daemons whose start inputs changed since they
+//	                      started (host-configuration lane)
 //
 // Invocation sites:
 //
@@ -32,10 +44,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
@@ -46,7 +60,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: deployctl <generate|check|diff|deploy|rollback|bundle-create|bundle-check|bundle-check-installed|migration-dry-run|legacy-import|upgrade-node> [args...]")
+		fmt.Fprintln(os.Stderr, "usage: deployctl <generate|check|diff|deploy|rollback|restart-changed|bundle-create|unit-overlay|bundle-check|bundle-check-installed|migration-dry-run|legacy-import|upgrade-node> [args...]")
 		os.Exit(2)
 	}
 	cmd := os.Args[1]
@@ -77,6 +91,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "deployctl bundle-check:", err)
 			os.Exit(1)
 		}
+	case "unit-overlay":
+		if err := runUnitOverlay(args); err != nil {
+			fmt.Fprintln(os.Stderr, "deployctl unit-overlay:", err)
+			os.Exit(1)
+		}
 	case "bundle-check-installed":
 		if err := runInstalledBundleCheck(args); err != nil {
 			fmt.Fprintln(os.Stderr, "deployctl bundle-check-installed:", err)
@@ -90,6 +109,11 @@ func main() {
 	case "rollback":
 		if err := runRollback(args); err != nil {
 			fmt.Fprintln(os.Stderr, "deployctl rollback:", err)
+			os.Exit(1)
+		}
+	case "restart-changed":
+		if err := runRestartChanged(args); err != nil {
+			fmt.Fprintln(os.Stderr, "deployctl restart-changed:", err)
 			os.Exit(1)
 		}
 	case "migration-dry-run":
@@ -148,8 +172,10 @@ var defaultTargets = []target{
 	{dir: "deploy/ansible/roles/vmmd_service/files", skip: only("vmmd")},
 	{dir: "deploy/ansible/roles/gatewayd_internal_service/files", skip: only("gatewayd-internal")},
 	{dir: "deploy/ansible/roles/gatewayd_public_service/files", skip: only("gatewayd-public")},
+	{dir: "deploy/ansible/roles/gatewayd_public_edge_service/files", skip: only("gatewayd-public-edge")},
 	{dir: "deploy/ansible/roles/builderd_service/files", skip: only("builderd")},
 	{dir: "deploy/ansible/roles/s3_gateway_service/files", skip: only("s3-gatewayd")},
+	{dir: "deploy/ansible/roles/internal_mail_service/files", skip: only("maild")},
 	{dir: "deploy/ansible/roles/profiled_service/files", skip: only("profiled")},
 }
 
@@ -158,15 +184,17 @@ var defaultTargets = []target{
 // daemon lives on the compute-only roles.
 func ansibleRoleSkips() map[string]bool {
 	return map[string]bool{
-		"githubd":           true,
-		"vmmd":              true,
-		"builderd":          true,
-		"imaged":            true,
-		"gatewayd-public":   true,
-		"gatewayd-internal": true,
-		"s3-gatewayd":       true,
-		"realtimed":         true,
-		"profiled":          true,
+		"githubd":              true,
+		"vmmd":                 true,
+		"builderd":             true,
+		"imaged":               true,
+		"gatewayd-public":      true,
+		"gatewayd-public-edge": true,
+		"gatewayd-internal":    true,
+		"s3-gatewayd":          true,
+		"maild":                true,
+		"realtimed":            true,
+		"profiled":             true,
 	}
 }
 
@@ -189,9 +217,11 @@ func only(name string) map[string]bool {
 // ship githubd or meterd (those only exist on the control plane).
 func legacySkips() map[string]bool {
 	return map[string]bool{
-		"githubd":     true,
-		"meterd":      true,
-		"s3-gatewayd": true,
+		"maild":                true,
+		"githubd":              true,
+		"meterd":               true,
+		"s3-gatewayd":          true,
+		"gatewayd-public-edge": true,
 	}
 }
 
@@ -363,10 +393,21 @@ func runLegacyImport(args []string) error {
 }
 
 func runDeploy(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: deployctl deploy <release-id>")
+	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
+	only := fs.String("only", "", "comma-separated services to restart (per-unit release)")
+	expect := fs.String("expect-current", "", "refuse unless this release id is active")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("usage: deployctl deploy [--only a,b] [--expect-current <release-id>] <release-id>")
 	}
 	runtime := defaultHostRuntime()
+	services, err := parseOnly(*only, flagSet(fs, "only"))
+	if err != nil {
+		return err
+	}
+	runtime.only = services
 	controller, err := deploycontroller.New(deploycontroller.Config{
 		ReleasesRoot: "/opt/faas/releases",
 		CurrentPath:  "/opt/faas/current",
@@ -375,7 +416,77 @@ func runDeploy(args []string) error {
 	if err != nil {
 		return err
 	}
-	return controller.Deploy(context.Background(), args[0])
+	return controller.DeployOver(context.Background(), fs.Arg(0), *expect)
+}
+
+// parseOnly reads --only: nil (every service) when the flag is absent,
+// otherwise a set of registry daemon names. An explicitly empty --only
+// restarts nothing: a per-unit release that replaced only an optional
+// daemon still activates, and its optional unit is restarted by CD.
+func parseOnly(value string, set bool) (map[string]struct{}, error) {
+	if !set {
+		return nil, nil
+	}
+	services := make(map[string]struct{})
+	if value == "" {
+		return services, nil
+	}
+	for _, name := range strings.Split(value, ",") {
+		if _, err := daemonunitspec.UnitByName(name); err != nil {
+			return nil, fmt.Errorf("--only: unknown service %q: %w", name, err)
+		}
+		services[name] = struct{}{}
+	}
+	return services, nil
+}
+
+func flagSet(fs *flag.FlagSet, name string) bool {
+	found := false
+	fs.Visit(func(f *flag.Flag) { found = found || f.Name == name })
+	return found
+}
+
+// runUnitOverlay assembles a per-unit release on the host
+// (deploycontroller.AssembleOverlay) and prints its root. It never
+// activates; `deployctl deploy --only` does.
+func runUnitOverlay(args []string) error {
+	fs := flag.NewFlagSet("unit-overlay", flag.ContinueOnError)
+	releaseID := fs.String("release-id", "", "overlay release id (40 hex)")
+	expect := fs.String("expect-current", "", "release id the overlay is built over")
+	commit := fs.String("commit", "", "commit the replaced units were built from")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return fmt.Errorf("usage: deployctl unit-overlay --release-id <id> --expect-current <id> --commit <sha> <path>=<staged-file> [more <path>=<staged-file>]")
+	}
+	files := make(map[string]string, fs.NArg())
+	for _, arg := range fs.Args() {
+		rel, source, ok := strings.Cut(arg, "=")
+		if !ok || rel == "" || source == "" {
+			return fmt.Errorf("file %q is not <path>=<staged-file>", arg)
+		}
+		if _, dup := files[rel]; dup {
+			return fmt.Errorf("file %s named twice", rel)
+		}
+		files[rel] = source
+	}
+	controller, err := deploycontroller.New(deploycontroller.Config{
+		ReleasesRoot: "/opt/faas/releases",
+		CurrentPath:  "/opt/faas/current",
+		LockPath:     "/run/lock/faas-deploy.lock",
+	}, defaultHostRuntime())
+	if err != nil {
+		return err
+	}
+	root, err := controller.AssembleOverlay(deploycontroller.OverlayRequest{
+		ReleaseID: *releaseID, ExpectedCurrent: *expect, CommitSHA: *commit, Files: files,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println(root)
+	return nil
 }
 
 // runRollback activates the newest verified retained release other than the
@@ -391,14 +502,25 @@ func runDeploy(args []string) error {
 // the release it activated so the CD log records what the fleet was put back
 // to.
 func runRollback(args []string) error {
-	if len(args) != 0 {
-		return fmt.Errorf("usage: deployctl rollback")
+	fs := flag.NewFlagSet("rollback", flag.ContinueOnError)
+	only := fs.String("only", "", "comma-separated services to restart (per-unit release)")
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("usage: deployctl rollback [--only a,b]")
+	}
+	runtime := defaultHostRuntime()
+	services, err := parseOnly(*only, flagSet(fs, "only"))
+	if err != nil {
+		return err
+	}
+	runtime.only = services
 	controller, err := deploycontroller.New(deploycontroller.Config{
 		ReleasesRoot: "/opt/faas/releases",
 		CurrentPath:  "/opt/faas/current",
 		LockPath:     "/run/lock/faas-deploy.lock",
-	}, defaultHostRuntime())
+	}, runtime)
 	if err != nil {
 		return err
 	}

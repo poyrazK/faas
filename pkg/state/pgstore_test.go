@@ -1923,8 +1923,10 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 		t.Errorf("ComputeNodeUsedMB=%d, want %d (5 live × (256+%d))", got, want, api.PerVMOverheadMB)
 	}
 
-	// Unknown node → 0 (COALESCE wraps the aggregate in the SELECT).
-	gotU, err := s.ComputeNodeUsedMB(ctx, "00000000-0000-0000-0000-000000000000")
+	// Unknown node → 0 (COALESCE wraps the aggregate in the SELECT). The nil
+	// UUID is never a node id and is rejected, so use a well-formed stranger.
+	unknownNodeID := uuid.NewString()
+	gotU, err := s.ComputeNodeUsedMB(ctx, unknownNodeID)
 	if err != nil {
 		t.Fatalf("ComputeNodeUsedMB(unknown): %v", err)
 	}
@@ -1932,15 +1934,15 @@ func TestPg_ComputeNodes_UsedMB_SumsLiveInstancesOnly(t *testing.T) {
 		t.Errorf("ComputeNodeUsedMB(unknown)=%d, want 0", gotU)
 	}
 
-	cpu, err := s.ComputeNodeUsedCPUMillicoresByNode(ctx, []string{nodeID, "00000000-0000-0000-0000-000000000000"})
+	cpu, err := s.ComputeNodeUsedCPUMillicoresByNode(ctx, []string{nodeID, unknownNodeID})
 	if err != nil {
 		t.Fatalf("ComputeNodeUsedCPUMillicoresByNode: %v", err)
 	}
 	if cpu[nodeID] != 5*api.DefaultAppCPUMillicores {
 		t.Errorf("used CPU for live instances = %d, want %d", cpu[nodeID], 5*api.DefaultAppCPUMillicores)
 	}
-	if cpu["00000000-0000-0000-0000-000000000000"] != 0 {
-		t.Errorf("used CPU for unknown node = %d, want 0", cpu["00000000-0000-0000-0000-000000000000"])
+	if cpu[unknownNodeID] != 0 {
+		t.Errorf("used CPU for unknown node = %d, want 0", cpu[unknownNodeID])
 	}
 }
 
@@ -2958,8 +2960,8 @@ func TestPg_CountLiveInstancesByDeployment(t *testing.T) {
 	// The seedLiveDeploy helper takes email + slug suffixes; pass
 	// both so we don't collide on the global apps.slug UNIQUE key
 	// (the first seed created "pg-app").
-	_, _, otherDepID := seedLiveDeploy(t, s, ctx, "555-other", "other")
-	otherRunning, err := s.CreateInstance(ctx, appID, otherDepID, string(state.StateRunning), 256, nodeID, "")
+	_, otherAppID, otherDepID := seedLiveDeploy(t, s, ctx, "555-other", "other")
+	otherRunning, err := s.CreateInstance(ctx, otherAppID, otherDepID, string(state.StateRunning), 256, nodeID, "")
 	if err != nil {
 		t.Fatalf("CreateInstance other: %v", err)
 	}
@@ -3151,7 +3153,7 @@ func TestPg_CreateDeployment_SupersedeZeroesPriorTrafficPercent(t *testing.T) {
 // distribution algorithm changes the Σ behaviour so a single
 // regression-test seam is required for both stores.
 func TestPg_UpdateDeploymentTraffic_ProportionalRedistribution(t *testing.T) {
-	s, ctx := pgStore(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	_, appID, depPrior := seedLiveDeploy(t, s, ctx, "prop-2way")
 
 	// Add a fresh live row alongside depPrior (which is at 100).
@@ -3186,6 +3188,7 @@ func TestPg_UpdateDeploymentTraffic_ProportionalRedistribution(t *testing.T) {
 	}
 
 	// Initial state: depPrior=0, depCanary=100, Σ=100.
+	normalizeTrafficFixture(t, pool, ctx, appID, depCanary.ID)
 	if _, err := s.UpdateDeploymentTraffic(ctx, depCanary.ID, 25); err != nil {
 		t.Fatalf("UpdateDeploymentTraffic(canary, 25): %v", err)
 	}
@@ -3212,7 +3215,7 @@ func TestPg_UpdateDeploymentTraffic_ProportionalRedistribution(t *testing.T) {
 // to integer-truncation or floor-only would land {A:25, B:45, C:29}
 // or {A:25, B:44, C:30} and trip this assertion.
 func TestPg_UpdateDeploymentTraffic_ThreeWayResidual(t *testing.T) {
-	s, ctx := pgStore(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	_, appID, depA := seedLiveDeploy(t, s, ctx, "three-way")
 
 	// depA is at 100. Add depB and depC, both live, then equalise
@@ -3260,6 +3263,7 @@ func TestPg_UpdateDeploymentTraffic_ThreeWayResidual(t *testing.T) {
 	// Build {A:50, B:30, C:20}: first set B=30 (residual=70 across
 	// A:0 + C:100 → A stays 0, C absorbs 70 — Σ must equal 100 by
 	// construction).
+	normalizeTrafficFixture(t, pool, ctx, appID, depC.ID)
 	if _, err := s.UpdateDeploymentTraffic(ctx, depB.ID, 30); err != nil {
 		t.Fatalf("stamp B=30: %v", err)
 	}
@@ -3344,7 +3348,7 @@ func TestPg_UpdateDeploymentTraffic_SoleLiveRow(t *testing.T) {
 // siblings at equal prior weight and an odd residual, the ±1
 // must always land on the lexicographically-greater ID.
 func TestPg_UpdateDeploymentTraffic_TieBreakStable(t *testing.T) {
-	s, ctx := pgStore(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	_, appID, depA := seedLiveDeploy(t, s, ctx, "tie-break")
 
 	// Add depB live alongside depA; equalise to {A:50, B:50}.
@@ -3368,6 +3372,7 @@ func TestPg_UpdateDeploymentTraffic_TieBreakStable(t *testing.T) {
 	if err := s.MarkDeploymentLive(ctx, depA); err != nil {
 		t.Fatalf("MarkDeploymentLive (restore A): %v", err)
 	}
+	normalizeTrafficFixture(t, pool, ctx, appID, depB.ID)
 	if _, err := s.UpdateDeploymentTraffic(ctx, depB.ID, 50); err != nil {
 		t.Fatalf("equalise to B=50: %v", err)
 	}
@@ -3406,7 +3411,7 @@ func TestPg_UpdateDeploymentTraffic_TieBreakStable(t *testing.T) {
 // but did not pin. A 100/0 split that becomes 25/75 must leave
 // Σ=100 and B=25. This is the user-visible canary contract.
 func TestPg_UpdateDeploymentTraffic_TwoWay_ResidualSpellsLegibly(t *testing.T) {
-	s, ctx := pgStore(t)
+	s, pool, ctx := pgStoreWithPool(t)
 	_, appID, depPrior := seedLiveDeploy(t, s, ctx, "two-way")
 
 	depCanary, err := s.CreateDeployment(ctx, state.Deployment{
@@ -3433,6 +3438,7 @@ func TestPg_UpdateDeploymentTraffic_TwoWay_ResidualSpellsLegibly(t *testing.T) {
 	}
 
 	// Equalise: stamp canary=0 first so prior=100, Σ=100.
+	normalizeTrafficFixture(t, pool, ctx, appID, depCanary.ID)
 	if _, err := s.UpdateDeploymentTraffic(ctx, depCanary.ID, 0); err != nil {
 		t.Fatalf("equalise canary=0: %v", err)
 	}
@@ -3510,7 +3516,7 @@ func TestPg_UpdateDeploymentTrafficRejectsActiveCanary(t *testing.T) {
 	_, appID, stableID := seedLiveDeploy(t, s, ctx, "traffic-active-canary")
 	candidate, err := s.CreateDeployment(ctx, state.Deployment{
 		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:active-canary",
-		Status: state.DeployPending, Scope: "canary", CanaryPreset: "balanced",
+		Status: state.DeployPending, Scope: "default", CanaryPreset: "balanced",
 		CanaryTotalSteps: 4, TrafficPercent: 1,
 	})
 	if err != nil {
@@ -4601,5 +4607,16 @@ func TestPg_DeploymentOrdinal(t *testing.T) {
 	}
 	if _, err := s.DeploymentOrdinal(ctx, a.String(), uuid.New().String()); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("missing deployment: err = %v, want ErrNotFound", err)
+	}
+}
+
+// These fixtures originally used distinct scope labels to bypass an old live
+// uniqueness rule. Manual splits are now correctly isolated by scope; explicit
+// weights model multiple retained releases within one real traffic family.
+func normalizeTrafficFixture(t *testing.T, pool *pgxpool.Pool, ctx context.Context, appID, servingID string) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `update deployments set scope='default',status='live',traffic_percent_explicit=true,
+ traffic_percent=case when id=$2::uuid then 100 else 0 end where app_id=$1`, appID, servingID); err != nil {
+		t.Fatal(err)
 	}
 }

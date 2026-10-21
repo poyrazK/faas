@@ -21,7 +21,12 @@ test("concurrent customer retries survive crash with one charge and matching ord
   f.drop(false);
   const results = await Promise.all(batchOrders.flatMap(({ key, order }) => Array.from({ length: 3 }, () => f.checkout(key, order))));
   assert.ok(results.every(result => result.status === 200));
-  assert.deepEqual(await f.paymentStats(), { charges: batchOrders.length, attempts: batchOrders.length * 2 });
+  // One charge per key is the invariant. Recovery normally takes one provider
+  // attempt per key, but each attempt has a 350 ms deadline and the app may
+  // retry once, so a loaded CI runner can add an attempt without a charge.
+  const recovered = await f.paymentStats();
+  assert.equal(recovered.charges, batchOrders.length);
+  assert.ok(recovered.attempts >= batchOrders.length * 2 && recovered.attempts <= batchOrders.length * 3, `attempts ${recovered.attempts}`);
   assert.equal((await f.orderStats()).orders, batchOrders.length);
   for (const { key, order } of batchOrders) {
     const saved = await (await fetch(`${f.urls().app}/orders/${key}`)).json();

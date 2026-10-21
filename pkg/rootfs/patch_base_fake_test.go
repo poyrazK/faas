@@ -107,6 +107,13 @@ func TestPatchBaseGuestInitPublishesAndSignsTheVerifiedCopy(t *testing.T) {
 	if got := readStored(t, be, in.StorageKey); !bytes.Equal(got, []byte("ext4 image")) {
 		t.Fatalf("published %q", got)
 	}
+	identity, err := ReadArtifactIdentity(t.Context(), bytes.NewReader(readStored(t, be, in.StorageKey)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ArtifactDigest != identity.Digest || res.ArtifactBytes != identity.Bytes || res.GuestInitDigest != "sha256:"+in.GuestInitSHA256 {
+		t.Fatalf("result identity = %+v, published identity = %+v", res, identity)
+	}
 	if len(signer.keys) != 1 || signer.keys[0] != in.StorageKey+"->sigs/"+in.StorageKey+".sig" {
 		t.Fatalf("signed %v", signer.keys)
 	}

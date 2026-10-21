@@ -273,7 +273,7 @@ func (j *linuxNativeSnapshotPublicationJournal) Require(ctx context.Context, exp
 	if err != nil {
 		return err
 	}
-	if current != expected {
+	if !current.Equal(expected) {
 		return errors.New("native snapshot publication: original durable intent changed")
 	}
 	return nil

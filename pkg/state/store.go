@@ -27,7 +27,8 @@ var ErrNotFound = errors.New("state: not found")
 var ErrRequestTelemetryRowNotFound = errors.New("state: request telemetry row not found for trace")
 
 // ErrSnapshotRuntimeStale means the captured guest predates the app's most
-// recent runtime configuration change. The notification is safe to discard.
+// recent runtime configuration change or operator recovery generation. The
+// notification is safe to discard.
 var ErrSnapshotRuntimeStale = errors.New("state: snapshot runtime config stale")
 
 const githubActionsOIDCIssuer = "https://token.actions.githubusercontent.com"
@@ -371,7 +372,8 @@ type CanaryAdvanceParams struct {
 	// durable meterd lease and rechecks it inside the transaction.
 	RequireSafeReleaseLease bool
 	// RequireCanaryStageElapsed makes the store compare the persisted stage
-	// start against its duration using the store clock before any traffic write.
+	// start against CanaryStageDuration (the stage timer, or its evidence-paced
+	// minimum, ADR-1321) using the store clock before any traffic write.
 	// Customer-requested manual advances leave this disabled.
 	RequireCanaryStageElapsed bool
 	CanaryStageDuration       time.Duration
@@ -379,6 +381,10 @@ type CanaryAdvanceParams struct {
 	RouteCheckFingerprint     RouteCheckFingerprinter
 	RouteGateDecision         *api.RouteGateDecision
 	RouteHealthDecision       *api.RouteHealthDecision
+	// Decision is the validated api.RolloutDecision behind this advance
+	// (ADR-1447). It is written to deployments.rollout_decision in the same
+	// UPDATE as the traffic change; nil clears the column.
+	Decision json.RawMessage
 }
 
 // CanaryAdvancer is intentionally separate from Store so existing narrow test
@@ -537,6 +543,7 @@ const (
 
 type QuotaError struct {
 	Kind       QuotaErrorKind // "apps" | "preview_apps" | "developer_apps" | "crons" | "memory" | "mirror" | "openapi_imports"
+	Plan       api.Plan       // authoritative plan for organization app admission; empty for legacy errors
 	Limit      int            // caps at the time of the call
 	Observed   int            // count(*) observed inside the same critical section
 	NotAllowed bool           // true when the plan tier forbids the entity entirely (e.g. Free cron)
@@ -1003,6 +1010,16 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
+	OrgAccessStore
+	OperatorObservabilityReader
+	OperatorAlertHistoryStore
+	OperatorAlertTriageWriter
+	OperatorAlertTriageHistoryReader
+	OperatorAlertWorkloadReader
+	OperatorAlertResponseTimesReader
+	OperatorAlertRecurrenceReader
+	OperatorAlertCollectionHistoryReader
+	OperatorAlertRetentionStore
 	RecordMCPTaskPromotionHold(context.Context, string, string, MCPTaskPromotionRecovery) error
 	ClaimMCPTaskPromotionRecovery(context.Context, string) (*MCPTaskPromotionRecovery, error)
 	FinishMCPTaskPromotionRecovery(context.Context, string, int64, string) (bool, error)
@@ -1023,6 +1040,14 @@ type Store interface {
 	ClaimServiceRecovery(ctx context.Context, appID, revision, token string, sampledAt, leaseUntil time.Time) (ServiceRecovery, bool, error)
 	CompleteServiceRecovery(ctx context.Context, token string, recovery ServiceRecovery) error
 	ServiceRecoveryByApp(ctx context.Context, appID string) (ServiceRecovery, error)
+
+	// Worker retries share an app lease across events and periodic sweeps.
+	// Claims preserve cooldown so scale-in can proceed while admission waits.
+	ListWorkerRecoveryApps(ctx context.Context, ownerNodeID string, sampledAt time.Time, limit int) ([]string, error)
+	ClaimWorkerRecovery(ctx context.Context, appID, ownerNodeID, revision, token string, sampledAt, leaseUntil time.Time) (WorkerRecovery, bool, error)
+	CompleteWorkerRecovery(ctx context.Context, token string, recovery WorkerRecovery) error
+	WorkerRecoveryByApp(ctx context.Context, appID string) (WorkerRecovery, error)
+	WorkerRecoverySummary(ctx context.Context, ownerNodeID string, sampledAt time.Time) (WorkerRecoverySummary, error)
 
 	// Ping tests store/database connectivity.
 	Ping(ctx context.Context) error
@@ -1859,13 +1884,11 @@ type Store interface {
 	SetServiceCapacityProtection(ctx context.Context, enabled bool) (api.ServiceCapacityProtection, error)
 	// Apps (apid is the only writer, spec §Component ownership).
 	CreateApp(ctx context.Context, app App) (App, error)
-	// CreateAppIfUnderQuota inserts app iff the account currently holds
-	// fewer than limits.DeployedApps live apps (active + evicted_cold).
-	// The count + insert happen under a single critical section — PgStore
-	// opens a transaction that SELECT … FOR UPDATE locks the parent
-	// accounts row, MemStore holds m.mu — so two concurrent createApp
-	// calls on a Free account cannot both pass the cap check (spec §4.2,
-	// PR fix for the TOCTOU in handlers.go::createApp).
+	// CreateAppIfUnderQuota reserves a slot in the app's persisted org pool.
+	// All creators share the organization's stored plan caps. Personal pools
+	// exclude company apps. PgStore holds an org advisory lock across count
+	// and insert; an org row SHARE lock keeps plan/status stable. MemStore
+	// holds m.mu.
 	//
 	// Returns:
 	//   - (App, nil) on success
@@ -1875,9 +1898,9 @@ type Store interface {
 	//   - (App{}, ErrNotFound) when the account row is gone
 	//   - (App{}, other) on transport / SQL errors
 	//
-	// limits.DeployedApps is the per-plan cap (api.MustLimitsFor(plan)).
-	// Implementations enforce it authoritatively; callers MUST NOT also
-	// call CountDeployedApps before this method (that's the bug).
+	// The limits argument is retained for personal/internal compatibility;
+	// a shared organization always uses its persisted plan. Callers MUST NOT
+	// perform an independent CountDeployedApps admission check.
 	CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error)
 	AppByID(ctx context.Context, id string) (App, error)
 	// PreviewAppsByParent (ADR-095 / issue #272) lists every
@@ -1898,7 +1921,13 @@ type Store interface {
 	PreviewAppByProjectWorkload(ctx context.Context, accountID, projectID string, previewPRNumber int, workloadName string) (App, error)
 	// Scenario test members form an explicit, fail-closed service namespace.
 	// Registration accepts only live developer previews and is atomic.
+	// Retained network containment is read before every application boot.
+	ScenarioRehearsalNetworkRun(context.Context, string) (string, error)
+
 	RegisterScenarioTestMembers(ctx context.Context, accountID, runID string, members []ScenarioTestMember) error
+	// ScenarioWebhookDeliveryBlocked consults retained capture authority, including
+	// after namespace cleanup. Errors must prevent all outbound transmission.
+	ScenarioWebhookDeliveryBlocked(ctx context.Context, appID, webhookID string) (bool, error)
 	ScenarioTestMemberByApp(ctx context.Context, appID string) (ScenarioTestMember, error)
 	ScenarioTestAppByWorkload(ctx context.Context, accountID, runID, workload string) (App, error)
 	SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error)
@@ -2097,6 +2126,11 @@ type Store interface {
 	// both want "instances I'm responsible for" rather than the
 	// fleet-wide ListAllInstances.
 	ListInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error)
+	// ListLiveInstancesByNodeID is ListInstancesByNodeID limited to live
+	// instances (IsLive) at the database boundary. Callers that only act on
+	// resident VMs use it so terminal wake history does not travel on every
+	// tick (H10-145).
+	ListLiveInstancesByNodeID(ctx context.Context, nodeID string) ([]Instance, error)
 	// ListInstancesOnNodeID returns every instance whose physical
 	// instances.node_id matches nodeID, regardless of the owning app's
 	// scheduler owner. This is the safety/observability view for drains:
@@ -2273,10 +2307,11 @@ type Store interface {
 	// Returns ErrConflict on RowsAffected()==0 — peer already
 	// committed, peer rolled back, lease expired, or row gone.
 	AbortMigratingInstance(ctx context.Context, instanceID, leaseToken string) error
-	// CountDeployedApps counts apps that occupy a deploy slot (active or
-	// evicted_cold) for quota enforcement (spec §4.2).
+	// CountDeployedApps counts the account's personal deploy slots (active or
+	// evicted_cold), excluding company apps. It is a display/preflight count;
+	// admission must use CreateAppIfUnderQuota's transaction (spec §4.2).
 	CountDeployedApps(ctx context.Context, accountID string) (int, error)
-	// CountDeveloperApps counts live `gregale dev` environments. These are
+	// CountDeveloperApps counts personal live `gregale dev` environments. These are
 	// deliberately separate from the deployed-app quota so local development
 	// cannot consume production or preview slots.
 	CountDeveloperApps(ctx context.Context, accountID string) (int, error)
@@ -2439,6 +2474,7 @@ type Store interface {
 	// when the project doesn't exist. Used by cmd/apid's
 	// scan_service to roll back a half-created project when the
 	// subsequent reconcile errors out (PR-GH.6 review H9).
+	ProjectOwnershipStore
 	CreateProject(ctx context.Context, p Project) (Project, error)
 	ProjectByID(ctx context.Context, projectID string) (Project, error)
 	ProjectBySlug(ctx context.Context, accountID, slug string) (Project, error)
@@ -2576,7 +2612,9 @@ type Store interface {
 	// UpsertGitHubInstall persists the OAuth handshake state for one
 	// account's GitHub App install (PR-C). Idempotent on
 	// (AccountID, InstallationID) so a retry of the OAuth
-	// flow doesn't crash on the unique-PK constraint. The account row
+	// flow doesn't crash on the unique-PK constraint.
+	// Returns ErrConflict if another account owns the installation;
+	// reconnecting must never transfer ownership implicitly. The account row
 	// itself must exist (the FK enforces this); pre-CASCADE deletes
 	// of an account surface as ErrNotFound here so the caller can
 	// distinguish "account doesn't exist" from a transient write
@@ -4048,7 +4086,7 @@ type Store interface {
 
 	// DailyCostCents returns the estimated raw usage cost for the UTC day that
 	// contains day, derived from usage_daily.mb_seconds. An empty appID scopes
-	// the sum to the account. The result is in integer EUR cents before any
+	// the sum to the account. The result is in integer billing-currency cents before any
 	// monthly included allowance is applied.
 	DailyCostCents(ctx context.Context, accountID, appID string, day time.Time) (int64, error)
 
@@ -4971,12 +5009,14 @@ type Store interface {
 	// means the handler must surface RFC 7807 `node_draining_refused`
 	// instead.
 	NodeListDrainable(ctx context.Context) ([]ComputeNode, error)
-	// NodeMarkDrainCompleted stamps drain_completed_at + holds the
+	// Deprecated: NodeMarkDrainCompleted refuses unfenced completion; use
+	// NodeLifecycleCompletionStore. Historical contract: stamps drain_completed_at + holds the
 	// lifecycle in 'maintenance' (CAS on a draining state). The recovery
 	// arbiter calls this once the migrate-or-recreate sweep
 	// confirms zero live instances remain.
 	NodeMarkDrainCompleted(ctx context.Context, id string, completedAt time.Time) error
-	// NodeMarkRecovered stamps last_recovery_outcome='succeeded' +
+	// Deprecated: NodeMarkRecovered refuses unfenced completion; use
+	// NodeLifecycleCompletionStore. Historical contract: stamps last_recovery_outcome='succeeded' +
 	// flips lifecycle to 'active' (CAS on 'recovering'). Called
 	// after the recovery sweep clears stranded instances.
 	NodeMarkRecovered(ctx context.Context, id string) error
@@ -5609,7 +5649,7 @@ type Store interface {
 	// CurrentMonthOverageCents returns the account's derived compute overage
 	// in integer cents for the current UTC month. The account plan's
 	// included calendar-month allowance is subtracted before the
-	// €0.01/GB-h conversion (CLAUDE.md: integer cents only, never float).
+	// $0.01/GB-h conversion (CLAUDE.md: integer cents only, never float).
 	// meterd consults this on every quota tick to decide whether the
 	// overage row should be capped. The PgStore implementation sums
 	// usage_minutes.mb_seconds since the UTC month start and converts

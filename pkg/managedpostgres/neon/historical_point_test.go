@@ -97,6 +97,9 @@ func TestLSNRestoreResolvesPinnedSourceHistoryAcrossRecovery(t *testing.T) {
 			if err != nil || observed.RestoreLineage == nil || observed.RestoreLineage.SourceResourceID != request.SourceResourceID || !observed.RestoreLineage.PointInTime.Equal(point) || observed.DataResourceID != "project-source/br-target" {
 				t.Fatalf("verified historical restore = %+v, %v", observed, err)
 			}
+			if v := observed.RestoreVerification; v == nil || v.ProviderResourceID != "project-source/br-target" || !strings.Contains(v.Evidence, "|0/1E25788|") {
+				t.Fatalf("verified restore carries no verification record: %+v", observed.RestoreVerification)
+			}
 			wantPosts, wantCustody := 0, 0
 			if mode == "create" || mode == "lost_ack" {
 				wantPosts = 1
@@ -182,8 +185,17 @@ func TestLSNRestoreRejectsUnverifiedOrChangedHistory(t *testing.T) {
 				}
 			}}
 			observed, err := provider.observeRestoredBranch(t.Context(), "project-source", "br-source", "restore", target, managedpostgres.RestoreRequest{PointInTime: point})
-			if err == nil || observed.RestoreLineage != nil || observed.ProviderResourceID != "" {
+			if err == nil || observed.RestoreLineage != nil || observed.ProviderResourceID != "" || observed.RestoreVerification != nil {
 				t.Fatalf("unverified history adopted: %+v, %v", observed, err)
+			}
+			// Neon maps a time to a drifting LSN, so a different mapping is
+			// "not proven yet" and retried; a later parent time is a conflict
+			// (ADR-1259).
+			if fault == "different_lsn" && (!errors.Is(err, managedpostgres.ErrLineageUnproven) || errors.Is(err, managedpostgres.ErrConflict)) {
+				t.Fatalf("drifted mapping: %v", err)
+			}
+			if fault == "contradictory_timestamp" && !errors.Is(err, managedpostgres.ErrConflict) {
+				t.Fatalf("later parent time: %v", err)
 			}
 		})
 	}

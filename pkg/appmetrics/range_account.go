@@ -24,15 +24,22 @@ import (
 // IDs. Values are regex-escaped and sorted so selectors are injection-safe
 // and stable across store implementations.
 func AppIDMatcher(appIDs []string) string {
-	parts := make([]string, 0, len(appIDs))
-	for _, id := range appIDs {
+	return LabelIDMatcher("app", appIDs)
+}
+
+// LabelIDMatcher is AppIDMatcher for a caller-chosen label, such as the
+// caller_app and target_app labels on service-proxy edge series. The label
+// name is a code constant, never request input.
+func LabelIDMatcher(label string, ids []string) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
 		if id = strings.TrimSpace(id); id != "" {
 			parts = append(parts, regexp.QuoteMeta(id))
 		}
 	}
 	sort.Strings(parts)
 	pattern := "^(?:" + strings.Join(parts, "|") + ")$"
-	return "app=~" + strconv.Quote(pattern)
+	return label + "=~" + strconv.Quote(pattern)
 }
 
 // FetchRangeAccount runs the account-scoped PromQL pipeline for the

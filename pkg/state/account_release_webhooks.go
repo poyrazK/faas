@@ -1,17 +1,19 @@
 package state
 
+import "github.com/onebox-faas/faas/pkg/api"
+
 // validAccountReleaseWebhookFilter is the in-memory counterpart of the
 // app_webhooks_scope_chk constraint. Account receivers must opt in to a
-// non-empty subset of the four release events, never a wildcard.
+// non-empty subset of release and environment events, never a wildcard.
 func validAccountReleaseWebhookFilter(events []string) bool {
-	if len(events) == 0 || len(events) > 4 {
+	if len(events) == 0 || len(events) > len(api.AllowedAccountReleaseWebhookEvents) {
 		return false
 	}
 	seen := make(map[string]struct{}, len(events))
 	for _, event := range events {
 		switch AppWebhookEvent(event) {
 		case AppWebhookEventDeploymentLive, AppWebhookEventDeploymentFailed,
-			AppWebhookEventRolloutCompleted, AppWebhookEventRolloutAborted:
+			AppWebhookEventRolloutCompleted, AppWebhookEventRolloutAborted, AppWebhookEventEnvironmentGitOpsChanged:
 		default:
 			return false
 		}

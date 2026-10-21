@@ -123,49 +123,23 @@ func TestMetalEgressAllowlist_LivePatch(t *testing.T) {
 		t.Fatalf("expected initial allowlist rule in chain, got:\n%s", initial)
 	}
 
-	// Stage 2: simulate UpdateEgressAllowlist([8.8.8.0/24])
-	// by running the same in-place patch the production code
-	// does — capture handle, delete by handle, add at the
-	// same position. We do it inline (not via the vmmd gRPC
-	// RPC) because this file is a netns-runtime regression
-	// net, not a vmmd wire regression.
+	// Stage 2: simulate UpdateEgressAllowlist([8.8.8.0/24]) the way
+	// pkg/fcvm does it: capture the accept's handle and replace that
+	// rule in place, so it keeps its position before the DNS gate,
+	// SMTP and terminal allowlist drops (H10-36: delete-then-add
+	// appended it after them, where it never matched).
 	listOut, err := runNet(t, nsName, "nft", "-a", "list", "chain", "ip", "faas", "forward")
 	if err != nil {
 		t.Fatalf("nft -a list chain: %v\n%s", err, listOut)
 	}
-	// Parse `# handle N` from the allowlist line via the
-	// regex-anchored helper. Modern nft prints handles at
-	// end-of-rule with `# handle N`; the regex match is
-	// anchored on the comment so a future rule body tokens
-	// that contain the word "handle" can't collide.
 	handle := handleFromListChainOutput(listOut, "ip daddr { 1.2.3.0/24 } accept")
 	if handle == "" {
 		t.Fatalf("could not find allowlist rule handle in:\n%s", listOut)
 	}
-
-	if out, err := runNet(t, nsName, "nft", "delete", "rule", "ip", "faas", "forward", "handle", handle); err != nil {
-		t.Fatalf("nft delete rule handle %s: %v\n%s", handle, err, out)
-	}
-	// Re-render the new rule using the SAME Config (just
-	// flipping EgressAllowlist) and pick out the single
-	// allowlist argv (it's the one that ends in `accept`
-	// and starts with `add rule` — the only "add" in the
-	// diff between [1.2.3.0/24] and [8.8.8.0/24] is the
-	// allowlist line).
 	c.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24")}
-	var addArgv []string
-	for _, argv := range c.NftCommands() {
-		if len(argv) >= 3 && argv[0] == "add" && argv[1] == "rule" && argv[len(argv)-1] == "accept" {
-			addArgv = argv
-			break
-		}
-	}
-	if addArgv == nil {
-		t.Fatalf("could not find new allowlist argv in re-rendered NftCommands")
-	}
-	full := append([]string{"ip", "netns", "exec", nsName}, addArgv...)
-	if out, err := exec.Command(full[0], full[1:]...).CombinedOutput(); err != nil {
-		t.Fatalf("nft add rule: %v\nargv: %v\noutput:\n%s", err, full, out)
+	replace := allowlistReplaceArgv(t, c, "ip", "8.8.8.0/24", handle)
+	if out, err := exec.Command(replace[0], replace[1:]...).CombinedOutput(); err != nil {
+		t.Fatalf("nft replace rule: %v\nargv: %v\noutput:\n%s", err, replace, out)
 	}
 
 	// Stage 3: assert the chain now has [8.8.8.0/24] and
@@ -185,6 +159,7 @@ func TestMetalEgressAllowlist_LivePatch(t *testing.T) {
 	if !strings.Contains(patched, "policy accept") {
 		t.Errorf("chain policy regressed after live patch:\n%s", patched)
 	}
+	assertAcceptBeforeTerminalDrop(t, patched, "ip daddr { 8.8.8.0/24 } accept")
 }
 
 // TestMetalEgressAllowlist_LivePatchV6 mirrors the v4 patch for
@@ -226,23 +201,10 @@ func TestMetalEgressAllowlist_LivePatchV6(t *testing.T) {
 	if handle == "" {
 		t.Fatalf("could not find v6 allowlist rule handle in:\n%s", listOut)
 	}
-	if out, err := runNet(t, nsName, "nft", "delete", "rule", "ip6", "faas", "forward", "handle", handle); err != nil {
-		t.Fatalf("nft delete rule handle %s: %v\n%s", handle, err, out)
-	}
 	c.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("fe80::/10")}
-	var addArgv []string
-	for _, argv := range c.NftCommands() {
-		if len(argv) >= 3 && argv[0] == "add" && argv[1] == "rule" && argv[len(argv)-1] == "accept" {
-			addArgv = argv
-			break
-		}
-	}
-	if addArgv == nil {
-		t.Fatalf("could not find new v6 allowlist argv in re-rendered NftCommands")
-	}
-	full := append([]string{"ip", "netns", "exec", nsName}, addArgv...)
-	if out, err := exec.Command(full[0], full[1:]...).CombinedOutput(); err != nil {
-		t.Fatalf("nft add rule (v6): %v\nargv: %v\noutput:\n%s", err, full, out)
+	replace := allowlistReplaceArgv(t, c, "ip6", "fe80::/10", handle)
+	if out, err := exec.Command(replace[0], replace[1:]...).CombinedOutput(); err != nil {
+		t.Fatalf("nft replace rule (v6): %v\nargv: %v\noutput:\n%s", err, replace, out)
 	}
 	patched := listChainForFamily(t, nsName, "faas", "ip6", "forward")
 	if !strings.Contains(patched, "ip6 daddr { fe80::/10 } accept") {
@@ -253,5 +215,48 @@ func TestMetalEgressAllowlist_LivePatchV6(t *testing.T) {
 	}
 	if !strings.Contains(patched, "policy accept") {
 		t.Errorf("v6 chain policy regressed after live patch:\n%s", patched)
+	}
+	assertAcceptBeforeTerminalDrop(t, patched, "ip6 daddr { fe80::/10 } accept")
+}
+
+// allowlistReplaceArgv renders c's allowlist accept for cidr and turns it
+// into the one-transaction `nft insert rule … handle <h> <spec> ; delete rule
+// … handle <h>` pkg/fcvm runs on a live patch (swapRuleArgv: nftables 1.0.9
+// aborts on `replace rule` with an anonymous set).
+func allowlistReplaceArgv(t *testing.T, c Config, family, cidr, handle string) []string {
+	t.Helper()
+	for _, argv := range c.NftCommands() {
+		if argv[len(argv)-1] != "accept" || !strings.Contains(strings.Join(argv, " "), " daddr { "+cidr+" }") {
+			continue
+		}
+		for i := 0; i+5 <= len(argv); i++ {
+			if argv[i] == "add" && argv[i+1] == "rule" && argv[i+2] == family {
+				out := append([]string{}, argv[:i]...)
+				out = append(out, "insert", "rule", family, "faas", "forward", "handle", handle)
+				out = append(out, argv[i+5:]...)
+				return append(out, ";", "delete", "rule", family, "faas", "forward", "handle", handle)
+			}
+		}
+	}
+	t.Fatalf("no %s allowlist accept for %s in NftCommands", family, cidr)
+	return nil
+}
+
+// assertAcceptBeforeTerminalDrop fails when the allowlist accept no longer
+// precedes the chain's terminal allowlist drop: a patched rule after it
+// never matches (H10-36).
+func assertAcceptBeforeTerminalDrop(t *testing.T, chain, accept string) {
+	t.Helper()
+	acceptAt, dropAt := -1, -1
+	for i, line := range strings.Split(chain, "\n") {
+		switch {
+		case strings.Contains(line, accept):
+			acceptAt = i
+		case strings.Contains(line, EgressDenyCounterAllowlist) && strings.Contains(line, "drop"):
+			dropAt = i
+		}
+	}
+	if acceptAt < 0 || dropAt >= 0 && acceptAt > dropAt {
+		t.Errorf("allowlist accept (line %d) must precede the terminal allowlist drop (line %d):\n%s", acceptAt, dropAt, chain)
 	}
 }

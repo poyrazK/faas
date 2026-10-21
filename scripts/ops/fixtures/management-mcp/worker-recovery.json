@@ -1,0 +1,76 @@
+{
+  "nonproduction": true,
+  "account_id": "REPLACE_ACCOUNT_ID",
+  "target": {
+    "app": "acceptance-worker",
+    "app_id": "REPLACE_APP_ID",
+    "scope": "default"
+  },
+  "steps": [
+    {
+      "id": "plan",
+      "tool": "gregale_plan_workload_rollout",
+      "arguments": {
+        "app": "acceptance-worker",
+        "image": "registry.example/worker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reason": "Native nonproduction acceptance"
+      },
+      "expect": {
+        "rollout_mode": "worker"
+      }
+    },
+    {
+      "id": "restart_planned",
+      "action": "restart_bridge"
+    },
+    {
+      "id": "apply",
+      "tool": "gregale_apply_workload_rollout",
+      "arguments": {
+        "plan_id": {
+          "ref": "plan.plan_id"
+        }
+      },
+      "expect": {
+        "deployment.app_id": "REPLACE_APP_ID"
+      },
+      "replay": [
+        "deployment.id"
+      ]
+    },
+    {
+      "id": "restart_applied",
+      "action": "restart_bridge"
+    },
+    {
+      "id": "cached",
+      "tool": "gregale_apply_workload_rollout",
+      "arguments": {
+        "plan_id": {
+          "ref": "plan.plan_id"
+        }
+      },
+      "expect": {
+        "deployment.id": {
+          "ref": "apply.deployment.id"
+        }
+      }
+    },
+    {
+      "id": "observe",
+      "tool": "gregale_get_rollout",
+      "arguments": {
+        "app": "acceptance-worker",
+        "deployment_id": {
+          "ref": "apply.deployment.id"
+        }
+      },
+      "poll": true,
+      "timeout_seconds": 900,
+      "expect": {
+        "worker_observation.generation_converged": true,
+        "worker_observation.queue_processing_confirmed": false
+      }
+    }
+  ]
+}

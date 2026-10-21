@@ -219,3 +219,48 @@ func TestNodeFunctionAdapterHeadersIgnoreCase(t *testing.T) {
 		t.Fatalf("event.headers = %+v, want lowercase keys with case-insensitive reads", got)
 	}
 }
+
+// TestNodeFunctionAdapterLogsOneLinePerCall covers H10-59: ctx.log.info(msg,
+// fields) printed a multi-line inspect() of the fields, so one call became
+// several log records.
+func TestNodeFunctionAdapterLogsOneLinePerCall(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"type":"module"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := `export async function handler(event, ctx) {
+  ctx.log.info("event received", {event_id: "evt-1", source: "billing.test", type: "invoice.paid", nested: {amount: 150}});
+  return {statusCode: 202, body: "ok"};
+}`
+	if err := os.WriteFile(filepath.Join(dir, "handler.js"), []byte(handler), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := filepath.Join(dir, "adapter.mjs")
+	if err := os.WriteFile(adapter, []byte(nodeFunctionAdapter), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	envelope, _ := json.Marshal(map[string]any{"method": "POST", "path": "/", "body_b64": "", "headers": map[string]string{}})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, node, adapter)
+	cmd.Stdin = bytes.NewReader(append(envelope, '\n'))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if _, err := cmd.Output(); err != nil {
+		t.Fatalf("adapter: %v; stderr=%s", err, stderr.String())
+	}
+	want := `event received {"event_id":"evt-1","source":"billing.test","type":"invoice.paid","nested":{"amount":150}}`
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(stderr.String()), "\n") {
+		if strings.Contains(line, "event received") || strings.Contains(line, "evt-1") {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) != 1 || lines[0] != want {
+		t.Fatalf("ctx.log lines = %q, want exactly %q", lines, want)
+	}
+}

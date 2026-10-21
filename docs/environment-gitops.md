@@ -205,6 +205,61 @@ check no later than that override's expiry; an override that expires during the
 run triggers a fresh check at the next poll. Completed reports remain historical
 observations, and do not certify changes made after their observed intent version.
 
+## Preview a pull or merge request
+
+Preview a candidate before approving it, including on a binding that has no
+approved revision yet:
+
+```sh
+gregale projects environments gitops plan shop staging \
+  --commit "$CANDIDATE_SHA" --format markdown --fail-on-blocked
+```
+
+Gregale verifies the commit through the bound provider and plans against current
+scoped intent and ownership. It returns the commit, digest, source generation,
+observed intent version and plan hash. Before/after values are omitted. It
+creates no revision, ownership claim, workload reservation or run. Its candidate
+hash cannot authorize approval or adoption. Refresh after source or environment
+changes; a passing check does not prove qualification or serving readiness.
+
+JSON is the default. `--fail-on-blocked` prints the result before exit 2 for
+ownership conflicts and unsupported operations. Exit 1 means the request or
+response could not be validated. See the
+[GitHub Actions and GitLab CI examples](../examples/gitops-ci/README.md) for
+summaries, artifacts and read-only `project_environments:read` credentials.
+
+Before adoption, unmanaged edits can change the plan hash while the managed
+intent counter remains zero. The hash includes the actual observed fields;
+candidate plans always require a fresh request and grant no write authority.
+
+## Receive drift and source notifications
+
+Subscribe an account receiver explicitly to `environment.gitops.changed`:
+
+```sh
+printf '%s' "$WEBHOOK_SECRET" | gregale webhooks account add \
+  --target-url https://alerts.example.test/gregale \
+  --event environment.gitops.changed --from-stdin
+```
+
+The `drift` axis reports `in_sync`, `drifted`, `blocked` or `unavailable` for
+current observations. The independent `source` axis reports `verified`,
+`blocked` or `unavailable`; an outage preserves the last approved definition.
+An initial healthy result establishes a silent baseline. Failures and later
+recoveries notify; unchanged status stays quiet. Stale reports cannot change
+the current baseline. New receivers get future transitions; inspect GitOps
+status for the current report. Drift reporting retains its operator opt-in; source
+notifications follow completed polls. Existing fleet stale-poll alerts remain
+separate from confirmed access loss.
+
+Signed payloads include a transition UUID, approved revision/commit when known,
+generation, observation version, field paths/actions, stable error/blocker codes,
+and a dashboard link. They omit values, secret-reference targets and credentials.
+Field and blocker details are limited to 100 each; `details_truncated` identifies
+shortened payloads. Baselines and all receiver deliveries commit together and
+survive restart and report pruning. Existing retries, receiver controls and
+account quotas apply. Native qualification and enforcement keep their gates.
+
 ## Isolated enforcement acceptance
 
 The real apid enforcement worker can run only in an isolated development
@@ -238,11 +293,24 @@ and guest-init built from the same checkout. Run it with
 checkout, refuses active Gregale services, checks leaks before and after, and
 requires the named metal test to pass rather than skip. Set the host class to
 `nested-diagnostic` only for troubleshooting; that result cannot qualify a
-production gate. A passing journey would prove API serving through the gateway,
-a completed scoped customer queue delivery for the applied Git revision, and
+production gate. A passing journey must prove API serving through the gateway,
+a completed scoped customer queue delivery for each applied generation, and
 repair of a console change after its temporary override expires while the
-graph is serving. Dedicated native results and outage/rollback on that graph
-remain outstanding.
+graph is serving. It observes activation before sending the delivery needed to
+prove mixed-graph serving; it never waits for an applied revision before
+admitting that first customer message.
+
+The resilience cases inject source unavailability through the real githubd RPC
+client, restart apid during that outage and while an image pull is held, and
+supersede the held revision through HTTP review and approval. A later case
+restarts schedd after activation with an accepted customer delivery in flight.
+The reviewed rollback must obtain a fresh graph and native qualification at a
+new generation, preserve accepted queue identities, and serve another customer
+delivery before convergence. Slow gateway requests continue throughout these
+transitions; a failed request or a response from the superseded image fails the
+journey. The guarded runner allows up to 90 minutes and retains its pre-run and
+post-run leak checks. These cases still require execution on the exclusive
+native host; no passing dedicated native result has been established.
 
 ## Next implementation steps
 

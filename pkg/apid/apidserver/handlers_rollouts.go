@@ -44,8 +44,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -100,8 +102,12 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 	// text and jsonb writes downstream both reject (SQLSTATE 22021 / 22P02),
 	// rolling back the recovery this endpoint exists to perform.
 	req.Reason = safetext.Truncate(req.Reason, api.AuditReasonMaxBytes)
+	if req.ExpectedReview != nil && (req.DeploymentID == "" || req.ExpectedPredecessorDeploymentID == "" || req.Action != "abort") {
+		api.WriteProblem(w, api.ErrValidation("reviewed recovery requires exact abort selectors"))
+		return
+	}
 	if req.DeploymentID != "" || req.ExpectedPredecessorDeploymentID != "" {
-		s.recoverPinnedCanaryRollout(w, r, acct, app, req)
+		s.recoverPinnedCanaryRollout(w, r, acct, app, req, nil)
 		return
 	}
 	if !acct.Plan.TrafficSplitAllowed() {
@@ -130,8 +136,9 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 			r = r.WithContext(contractCtx)
 		}
 	}
-	// (6) Atomic-tx recovery.
-	updated, auditID, err := s.store.RecoverRollout(r.Context(), app.ID, req.Action, req.Reason)
+	// (6) Atomic-tx recovery, recording a person's request as a manual
+	// decision (ADR-1447).
+	updated, auditID, err := s.recoverRolloutRecordingDecision(r, app, req)
 	if err != nil {
 		if problem := routeRemovalBlockedProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
@@ -232,10 +239,15 @@ func (s *server) recoverDeploymentRollout(w http.ResponseWriter, r *http.Request
 		s.notFound(w, "no such deployment")
 		return
 	}
+	decision, err := release.WorkerDecision(req.Decision, api.RolloutDecisionAbort)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid rollout decision", err.Error()))
+		return
+	}
 	s.recoverPinnedCanaryRollout(w, r, acct, app, api.RecoverRolloutRequest{
 		Action: req.Action, Reason: req.Reason, DeploymentID: d.ID,
 		ExpectedPredecessorDeploymentID: req.ExpectedPredecessorDeploymentID,
-	})
+	}, decision)
 }
 
 // int64ToAuditIDString renders the deployment_audit id the
@@ -264,4 +276,28 @@ func int64ToAuditIDString(id int64) string {
 		id /= 10
 	}
 	return string(buf[i:])
+}
+
+// recoverRolloutRecordingDecision runs the app-level recovery. A person's
+// request records advance_manual or abort_manual against the in-flight
+// candidate; meterd's mirror-drift abort on the internal route records none.
+func (s *server) recoverRolloutRecordingDecision(r *http.Request, app state.App, req api.RecoverRolloutRequest) (state.Deployment, int64, error) {
+	decisions, ok := s.store.(state.RolloutDecisionStore)
+	if !ok || isInternalSafeDeployRequest(r) {
+		return s.store.RecoverRollout(r.Context(), app.ID, req.Action, req.Reason)
+	}
+	var decision json.RawMessage
+	if rows, err := s.store.LiveDeployments(r.Context(), app.ID); err == nil {
+		var candidate state.Deployment
+		for _, d := range rows {
+			rollout := state.NormalizeRolloutState(d.RolloutState)
+			if (rollout == "pending" || rollout == "rolling_out") && (candidate.ID == "" || d.CreatedAt.After(candidate.CreatedAt)) {
+				candidate = d
+			}
+		}
+		if candidate.ID != "" {
+			decision = release.ManualDecision(release.RecoveryRule(req.Action), candidate, time.Now())
+		}
+	}
+	return decisions.RecoverRolloutWithDecision(r.Context(), app.ID, req.Action, req.Reason, decision)
 }

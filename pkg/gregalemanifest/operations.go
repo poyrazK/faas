@@ -32,11 +32,24 @@ type Operation struct {
 	CompletionWebhookID    string                    `yaml:"completion_webhook_id,omitempty" toml:"completion_webhook_id"`
 	Recovery               string                    `yaml:"recovery,omitempty" toml:"recovery"`
 	HTTPTransactionVersion int                       `yaml:"http_transaction_version,omitempty" toml:"http_transaction_version"`
+	// Approvals names who decides each approval step of a workflow (ADR-1194).
+	Approvals []api.OperationApprovalSpec `yaml:"approvals,omitempty" toml:"approvals"`
+	// Limits bounds each accepted Operation's time and execution (ADR-1196).
+	Limits *api.OperationLimits `yaml:"limits,omitempty" toml:"limits"`
 }
 
 func (o Operation) specification() api.OperationDefinitionSpec {
 	return api.OperationDefinitionSpec{Name: o.Name, Job: o.Job, Workflow: o.Workflow, TransactionReceipt: o.TransactionReceipt, Subject: o.Subject, Method: o.Method, Path: o.Path, Owner: o.Owner,
-		Milestones: make(map[string]json.RawMessage, len(o.Milestones)), ProgressStages: append([]string(nil), o.ProgressStages...), CompletionWebhookID: o.CompletionWebhookID, Recovery: o.Recovery, HTTPTransactionVersion: o.HTTPTransactionVersion}
+		Milestones: make(map[string]json.RawMessage, len(o.Milestones)), ProgressStages: append([]string(nil), o.ProgressStages...), CompletionWebhookID: o.CompletionWebhookID, Recovery: o.Recovery, HTTPTransactionVersion: o.HTTPTransactionVersion,
+		Approvals: append([]api.OperationApprovalSpec(nil), o.Approvals...), Limits: cloneOperationLimits(o.Limits)}
+}
+
+func cloneOperationLimits(l *api.OperationLimits) *api.OperationLimits {
+	if l == nil {
+		return nil
+	}
+	c := *l
+	return &c
 }
 
 // OperationWorkflow declares a read-only business process assembled from

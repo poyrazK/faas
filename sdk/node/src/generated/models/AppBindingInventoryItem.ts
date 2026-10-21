@@ -6,10 +6,30 @@ import type { BindingApplicationAdoption } from './BindingApplicationAdoption.js
 import type { BindingRefresh } from './BindingRefresh.js';
 import type { BindingVerification } from './BindingVerification.js';
 import type { OutboundBindingProbePolicy } from './OutboundBindingProbePolicy.js';
+import type { QueueBindingCanary } from './QueueBindingCanary.js';
+import type { ServiceBindingInventoryContext } from './ServiceBindingInventoryContext.js';
 /**
  * Public binding configuration with separately reported runtime observations and verification status.
  */
 export type AppBindingInventoryItem = {
+  service_context?: ServiceBindingInventoryContext;
+  /**
+   * Exact service recipient selected explicitly or resolved from the managed reviewed release.
+   */
+  service_target_deployment_id?: string;
+  queue_canary?: QueueBindingCanary;
+  /**
+   * Whether the exact selected deployment and current consumer can admit a canary.
+   */
+  queue_canary_supported?: boolean;
+  /**
+   * Sanitized reason canary publication is unavailable.
+   */
+  queue_canary_reason?: string;
+  /**
+   * Explicit queue environment; empty means shared legacy binding. Distinguishes app-wide scope from an environment named app. Consumer-readiness policies require this field; older inventories omit it.
+   */
+  queue_environment?: string;
   type: 'service' | 'postgres' | 'object_storage' | 'queue' | 'outbound';
   name: string;
   /**
@@ -30,7 +50,7 @@ export type AppBindingInventoryItem = {
    */
   runtime_status: string;
   /**
-   * Latest platform canary: passed, failed, unknown or stale. Deployment or configuration changes invalidate old evidence. Inventory does not run probes.
+   * Latest platform canary: passed, failed, unknown or stale. Managed edges without a known verification contract remain unsupported. Deployment or configuration changes invalidate old evidence. Inventory does not run probes.
    */
   verification_status: string;
   verification?: BindingVerification;

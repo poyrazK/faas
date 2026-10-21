@@ -28,7 +28,7 @@ func finalizedFrom(q APIConsumerUsageQuote) state.APIConsumerUsageStatement {
 	for _, b := range q.Buckets {
 		charged := b.ChargedUnits
 		out.Buckets = append(out.Buckets, state.APIConsumerUsageStatementBucket{WindowStart: b.WindowStart, BillableUnits: b.BillableUnits,
-			RateCardID: b.RateCardID, ChargedUnits: &charged, TierUnits: slices.Clone(b.TierUnits), AmountMillicents: b.AmountMillicents})
+			RateCardID: b.RateCardID, ChargedUnits: &charged, TierUnits: slices.Clone(b.TierUnits), AmountMillicents: b.AmountMillicents, Unit: b.Unit})
 	}
 	return out
 }

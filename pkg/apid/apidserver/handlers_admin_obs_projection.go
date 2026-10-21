@@ -34,8 +34,7 @@ package apidserver
 
 import (
 	"context"
-	"fmt"
-	"math"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -45,199 +44,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
-
-type obsOverviewSnapshot struct {
-	accounts           []state.Account
-	apps               []state.App
-	deployments        []state.Deployment
-	instances          []state.Instance
-	nodes              []state.ComputeNode
-	firstSuccessByAcct map[string]time.Time
-}
-
-func loadObsOverviewSnapshot(ctx context.Context, store state.Store, now time.Time) (obsOverviewSnapshot, error) {
-	var snap obsOverviewSnapshot
-	var err error
-	if snap.accounts, err = store.ListAllAccounts(ctx); err != nil {
-		return snap, fmt.Errorf("list accounts: %w", err)
-	}
-	if snap.apps, err = store.ListAllApps(ctx); err != nil {
-		return snap, fmt.Errorf("list apps: %w", err)
-	}
-	if snap.deployments, err = store.ListAllDeployments(ctx); err != nil {
-		return snap, fmt.Errorf("list deployments: %w", err)
-	}
-	if snap.instances, err = store.ListAllInstances(ctx); err != nil {
-		return snap, fmt.Errorf("list live instances: %w", err)
-	}
-	if snap.nodes, err = store.ListComputeNodes(ctx, true); err != nil {
-		return snap, fmt.Errorf("list compute nodes: %w", err)
-	}
-	snap.firstSuccessByAcct, err = loadFirstSuccessfulRequests(ctx, store, now)
-	return snap, err
-}
-
-func loadFirstSuccessfulRequests(ctx context.Context, store state.Store, now time.Time) (map[string]time.Time, error) {
-	first := make(map[string]time.Time)
-	rows, err := store.ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx, now.Add(-14*24*time.Hour))
-	if err != nil {
-		return nil, fmt.Errorf("list beta first-success times: %w", err)
-	}
-	for _, row := range rows {
-		first[row.AccountID] = row.At
-	}
-	return first, nil
-}
-
-// summariseAccounts reduces the canonical accounts slice to the
-// five headline counts on the overview. PII is NEVER projected
-// here — the per-account view is on the tenants endpoint, not
-// the overview.
-func summariseAccounts(rows []state.Account) api.ObsOverviewTotals {
-	var t api.ObsOverviewTotals
-	for _, a := range rows {
-		switch a.Status {
-		case state.AccountActive:
-			t.AccountsActive++
-		case state.AccountPastDue:
-			t.AccountsPastDue++
-		case state.AccountSuspended:
-			t.AccountsSuspended++
-		}
-	}
-	return t
-}
-
-func summariseBetaFunnel(now time.Time, accounts []state.Account, apps []state.App, deployments []state.Deployment, firstSuccess map[string]time.Time) api.ObsBetaFunnel {
-	out := api.ObsBetaFunnel{WindowStartedAt: now.Add(-14 * 24 * time.Hour)}
-	cohort := make(map[string]state.Account)
-	verified := make(map[string]bool)
-	for _, account := range accounts {
-		if account.CreatedAt.Before(out.WindowStartedAt) || account.CreatedAt.After(now) {
-			continue
-		}
-		cohort[account.ID] = account
-		out.AccountsCreated++
-		if account.EmailVerifiedAt != nil && !account.EmailVerifiedAt.After(now) {
-			verified[account.ID] = true
-			out.EmailVerified++
-		}
-	}
-	appAccounts := make(map[string]bool)
-	appOwners := make(map[string]string)
-	for _, app := range apps {
-		appOwners[app.ID] = app.AccountID
-		if verified[app.AccountID] {
-			appAccounts[app.AccountID] = true
-		}
-	}
-	out.WithApp = len(appAccounts)
-	liveAccounts := make(map[string]bool)
-	for _, deployment := range deployments {
-		accountID := appOwners[deployment.AppID]
-		if deployment.Status == state.DeployLive && appAccounts[accountID] {
-			liveAccounts[accountID] = true
-		}
-	}
-	out.WithLiveDeployment = len(liveAccounts)
-	latencies := make([]int64, 0, len(liveAccounts))
-	for accountID := range liveAccounts {
-		seen, ok := firstSuccess[accountID]
-		if !ok {
-			continue
-		}
-		out.WithSuccessfulRequest++
-		latencies = append(latencies, int64(seen.Sub(cohort[accountID].CreatedAt).Seconds()))
-	}
-	out.SignupToFirstSuccessSamples = len(latencies)
-	out.SignupToFirstSuccessP50Seconds = nearestRankSeconds(latencies, 0.50)
-	out.SignupToFirstSuccessP95Seconds = nearestRankSeconds(latencies, 0.95)
-	return out
-}
-
-func nearestRankSeconds(values []int64, percentile float64) int64 {
-	if len(values) == 0 {
-		return 0
-	}
-	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
-	rank := int(math.Ceil(float64(len(values)) * percentile))
-	if rank < 1 {
-		rank = 1
-	}
-	return values[rank-1]
-}
-
-// summariseInstances counts live + waking instances across the
-// fleet. The state strings are written by schedd (CLAUDE.md
-// ownership rule) and the obs read is a snapshot — the values
-// reflect the schedd state at the moment of the SELECT.
-func summariseInstances(rows []state.Instance) (live, waking int) {
-	for _, i := range rows {
-		switch instanceState := state.State(strings.ToLower(i.State)); instanceState {
-		case state.StateRunning:
-			live++
-		case state.StateWaking, state.StateColdBooting:
-			waking++
-		}
-	}
-	return live, waking
-}
-
-// summariseNodes counts active vs inactive compute nodes. The
-// Store.ListComputeNodes(includeInactive=true) call already
-// returns both; the helper only tallies.
-func summariseNodes(rows []state.ComputeNode) (active, inactive int) {
-	for _, n := range rows {
-		if n.Active {
-			active++
-		} else {
-			inactive++
-		}
-	}
-	return active, inactive
-}
-
-// toNodeHealthRows projects state.ComputeNode to the operator
-// overview's per-node tile. Stale is a heuristic the frontend
-// can render as a yellow chip without a second round-trip; the
-// threshold (60s) matches schedd's watchdog cycle so a node
-// the watchdog already considers stale flips the flag.
-func toNodeHealthRows(rows []state.ComputeNode, now time.Time) []api.ObsOverviewNodeHealth {
-	out := make([]api.ObsOverviewNodeHealth, 0, len(rows))
-	for _, n := range rows {
-		stale := false
-		if !n.LastHeartbeatAt.IsZero() && now.Sub(n.LastHeartbeatAt) > 60*time.Second {
-			stale = true
-		}
-		out = append(out, api.ObsOverviewNodeHealth{
-			Name:            n.Name,
-			Active:          n.Active,
-			LastHeartbeatAt: n.LastHeartbeatAt,
-			Stale:           stale,
-		})
-	}
-	return out
-}
-
-// summariseTopRateLimited returns the top-N accounts over the
-// 24h window. The cap (obsOverviewRateLimitTopN = 5) is
-// pinned in handlers_admin_obs.go to bound Prometheus label
-// cardinality (ADR-091 §"Label cardinality").
-//
-// PR #1 ships an empty list — the audit_log failure-kind scan
-// that powers this tile is implemented in PR #3 once the
-// audit-log search endpoint is in place. The shape is here so
-// the wire contract is stable.
-func summariseTopRateLimited(_ *http.Request, _ time.Time) []api.ObsOverviewRateLimited {
-	return nil
-}
-
-// summariseRecentFailures returns the top-N failure kinds over
-// the 1h window. Like summariseTopRateLimited, PR #1 ships an
-// empty list and PR #3 wires the actual audit_log scan.
-func summariseRecentFailures(_ *http.Request, _ time.Time) []api.ObsOverviewFailureKind {
-	return nil
-}
 
 // filterTenantRows applies the ?plan= and ?status= query
 // filters to the canonical accounts slice. Mismatched values
@@ -301,19 +107,23 @@ func paginateTenantRows(rows []state.Account, cursor string, limit int) ([]state
 // empty string unless includePII is true; the projection
 // helper never reads mfa_secret_encrypted, the password hash,
 // or any other sealed blob.
-func projectTenantList(ctx context.Context, st state.Store, rows []state.Account, includePII bool) []api.ObsTenantRow {
+func projectTenantList(ctx context.Context, st state.Store, rows []state.Account, includePII bool) ([]api.ObsTenantRow, error) {
 	out := make([]api.ObsTenantRow, 0, len(rows))
 	for _, a := range rows {
-		out = append(out, projectTenantRow(ctx, st, a, includePII))
+		row, err := projectTenantRow(ctx, st, a, includePII)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
 	}
-	return out
+	return out, nil
 }
 
 // projectTenantRow projects one account. OrgSlug resolves
 // from the personal org (issue #190 / ADR-061) and the call is
 // best-effort: a missing personal-org row (pre-ADR-061 era) is
 // not a 500 — the field is simply empty.
-func projectTenantRow(ctx context.Context, st state.Store, a state.Account, includePII bool) api.ObsTenantRow {
+func projectTenantRow(ctx context.Context, st state.Store, a state.Account, includePII bool) (api.ObsTenantRow, error) {
 	row := api.ObsTenantRow{
 		AccountID:   a.ID,
 		Plan:        string(a.Plan),
@@ -326,56 +136,54 @@ func projectTenantRow(ctx context.Context, st state.Store, a state.Account, incl
 		if org, err := st.OrgByPersonalAccount(ctx, a.ID); err == nil {
 			row.OrgSlug = org.Slug
 			row.IsPersonal = org.Personal
+		} else if !errors.Is(err, state.ErrNotFound) {
+			return row, err
+		}
+		var err error
+		row.AppsCount, row.DeploymentsLiveCount, err = st.OperatorTenantCounts(ctx, a.ID)
+		if err != nil {
+			return row, err
 		}
 	}
 	if includePII {
 		row.Email = a.Email
 	}
-	return row
+	return row, nil
 }
 
 // buildTenantDetail assembles the per-tenant drawer. Mirrors
 // projectTenantRow + adds apps, orgs, api-key counts, and
 // session counts. Pre-aggregated so the frontend renders the
 // drawer without a second round-trip.
-func buildTenantDetail(ctx context.Context, st state.Store, a state.Account, includePII bool) api.ObsTenantDetailResponse {
-	row := projectTenantRow(ctx, st, a, includePII)
-	apps, _ := st.ListApps(ctx, a.ID)
-	appRows := make([]api.ObsTenantApp, 0, len(apps))
-	for _, app := range apps {
-		// ListDeploymentsForApp is paginated; the operator's
-		// per-tenant view renders the live count, so a single
-		// over-read of 1000 is fine (the customer cap is far
-		// lower; the over-read is bounded by the per-tenant
-		// app count).
-		deps, _ := st.ListDeploymentsForApp(ctx, app.ID, 1000, 0)
-		live := 0
-		for _, d := range deps {
-			if d.Status == state.DeployLive {
-				live++
-			}
-		}
-		appRows = append(appRows, api.ObsTenantApp{
-			ID:          app.ID,
-			Slug:        app.Slug,
-			Status:      string(app.Status),
-			Deployments: live,
-		})
+func buildTenantDetail(ctx context.Context, st state.Store, a state.Account, includePII bool) (api.ObsTenantDetailResponse, error) {
+	row, err := projectTenantRow(ctx, st, a, includePII)
+	if err != nil {
+		return api.ObsTenantDetailResponse{}, err
 	}
-	orgs, _ := st.ListOrgsForAccount(ctx, a.ID)
+	appRows, err := st.OperatorTenantApps(ctx, a.ID)
+	if err != nil {
+		return api.ObsTenantDetailResponse{}, err
+	}
+	orgs, err := st.ListOrgsForAccount(ctx, a.ID)
+	if err != nil {
+		return api.ObsTenantDetailResponse{}, err
+	}
 	orgRows := make([]api.ObsTenantOrg, 0, len(orgs))
 	for _, o := range orgs {
-		role := "member"
-		if mem, err := st.OrgMemberByAccount(ctx, o.ID, a.ID); err == nil {
-			role = string(mem.Role)
+		mem, err := st.OrgMemberByAccount(ctx, o.ID, a.ID)
+		if err != nil {
+			return api.ObsTenantDetailResponse{}, err
 		}
 		orgRows = append(orgRows, api.ObsTenantOrg{
 			ID:   o.ID,
 			Slug: o.Slug,
-			Role: role,
+			Role: string(mem.Role),
 		})
 	}
-	keys, _ := st.ListAPIKeys(ctx, a.ID)
+	keys, err := st.ListAPIKeys(ctx, a.ID)
+	if err != nil {
+		return api.ObsTenantDetailResponse{}, err
+	}
 	apiCounts := api.ObsTenantCounts{}
 	for _, k := range keys {
 		if k.RevokedAt != nil {
@@ -384,7 +192,10 @@ func buildTenantDetail(ctx context.Context, st state.Store, a state.Account, inc
 			apiCounts.Active++
 		}
 	}
-	sessions, _ := st.ListSessions(ctx, a.ID)
+	sessions, err := st.ListSessions(ctx, a.ID)
+	if err != nil {
+		return api.ObsTenantDetailResponse{}, err
+	}
 	sessionCounts := api.ObsTenantCounts{}
 	for _, sess := range sessions {
 		if sess.RevokedAt != nil {
@@ -399,10 +210,10 @@ func buildTenantDetail(ctx context.Context, st state.Store, a state.Account, inc
 		Orgs:     orgRows,
 		APIKeys:  apiCounts,
 		Sessions: sessionCounts,
-	}
+	}, nil
 }
 
-// paginateNodes is the cursor-free paginator for compute nodes.
+// paginateNodes applies the offset cursor to the stable active/name ordering.
 // The list is small (single-digit count in production) and the
 // response always returns the full set up to the limit; the
 // cursor is the empty string when end == len. The shape stays
@@ -415,7 +226,7 @@ func buildTenantDetail(ctx context.Context, st state.Store, a state.Account, inc
 // LatestHeartbeatStats aggregate (one row per node that has
 // heartbeated). Both are keyed by compute_nodes.name so the
 // fold is a map lookup, not a nested loop.
-func paginateNodes(rows []state.ComputeNode, limit int, liveStats []state.PerNodeStats, hbStats []state.ComputeNodeHeartbeatStats) ([]api.ObsNodeRow, string) {
+func paginateNodes(rows []state.ComputeNode, limit int, liveStats []state.PerNodeStats, hbStats []state.ComputeNodeHeartbeatStats, offsets ...int) ([]api.ObsNodeRow, string) {
 	sort.Slice(rows, func(i, j int) bool {
 		// active first, then name asc
 		if rows[i].Active != rows[j].Active {
@@ -451,13 +262,20 @@ func paginateNodes(rows []state.ComputeNode, limit int, liveStats []state.PerNod
 			hbByNameResolved[name] = h
 		}
 	}
-	end := limit
+	start := 0
+	if len(offsets) > 0 {
+		start = offsets[0]
+	}
+	if start < 0 || start >= len(rows) {
+		return []api.ObsNodeRow{}, ""
+	}
+	end := start + limit
 	next := ""
 	if end > len(rows) {
 		end = len(rows)
 	}
-	out := make([]api.ObsNodeRow, 0, end)
-	for i := 0; i < end; i++ {
+	out := make([]api.ObsNodeRow, 0, end-start)
+	for i := start; i < end; i++ {
 		n := rows[i]
 		row := api.ObsNodeRow{
 			ID:                 n.ID,

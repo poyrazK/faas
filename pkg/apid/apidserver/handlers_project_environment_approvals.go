@@ -84,30 +84,37 @@ func (s *server) getProjectEnvironmentApprovalStatus(w http.ResponseWriter, r *h
 }
 
 func (s *server) issueProjectEnvironmentPromotionApproval(ctx context.Context, acct state.Account, projectSlug, environment, promotionToken string) (string, state.ProjectEnvironmentApproval, *api.Problem) {
+	if _, problem := s.validateProjectEnvironmentPromotionApproval(ctx, acct, projectSlug, environment, promotionToken); problem != nil {
+		return "", state.ProjectEnvironmentApproval{}, problem
+	}
+	return s.createProjectEnvironmentApproval(ctx, acct, projectSlug, environment, promotionToken, "promotion")
+}
+
+func (s *server) validateProjectEnvironmentPromotionApproval(ctx context.Context, acct state.Account, projectSlug, environment, promotionToken string) (projectEnvironmentPromotionPlan, *api.Problem) {
 	wire, err := decodeProjectEnvironmentPromotionToken(promotionToken)
 	if err != nil || wire.AccountID != acct.ID || wire.ProjectSlug != projectSlug || wire.ToEnvironment != environment {
-		return "", state.ProjectEnvironmentApproval{}, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+		return projectEnvironmentPromotionPlan{}, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 			"Promotion token does not match", "approve the exact promotion preview for this project and environment")
 	}
 	plan, problem := s.buildProjectEnvironmentPromotionPlan(ctx, acct, projectSlug, wire.FromEnvironment, environment, wire.SyncConfig)
 	if problem != nil {
-		return "", state.ProjectEnvironmentApproval{}, problem
+		return projectEnvironmentPromotionPlan{}, problem
 	}
 	if wire.ProjectID != plan.ProjectID || wire.SyncConfig != plan.SyncConfig || wire.FromConfigHash != plan.Preview.ConfigDiff.FromHash ||
 		wire.ToConfigHash != plan.Preview.ConfigDiff.ToHash ||
 		wire.SourceQualificationID != projectEnvironmentPromotionQualificationID(plan.Qualification) ||
 		wire.PromotionHash != plan.Preview.PromotionHash {
-		return "", state.ProjectEnvironmentApproval{}, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
+		return projectEnvironmentPromotionPlan{}, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 			"Promotion preview is stale", "the live releases or environment configuration changed; preview again")
 	}
 	if !plan.Preview.CanPromote {
-		return "", state.ProjectEnvironmentApproval{}, api.NewProblem(http.StatusConflict, api.CodeValidation,
+		return projectEnvironmentPromotionPlan{}, api.NewProblem(http.StatusConflict, api.CodeValidation,
 			"Promotion is blocked", strings.Join(plan.Preview.BlockingReasons, "; "))
 	}
 	if problem := projectEnvironmentPromotionExecutionProblem(plan); problem != nil {
-		return "", state.ProjectEnvironmentApproval{}, problem
+		return projectEnvironmentPromotionPlan{}, problem
 	}
-	return s.createProjectEnvironmentApproval(ctx, acct, projectSlug, environment, promotionToken, "promotion")
+	return plan, nil
 }
 
 func (s *server) issueProjectEnvironmentApproval(ctx context.Context, acct state.Account, projectSlug, environment, planToken string) (string, state.ProjectEnvironmentApproval, *api.Problem) {

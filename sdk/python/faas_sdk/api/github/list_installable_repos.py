@@ -92,9 +92,10 @@ def sync_detailed(
     visible to the user's GitHub App installation — githubd
     resolves the per-install token from the session's account.
 
-    §11 anti-takeover: the handler re-runs
-    githubd.VerifyInstallation with the session's github_login
-    as `expected_login` before listing. Mismatch → 403 forged.
+    ADR-1345 / §11: the exact installation must be durably connected to
+    the session's Gregale account before any GitHub call. A separate
+    GitHub sign-in claim is not required. Live installation verification
+    and account-scoped repository access checks still apply.
 
     Args:
         body (InstallBindRequest): Body for both `POST /v1/install/repos/list` and
@@ -103,6 +104,8 @@ def sync_detailed(
             the dashboard's bind picker commits. `production_branch` is
             optional — when omitted, githubd uses the install's
             `default_branch` from `/installations/{id}`.
+            Binding requires a `csrf_token` issued for `bind_app_to_repo`
+            by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -135,9 +138,10 @@ def sync(
     visible to the user's GitHub App installation — githubd
     resolves the per-install token from the session's account.
 
-    §11 anti-takeover: the handler re-runs
-    githubd.VerifyInstallation with the session's github_login
-    as `expected_login` before listing. Mismatch → 403 forged.
+    ADR-1345 / §11: the exact installation must be durably connected to
+    the session's Gregale account before any GitHub call. A separate
+    GitHub sign-in claim is not required. Live installation verification
+    and account-scoped repository access checks still apply.
 
     Args:
         body (InstallBindRequest): Body for both `POST /v1/install/repos/list` and
@@ -146,6 +150,8 @@ def sync(
             the dashboard's bind picker commits. `production_branch` is
             optional — when omitted, githubd uses the install's
             `default_branch` from `/installations/{id}`.
+            Binding requires a `csrf_token` issued for `bind_app_to_repo`
+            by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,9 +179,10 @@ async def asyncio_detailed(
     visible to the user's GitHub App installation — githubd
     resolves the per-install token from the session's account.
 
-    §11 anti-takeover: the handler re-runs
-    githubd.VerifyInstallation with the session's github_login
-    as `expected_login` before listing. Mismatch → 403 forged.
+    ADR-1345 / §11: the exact installation must be durably connected to
+    the session's Gregale account before any GitHub call. A separate
+    GitHub sign-in claim is not required. Live installation verification
+    and account-scoped repository access checks still apply.
 
     Args:
         body (InstallBindRequest): Body for both `POST /v1/install/repos/list` and
@@ -184,6 +191,8 @@ async def asyncio_detailed(
             the dashboard's bind picker commits. `production_branch` is
             optional — when omitted, githubd uses the install's
             `default_branch` from `/installations/{id}`.
+            Binding requires a `csrf_token` issued for `bind_app_to_repo`
+            by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,9 +223,10 @@ async def asyncio(
     visible to the user's GitHub App installation — githubd
     resolves the per-install token from the session's account.
 
-    §11 anti-takeover: the handler re-runs
-    githubd.VerifyInstallation with the session's github_login
-    as `expected_login` before listing. Mismatch → 403 forged.
+    ADR-1345 / §11: the exact installation must be durably connected to
+    the session's Gregale account before any GitHub call. A separate
+    GitHub sign-in claim is not required. Live installation verification
+    and account-scoped repository access checks still apply.
 
     Args:
         body (InstallBindRequest): Body for both `POST /v1/install/repos/list` and
@@ -225,6 +235,8 @@ async def asyncio(
             the dashboard's bind picker commits. `production_branch` is
             optional — when omitted, githubd uses the install's
             `default_branch` from `/installations/{id}`.
+            Binding requires a `csrf_token` issued for `bind_app_to_repo`
+            by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

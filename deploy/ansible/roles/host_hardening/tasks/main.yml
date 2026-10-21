@@ -127,6 +127,24 @@
     - { src: 20auto-upgrades.j2, dest: /etc/apt/apt.conf.d/20auto-upgrades }
   when: faas_hardening_unattended_upgrades | bool
 
+- name: host_hardening — needrestart config directory
+  ansible.builtin.file:
+    path: /etc/needrestart/conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_hardening_unattended_upgrades | bool
+
+- name: host_hardening — keep needrestart from restarting stateful services
+  ansible.builtin.template:
+    src: 60-faas-needrestart.conf.j2
+    dest: /etc/needrestart/conf.d/60-faas.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_hardening_unattended_upgrades | bool
+
 - name: host_hardening — enable the unattended-upgrades timers
   ansible.builtin.systemd_service:
     name: "{{ item }}"

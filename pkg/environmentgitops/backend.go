@@ -20,5 +20,11 @@ func (b IntentBackend) Observe(ctx context.Context, lease state.EnvironmentGitOp
 }
 
 func (b IntentBackend) Apply(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) ([]Step, error) {
+	if retirement, ok := b.Store.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
+		steps, err := retirement.BeginEnvironmentGitOpsWorkloadRetirements(ctx, lease, plan)
+		if err != nil || len(steps) > 0 {
+			return steps, err
+		}
+	}
 	return b.Store.ApplyEnvironmentGitOps(ctx, lease, plan)
 }

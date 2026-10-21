@@ -404,8 +404,8 @@ func validateDeploymentTrafficOptions(req *api.CreateDeploymentRequest, plan api
 }
 
 // validateDeploymentRollbackOptions enforces the customer-facing plan gate
-// for the first-wake 5xx auto-rollback opt-in. Omitted and explicit false
-// values are safe defaults on every plan; only true requires Pro or Scale.
+// for the first-wake 5xx auto-rollback opt-in. ADR-200 unlocked it on every
+// plan; the gate remains as the operator's re-tiering switch.
 func validateDeploymentRollbackOptions(req *api.CreateDeploymentRequest, plan api.Plan) *api.Problem {
 	if req.RollbackOn5xx != nil && *req.RollbackOn5xx && !plan.RollbackOn5xxAllowed() {
 		return api.ErrPlanRollbackOn5xxNotAllowed(plan)

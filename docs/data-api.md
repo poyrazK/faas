@@ -14,6 +14,581 @@ remain ordinary, separately deployed apps.
 Use [CLI/SDK bundles](data-api-packaging.md) to package a matching pair,
 pin their checksums in the application, and restore the SDK in client CI.
 
+## Runtime admission and overload
+
+`gregale data-api health NAME` now also reads account-scoped database connection
+planning reports. The report's `connection_budget` is separate from current SQL
+readiness and per-engine pool metrics. `unknown` capacity or incomplete coverage
+makes the report partial and the command exits nonzero; it does not declare a
+database outage. Older management APIs and keys without `managed-postgres:read`
+also leave this section unknown. Apps with no visible managed Data API binding
+report `not_applicable`.
+
+`GET /v1/postgres/databases/{id}/connection-budget` reads one database snapshot;
+`GET /v1/apps/{slug}/data-api/connection-budget` lists its shared Data API database
+reports, including demand from other bindings and scopes in the same account.
+Both require managed PostgreSQL read permission and return `Cache-Control:
+no-store`. No provider calls, SQL probes, credential delivery or admission changes
+occur. Different database snapshots are independent.
+
+The canonical planning model uses two total connections per Data API runtime,
+including the reserved reader when coordinated refresh splits the pool, and four
+per Auth runtime. It retains nonterminal resident states and parked instances,
+deduplicates app/scope/access consumers, and plans for the greater of observed
+resident-plus-parked instances or effective concurrency plus one overlap slot
+when rotation/deployment overlap is observed. Existing replacements are not
+added a second time. One database control slot and a migration slot when such a
+binding exists are planning headroom, not reserved connections or a measured
+maximum. Unknown client pools, auxiliary workloads/tasks, migration uncertainty,
+stale node heartbeats, incomplete inventory and unverified pool versions remain
+explicit reasons. Counts and estimates are not live SQL sessions or available
+database capacity.
+
+Current adapters do not provide verified tenant-usable capacity after other
+reservations, so their reports remain `unknown`. A future qualified cached
+observation must match the database, backend placement and generation and be
+fresh before `within_budget` or `over_budget` can be reported. Compute class,
+`max_connections` alone and successful SQL readiness cannot supply that evidence.
+Reports expire within 30 seconds, cap database/binding inventory at 100/1,024,
+and omit credentials, provider identities, node addresses and consumer app names.
+
+Each Data API runtime admits at most two requests to authenticated endpoints
+at a time and queues at most eight more in arrival order. Coordinated refresh reserves one
+database connection for its control reader and admits one request at a time.
+These bounds cover JWT verification, REST/RPC and authenticated schema/OpenAPI
+requests through response completion. Health checks and CORS preflight bypass
+the queue; a healthy engine does not imply spare request capacity.
+
+A full queue or a wait of one second returns HTTP 503 with stable code
+`data_api_overloaded`, a gateway request ID and `Retry-After: 1`. Allowed browser
+origins can read `Retry-After`. These rejections happen before authentication or
+PostgREST dispatch; they do not execute the queued mutation. Queued disconnects
+are removed, and authentication and coordinated-refresh checks run after admission.
+Disconnecting during verification retains the active slot until verification
+settles. Active requests also have the elapsed-time deadline described below.
+
+Admission is local to each runtime, not an account rate limit, a global database
+connection budget or a per-user fairness guarantee. A request already dispatched
+to PostgREST can commit after a timeout or disconnect; reconcile uncertain writes
+using application receipts before retrying. The runtime and SDK add no automatic
+mutation retries. `classifyDataError` recognizes the overload code as `unavailable`,
+including errors returned by `throwOnError()`.
+
+Request logs add safe `admission` metadata: outcome, queue wait in milliseconds,
+and active/queued counts at the admission decision. `data-api diagnostics`
+summarizes observed admissions, full queues, expired waits, queued cancellations,
+wait p50/p95/p99 and observed active/queued peaks. `failures.overloaded` counts
+overload responses separately from query timeouts and engine unavailability.
+Older logs and routes bypassing admission have no admission metadata; zero
+observations give null wait percentiles. These are retained-log samples, not
+durable counters, SQL execution timing or measurements of SQL pool wait.
+
+## Per-user concurrent request limits
+
+Set `DATA_API_USER_CONCURRENCY=1` in the deployment environment to limit each
+verified user to one concurrent authenticated request per runtime. The setting
+is optional and absent means disabled. It accepts decimal integers from one to
+the serving admission capacity: two normally, one with coordinated refresh.
+Invalid settings fail startup. Rebuild from the updated runtime template and
+fresh-restart after changing deployment settings.
+
+The policy covers REST, RPC, schema and OpenAPI routes. JWTs with the same verified
+`sub` share slots across rotation; caller headers and policy-like JWT claims cannot
+override it. Global admission still bounds verification and the queue, and rate
+checks run before user concurrency checks. Excess calls return
+`429 data_api_concurrency_limited` before refresh, readiness or engine SQL, with
+`Retry-After`, request ID, fixed reason `subject` or `tracking_capacity`, configured
+`max_concurrent`, and `active`/`cooling_down` counts. Public health and OPTIONS bypass
+this policy. `Retry-After` is advisory, normally one second for active work and up
+to 15 seconds for cooldown. Other limits can reject a call first.
+
+A slot remains occupied until both the asynchronous handler and downstream
+response settle. Client cancellation cannot discard pending handler work. An
+engine/control completion acknowledgement permits release when downstream work
+also finishes; a still-streaming response keeps its slot. If dispatched work has
+no confirmed completion when handler and downstream settle, retain a slot in
+cooldown for a full 15 seconds from that point. A late genuine acknowledgement
+can release its own cooldown, without affecting a replacement request.
+
+These are HTTP admission counts, not SQL sessions. SQL can outlive a timeout,
+disconnect or cooldown. A cooldown can also reject requests after SQL actually
+finished if the gateway never received its acknowledgement. The limiter stores
+at most 4,096 subject digests and refuses new users at that bound; active work is
+never evicted. Lazy cleanup opens capacity after eligible cooldowns expire, without
+adding SQL probes or pools. There is no distributed quota or per-user queue, and
+the existing global FIFO queue does not guarantee fairness. Process restart clears
+the limiter; other runtime instances have independent budgets.
+
+Logs add `concurrency_limit` only to rejections, containing the fixed reason,
+policy, active/cooling counts and retry seconds. Subjects, digests, JWTs and SQL
+values are excluded. `data-api diagnostics` counts
+`failures.concurrency_limited` separately from rates, overload and unavailability;
+`--request-id` retains the safe metadata. Health reports
+`user_concurrency_limits_observed` as a recent finding, without changing current
+readiness. SDK `classifyDataError` returns `concurrency_limited` / `wait`; it adds
+no automatic retries. Reconcile earlier uncertain writes independently.
+See [ADR-1732](adr/1732-data-api-user-concurrency-limits.md).
+
+## Database lock waits
+
+New managed Data API SQL logins default to a **5-second `lock_timeout`** alongside
+the existing **15-second `statement_timeout`**. Local development uses the same
+defaults. This limits each PostgreSQL lock acquisition, including row, table and
+advisory locks; it is not a five-second query, pool-wait or transaction deadline.
+Uncontended SQL can run longer, subject to the statement and HTTP deadlines.
+
+An uncaught lock timeout returns the engine's original SQLSTATE `55P03`;
+`classifyDataError` reports `lock_conflict` / `wait`. A surfaced PostgreSQL
+`40P01` is classified as `deadlock` / `wait`. `55P03` can also mean NOWAIT
+lock refusal, so it does not prove a timeout. Generic HTTP failures and message
+text do not identify database contention. The SDK adds no automatic retries.
+Pinned PostgREST 14.3 uses Hasql transaction retries for deadlocks and
+serialization failures; a deadlock can therefore resolve inside one HTTP request
+and return success. This existing engine behavior is separate from SDK retries.
+
+The failed request's PostgreSQL transaction rolls back, including earlier
+transactional RPC writes. Sequence increments and external effects are not
+rolled back. A failure also cannot establish the outcome of an earlier attempt.
+Wait, review the operation and use its existing idempotency/receipt contract
+before explicit replay. The starter keeps the same receipt key for outcome
+recovery. A disconnect or missing response still leaves an uncertain outcome.
+
+For an existing binding, use the normal [credential rotation](managed-postgres.md)
+workflow to create
+a login with the new defaults, then ensure serving runtimes start fresh SQL
+sessions. Credential issuance/reconciliation can also upgrade the exact legacy
+role policy atomically without changing its password. Unexpected settings,
+memberships, markers or privilege drift are refused. Cached credential delivery
+need not invoke reconciliation, and changing role defaults does not affect open
+sessions. A runtime rebuild alone does not upgrade a database role.
+
+```sh
+gregale postgres bindings rotate BINDING_ID --wait
+```
+
+Rotation refreshes serving runtimes through the existing binding lifecycle;
+`--wait` polls until `rotation_pending` clears.
+
+Update generated migration/RPC permission tooling before using new roles: the
+updated tool accepts both exact policy versions and keeps `ready` scoped to ACL
+checks. It does not change timeouts. Database-specific settings or trusted RPC
+functions can override login defaults or catch SQL errors; these defaults do not
+guarantee cancelled SQL stops. Disposable provider qualification verifies effective
+timeouts on its new connection, independently of deployed pools.
+See [ADR-1733](adr/1733-data-api-lock-contention-policy.md).
+
+## SQL deadlines across transaction retries
+
+`DATA_API_SQL_DEADLINE=1` optionally carries the original admitted request's
+15-second budget into PostgreSQL transaction retries. Pinned PostgREST 14.3 can
+retry deadlocks and serialization failures internally; a statement timeout alone
+can restart on each attempt. The hook checks one fixed expiry on each attempt,
+caps subsequent statement/lock timeouts to the remaining budget, and preserves
+stricter existing settings. Authentication, signing, refresh waits and engine pool
+waits consume that budget. There is no extra serving connection pool or per-request
+SQL probe. Disabled deployments retain their current hook selection.
+Opt-in disables PostgREST in-database engine configuration loading so a role/database
+setting cannot replace the required hook. Existing PostgreSQL login defaults remain;
+review deployments that rely on PostgREST's in-database engine/role configuration.
+
+Rebuild with the updated runtime template, keeping the setting absent initially.
+Use the owner-authorized migration task/connection to install and check the hooks
+for the exact serving binding login:
+
+```sh
+node data-api-runtime/sql-deadline.mjs install YOUR_BINDING_LOGIN_ROLE
+node data-api-runtime/sql-deadline.mjs check YOUR_BINDING_LOGIN_ROLE
+```
+
+These commands use `MIGRATION_DATABASE_URL`. The installer verifies serving-role
+permissions through the catalog and needs no membership allowing it to assume
+the serving login. For a coordinated-refresh deployment,
+install its existing barrier first and run both commands with
+`DATA_API_COORDINATED_REFRESH=1`. Then enable `DATA_API_SQL_DEADLINE=1` and start
+fresh runtimes. Startup checks the pinned engine and installed hook bodies,
+security attributes and grants before serving; it never installs or repairs them.
+The `check` command is read only. By default each new/rotated login requires
+authorized hook grants before adoption.
+
+For managed Neon `data_api` bindings in a database without coordinated SQL refresh
+gates, the managed schema owner can explicitly approve automatic deadline grants
+for subsequent credential generations:
+
+```sh
+node data-api-runtime/sql-deadline.mjs enroll YOUR_BINDING_LOGIN_ROLE YOUR_BINDING_UUID
+node data-api-runtime/sql-deadline.mjs check-enrollment YOUR_BINDING_LOGIN_ROLE YOUR_BINDING_UUID
+```
+
+Use the existing migration connection, whose effective role is the stable managed
+schema owner. Install/check the hooks first. Enrollment records the binding UUID,
+provider resource scope and version-one body hashes in a private owner-only table.
+It neither installs hooks nor turns on the runtime setting. Each candidate login
+receives only schema usage and execution of the two matching deadline hooks,
+inside credential preparation and before the app secret is replaced. Ownership,
+body, security-attribute or policy-table drift blocks publication and rolls back
+preparation; the previous credential stays available. Repair the owner setup
+and retry the existing rotation rather than creating another generation. Existing
+rolling runtime refresh and retirement still determine when the previous login
+is revoked. Arbitrary RPC grants are not copied; retain their permission workflow.
+
+`check-enrollment` is read only. Repeated enrollment preserves a matching approval
+and rejects incompatible versions/hashes. `unenroll BINDING_ROLE BINDING_UUID`
+removes future automation without revoking existing hook grants. Binding or
+resource scopes without an approval retain manual setup. Keep coordinated SQL
+refresh grants and gate setup manual: any `gregale_data_api.refresh_gate` in this
+database blocks automated preparation for enrolled bindings. Unenrollment remains
+available after a gate is added. This prevents adopting a candidate that bypasses
+the predecessor's pause/fingerprint contract. See [ADR-1735](adr/1735-data-api-deadline-grant-rotation.md).
+
+The coordinated enrollment below replaces that manual rotation boundary for
+supported managed bindings.
+
+The gateway overwrites the reserved `gregale_sql_deadline` JWT claim and strips
+it when disabled. Caller headers and claims cannot extend the deadline or select
+refresh behavior. With coordinated refresh, the SQL hook checks time before the
+existing barrier and recalculates after it; pause, fingerprint checks and pool
+reservation retain their existing behavior.
+
+If the hook observes expiry, it returns HTTP 504 with
+`data_api_sql_deadline_exceeded`, classified by the SDK as `timeout` / `reconcile`.
+Malformed/missing/version-mismatched deadline claims fail closed with HTTP 500
+and `data_api_sql_deadline_invalid`. PostgreSQL can instead return `57014` when
+the main statement timer fires, or `55P03` for a lock wait; the gateway HTTP timer
+may also win the response race. Keep existing cancellation/lock guidance and
+reconcile uncertain writes before explicit replay. No SDK retries are added.
+
+This contract assumes stable, reasonably synchronized gateway/database clocks.
+An ahead database clock shortens the budget; a substantially behind clock rejects
+the future deadline. Backward clock steps can extend elapsed work. Pool acquisition
+is not cancelled by this hook: an expired queued request is refused when its hook
+runs. Trusted SQL functions can override timeouts or catch errors, and external
+effects/sequences are not rolled back. HTTP abort still does not prove SQL stopped.
+See [ADR-1734](adr/1734-data-api-sql-retry-deadlines.md) for the boundaries and tests.
+
+## Credential rotation with coordinated SQL refresh
+
+Managed Neon `data_api` bindings using the `api` schema can explicitly enroll in
+rotation support for coordinated refresh. Rebuild from the updated runtime
+template. Install the existing refresh barrier first and keep
+`DATA_API_COORDINATED_REFRESH=1` on serving runtimes. Use the migration connection
+whose effective role is the stable managed schema owner:
+
+```sh
+node data-api-runtime/refresh-rotation.mjs enroll YOUR_BINDING_LOGIN_ROLE YOUR_BINDING_UUID
+node data-api-runtime/refresh-rotation.mjs check-enrollment YOUR_BINDING_LOGIN_ROLE YOUR_BINDING_UUID
+```
+
+If the serving login has SQL deadline hook grants, install/check those hooks first
+and run both enrollment commands with `DATA_API_SQL_DEADLINE=1`. The recorded
+deadline mode must match on repeated enrollment. If this binding previously used
+deadline-only enrollment, remove that approval with `sql-deadline.mjs unenroll`
+before enrolling coordinated rotation; existing deadline grants remain intact.
+
+Enrollment drains admissions using the old login's lock, preserves an existing
+pause and its owner token, then moves protection to a shared binding gate.
+Queued calls to the old hook fail closed after its legacy gate row is removed.
+Both old and replacement logins subsequently honor the same pause/resume state.
+Each login has its own verified schema fingerprint. Other per-login legacy
+barriers continue through the upgraded hooks. Once the database uses rotation
+hooks, enroll additional managed bindings with this tool; the old `install`
+command refuses to overwrite them. Owner enrollment and read-only checks use
+catalog privileges and do not need membership in serving logins.
+
+Replacement preparation grants the two fixed refresh functions, optional matching
+deadline functions and the source login's explicitly approved `@gregale:rpc`
+functions. It compares a pinned catalog/permission witness before committing the
+candidate and publishing credentials. It does not copy arbitrary grants or table
+ownership. Invalid hook/table metadata, source-role identity, RPC definitions or
+permissions block publication and leave current credentials available. A failed
+attempt can resume the same credential generation after owner repair.
+
+Continue using the existing `refresh.mjs pause|resume|check` commands and
+coordinated sync/recovery workflow. Pause drains requests from every enrolled
+generation. Resume verifies the supplied fingerprint for the requested login,
+inspects every remaining member using that member's privileges, and records each
+verified fingerprint and catalog witness before releasing the shared pause.
+Stale runtimes receive `schema_contract_mismatch` until refreshed. The scheduler's
+existing rolling credential refresh determines when the old login is revoked;
+retirement removes only its mapping. The shared gate survives until the last
+login is retired, including during binding deletion.
+
+DDL or permission changes after approval can conservatively block preparation,
+including unrelated catalog DDL. Use coordinated pause/verification/resume to
+approve the current catalog before retrying rotation. Preparation can join an
+already paused gate when its approved witness still matches; changes during a
+migration keep it blocked until verification. Arbitrary owner edits outside this
+workflow remain an operational coordination concern. There is no additional
+serving connection pool, request probe or automatic mutation replay. See
+[ADR-1667](adr/1667-data-api-coordinated-refresh-rotation.md).
+
+### Rotation preflight and progress
+
+Before rotating an enrolled coordinated-refresh binding, check it using the
+matching owner tool and the same managed migration connection used for setup:
+
+```sh
+node data-api-runtime/refresh-rotation.mjs preflight YOUR_BINDING_LOGIN_ROLE YOUR_BINDING_UUID
+```
+
+Keep `MIGRATION_DATABASE_URL` in the local owner environment and set
+`DATA_API_SQL_DEADLINE=1` when that mode is enrolled. The command checks enrollment,
+protected hook versions and ACLs, source identity, deadline and RPC grants,
+catalog/schema drift, managed baseline privileges and RLS policy role lists.
+It returns JSON with stable check codes and repair steps. `passed`, `blocked`
+and `unknown` distinguish checked conditions from missing evidence. Blocked or
+unknown checks exit nonzero. It runs a read-only transaction, always rolls back,
+and needs neither an application JWT nor a refresh token. An unchanged paused
+gate can pass because replacement preparation preserves that pause.
+
+For a combined CLI report, save a trusted local command in `rotation-check.json`
+(paths resolve relative to the file's directory):
+
+```json
+{
+  "command": ["node", "data-api-runtime/refresh-rotation.mjs", "preflight", "YOUR_BINDING_LOGIN_ROLE", "YOUR_BINDING_UUID"],
+  "directory": "."
+}
+```
+
+```sh
+gregale --json data-api rotation preflight notes-data --binding YOUR_BINDING_UUID --owner-check rotation-check.json
+gregale --json data-api rotation status notes-data --binding YOUR_BINDING_UUID
+gregale --json data-api diagnostics notes-data --rotation-binding YOUR_BINDING_UUID
+```
+
+The CLI verifies that this Data API binding belongs to the app before running
+the owner command. Its `ready` result requires passing owner checks, complete and
+consistent inventory, a ready binding and no pending predecessor cleanup. Owner
+output is bounded and validated; arbitrary stdout/stderr is not relayed. Use the
+documented read-only command: the configuration is trusted executable code and
+inherits your environment. The CLI cannot make an arbitrary owner command safe.
+`--timeout` bounds the entire check (default two minutes, maximum one hour).
+
+Status shows the credential generation, refresh handoff and retirement progress.
+A completed refresh may still have `cleanup_pending`; `retiring` records active
+managed cleanup. `no_previous_generation_pending` means the catalog records no
+predecessor cleanup, including bindings that have never rotated. It is not an
+independent provider revocation test. Runtime freshness compares configuration
+and instance timestamps; it does not prove credential use or readiness. Inventory
+comes from separate reads; conflicting or partial observations require a retry.
+Hosted diagnostics includes this evidence only with `--rotation-binding` and
+marks metadata failures partial. Offline `--file` analysis rejects that flag.
+
+Repair catalog or grant drift through coordinated pause, verification and resume;
+preflight never adopts it. Review policies whose `TO` list names the source SQL
+login: a replacement has a different identity. Use owner-reviewed policies that
+apply to replacement logins and preserve application-claim isolation. A passing
+preflight remains advisory: it does not evaluate arbitrary RLS expressions or
+prove future candidate privileges, runtime adoption or provider revocation.
+Preparation rechecks the full witness transactionally before publication. See
+[ADR-1668](adr/1668-data-api-rotation-preflight.md).
+
+## Per-user request rate limits
+
+Enable an optional policy through the Data API deployment environment:
+
+```sh
+DATA_API_RATE_LIMIT_PER_SECOND=10
+DATA_API_RATE_LIMIT_BURST=20
+```
+
+Either variable enables the policy. If one is omitted, its default is 10 requests
+per second or a burst of 20. Both must be decimal integers from 1 to 1,000;
+empty, zero, fractional and out-of-range values fail startup. Remove both
+variables to disable. Update the runtime and fresh-restart after changing these
+deployment settings; existing templates without this feature ignore them.
+These are owner-selected application limits, separate from platform plan quotas.
+
+The gateway checks a token bucket keyed by the verified JWT `sub` after admission
+and JWT/claim validation, before refresh checks, SQL readiness probes, signing
+or data-engine dispatch. A new subject starts with `burst` credit; each request
+uses one credit, replenished continuously at `per_second` up to that burst.
+REST reads/writes, RPCs, OpenAPI and serving-contract reads share one bucket.
+Rotating tokens or changing routes does not reset the same subject's budget.
+Missing/invalid JWTs do not create buckets. Health probes and CORS preflight
+bypass this policy. Valid subjects' subsequent permission/contract failures can
+consume credit. Each request has the same cost; this is not a SQL-cost budget.
+
+Rejection returns HTTP 429 with code `data_api_rate_limited`, `Retry-After: 1`,
+`Cache-Control: no-store` and the gateway request ID. Allowed browser origins
+can read the retry header. The problem includes `reason`, `per_second`, `burst`,
+`retry_after_seconds`, policy `limit`, safe `observed` counts and a documentation
+link. `reason: "subject"` means there is no whole request credit available;
+`reason: "tracking_capacity"` means no slot is available for a new subject.
+HEAD returns status/headers without a problem body. A rejected write never
+reaches PostgreSQL through this gateway. No automatic replay is added.
+Generated OpenAPI advertises the 429 problem shape and retry header.
+
+Each runtime holds at most 4,096 hashed subject keys. A lazy sweep at most once
+per second removes only fully refilled buckets, which can safely restart full.
+When tracking fills, new subjects are rejected until slots become available;
+existing depleted buckets are not evicted to make room, preventing identity
+churn from resetting their budgets. Existing subjects may still use their
+available credit. Cleanup adds no timers or SQL connections. Logs retain no
+subjects, hashes, tokens or per-user counters: `rate_limit` contains only fixed
+`reason`, `per_second`, `burst` and `retry_after_seconds`.
+
+CLI diagnostics validate this metadata, count `failures.rate_limited` separately
+from overload/unavailability, and retain the safe policy in request-ID lookup.
+Unknown fields are discarded; malformed/inconsistent metadata makes coverage
+partial. Old records without rate-limit observations remain readable. Health
+adds `rate_limits_observed` to recent findings without changing current readiness.
+The SDK recognizes the stable code and HTTP 429 as `rate_limited` with recovery
+`wait`, including `throwOnError()` when the code is available. This guidance
+defers a decision; it never retries. Generic 429 can come from another service
+or application SQL and does not establish that a mutation was rejected before
+execution. Reconcile uncertain writes before replaying them.
+
+Budgets are local to a runtime and reset on a cold process start; snapshots may
+retain in-memory state. Replicas do not share counters. The existing global
+admission queue runs before authentication, so this does not provide per-user
+queue fairness, protect against all verification floods, or enforce a distributed
+account/tenant quota. Shared quotas and deployed load qualification remain separate.
+
+## Total request deadline
+
+Each admitted authenticated request has one 15-second elapsed-time budget, using
+the canonical query bound in `pkg/api/limits.go`. The budget starts when the
+request receives an active slot, after the separate one-second admission wait.
+It includes JWT verification, coordinated-refresh checks, signing, upstream
+request/body handling and response streaming. Authenticated schema and OpenAPI
+requests share this budget; public health and CORS checks retain their existing
+separate behavior. Continuous response chunks cannot extend the deadline.
+
+The runtime checks monotonic elapsed time after asynchronous work and before
+engine dispatch, as well as through a deadline timer. Expired verification,
+refresh or signing cannot later dispatch the original request. Before response
+headers, expiry returns HTTP 504 with stable code `request_deadline_exceeded`,
+the gateway request ID and `Connection: close`. After headers, expiry closes the
+incomplete response; a previously sent status such as 200 cannot become a 504.
+HTTP work is aborted, and normal completion or client cancellation clears the
+timer. Timers run when the Node event loop can execute them; this is not a
+preemptive CPU execution limit.
+
+An active verification or refresh operation retains its admission slot until it
+settles, even if its HTTP response already timed out. This preserves the active
+work bound; a timeout must not admit more unfinished verification work. Closing
+an engine HTTP request does not prove PostgreSQL cancelled or rolled back SQL.
+Dispatched writes remain uncertain and require receipt/data reconciliation before
+retry. SQL statement timeouts remain independent. No automatic mutation retry is
+introduced, and the new SDK classifies `request_deadline_exceeded` as `timeout`
+with recovery guidance `reconcile`, including `throwOnError()` errors.
+
+Timed-out request logs add safe `deadline` metadata: `phase`, `elapsed_ms` since
+admission and `dispatched`. Fixed phases are `verification`, `refresh`, `readiness`,
+`signing`, `upstream` and `streaming`. Streaming includes engine response buffering
+and OpenAPI rendering. `dispatched` records an attempted data-engine HTTP request;
+it is not evidence of SQL execution/commit and excludes refresh/admin SQL probes.
+An upstream-phase expiry can precede dispatch and then records `dispatched: false`.
+Pre-header expiry has outcome `query_timeout`; incomplete responses keep outcome
+`aborted`, the already-sent status and the deadline code. No raw error, token,
+SQL, query value or response body enters the metadata.
+
+`data-api diagnostics` reports `deadlines.observed`, `deadlines.dispatched` and
+counts in `deadlines.by_phase`. `failures.timeouts` includes both old inactivity
+timeouts and total deadlines, including interrupted streams whose sent status was
+200. Older records remain readable with no deadline-phase observations. Request
+ID lookup retains the validated timeout metadata; malformed phase records make
+the retained sample partial rather than publishing untrusted fields. These are
+sampled HTTP observations, not SQL execution timings or rollback guarantees.
+
+## Response byte limit
+
+Normal REST/RPC response bodies, including engine error bodies, have a 16 MiB
+(16,777,216-byte) limit from `api.DataAPIMaxResponseBytes`. Exactly that many
+bytes are allowed. The gateway counts actual body bytes while streaming and
+preserves downstream backpressure; it does not buffer the full result. This
+limit is independent of the 1,000-row cap: a single large JSON value can exceed
+it. Request bodies and successful OpenAPI/schema rendering retain their separate
+1 MiB bounds. HEAD and bodyless HTTP responses do not count a representation's
+advertised size, and HTTP headers are excluded from body byte accounting.
+
+If the engine advertises an oversized `Content-Length`, the gateway rejects it
+before sending headers with HTTP 502 and stable code `response_too_large`. The
+problem includes `request_id`, `limit`, `observed`, `observed_is_lower_bound: true`
+and a documentation link. `observed` is always the safe lower bound 16,777,217,
+not a measurement of the complete result. Otherwise the gateway checks each
+chunk before forwarding it. Overflow after a prefix was sent closes the
+incomplete response, keeping its original sent status, which may be 200. It
+cannot append a JSON problem or replace those headers. A first oversized chunk
+can still return the 502 problem if headers have not been sent.
+
+Safe logs record code `response_too_large` and `response_limit` metadata with
+`source` (`content_length` or `stream`), `limit_bytes` and
+`observed_at_least_bytes`. They contain no result values or exact result size.
+An interrupted stream records outcome `aborted` and its sent status; a completed
+502 problem records `rejected`. The streaming timing remains incomplete.
+`data-api diagnostics` counts both in `failures.response_too_large`, and request-ID
+lookup retains the validated metadata. `data-api health` reports
+`response_limits_observed` among recent findings, separately from current readiness.
+Older records remain readable; malformed metadata marks the sample partial.
+
+The SDK classifies the problem code as `response_too_large` with recovery
+`reconcile`, including errors from `throwOnError()`. An interrupted body can
+instead surface as status 0 / `no_response`; a transport failure alone does not
+identify its cause. Capture the header request ID with `onResponse` and look up
+the gateway log. A mutation may commit before its response exceeds this limit.
+Reconcile its receipt or resulting data before replaying it; a 502 does not
+establish rollback. No automatic mutation retries are added. For future requests,
+use smaller projections/pages and bounded RPC results. Existing apps need the
+updated runtime; applications need the updated SDK for the new category.
+
+## Guided first application
+
+With Node.js 22+, npm, a running local Docker daemon and an approved matching
+CLI/SDK bundle, create and verify a complete project with:
+
+```sh
+gregale data-api onboard --path notes --bundle /path/to/data-api-bundle.json
+```
+
+This composes the existing starter, verified SDK installer and disposable local
+workflow. It generates types, compiles and tests the client, and replays CRUD,
+two-user isolation and RPC scenarios. It exits after verification and removes
+its disposable services. The project, artifact pin, lockfile and generated types
+remain for development. Existing nonempty directories are refused.
+
+Each stage reports its result and duration. If installation or verification
+fails, fix the reported cause and use the printed commands to continue in the
+retained project. Do not rerun onboarding over that project. `--json` emits
+newline-delimited `onboarding_step` records; nested workflow output goes to
+stderr. `local_activation: passed` means this local starter passed its checks;
+it does not establish hosted deployment, production policy correctness, or a
+customer activation-time target.
+
+Follow the [first-application journey](data-api-onboarding.md) to open the
+browser example, evolve a schema, investigate a failure and prepare a pilot.
+
+## Team orders dashboard starter
+
+For a shared-team application, use the embedded `data-api-teams` starter:
+
+```sh
+gregale data-api onboard --template data-api-teams --path team-orders --bundle /path/to/data-api-bundle.json
+cd team-orders
+gregale data-api dev --port 0 --check
+```
+
+Build and serve its browser client with `npm run build:browser --prefix client`
+and `npm run serve --prefix client`. Database membership grants owners/admins
+order writes and members shared reads. Tenant claims do not grant membership.
+The typed dashboard includes status filters, UUID cursor pages, version-checked
+idempotent saves and explicit same-user recovery after uncertain responses.
+Owners can also add registered identity-provider IDs, edit/remove membership
+with UUID revisions, transfer ownership atomically and browse access history.
+The last owner is protected. Exact-key receipt recovery confirms transfers even
+after the original actor loses ownership; directories and history remain
+owner-only. The local collection tests tenant isolation, role escalation denial,
+membership administration, expiring member/admin invitations and receipt replay.
+Invitations register the verified accepting subject without manual ID provisioning.
+Committed declarations can be verified with `--check-types` in CI.
+
+The [starter README](../cmd/gregale/templates/data-api-teams/README.md) explains
+owner-controlled membership provisioning, hosted adoption and receipt retention.
+Seed memberships are local test fixtures. Membership changes use reviewed application RPCs. The starter adds no identity
+service, invitation email delivery, automatic write retries, payments or hosted
+qualification.
+
 ## Develop locally
 
 Initialize the starter and run a disposable API without a Gregale account:
@@ -126,7 +701,8 @@ their subjects, and the schema fingerprint. Use its `url` and an identity's
 `token` with the normal SDK. Tokens expire after 24 hours and work only for that
 running instance. Before reporting readiness, the command verifies that missing
 tokens and cross-subject reads and writes are rejected. Browser CORS allows
-`http://localhost:5173` and `http://127.0.0.1:5173`.
+`http://localhost:5173`, `http://127.0.0.1:5173`, and the starter browser
+origins `http://localhost:3030` and `http://127.0.0.1:3030`.
 
 After installing the pinned SDK and starter client dependencies as described in
 the starter README, run:
@@ -735,7 +1311,8 @@ engine readiness. Browser origins must be explicitly allowed. The service
 rejects missing, expired, wrong-audience and invalid tokens with HTTP 401.
 
 V1 bounds each instance to two database connections, 1,000 returned rows,
-1 MiB request bodies and a 15-second upstream timeout. Type generation is
+1 MiB request bodies, 16 MiB normal REST/RPC response bodies and a 15-second
+upstream timeout. Type generation is
 bounded to 1,000 exposed relations, 10,000 columns, 20,000 catalog types,
 and 1 MiB output. Truncated output fails without replacing your types file.
 The normal app, task and database quotas and billing rules apply.
@@ -829,7 +1406,8 @@ handling returns `{ data: null, error, status: 0 }` for an aborted read or a
 network failure; inspect `signal.aborted` to distinguish cancellation. With
 `.throwOnError()`, transport failures throw their original error and database
 errors throw `PostgrestError` with the server's code. The proxy returns HTTP 504
-with `query_timeout` for its upstream timeout, HTTP 503 with
+with `request_deadline_exceeded` for its total admitted deadline (or
+`query_timeout` for an earlier upstream inactivity timeout), HTTP 503 with
 `data_api_unavailable` when the engine is unavailable, and HTTP 401 with
 `token_invalid` for invalid or expired sessions.
 
@@ -891,7 +1469,7 @@ not undo a successful earlier insert. The example above is therefore two
 transactions. RPC can provide one transaction per function call; transactions cannot span HTTP requests.
 Use an application-owned transaction on a trusted backend when multiple writes
 must commit together. Avoid automatic retries after ambiguous network failures.
-The existing request-body and response-row caps apply to bulk writes; the number
+The existing request-body, response-byte and response-row caps apply to bulk writes; the number
 of returned rows does not prove the number committed for oversized batches.
 Keep batches small enough to verify every returned id before relying on the
 result for follow-up writes or cleanup.
@@ -1071,7 +1649,7 @@ outcome is resolved, and reuse both after a timeout or lost response:
 const key = crypto.randomUUID() // create once; retain this key for retries
 const payload = { body: 'Atomic note', tags: ['work', 'todo'] }
 const result = await notesClient(session).createWithTagsOnce(key, payload.body, payload.tags)
-// If the network outcome is uncertain, call again with this same key and payload.
+// If the network outcome is uncertain, first look up the receipt below.
 ```
 
 The raw typed call is `db.rpc('create_note_with_tags_once', {
@@ -1105,9 +1683,293 @@ note row types can make historical snapshots incompatible, so plan receipt
 migration or retirement together with schema changes. A fresh key always means
 a new operation; the original `createWithTags` remains non-idempotent.
 
+### Read-only receipt recovery
+
+Apply the append-only `0011_note_receipt_lookup.sql` migration and the normal
+owner RPC permission workflow, then refresh the API and regenerate types. The
+approved `read_note_create_receipt(uuid,text,text[])` function derives the subject
+from the JWT and compares the original key, body and ordered tags. It returns
+the stored original note snapshot without creating a note or reserving a key.
+The function is `STABLE SECURITY INVOKER`, works in a SQL read-only transaction,
+and restores its private SELECT-only RLS scope after lookup.
+
+```ts
+import { dataRequest, reconcileMutation } from '@gregale/data'
+
+// pending was saved before the original write, under this API and identity.
+const response = await dataRequest(
+  client.readCreateReceipt(pending.key, pending.body, pending.tags)
+    .select('id,body,subject'),
+  { timeoutMs: 5000 },
+)
+const recovery = reconcileMutation(response, row =>
+  row.subject === pending.subject && row.body === pending.body,
+)
+```
+
+The helper classifies the completed lookup without executing another request.
+It preserves selected types and returns `confirmed` with the original `row`,
+`payload_conflict`, or `unresolved`. Its synchronous predicate binds a receipt to
+the pending operation; keep the same API, subject, tenant where applicable, key
+and complete payload. The lookup checks arguments that are absent from the
+selected response. A visible payload mismatch uses HTTP 409, `PT409` and
+`idempotency_payload_conflict`; other request failures retain their original
+error/status and remain unresolved. Invalid or multiple rows also remain
+unresolved, without exposing rejected rows or predicate exceptions.
+
+An empty result cannot distinguish an uncommitted write, a hidden receipt or
+owner purging. It never proves rollback. Preserve the original pending operation
+and keep replay explicit under the retained-receipt contract. A lookup after
+purging cannot recreate a note. Confirmation describes the original response,
+including after a later edit or deletion of the business row. The
+[order example](../examples/data-api-idempotency/README.md) provides the same
+workflow with subject/tenant-scoped `read_order_receipt` and a typed client.
+See [ADR-1669](adr/1669-data-api-read-only-mutation-recovery.md).
+
+### Versioned replay expiry
+
+The starter's append-only `0012_note_replay_expiry.sql` adds an explicit v2
+contract. Apply it with the owner migration binding, run the existing RPC
+permission workflow, refresh the serving schema and regenerate types. Install
+the paired SDK bundle to use `createReplayKeyV2()` and the typed expiry results.
+Existing v1 functions and cleanup behavior remain unchanged.
+
+```ts
+import { createReplayKeyV2, classifyDataError, dataRequest } from '@gregale/data'
+
+// Persist once with the original API, subject and complete payload before send.
+const operation = {
+  contract: 'v2', subject: session.subject,
+  key: createReplayKeyV2(), body: 'hello', tags: ['work'],
+}
+const result = await dataRequest(
+  client.createWithTagsOnceV2(operation.key, operation.body, operation.tags),
+  { timeoutMs: 5000 },
+)
+if (classifyDataError(result.error, { status: result.status })?.category === 'replay_expired') {
+  // Retain operation. Read its receipt or resolve through business review.
+}
+```
+
+`create_note_with_tags_once_v2(uuid,text,text[])` requires an RFC UUIDv7 key.
+Its fixed deadline is the key's embedded millisecond timestamp plus **24 hours**.
+Timestamps over **five minutes** ahead of the database clock are refused. A slow
+client clock shortens its window; a clock within the future allowance can produce
+up to 24 hours plus five minutes measured from acceptance. PostgreSQL checks
+`clock_timestamp()` before and after the operation lock, after business work and
+before returning. If work crosses the deadline, its database changes roll back.
+Expiry is independent of receipt deletion and receipt creation time.
+
+Expired writes return HTTP 410 / `PT410` / `idempotency_key_expired`. The SDK
+classifies that exact contract as `replay_expired` with reconciliation guidance.
+Do not replace the key or switch RPC versions after an uncertain write. Keys are
+scoped by this contract and authenticated subject; changing the API, identity,
+version or timestamp creates another operation namespace.
+
+Use `client.readCreateReceiptV2(key,body,tags)` (SQL RPC
+`read_note_create_receipt_v2`) for read-only recovery. A retained receipt returns
+its original snapshot even after expiry. A visible payload mismatch returns the
+existing `idempotency_payload_conflict`. A missing unexpired receipt returns zero
+rows; a missing expired receipt returns the expiry error. `reconcileMutation`
+keeps that outcome `unresolved`, with reason `replay_expired`. None of these
+unresolved outcomes proves rollback or permits a new key. The browser starter
+explicitly selects v2; `createNoteForm` preserves its v1 default for existing
+callers and accepts `{ replayContract: 'v2' }` for opt-in adoption.
+
+For owner maintenance, use the existing cleanup command with an explicit contract:
+
+```sh
+# Set MIGRATION_DATABASE_URL through the owner migration binding.
+# Choose a past UTC cutoff. Preview, then use the same options with --apply.
+npm run receipts:cleanup -- --contract v2 --before 2026-10-17T00:00:00.000Z --batch-size 100 --max-batches 1
+```
+
+V2 cleanup considers only generated key deadlines at or before both the past
+cutoff and server time. It keeps bounded batches, skips locked rows and operations,
+and removes snapshots without deleting notes. RLS permits no application receipt
+updates/deletes; a maintenance trigger also refuses updates and premature owner
+deletes. Owners can change their schema, so these guards do not cover arbitrary
+owner SQL or truncation. Without `--contract v2`, cleanup retains its legacy v1
+behavior described below.
+
+Keep the fixed v2 replay window unchanged: extending it could revive purged keys.
+A new policy requires a new contract version. Use a trustworthy database clock;
+large backward clock jumps and restores losing committed receipts invalidate the
+assumptions. This contract covers database effects under normal retained history,
+with separate policies needed for external effects and disaster recovery.
+Invalid UUID versions/variants return `PT400` / `idempotency_key_invalid`; excessive
+future skew returns `PT400` / `idempotency_key_in_future`. See
+[ADR-1670](adr/1670-data-api-versioned-replay-expiry.md).
+
+### Versioned update and delete recovery
+
+Apply `0013_note_mutation_receipts.sql`, run the normal owner RPC permission
+workflow, refresh the serving schema and regenerate types. Install the paired SDK.
+The new RPCs are opt-in; existing REST updates/deletes keep their prior behavior.
+
+| Operation | Write RPC | Read-only receipt RPC | Starter client methods |
+| --- | --- | --- | --- |
+| Update | `update_note_once_v2` | `read_note_update_receipt_v2` | `updateOnceV2`, `readUpdateReceiptV2` |
+| Delete | `delete_note_once_v2` | `read_note_delete_receipt_v2` | `removeOnceV2`, `readDeleteReceiptV2` |
+
+Each call takes the original UUIDv7 key, note ID and expected version; update
+also takes a nonempty patch containing only `body` and/or `priority`. These fields
+must be a non-null string and a PostgreSQL integer respectively. The API derives
+subject from the token. Keys share one update/delete namespace, so a successful
+key cannot switch action, target, expected version or patch. Creation has its own
+namespace. Keep the original API, identity, contract, action and all arguments.
+
+```ts
+import { createReplayKeyV2, dataRequest, classifyVersionedMutation, reconcileMutation } from '@gregale/data'
+
+// Save this operation before its first request. Keep it unchanged for recovery.
+const pending = {
+  contract: 'note_mutation_v2', action: 'update', subject: session.subject,
+  key: createReplayKeyV2(), id: note.id, expectedVersion: note.version,
+  patch: { body: 'edited' },
+}
+const matches = (row: { id: number; subject: string; version: number; body: string }) =>
+  row.id === pending.id && row.subject === pending.subject &&
+  row.version === pending.expectedVersion + 1 && row.body === pending.patch.body
+const response = await dataRequest(
+  client.updateOnceV2(pending.key, pending.id, pending.expectedVersion, pending.patch)
+    .select('id,subject,version,body'),
+  { timeoutMs: 5000 },
+)
+const outcome = classifyVersionedMutation(response, matches)
+
+// If uncertain, read its original receipt explicitly; this performs no write.
+const receipt = await dataRequest(
+  client.readUpdateReceiptV2(pending.key, pending.id, pending.expectedVersion, pending.patch)
+    .select('id,subject,version,body'),
+  { timeoutMs: 5000 },
+)
+const recovery = reconcileMutation(receipt, matches)
+```
+
+A successful update stores its post-update snapshot and increments the version
+once. A successful delete stores the deleted snapshot, preserving its version.
+Use `removeOnceV2(key,id,expectedVersion)` and `readDeleteReceiptV2` for deletion;
+match the original ID, subject and **expected version**, without adding one.
+Receipt confirmation describes the original operation, not the current note.
+
+`classifyVersionedMutation` returns `applied`, `version_conflict`,
+`payload_conflict`, or `unresolved` (including reason `replay_expired`). It executes
+no request or retry. Stale, absent and hidden rows share HTTP 409 / `PT409` /
+`idempotency_version_conflict`. Changing a successful key's request gives the
+existing `idempotency_payload_conflict`. Failed mutations roll back and store no
+receipt; a latest conflict alone cannot confirm an earlier uncertain write.
+Invalid mutation arguments return `PT400` / `idempotency_mutation_invalid`.
+
+V2 expiry remains 24 hours from the UUID timestamp, with five minutes of future
+clock tolerance. Lookups can confirm retained expired receipts; writers reject
+expired keys before and after lock waits, including after receipt deletion.
+Preserve unresolved operations and never automatically change their key or row
+version. To purge only expired update/delete receipts using the owner binding:
+
+```sh
+npm run receipts:cleanup -- --contract v2 --receipt-kind mutation --before 2026-10-17T00:00:00.000Z --batch-size 100 --max-batches 1
+# Review the preview, then repeat with --apply to commit bounded batches.
+```
+
+Cleanup skips active operation locks and row locks and does not delete business
+rows. Default creation cleanup remains unchanged. The clock, database-history
+and owner-authority assumptions from the v2 expiry section also apply here.
+See [ADR-1671](adr/1671-data-api-versioned-update-delete-receipts.md).
+
+### Atomic note batch recovery
+
+Apply `0014_note_atomic_batches.sql` after the earlier starter migrations. Run
+owner RPC permission setup, refresh the serving runtime, regenerate types and
+install the paired SDK. The opt-in `apply_note_batch_once_v2(key,operations)` RPC
+commits 1–100 updates/deletes on **distinct notes** in one transaction. Every item
+must supply `operation`, `note_id`, `expected_version`; updates also need a
+nonempty `patch` with only `body` (non-null string) and/or `priority` (PostgreSQL
+integer). Deletes must omit `patch`. IDs and versions are positive PostgreSQL
+integers. Unknown fields, repeated IDs or invalid items reject the entire batch.
+
+```ts
+import { dataRequest, classifyVersionedMutation, reconcileMutation } from '@gregale/data'
+import { prepareNoteBatch, noteBatchMatches } from './note-batch.js'
+
+// Capture before sending; retain the original API/client, identity and contract.
+const pending = prepareNoteBatch(session.subject, [
+  { operation: 'update', note_id: first.id, expected_version: first.version,
+    patch: { body: 'edited', priority: 2 } },
+  { operation: 'delete', note_id: second.id, expected_version: second.version },
+])
+const matches = noteBatchMatches(pending)
+const response = await dataRequest(
+  client.applyBatchOnceV2(pending.key, pending.operations), { timeoutMs: 5000 },
+)
+const outcome = classifyVersionedMutation(response, matches)
+if (outcome.outcome === 'applied') {
+  // All original operations matched. results have validated typed snapshots.
+  console.log(outcome.row.results.map(item => [item.index, item.operation, item.note.id]))
+}
+
+// After an uncertain response, explicitly read; this does not replay a write.
+const lookup = await dataRequest(
+  client.readBatchReceiptV2(pending.key, pending.operations), { timeoutMs: 5000 },
+)
+const recovery = reconcileMutation(lookup, matches)
+```
+
+`prepareNoteBatch` clones/freezes the input and creates one UUIDv7 key after
+validation; it does not save pending work. An optional third argument restores
+an original captured key without changing its deadline. Persist the whole
+pending operation with its API/identity/contract context if recovery must survive
+a reload. Use the same identity and API for lookup; token renewal may preserve
+that identity. Never regenerate keys, update versions or split an uncertain batch
+automatically.
+
+One response row contains `request_key`, `subject` and ordered `results`. Each
+result contains its zero-based `index`, `operation` and original note snapshot.
+Updates advance the version once; deletes preserve the deleted version. The
+matcher checks **every** result, including identity, ID, action, order, version
+and update patch. A partial/malformed envelope cannot confirm the batch. The
+SDK type-guard overload narrows generated JSON only after this runtime check.
+
+All expected versions are checked under row locks before work begins. A stale,
+absent or hidden note produces the same `PT409` /
+`idempotency_version_conflict`. Any mutation, RLS, cascade or receipt failure
+rolls back the entire batch. The saved results are capped at 1 MiB (1,048,576
+bytes of JSON text); exceeding it gives HTTP 413 / `PT413` /
+`idempotency_batch_result_too_large` and rolls back everything. Invalid arrays
+return `PT400` / `idempotency_batch_invalid`. Existing API request/deadline limits
+also apply. PostgreSQL sequences and external effects from custom code are
+outside database rollback.
+
+The ordered array is part of the receipt's identity: reordering or changing any
+successful request returns `idempotency_payload_conflict`. Matching replay returns
+the original envelope after later edits/deletions. Batch keys have their own
+namespace, separate from creation and individual mutations. Locks are acquired
+by ascending note ID; results follow submitted order. Customer triggers and
+other transactions can still encounter ordinary lock errors.
+
+The same v2 clock policy applies: 24 hours from the UUID timestamp and at most
+five minutes ahead of database time. Writers reject expired keys even after
+purge. `read_note_batch_receipt_v2` may confirm a retained expired receipt; an
+absent live receipt returns zero rows and an absent expired one returns
+`idempotency_key_expired`. Empty, conflicting and expired results do not resolve
+an earlier uncertain request. Retain its original pending context.
+
+Preview owner cleanup with the batch selector, then add `--apply` to commit:
+
+```sh
+npm run receipts:cleanup -- --contract v2 --receipt-kind batch --before 2026-10-17T00:00:00.000Z --batch-size 100 --max-batches 1
+```
+
+Cleanup skips active key/row locks and only purges expired batch receipts. It
+never deletes business rows or reopens old keys. Budget storage for the full
+ordered request and original snapshots. Existing SDK `bulkMutations` continues
+to issue separate requests; use this explicit RPC when one database transaction
+is required. See [ADR-1672](adr/1672-data-api-atomic-note-batches.md).
+
 ### Receipt retention and owner cleanup
 
-Apply `0010_receipt_retention.sql` to add the cleanup scan index. Choose a
+For the legacy v1 contract, apply `0010_receipt_retention.sql` to add the cleanup
+scan index. Choose a
 retention window longer than every supported client retry/offline window, then
 calculate an absolute UTC cutoff. There is no automatic expiry or default
 retention duration: a receipt older than the cutoff becomes eligible, but
@@ -1186,7 +2048,8 @@ npm run rpc:permissions -- --role your_data_api_login --apply
 A retired NOLOGIN role, different credential scope, elevated role, membership,
 object ownership, schema creation, outside-schema table access or executable
 security-definer function is refused. The selected role must have the existing
-Data API statement-timeout configuration, connection/schema usage, table and
+Data API timeout configuration (the exact legacy statement-only policy or the
+current statement/lock policy), connection/schema usage, table and
 sequence grants, and future-object default grants. Tables must have RLS enabled
 and policies configured; views must be security-invoker views. Materialized and
 foreign tables are blocked by this conservative readiness check. Unsupported,
@@ -1668,6 +2531,120 @@ The starter's `notesClient.cursorPage()` uses the SDK's `cursorPage` and
 timestamp/id validation remain the same, including PostgreSQL microseconds.
 Upgrade the installed SDK bundle alongside the starter to use these helpers.
 
+### Ranked note search
+
+The notes starter's `0016_note_search.sql` adds an indexed, ranked search RPC.
+Apply the migration, run the normal owner RPC permission workflow, refresh the
+runtime and regenerate client types. Existing notes are indexed by the migration;
+ordinary inserts, edits and deletes maintain the index in their transaction.
+
+```ts
+import { parseNoteSearchPage } from './note-search.js'
+
+const response = await notes.search('running errands', { size: 20 })
+if (response.error) throw response.error
+const page = parseNoteSearchPage(response.data[0])
+// Results contain current id, body, priority, created_at, version and rank.
+if (page.has_more) {
+  const next = await notes.search('running errands', { after: page.next_cursor!, size: 20 })
+  if (next.error) throw next.error
+  const following = parseNoteSearchPage(next.data[0], page.next_cursor!)
+}
+```
+
+Search uses PostgreSQL's English dictionary, stemming and stop-word removal.
+Every normalized query word must match. Input is plain text: Boolean operators,
+phrase, prefix and fuzzy syntax are unsupported. Empty and stop-word-only queries
+are invalid. Results sort by relevance (an integer score in millionths) and then
+descending id. The RPC returns current note fields, without snippets or totals.
+Requests support `.abortSignal(signal)` and preserve normal Data API errors.
+
+Queries allow at most 1,024 UTF-8 bytes and 16 distinct normalized terms. Pages
+allow 1–100 results (default 20), and cursors at most 128 ASCII bytes. Invalid
+arguments return HTTP 400 with `note_search_query_invalid`,
+`note_search_page_size_invalid` or `note_search_cursor_invalid`. Cursors bind
+to the exact query text and verified subject. Keep API, identity and query
+consistent across pages; restart when any changes. Pagination uses live data:
+an edit that changes relevance can move a row between pages.
+
+The internal term index uses subject/lexeme equality lookups that remain
+indexable under RLS. Every candidate is joined to current notes under their
+current RLS policy and checked again for a full-text match. Direct index reads
+are hidden and direct writes are rejected. There are no definer functions or
+required extensions. Common queries can still rank many matches; normal
+statement and response budgets apply. The index consumes storage and adds work
+to writes. Owner TRUNCATE, disabled triggers or dictionary changes require a
+reviewed index rebuild. See [ADR-1677](adr/1677-data-api-ranked-note-search.md).
+
+### Incremental note changes
+
+The notes starter's `0015_note_change_feed.sql` adds a bounded change feed over
+the existing Data API. Apply the numbered migration, use the normal owner RPC
+permission workflow, refresh the runtime and regenerate the paired client types.
+This captures future changes to `api.notes`; existing rows come from the initial
+scan. Comments, tags and other related tables have separate lifecycles.
+
+```ts
+import { notesClient } from './notes.js'
+import { parseNoteSyncCheckpoint, parseNoteChangePage,
+  noteChangeCursorExpired } from './note-changes.js'
+
+const notes = notesClient({ url, subject, accessToken })
+const started = await notes.startSync()
+if (started.error) throw started.error
+let cursor = parseNoteSyncCheckpoint(started.data[0])
+
+// First build a fresh staging cache with notes.syncRows({ afterID, size }).
+// Scan in ascending id order until an empty page, then catch up from cursor.
+const result = await notes.readChanges(cursor, 100)
+if (noteChangeCursorExpired(result)) {
+  // Restart the staging scan with a fresh startSync() checkpoint.
+} else if (result.error) {
+  throw result.error
+} else {
+  const page = parseNoteChangePage(result.data[0], cursor)
+  // Re-fetch every distinct page.changes[].note_id through notes.db:
+  // upsert current rows and remove ids absent under current RLS.
+  // Apply the whole page before saving page.next_cursor locally.
+  cursor = page.next_cursor
+  // Explicitly request subsequent pages while page.has_more is true.
+}
+```
+
+Events contain `sequence` (a decimal string), `operation` (`insert`, `update`,
+`delete`), `note_id` and `version`. They identify rows to refresh and never
+contain historical note bodies. Re-fetch ids even for deletion events: a newer
+row state may already exist by the time the page is applied. Fetches use normal
+RLS; an absent row is removed from the cache. A page can split a multi-row SQL
+transaction. This provides eventual synchronization rather than a frozen client
+snapshot. Persist the cursor only after applying all page invalidations.
+
+Per-subject transactional counters ensure a later commit cannot skip an earlier
+pending write. Rollback removes its changes and counter advancement together.
+Writes by the same subject serialize at the counter and can encounter ordinary
+SQL lock/deadlock errors. Other subjects have independent streams. Polling takes
+no stream write lock and creates no counter row for an empty subject.
+
+Each subject retains its latest 10,000 events. Older positions return HTTP 410,
+code `PT410`, message `note_change_cursor_expired`. Restart the initial scan on
+this exact result; failed requests do not advance the cursor. High write volume
+can expire history during bootstrap. Stream watermarks remain after deletion of
+all notes, and stream storage grows with the number of subjects with history.
+
+Pages contain at most 100 events. Opaque cursors are at most 128 bytes and bind
+to the feed instance and verified subject. Wrong-context, malformed and future
+cursors return HTTP 400 / `note_change_cursor_invalid`; invalid sizes return
+`note_change_page_size_invalid`. Missing/inconsistent history fails with HTTP
+503 / `note_change_feed_unavailable`. Cursors are not authorization tokens.
+Bind local caches to API and identity, and reset staging on identity changes.
+
+Both RPCs work in read-only transactions. Private feed tables cannot be read or
+modified directly through the API. Ordinary inserts, edits, deletes and approved
+business RPCs capture metadata atomically, including owner changes of a note's
+identity. Owner resets, TRUNCATE, history-losing restores and changed policies
+require a reviewed reset/epoch strategy. See
+[ADR-1676](adr/1676-data-api-incremental-note-change-feed.md).
+
 ### Coordinated hosted schema updates
 
 Opt-in coordinated sync keeps ordinary SQL traffic paused until compatibility,
@@ -1998,6 +2975,105 @@ Structural checks do not cover RLS policy bodies, arbitrary RPC behavior, or
 whether every serving replica has refreshed. Keep authorization replay and
 coordinated refresh checks for those concerns.
 
+### Check liveness, readiness and recent failures
+
+```sh
+gregale data-api health notes-data
+gregale --json data-api health notes-data --since 15m --timeout 30s
+```
+
+The read-only health report combines public process and readiness probes with
+the existing owner-authorized retained log sample. Account credentials are sent
+only to the management API. Probes follow no redirects and require no application
+JWT. The default recent window is 15 minutes; one 30-second deadline covers the
+report (`--timeout` accepts up to one hour). Individual public probes have a
+five-second deadline. Probing may wake a parked app through normal routing.
+
+`/livez` returns `200 {"version":1,"live":true}` when the gateway can handle the
+request. It performs no engine, JWT or database work. `/healthz` retains engine
+SQL readiness and returns HTTP 200 or 503 with `ready`, `live`, `version: 1`,
+safe `checks` and an `admission` snapshot. Both bypass request admission and use
+`Cache-Control: no-store`. Liveness does not prove startup completion or database
+availability; startup failures and engine exit still stop the production runtime.
+Keep deployment health checks on `/healthz`.
+
+The observations have deliberately separate meanings:
+
+| Field | Values and meaning |
+| --- | --- |
+| `checks.engine` | `reachable` means a TCP connection to the loopback engine listener succeeded; `unreachable` means it failed or timed out. It does not test SQL. |
+| `checks.sql` | `ready` means the pinned engine's `/ready` check succeeded; `unready` means it returned a failing status; `unknown` means no status arrived before the deadline. The runtime disables PostgREST's DB listener, so readiness checks SQL connectivity through its existing pool. |
+| `checks.database` | `reachable` means SQL readiness or the separate coordinated refresh reader succeeded during this probe; `unknown` means connectivity could not be established. It never infers a database outage from SQL unreadiness. |
+| `checks.refresh` | `disabled`, `active`, `paused` or `unavailable`. A deliberate pause remains visible even when SQL is ready. An unavailable refresh reader makes readiness fail. |
+| `admission` | Current `active`, `queued`, `capacity` and `queue_capacity` for this runtime. Full active capacity is evidence of admission saturation, not proof of SQL pool exhaustion. |
+| `pool` | An allowlisted observation from the engine's private loopback metrics endpoint, with its own `checked_at` timestamp. `state: "observed"` includes `capacity`, `available`, `waiting` and `timeouts_total`; `state: "unknown"` omits all counts and includes a fixed reason. |
+
+The engine pool has capacity two, or one with coordinated refresh (the separate
+refresh reader retains the other connection). `available` counts existing idle
+connections in the engine's lazy pool. It is not unused configured capacity:
+`capacity - available` cannot be used as an active-connection count. Zero
+available connections alone does not change current health. Positive `waiting`
+records pending pool acquisitions and adds the CLI finding `pool_waiting`.
+Waiters can include the SQL readiness probe itself; they are distinct from
+the gateway's HTTP admission queue and do not count only customer requests.
+
+`timeouts_total` is a cumulative engine acquisition-timeout counter. It may reset
+on engine restart and does not establish timeouts within the CLI's `--since`
+window. A positive counter or a reset does not add a current or recent failure.
+Acquisition timeouts include engine admin/health work, including diagnostic probes.
+Pool observations do not measure SQL execution time, acquisition latency or
+database-wide connection usage.
+
+Metrics callers have a two-second deadline and cap responses at the existing
+8 KiB health-response bound. The pinned engine checks SQL twice before exporting
+metrics when its DB listener is disabled, so saturation can make this observation
+unknown. Reads reuse the engine pool, share in-flight work even after caller
+timeout, and have the existing 15-second hard HTTP cap (including continuous
+chunks). Completed observations are not cached. SQL work can outlive HTTP
+cancellation. The metrics endpoint stays private and its raw response is never
+forwarded.
+Fixed unknown reasons are `unavailable`, `timeout`, `unsupported`, `too_large`
+and `invalid_metrics`. Missing, duplicate, fractional, negative, unsafe-integer
+or inconsistent required metrics fail the observation rather than producing zeros.
+Unrelated metric series are discarded. Required pool metrics must be unlabelled.
+
+Pool telemetry does not affect `/healthz` SQL readiness or its HTTP status.
+The CLI retains valid readiness when pool metadata is unknown or malformed,
+marks coverage partial (`pool_unknown`, `pool_invalid` or `pool_unsupported`),
+and exits 1. A versioned older runtime without `pool` is unsupported for this
+observation; update that runtime. Valid counts appear in `readiness.pool` in JSON
+and the text report. Each timestamp belongs to its own probe; concurrent fields
+are observations rather than a single atomic snapshot.
+
+Runtime observations run concurrently with a two-second caller deadline. Engine
+SQL probes share one in-flight admin request per runtime, retained until it
+finishes or the existing 15-second query deadline; a caller timing out cannot
+immediately create another pool waiter. Refresh health reads likewise stay shared
+until the reserved reader settles. No new database connection pool is added.
+PostgREST 14.3's admin `/live` also checks SQL in this configuration, which is why
+the independent engine observation uses TCP. Already-started engine SQL work can
+outlive an HTTP probe deadline.
+
+JSON reports separate `current_findings` from `recent_findings` and include the
+validated diagnostics report with its sample coverage. Current findings include
+admission saturation, engine pool waiters, refresh pauses, engine reachability and SQL readiness;
+recent findings include observed overloads, query timeouts, refresh pauses,
+unavailability, response-size limits and user rate limits. `failures.refresh_paused` and `failures.refresh_unavailable` refine
+the existing aggregate `failures.unavailable` count. Recent failures do not mark
+a recovered runtime unhealthy. No matching retained records are not proof that
+no failures occurred. Logs that are unavailable, truncated or contain gaps remain
+explicit partial coverage; valid current observations are retained.
+
+The command exits 0 for a healthy current observation and a completely read log
+sample, and 1 for degraded/unavailable/unknown current health or partial coverage.
+An older runtime without the versioned health response is reported as unsupported
+and partial; redeploy the updated runtime. HTTP errors and malformed/oversized
+responses expose fixed findings only, never raw response bodies. Public probes
+can reach different replicas; neither the report nor the retained sample proves
+the health of every deployment or replica, and the fields are observations rather
+than an atomic snapshot. `data-api status` continues to inspect coordinated
+refresh ownership and fingerprints.
+
 ### Summarize request logs and look up request IDs
 
 `data-api diagnostics` summarizes existing safe request records without changing
@@ -2035,6 +3111,57 @@ aborted requests and measure the gateway's local response finish/close interval,
 not SQL execution, client receipt, network latency or platform wake time. Empty
 groups report null percentiles and error rate, rather than a healthy zero.
 Percentiles are exact for the observed sample; small samples have coarse ranks.
+
+Updated runtimes also attach `timings` to admitted requests. Each entered phase
+has `duration_ms` and `complete`: `verification` covers JWT verification and
+gateway authorization/contract checks; `refresh` covers the refresh barrier;
+`readiness` covers authenticated schema readiness probes; `signing` covers the
+engine JWT; `upstream` covers engine HTTP dispatch until response headers arrive;
+`streaming` covers response headers through the gateway's finish/close event.
+These are sequential gateway intervals. Engine wait can include request upload,
+transport, pool wait and SQL work; it does not isolate SQL execution or pool wait.
+Admission queue wait remains separate in `admission.wait_ms`.
+
+Every statistics group exposes `timings.observed_requests`, `without_timings`
+and `by_phase`. Each phase reports `observed`, `completed`, `interrupted`, and
+completed-only `latency_ms` p50/p95/p99. A normally returned error is a completed
+phase observation. Cancellation or timeout marks the active phase incomplete;
+earlier completed phases still contribute samples. Interrupted elapsed times are
+lower bounds, reported separately in `interrupted_elapsed_ms` in JSON. Phases
+never entered are absent, not zero. Legacy logs and requests rejected before
+admission or bypassing it (including health probes) count as `without_timings`.
+Missing completed samples produce null percentiles (`n/a` in text).
+Phase populations can differ, so their percentiles cannot be added to reconstruct
+the request-latency percentile.
+
+New runtimes also enable PostgREST 14.3 timing and log `database_timings` when
+a request is dispatched to the engine. Version 1 uses source
+`postgrest_server_timing`, state `observed`, and five `phases`: `jwt`, `parse`,
+`plan`, `transaction` and `response`. Each has `duration_ms` and `complete: true`.
+`transaction` combines pool acquisition, connection/session setup, hooks, SQL and
+result transfer. `plan` measures engine SQL generation, not PostgreSQL planning.
+Both `sql_execution` and `pool_wait` are explicitly `unknown`: the pinned engine
+does not isolate them, and subtracting gateway time cannot recover them.
+
+The header is private and strictly parsed; raw headers and descriptions are never
+logged or forwarded. Errors can omit it. A dispatched request with no engine
+headers records `state: "unknown", reason: "no_response"`; absent or invalid
+timing headers use `missing_header` or `invalid_header` and contain no durations.
+A downstream abort or response limit after engine headers preserves the completed
+engine measurement while gateway streaming remains incomplete. Engine timing is
+not independent evidence of SQL commit or client receipt. Measurements belong to
+one request UUID and timestamp; there is no cross-request cache.
+
+Statistics groups add `database_timings` with `version`, `source`,
+`observed_requests`, `unknown_requests`, `unknown_by_reason`, `without_timings`,
+`by_phase`, `sql_execution` and `pool_wait`. Phase statistics use completed-only
+percentiles. Unknown measurements and legacy/bypassed requests never become zero
+latencies. `data-api health` includes the REST/RPC sample under
+`diagnostics.data_requests.database_timings` and shows combined transaction
+percentiles in text. These are retained sample observations; missing timings do
+not change current readiness or make an otherwise complete report partial.
+Rebuild the runtime from the updated template to enable this on an existing app.
+See [ADR-1731](adr/1731-data-api-database-timing-telemetry.md).
 
 Request IDs are deduplicated across the sample. `--request-id UUID` narrows all
 summaries and includes the matching safe metadata record in `matches`. A missing
@@ -2077,7 +3204,7 @@ configured staging target.
 ### Classify SDK errors
 
 `@gregale/data` exports `classifyDataError(error, { status })` for stable SQL,
-authentication, permission, contract, deadline, cancellation and availability
+authentication, permission, contract, deadline, cancellation, response-size and availability
 categories. Pass `result.error` and `result.status`; successful null errors return
 `null`. Caught `throwOnError()` errors can be classified without a status. The
 helper preserves the original error and performs no requests or retries. See the
@@ -2111,8 +3238,8 @@ case demonstrates read-only reconciliation of a committed write.
 
 The notes starter's browser form is a runnable validated RPC example. It supplies
 inline field feedback, curated request-error messages and typed note results.
-Uncertain writes retain the same key and payload for explicit recovery through
-the starter's idempotent function; automatic retries remain disabled. Follow the
+Uncertain writes retain the same key and payload for read-only receipt lookup;
+write replay is a separate explicit action and automatic retries remain disabled. Follow the
 [starter form guide](../cmd/gregale/templates/data-api-starter/README.md#validated-rpc-form)
 for same-user session handling, receipt-retention limits and in-memory state.
 
@@ -2157,3 +3284,1909 @@ and does not establish that a write rolled back. Reconcile an uncertain write
 before replaying it. PostgreSQL/PostgREST acceptance explicitly verifies a
 committed write whose response parser fails, along with scalar, JSON and
 RLS-filtered row parsing and unchanged SQL permission failures.
+
+### Team invitation example
+
+The `data-api-teams` starter includes self-service member/admin invitation links.
+Owners create, list and revoke invitations; a signed-in recipient joins under
+their verified JWT subject without manual registry provisioning. Links expire,
+are single-use, keep bearer secrets in URL fragments and store only hashes in
+PostgreSQL. Recovery reuses one immutable operation; historical acceptance does
+not restore subsequently removed membership. See the
+[team starter guide](../cmd/gregale/templates/data-api-teams/README.md#self-service-invitations)
+for sharing, acceptance, privacy and audit behavior. This is customer application
+SQL, not a platform identity service or email delivery feature.
+
+### Team CSV import and export
+
+The team starter provides local CSV mapping and validation, reviewed create-only
+imports, duplicate skipping and persisted batch progress. Owners/admins import;
+owners see team history and admins their own, with resume restricted to the
+original actor. Members may export their readable orders using the status filter.
+See the [CSV workflow guide](../cmd/gregale/templates/data-api-teams/README.md#csv-import-and-export)
+for application bounds, recovery, retention and live-export semantics. Other
+schemas require application-owned parsers and reviewed RPCs.
+
+### Reviewed team order actions
+
+Team orders provides version-checked submit and fulfil RPCs with immutable
+receipts and tenant-scoped history. Ordinary creates are draft-only, submission
+freezes totals and fulfilment is final. Imported historical initial states remain
+supported. See the [workflow guide](../cmd/gregale/templates/data-api-teams/README.md#reviewed-order-workflows)
+for recovery, permissions and migration behavior. These rules belong to the
+application starter; other domains need their own reviewed transitions.
+
+### Team order summaries
+
+The teams starter's `0012_team_order_summary.sql` adds
+`summarize_team_orders(team_id, status_filter, minimum_total, maximum_total)`.
+Apply the migration, run owner RPC permission setup, refresh and regenerate
+types. The function returns one row with `tenant_id`, `order_count`,
+`total_cents` and `by_status`. Each status bucket contains `status`,
+`order_count` and `total_cents`, including zeros for absent groups.
+
+```ts
+import { teamsClient } from './orders.js'
+import { parseOrderSummary } from './order-summary.js'
+
+const team = teamsClient({ url, accessToken }, 'shop-a')
+const filters = { status: 'submitted' as const, minimum: 100, maximum: 50000 }
+const controller = new AbortController()
+const result = await team.summary(filters).abortSignal(controller.signal)
+if (result.error) throw result.error
+const summary = parseOrderSummary(result.data[0], team.tenant, filters)
+const exactCents = BigInt(summary.total_cents)
+```
+
+Status and inclusive amount filters are optional; null means absent. Amount
+bounds use the existing per-order PostgreSQL integer range, 0–2,147,483,647
+cents. Summaries include all matching visible rows, beyond ordinary page caps.
+Counts and sums are decimal strings, preserving exact values above JavaScript's
+safe-integer range. The parser validates the selected team, filters, status
+order and agreement between overall and bucket totals, and freezes the result.
+
+The read-only invoker RPC checks current membership and the order table's RLS.
+Owners, admins and members may read. JWT tenant/role hints do not grant access;
+revoked or absent membership returns HTTP 403 / `team_membership_required`.
+Authorized empty datasets return zeros. Empty/null team IDs and invalid ranges
+return HTTP 400 /
+`invalid_order_summary`; enum/integer wire errors retain native database errors.
+The client keeps native errors and cancellation and disables automatic retries.
+
+All totals use one statement snapshot. In-flight reads can finish with an
+earlier view during a concurrent revocation. Existing 15-second statement and
+request deadlines apply; fixed result size does not cap scanning work. Errors
+return no partial or cached totals. Status enum changes require updating the
+paired client contract. See
+[ADR-1678](adr/1678-data-api-team-order-aggregation.md).
+
+### Team order webhooks
+
+Reviewed team order transitions atomically enqueue signed delivery snapshots.
+A separate application worker uses tenant-scoped trusted claims, leased retries
+and finite dead-letter budgets. Owners inspect deliveries and replay failed
+generations; keys and destinations stay in the worker environment. See the
+[webhook guide](../cmd/gregale/templates/data-api-teams/README.md#transactional-webhook-delivery)
+for worker setup, raw-byte HMAC verification and receiver deduplication. This is
+at-least-once application delivery, with customer-owned scheduling and retention.
+
+### Tenant webhook operations
+
+Owners can pause/resume new leases, inspect queue health and enqueue age, and
+review a bounded failure set before atomic batch replay. Active leases can still
+finish while paused. Operation history and original-actor receipts support
+recovery after response loss. See the [delivery operations guide](../cmd/gregale/templates/data-api-teams/README.md#tenant-delivery-operations)
+for revision checks, effective expired states and retention responsibilities.
+
+The `data-api-teams` starter includes named webhook subscriptions: owners select event
+filters and approved configuration references, while separate workers deliver from
+independent queues. Pending deliveries retain their original version and reference.
+See the generated team README for private worker configuration, rotation, and the
+interaction between per-subscription and team-wide pause.
+
+Owners of the team starter can queue signed sample webhook tests and inspect
+per-delivery attempts, retry eligibility and subscription changes. Tests use the same
+private worker and respect pause controls. Missing-binding diagnostics help operators
+restore approved configuration; HTTP acceptance is evidence for the pinned version
+at that time, not a live health guarantee. See the generated README for sample
+receiver handling and immutable operation recovery.
+
+The team starter now supports personal saved order views with reusable status/total
+filters and sorting. Owners and admins can preview selected submitted orders and
+atomically fulfil a reviewed batch, with version checks, webhook fan-out, immutable
+history and recovery for lost responses. A stale row rejects the whole batch. See the
+generated team README for personal-view privacy, pagination and recovery semantics.
+
+The team starter supports shared views published by owners/admins. Members can apply
+published status/range/sort presets, inspect publication history, or create private
+personal copies. Reviewed revisions and immutable receipts protect edits and copy
+recovery. Shared views reuse existing queries, exports and bulk-review controls;
+applying them does not change order permissions. See the generated README for copy
+privacy and publication semantics.
+
+### Schema changes and consumer impact
+
+`data-api diff` can identify saved views and RPCs affected by changed contract
+paths. Keep a customer-owned dependency manifest alongside your migrations:
+
+```json
+{
+  "version": 1,
+  "consumers": [
+    {"kind": "saved_view", "name": "Submitted orders", "dependencies": ["api.team_orders.status", "api.team_orders.total_cents"]},
+    {"kind": "rpc", "name": "Fulfil orders", "dependencies": ["api.team_orders", "api.fulfil_orders_once"]}
+  ]
+}
+```
+
+```sh
+gregale --json data-api diff --baseline before.json --current after.json \
+  --dependencies data-api.dependencies.json --check
+```
+
+The JSON report includes `impacts` with each affected consumer and its matching
+changes, including breaking/approval status. Human-readable output lists affected
+consumers. Relation or schema removals affect declared descendants; a relation
+reference covers all its fields, and an RPC reference covers argument changes.
+Names match exactly at contract path boundaries (`api.orders` does not match
+`api.orders_archive`). Duplicate dependency matches report a change once.
+
+Coverage is **declared dependencies only**: maintain this manifest when changing
+views or RPCs. Gregale does not parse SQL bodies, discover stored user preferences,
+or prove that unlisted consumers are unaffected. Declare enum and composite type
+paths separately when used. Dependencies do not change the existing CI gate:
+`--check` still fails on every unapproved breaking contract change, including
+changes without a declared consumer. Offline comparisons need no staging access.
+
+Dependency paths must exist in either comparison snapshot. Unknown paths fail
+validation, so a misspelled field cannot silently disappear from the impact report.
+
+### Rehearse migrations before deploying
+
+Run a migration rehearsal from your project directory:
+
+```sh
+gregale --json data-api migration preview --baseline schema.json \
+  --dependencies data-api.dependencies.json --replay data-api.requests.json \
+  > migration-preview.json
+```
+
+The baseline is a previously reviewed `data-api types --snapshot` export or a
+saved `.gregale/data-api-contract.json` from local development. All file arguments
+are relative to `--directory` (default `.`), unless absolute. Install the pinned
+SDK and client dependencies before running this command. It requires Node.js
+22+, npm, and a local Docker daemon, as does `data-api dev`.
+
+Preview rebuilds the configured migration history in disposable PostgreSQL 16,
+loads configured local seed data, applies the existing RPC/RLS permission checks,
+and verifies the required authorization scenarios against PostgREST. It compares
+the resulting API with the read-only baseline, checks committed generated types,
+runs configured client checks, and optionally replays a saved request collection.
+`--scenario NAME` restricts the optional replay; required authorization scenarios
+always run. `--output FILE` overrides the configured committed types path.
+
+JSON mode emits one version 1 report on stdout, after container cleanup. It
+includes the actual migration ledger (versions, filenames, SHA-256 checksums),
+baseline and candidate fingerprints, schema changes, declared consumer impacts,
+request assertion results, and per-step `passed`, `failed`, `skipped`, or
+`not_run` statuses. Diagnostics and dependency installation output go to stderr.
+Without `--json`, preview prints a readable summary. Exit status 0 means the
+requested checks and cleanup passed; failures return a nonzero status for CI.
+Invalid inputs and prerequisite failures can exit before rehearsal starts and
+therefore before a report is available.
+
+Unapproved breaking changes, stale types, client failures, or replay mismatches
+fail the report, but do not suppress subsequent independent checks. Migration,
+permission, or authorization failures stop checks that need a working API;
+remaining stages show `not_run`. Omitted optional replay shows `skipped`.
+`--approval FILE` accepts only existing fingerprint-bound compatibility approvals.
+`--dependencies FILE` uses declared coverage; omitted dependencies show
+`not_provided`. Unknown dependency paths fail comparison.
+
+Preview does not update the baseline, committed types, or local accepted contract,
+and does not persist local JWTs or identity receipts. Configured client commands
+still execute locally and may write build/test artifacts. Replayed requests target the disposable API database.
+
+By default, this is a **clean rebuild** from local migration history and seed data. It does
+not clone an existing database or prove that an upgrade will succeed on production
+rows, lock contention, or data volume. Use representative local seed data for
+application checks, and rehearse data-dependent upgrades against a separate
+representative database before deployment, or use the fixture-based upgrade mode below. Preview does not deploy or modify a
+hosted Gregale database.
+
+### Rehearse an upgrade with existing data
+
+Add `--from-version N` to build the selected older schema before applying the
+pending migrations:
+
+```sh
+gregale --json data-api migration preview --baseline schema-v10.json \
+  --from-version 10 --fixture testdata/pre-upgrade.sql \
+  --data-check testdata/post-upgrade.json --replay data-api.requests.json \
+  > upgrade-preview.json
+```
+
+The selected version must exist in the configured migration directory. Preview
+applies migrations through that version, configures the API role, and requires
+its inspected contract fingerprint to match the baseline. Compatibility approvals
+cannot bypass this source check. It then loads the SQL fixture into the older
+schema, verifies that the fixture did not change the exposed API contract, and
+applies only the later migrations using the existing transactional migration
+ledger. The fixture can therefore reveal failures such as a new constraint that
+cannot accept existing rows. Fixtures referencing future columns fail before the
+upgrade starts.
+
+`--fixture FILE` overrides the configured seed for this rehearsal. If omitted,
+the development config's seed must be nonempty and compatible with the older
+schema. Fixtures run with the local database owner, as configured seeds do; use
+representative, data-only SQL. In upgrade mode, seeds run **before** pending
+migrations and are not rerun afterward. The normal clean-rebuild preview remains
+available by omitting `--from-version`.
+
+Declare data-preservation and backfill assertions in a JSON file:
+
+```json
+{
+  "version": 1,
+  "checks": [
+    {
+      "name": "Existing notes preserved",
+      "sql": "SELECT count(*) = 2 AS passed FROM api.notes WHERE subject = 'fixture-user'"
+    },
+    {
+      "name": "Existing note content preserved",
+      "sql": "SELECT count(*) = 2 AND bool_and(body IN ('first note', 'second note')) AS passed FROM api.notes WHERE subject = 'fixture-user'"
+    }
+  ]
+}
+```
+
+For those checks, the older-schema fixture could contain:
+
+```sql
+INSERT INTO api.notes(subject, body)
+VALUES ('fixture-user', 'first note'), ('fixture-user', 'second note');
+```
+
+Each assertion must be a single SQL query returning exactly one row and one
+boolean column named `passed`, with the value `true`. False, null, wrong-shaped
+results, SQL errors, writes, and multiple statements fail the assertion. Checks
+run in separate read-only transactions with statement and lock timeouts, before
+API authorization verification can create or remove its own test rows. These
+owner-level checks inspect stored data; required API verification and saved
+request replay continue to check application authorization separately.
+
+A manifest may contain one to 100 uniquely named checks and must be a regular
+JSON file under 64 KiB. Query text, returned values, fixture rows, and raw database
+errors are not included in the report. All assertions run even when an earlier
+assertion fails, and a data-check failure still allows independent API and client
+checks to run.
+
+The version 1 report uses `mode: "upgrade"` and adds source and fixture stages,
+`upgrade.from_version`, the verified source fingerprint, source migration
+checksums, pending migration checksums, and `data_checks` results. On an upgrade
+SQL failure, the migration ledger reflects the source migrations that remain
+after rollback. Data coverage is `declared` when `--data-check` is provided, or
+`not_provided` with a skipped data stage when it is omitted. Data assertions can
+also be used with a clean-rebuild preview.
+
+This rehearsal covers the supplied fixtures and assertions. It does not clone a
+hosted database or reproduce production data volume, concurrent traffic, or lock
+contention. Baselines, committed types, fixture files, and local accepted contracts
+remain unchanged, and disposable services are removed on success and failure.
+
+### Build representative fixtures from a local or test database
+
+Use `data-api fixture build` to generate rehearsal data from an explicitly
+allowlisted slice of a PostgreSQL database. Supply the connection through an
+environment variable, as you would other database bindings:
+
+```sh
+gregale --json data-api fixture build --config fixture-policy.json \
+  --database-url-env DATA_API_FIXTURE_DATABASE_URL \
+  --api-role gregale_data_api --output fixtures/before-upgrade
+```
+
+The command needs Node.js 22+ and npm. It installs the pinned embedded runtime in
+a temporary directory and does not require Docker. The selected environment
+variable holds the local/test database URL; the URL is never placed in arguments,
+options files, fixture metadata, or diagnostic output. Remote test connections
+use verified TLS. `--api-role` switches only contract inspection to the serving
+role, so the generated contract reflects its privileges. The source account must
+be allowed to select that role and read the declared source rows. Without this
+flag, the contract reflects the source account's own privileges.
+
+Declare each table, every exported column, root filters, and masking rules:
+
+```json
+{
+  "version": 1,
+  "tables": [
+    {
+      "table": "api.notes",
+      "columns": ["id", "subject", "body"],
+      "where": {"id": 10},
+      "limit": 1,
+      "mask": {
+        "subject": {"kind": "hash", "group": "subjects"},
+        "body": {"kind": "replace", "value": "sample note"}
+      }
+    },
+    {
+      "table": "api.comments",
+      "columns": ["id", "subject", "note_id", "body"],
+      "limit": 0,
+      "mask": {
+        "subject": {"kind": "hash", "group": "subjects"},
+        "body": {"kind": "replace", "value": "sample comment"}
+      }
+    }
+  ]
+}
+```
+
+Filters are parameterized equality comparisons on allowlisted columns. A null
+filter means `IS NULL`. `limit` selects root rows in primary-key order; its default
+is 20, and zero means related rows only. Once roots are selected, the exporter
+follows incoming and outgoing foreign keys between declared tables until the
+related set is complete. Root filters and limits do not restrict relationship
+closure. For example, the policy above includes comments attached to the selected
+note even though the comments table has no roots. Rows are deduplicated by their
+primary keys. A non-null reference to an undeclared or invisible parent fails the
+export; the tool never silently drops required parents or truncates closure.
+Undeclared child tables are not traversed.
+
+Only allowlisted columns are selected. Include each table's primary, unique, and
+foreign-key columns, along with required columns that have no database default.
+Keep a sensitive required column in the allowlist and explicitly mask it. Columns
+without masks retain their selected values; there is no automatic sensitive-data
+detection or masking. Available rules are:
+
+- `replace`: use a declared scalar `value`, converted by PostgreSQL to the column
+  type. Use strings for exact large integers and decimal values.
+- `null`: emit null for nullable columns.
+- `hash`: use a named `group` to generate a 32-character text pseudonym. Hashes
+  use a fresh unrecorded random salt per export; equal values in the same group
+  map consistently within that package.
+
+Hash masks support PostgreSQL text and varchar columns with room for 32
+characters. Primary, unique, and foreign-key columns support keeping values or
+hash masking; replacements and null masks on keys are rejected. Both sides of a
+foreign-key pair must use the same masking rule and hash group. The exporter
+checks selected key collisions and masked relationship consistency before writing
+files. Arbitrary database constraints and triggers still apply when restoring
+fixtures; choose replacement values that satisfy them.
+
+Export runs in a read-only, repeatable-read source transaction. It preserves
+source rows and sequence state. Identity values are emitted with
+`OVERRIDING SYSTEM VALUE`, and the generated SQL resets ordinary ascending
+identity/serial sequences on the target so subsequent API writes avoid exported
+IDs. The first version supports ordinary and partitioned `api` tables with an
+acyclic active table dependency graph and primary keys. Generated columns cannot
+be exported directly. Custom descending or nonstandard-increment sequences,
+cyclic/self-referencing row sets, partial/expression unique indexes, views, and
+arbitrary SQL filters are rejected.
+
+A policy must be a regular JSON file under 64 KiB with one to 50 declared tables.
+Roots and complete relationship closure share the existing 1,000-row Data API
+bound. Selected source values and generated SQL share the 1 MiB fixture bound;
+generated assertions must fit the rehearsal's 64 KiB/100-check limits. The source
+API contract must fit the existing 1 MiB schema-comparison bound. Exceeding a
+bound fails the export without a partial package. Narrow roots or split policies
+rather than relying on truncation.
+
+The output directory must be new. All files are staged privately and published
+together. It contains private files:
+
+- `fixture.sql`: typed SQL containing only selected, explicitly masked values.
+- `data-checks.json`: basic assertions for preserved keys and references.
+- `contract.json`: the source API snapshot and fingerprint.
+- `fixture.json`: row counts, column allowlists, mask kinds/groups, and checksums.
+
+The source URL, filters, replacement values, and hash salt are not recorded in
+metadata. The SQL and assertion files contain the kept or masked fixture values;
+review them before sharing. A failed build preserves existing output directories.
+
+Use the package directly in an upgrade rehearsal:
+
+```sh
+gregale --json data-api migration preview --from-version 10 \
+  --baseline fixtures/before-upgrade/contract.json \
+  --fixture fixtures/before-upgrade/fixture.sql \
+  --data-check fixtures/before-upgrade/data-checks.json \
+  --replay data-api.requests.json
+```
+
+The selected source migration version must reproduce the exported contract.
+Generated fixtures contain a source fingerprint and payload checksum in their
+header. Preview rejects edited payloads and mismatched source fingerprints before
+loading rows. Hand-authored SQL fixtures continue to work. Add your own data checks
+for business invariants and expected backfills; generated checks cover declared
+keys and references, not every value or production workload.
+
+### Inspect local query plans
+
+`data-api explain` plans saved GET relation requests against a disposable local
+rebuild, using their configured identities and RLS. Supply representative seed
+data or a SQL fixture; writes, RPC calls and unresolved capture variables are
+skipped. A report passes only when at least one read is planned and none fail.
+
+```sh
+gregale --json data-api explain --collection data-api.requests.json \
+  --fixture fixtures/before-upgrade/fixture.sql > plans-before.json
+# Add a reviewed index migration, then compare the same workload and fixture.
+gregale --json data-api explain --collection data-api.requests.json \
+  --fixture fixtures/before-upgrade/fixture.sql \
+  --baseline plans-before.json > plans-after.json
+```
+
+Use `--scenario NAME` to select one saved scenario and `--config FILE` for a
+custom development project. The command refreshes statistics in its disposable
+database and requests estimated PostgREST plans with execution analysis disabled.
+It reports scan/sort findings and candidate BTREE indexes for simple root filters,
+ordering and direct JWT equality policies. Review suggestions for selectivity,
+existing indexes, RLS and write cost before applying a migration. Complex policies,
+embedded filters and partial/expression indexes require manual assessment.
+
+Reports omit filter values, claims and raw SQL expressions. They include estimated
+costs, rows, catalog names, request names and cleanup status. Costs are planner
+units, not measured latency. Comparison requires matching fixture/seed, identities
+and saved requests; use deterministic fixtures because matching SQL alone does
+not guarantee identical data. Local data distributions and planner settings may
+differ from production. Planning can evaluate functions declared immutable by the
+schema. This command leaves generated types, saved contracts and collections
+unchanged and enables plan responses only in its disposable PostgREST instance.
+
+### Enforce query performance budgets in CI
+
+Use the same deterministic fixture and saved collection for the approved baseline
+and candidate migrations. Checked runs require a baseline and an explicit budget:
+
+```sh
+gregale --json data-api explain --collection data-api.requests.json \
+  --fixture fixtures/before-upgrade/fixture.sql --baseline plans-before.json \
+  --check --budget budgets.json > plans-candidate.json
+```
+
+```json
+{
+  "version": 1,
+  "queries": [
+    {
+      "scenario": "default",
+      "name": "Selective read",
+      "max_total_cost": 100,
+      "max_cost_ratio": 1.2,
+      "max_scanned_rows": 1000
+    }
+  ]
+}
+```
+
+Version 1 collections use scenario `default`; version 2 uses the saved scenario
+name. Each rule needs at least one limit. All limits must be finite nonnegative
+numbers, and cost ratios must be greater than zero. Duplicate selectors and
+unknown fields are rejected. Equality at a limit passes. There is no implicit
+regression threshold; choose limits appropriate for your workload.
+
+Every planned read must have a budget, and every budget must resolve to a planned
+read with a matching baseline query. A skipped, missing or failed budgeted query
+cannot pass. When selecting `--scenario`, supply budgets for that selected workload.
+Exceeded limits return exit code 1 after cleanup, with structured `budget_check`
+violations and the existing index suggestions in the JSON report. Invalid inputs
+fail before starting disposable services. Budgets and baseline files are read only.
+
+`max_total_cost` uses the top-level estimated plan cost; `max_cost_ratio` bounds
+candidate cost divided by baseline cost. For a zero-cost baseline, only a zero-cost
+candidate passes that ratio limit. `max_scanned_rows` uses approximate scan work:
+sequential scans count full relation rows from local statistics, while index,
+bitmap heap, TID and foreign scans count estimated returned rows. Scan nodes are
+summed once without estimating loop multiplicity or rows rejected by index filters.
+This metric is not a measured physical-row count. Plans and budgets remain local
+estimates and do not guarantee production latency.
+
+### Verify reusable data integrity checks
+
+`data-api verify` rebuilds the configured local migrations in a disposable database,
+loads the configured seed or a current-schema SQL fixture, and runs named assertions
+before authorization verification creates its temporary test rows. It then runs the
+project's required authorization checks through the local API. No hosted database
+or credentials are used, and types, contracts and input manifests stay unchanged.
+
+```sh
+gregale --json data-api verify --checks data-checks.json \
+  --fixture fixtures/current.sql > verification.json
+```
+
+Reuse the same version 1 assertion manifest with migration preview's `--data-check`:
+
+```json
+{
+  "version": 1,
+  "checks": [
+    {
+      "name": "Required note bodies",
+      "sql": "SELECT NOT EXISTS (SELECT 1 FROM api.notes WHERE body IS NULL) AS passed"
+    }
+  ]
+}
+```
+
+A manifest contains one to 100 uniquely named checks, each with one SQL statement
+returning exactly one row and one column named `passed`, containing boolean `true`.
+Use `NOT EXISTS` for orphaned relationships, null fields or invalid tenant mappings,
+and boolean aggregate comparisons for expected counts and totals. False results,
+wrong result shapes and SQL errors fail the command with exit code 1. Queries run
+in separate read-only transactions with 15-second statement and 5-second lock
+limits; failures roll back and remaining checks continue. Reports contain names,
+pass/fail results, summary counts, authorization status and cleanup status, without
+SQL or data values. Invalid manifests fail before containers start.
+
+Assertions run as the disposable database owner to inspect all fixture rows; they
+are data integrity checks, not RLS impersonation. Tenant isolation is checked by the
+project's configured API authorization scenarios. Configure those scenarios to
+cover your identities and access rules. Local fixtures must represent the cases you
+want to detect. For older-schema fixtures and pending upgrades, use
+`data-api migration preview --from-version N --fixture FILE --data-check FILE`,
+which also checks source contracts and migration compatibility.
+
+### Verify identity-aware access rules
+
+Use `data-api verify --access-checks access-checks.json` with a saved version 1
+request collection or version 2 named scenario collection. You may combine it
+with `--checks data-checks.json`; at least one manifest is required. Requests use
+the project's configured identities through the disposable local API, after its
+required authorization verification. Successful HTTP assertions require explicit
+expected JSON: status 200 alone does not prove that a row was visible or changed.
+Use `json: []` for RLS-filtered reads or mutations, and a follow-up owner read to
+prove a forbidden mutation left the data unchanged.
+
+```json
+{"version":1,"requests":[
+  {"name":"Bob cannot read Alice","identity":"bob","method":"GET",
+   "path":"/rest/v1/notes?subject=eq.alice&select=id",
+   "expect":{"status":200,"json":[]}}
+]}
+```
+
+Scenarios run ordered requests with captures and independent variable scopes.
+Use setup requests, member/admin reads, a membership-revocation request and a
+subsequent denied read to verify access transitions. Mutations affect only the
+disposable fixture; scenarios share that database, so use distinct test records
+or explicit cleanup. When an assertion fails, remaining requests in its scenario
+are marked skipped and the next scenario continues. Any failure or skipped
+assertion causes a failing exit code. Reports include named identity-aware results
+and `access_summary`, without paths, claims, response bodies or captured values.
+Generated types, contracts and manifests are preserved. Checks prove only the
+access cases represented by your fixture and expectations.
+
+### Generate a guided verification package
+
+Use `data-api verify init` offline with a saved schema contract and development
+config. Choose a new output directory; existing files are never replaced:
+
+```sh
+gregale data-api verify init --schema .gregale/data-api-contract.json \
+  --config data-api.dev.json --output verification --plans plans-before.json
+```
+
+The package contains `README.md` and `coverage.json`, plus applicable manifests:
+`data-checks.json` for nonnullable fields and known API foreign-key orphan checks,
+`access-checks.json` for owner/nonowner read drafts, and optional `budgets.json`
+from a successful explain report matching the schema fingerprint. Budgets use
+exact baseline cost/scan estimates and a growth ratio of 1; review tolerances and
+keep the original report for `explain --baseline`. Missing manifests mean no
+applicable templates were generated, not that the area is verified.
+
+Access drafts use the first two sorted configured identity names and an unresolved
+`{{fixture_value}}` placeholder. Choose actual ownership columns, fixture values
+and expected owner rows before running them. Add admin, forbidden mutation and
+membership-revocation assertions for your access model. These drafts deliberately
+fail until edited. Configured claims, subjects and explain filter values are not
+copied into the package.
+
+Coverage stays `needs_review`: initialization executes no checks and does not infer
+permission semantics. Relations without access templates are marked `not_generated`.
+Integrity assertions are limited to 100 and access drafts to 50 relations (100
+requests); each manifest is bounded to 64 KiB. Review larger schemas for omitted
+checks. Views, unknown/cross-schema relationship targets, CHECK expressions,
+composite FK match variants and business invariants need custom assessment. Checks
+based on existing constraints are a starting point; representative fixtures and
+application-specific assertions provide stronger migration coverage.
+
+### Enforce customer-required verification coverage
+
+`data-api verify coverage` evaluates an explicit policy against saved reports,
+offline. It does not run checks or infer what a named check proves:
+
+```sh
+gregale --json data-api verify coverage --schema schema.json \
+  --policy coverage-policy.json --verification verified.json \
+  --plans checked-plans.json --baseline-schema previous-schema.json --check
+```
+
+```json
+{
+  "version": 1,
+  "default_required": ["integrity", "access_read"],
+  "relations": [
+    {
+      "relation": "api.notes",
+      "required": ["integrity", "access_read", "access_mutation", "access_admin", "access_revocation", "performance"],
+      "checks": [
+        {"kind": "integrity", "name": "Required bodies"},
+        {"kind": "access_read", "scenario": "default", "name": "Owner reads fixture"},
+        {"kind": "performance", "scenario": "default", "name": "Concrete read"}
+      ]
+    }
+  ]
+}
+```
+
+Supported kinds are `integrity`, `access_read`, `access_mutation`, `access_admin`,
+`access_revocation` and `performance`. Declare mappings for each required kind;
+the example still lacks mutation, admin and revocation mappings and therefore
+fails. Integrity names reference SQL results, access names/scenarios reference
+identity-aware results, and performance names/scenarios reference budget-checked
+queries for that exact relation. Every mapping for a required kind must pass.
+These categories express customer intent: review the mapped SQL, identities and
+request expectations yourself. A passing assertion does not automatically prove
+that its declared category or table scope is correct.
+
+Evidence must match the current schema fingerprint and report completed cleanup.
+Only successful overall verification reports with passing authorization count;
+skipped access assertions do not count. Performance evidence needs a successful
+budget check covering planned reads. Plain explain reports do not count as budget
+coverage. Reports are bounded to 1 MiB; policies to 64 KiB and 1,000 mappings.
+Duplicate mappings, unknown kinds, ambiguous evidence names and stale schema
+fingerprints are rejected. Use reports from the current release candidate; this
+command does not attest report age, fixture suitability or test-code freshness.
+
+Every relation in the current schema is inventoried. Relations without an explicit
+policy entry inherit the nonempty `default_required` list, so a newly added table
+cannot disappear from coverage. `--baseline-schema` marks newly added relations.
+Explicit per-relation `required: []` waives requirements for that relation. Removed
+relations still referenced by the policy require policy review. The report lists
+verified/missing kinds per relation; `--check` returns exit code 1 for missing
+requirements. Without `--check`, missing coverage is informational. Omitted evidence
+files leave corresponding requirements missing. Generated initializer `coverage.json`
+is a review guide, not this policy or evidence of passing checks.
+
+### Run one local release check
+
+`data-api verify release` runs migration preview, integrity/access verification,
+query-budget enforcement and coverage validation in order, then emits one report:
+
+```sh
+gregale --json data-api verify release --config data-api.release.json \
+  > release-report.json
+```
+
+```json
+{
+  "version": 1,
+  "baseline": "schema-before.json",
+  "current_schema": "schema-candidate.json",
+  "checks": "data-checks.json",
+  "access_checks": "access-checks.json",
+  "collection": "performance-requests.json",
+  "plan_baseline": "plans-before.json",
+  "budget": "budgets.json",
+  "coverage_policy": "coverage-policy.json"
+}
+```
+
+The project defaults to the release config's directory. Optional `directory` is
+relative to that directory; all other file paths are relative to the project.
+Use `development_config` for a custom development config. At least one of `checks`
+or `access_checks` is required; the baseline/current contracts, query collection,
+plan baseline, budgets and coverage policy are required. The candidate contract
+must describe the schema being rehearsed. Generate and review it beforehand, and
+commit matching client types and install client dependencies for migration preview.
+The release check preserves those files and does not deploy or publish anything.
+
+A clean rebuild uses the project's configured seed throughout. If an explicit
+`fixture` is supplied, it must be that same configured development seed. An upgrade
+uses `from_version` and `upgrade_fixture` for older-schema rehearsal, plus a required
+current-schema `fixture` for standalone integrity/access and performance checks.
+Optional `dependencies` and `approval` apply to migration preview. SQL checks also
+run on the upgraded older fixture when rehearsing an upgrade. Use deterministic,
+representative data and the matching workload/fixture when approving plan baselines.
+
+Each stage must pass, report completed cleanup and match `current_schema` before
+the next stage starts. Coverage consumes fresh verification and checked-plan reports
+from this invocation, rather than user-supplied cached reports. Each stage's report
+is nested in the consolidated JSON; failed and blocked stages identify release
+blockers. Any failure returns exit code 1. Child output is bounded to 1 MiB per
+stage. Inputs and the config are bounded regular files; invalid runtime inputs can
+fail a stage before it produces a report, in which case cleanup is `unknown` rather
+than claimed successful. Temporary evidence files are private and removed afterward.
+
+Each stage has a ten-minute execution limit. Cancellation signals child commands
+so disposable cleanup can finish, with up to four additional minutes before forced
+termination. This command is a local release readiness check, not an attestation of
+production performance, fixture completeness or test intent. Existing coverage
+policy waivers and assertion semantics remain customer-controlled.
+
+### Generate client migration guidance
+
+`data-api migration guide` compares two saved contracts offline and presents
+reviewable client updates without editing application files:
+
+```sh
+gregale --json data-api migration guide --baseline schema-before.json \
+  --current schema-candidate.json --requests data-api.requests.json \
+  --dependencies data-api.dependencies.json \
+  --coverage-policy coverage-policy.json > migration-guide.json
+```
+
+Each change includes its compatibility classification, before/after normalized
+contract shapes, suggested actions and applicable illustrative TypeScript examples.
+Required insert fields, nullable reads, removed fields, changed write permissions,
+RPC arguments/results and relationship changes receive targeted guidance. Enum and
+composite changes expose their before/after shapes for review. Substitute actual
+application values and helpers in examples; conversions, renames and replacement
+fields are not inferred or applied. Regenerate database types and run client checks
+against the candidate before releasing.
+
+Optional declared dependency mappings identify matching saved-view/RPC consumers.
+Saved request collections are read only for bounded name/method/path metadata;
+requests are never executed. Any root-relation/RPC contract change flags matching
+queries conservatively, regardless of whether a specific projection uses the changed
+field. Embedded/computed lineage and transitive enum/composite usage are not inferred:
+review those consumers or declare their dependencies. The guide omits request paths,
+filter values, identities, payloads and response expectations from its output.
+
+Coverage policies identify named checks to review for changed/new/removed relations;
+shared enum/composite changes conservatively flag all inventoried relation checks.
+Review data fixtures, integrity/access assertions, schema-bound evidence and budgets.
+The guide does not rewrite coverage policies or approve breaking changes. Missing
+optional manifests are explicitly marked `not_provided`, not interpreted as no impact.
+Without `--json`, the same guidance is printed for human review.
+
+A guide returns exit code 0 for valid analysis, including breaking changes; its
+status is `needs_review` or `no_changes`. Use migration preview/release checks for
+CI enforcement. Saved requests are bounded to 64 KiB/100 requests, dependencies to
+1 MiB/100 consumers/1,000 declared paths, and guides to 1,000 contract changes.
+Schema contracts and coverage policies retain their existing validation and bounds.
+
+### Observe redacted query shapes
+
+Set runtime environment variable `DATA_API_QUERY_SHAPES=1` to opt in to structural
+query metadata in existing Data API request logs. Operation/query metadata is
+omitted unless enabled. It is attached only after authentication/contract checks for known
+catalog relations or RPCs with simple identifiers and a serving schema fingerprint.
+Unknown paths, unsupported names, unauthenticated requests and oversized shapes
+retain their normal request log without operation/query metadata.
+
+Use existing diagnostics against hosted retained logs or saved NDJSON:
+
+```sh
+gregale --json data-api diagnostics --file requests.ndjson > diagnostics.json
+gregale data-api diagnostics notes-data --since 15m --sort p95
+gregale data-api diagnostics notes-data --since 15m --sort errors
+```
+
+Reports now include `operations` and `query_shapes`, with request/error counts,
+error rates, gateway-latency p50/p95/p99 and up to three sample request IDs per shape.
+Use the existing request-ID lookup to correlate an operation with a specific failure.
+Shapes are grouped by schema fingerprint and operation. `--sort requests` (the
+default) ranks by request count; `--sort p95` ranks by total gateway-request p95,
+including aborted requests; `--sort errors` ranks by failure count, not error rate.
+Ties use request count and stable shape identifiers. These rankings apply to
+`query_shapes`, with the chosen order recorded in `query_shape_sort`.
+Operation and shape statistics also include phase timings and their coverage.
+Existing deployment/lookback filters let you compare samples across releases. These
+are bounded retained-log summaries, not persistent metrics or complete traffic counts.
+`shaped_requests` and `unshaped_data_requests` expose metadata coverage alongside
+existing partial-sample/gap reporting. Per-operation statistics cover shaped requests.
+
+A shape contains known catalog projection/filter/order fields, allowlisted operators,
+ordering/null behavior, count mode and pagination-presence flags. Its ID hashes only
+this structural description and method/resource, never query values. Limit values
+are deliberately omitted, so different page sizes may share a shape. Claims, tokens,
+identities, filters' operands, bodies, response values and raw request URLs are absent.
+Unknown columns, JSON paths, embedded selects and logical expressions mark a shape
+`complex` without copying caller-provided text. Mutations/RPC bodies are not inspected;
+those operations can share a shape despite different payloads.
+
+Use frequent, slow or failing shapes to choose representative saved requests for
+`data-api explain`. Shape summaries cannot reconstruct executable production queries:
+supply safe fixture values and review complex projections/filters yourself. The CLI
+validates bounded metadata and its digest, discarding unrelated raw log fields; catalog
+recognition happens in the runtime. Schema fingerprints identify serving contracts,
+not deployment versions or database index changes. Use deployment filters to investigate
+rollouts that retain the same schema. Gateway latency includes request/response work
+and does not measure PostgreSQL execution time alone.
+
+### Scaffold typed atomic business operations
+
+Gregale RPCs already run each call in a PostgreSQL transaction and generate their
+TypeScript arguments/results from the schema. Use the reusable transaction starter
+for an editable tenant-scoped order/inventory example:
+
+```sh
+gregale data-api transaction init --name place_order --output transactions/place-order
+```
+
+The parent directory must exist. Existing output directories are never replaced.
+The package contains a migration, synthetic fixture, client input parser, access
+scenarios, integrity assertions and a review guide. No migration is applied by init.
+Copy `migration.sql` into your next numbered project migration after review, then
+regenerate database types. Place `client.ts` beside the generated `database.types.ts`;
+it imports `Args` from `Database` rather than maintaining another interface. Wrap
+`db.schema('api').rpc('place_order', args)` with the existing `validatedRpc` helper
+and parser to preserve generated result inference and validate before networking.
+
+The function creates an order header/items, locks stock rows in canonical SKU order,
+checks availability, snapshots server-side prices and decrements inventory atomically.
+A late failure rolls back all changes. A tenant/actor-scoped UUID request key identifies
+retries: the same canonical payload returns the original receipt, while changed
+quantities/SKUs conflict. Stock row locks prevent concurrent keys from overselling.
+Do not delete receipts while retries remain possible. Example quantity, item-count
+and price limits are business validation templates, not new platform quotas.
+
+Ownership comes from verified `sub` and `tenant_id` claims, never RPC arguments.
+The function is SECURITY INVOKER with a fixed search path, revoked PUBLIC execution
+and the normal `@gregale:rpc` permission opt-in. Read policies expose tenant rows;
+write policies additionally require the function's transaction-local scope marker,
+blocking direct REST inserts/updates/deletes. Audit other exposed functions and SQL
+grants: a scope marker does not defend against a role with arbitrary SQL access.
+Adapt membership, admin and revocation semantics to your own application model.
+
+For local examples configure Alice's tenant claim as `alpha` and Bob's as `beta`.
+Load the fixture through the normal disposable development/verification tools;
+manual fixture loading requires an owner transaction for its local claim/scope
+settings. Run the generated `data-checks.json` and `access-checks.json` with
+`data-api verify`, or include them in your release config. Access scenarios expect
+fresh synthetic inventory and exercise a late rollback, successful commit, retry,
+changed payload conflict, cross-tenant visibility and rejected direct mutations.
+Existing required project authorization scenarios still run independently.
+
+This starter needs review before production use. Database atomicity covers database
+changes; use the existing transactional outbox workflow for external notifications.
+It introduces no arbitrary-SQL endpoint, elevated definer function or SDK transaction
+that bundles unrelated HTTP calls.
+
+### Generate a v2 recoverable business transaction
+
+Use the opt-in v2 package for new operations that need bounded replay and
+read-only recovery:
+
+```sh
+gregale data-api transaction init --name place_order --contract v2 --output transactions/place-order-v2
+```
+
+It generates `api.place_order_v2`, `api.read_place_order_receipt_v2`, separate
+`place_order_v2_*` tables, a typed preparation/recovery client, owner cleanup,
+synthetic fixtures and verification checks. Default generation remains v1. V2
+can coexist with the existing example; it does not migrate earlier business data.
+Review the generated README and SQL, copy the migration into a new project
+version, run owner RPC grants, refresh the runtime and regenerate types with
+`--validators`. Install the paired SDK before adopting its client.
+
+The sample operation locks inventory by ASCII SKU order, snapshots server prices,
+and commits stock changes, the order/items and a private success receipt in one
+transaction. A late shortage, RLS failure or receipt failure rolls back the
+operation. Verified `tenant_id`/`sub` claims determine ownership. Business reads
+are shared within a tenant; recovery requires the original tenant and actor.
+Receipts survive later price changes and business-row deletion.
+
+```ts
+import { dataRequest } from '@gregale/data'
+import { transactionClient, transactionMatches, reconcileMutation } from './client.js'
+
+const transaction = transactionClient({
+  url: dataAPIURL, accessToken: () => session.token,
+  subject: session.subject, tenant: session.tenant,
+})
+const pending = transaction.prepare({ skus: ['a_widget'], quantities: [2] })
+// Save pending before sending if it must survive a reload.
+const response = await dataRequest(transaction.execute(pending), { timeoutMs: 5000 })
+const result = reconcileMutation(response, transactionMatches(pending))
+
+// Explicit read-only recovery after an uncertain response:
+const lookup = await dataRequest(transaction.lookup(pending), { timeoutMs: 5000 })
+const recovery = reconcileMutation(lookup, transactionMatches(pending))
+```
+
+Preparation validates before generating one UUIDv7 and freezes copied canonical
+inputs with their API URL, optional schema fingerprint, tenant, actor and
+contract. The client rejects changed context. It does not persist pending work.
+For reload recovery retain that complete context and key; an optional second
+argument to `prepare` restores the captured key after verifying context. Never
+automatically replace uncertain keys or rebuild requests from current stock.
+The runtime guard validates all returned lines, quantities, prices and total
+before narrowing JSON into a typed original receipt.
+
+V2 keys expire 24 hours after their embedded timestamp, with five minutes of
+future clock tolerance. Reordering identical SKU/quantity pairs preserves payload
+identity; changing them on a successful key gives `idempotency_payload_conflict`.
+Writers refuse expired keys even after purge. Read-only lookup can confirm a
+retained expired receipt; missing live receipts return zero rows and missing
+expired receipts return `idempotency_key_expired`. Missing, conflicting and
+expired results leave earlier uncertain operations unresolved. The clock,
+database-history and owner-authority assumptions of the v2 replay contract apply.
+
+The generated cleanup package pins `pg`; install its dependencies and retain the
+lockfile. Use the owner migration binding through `MIGRATION_DATABASE_URL`,
+preview a past UTC cutoff, then add `--apply` after reviewing the output:
+
+```sh
+npm run receipts:cleanup -- --before 2026-10-17T00:00:00.000Z --batch-size 100 --max-batches 1
+```
+
+Cleanup skips row/operation locks and purges only expired success snapshots. It
+never deletes orders, items or inventory. Quantity/SKU/price bounds remain
+editable application rules; membership, RLS, custom triggers, storage/retention
+and outbox handling need business review. See
+[ADR-1673](adr/1673-data-api-v2-transaction-generator.md).
+
+
+### Receipt storage diagnostics
+
+The starter and generated v2 transaction packages include an owner-only,
+read-only receipt report. Use the secret-managed `MIGRATION_DATABASE_URL` that
+assumes the stable receipt-table owner, after installing package dependencies:
+
+```sh
+# Starter: all three v2 note receipt contracts.
+npm run --silent receipts:diagnostics
+# Starter: select creation, update/delete, or batch receipts.
+npm run --silent receipts:diagnostics -- --receipt-kind mutation
+# Generated v2 transaction package: its own transaction receipt contract.
+npm run --silent receipts:diagnostics
+```
+
+The single JSON object has `version: 1`, `status: "ok"` or `"incomplete"`, and
+a `receipts` array. Successful entries include `contract`, `table`, `observedAt`,
+`totalCount`, `activeCount`, `expiredCount`, `oldestExpiredAt`,
+`oldestExpiredAgeMs`, `tableBytes`, `indexBytes` and `totalBytes`. Counts, ages
+and byte sizes are decimal strings to preserve precision. Empty backlogs have
+null oldest deadline and age. Expiry uses database statement time; retained
+expired receipts still support recovery.
+
+Unavailable entries have fixed `reason` values: `not_owner`, `missing_table`,
+`unsupported_table`, `lock_timeout`, `statement_timeout`, `query_failed`,
+`connection_failed` or `migration_binding_required`. They omit measurements.
+Incomplete reports and invalid options exit nonzero. Successful contracts remain
+visible when another fails. The serving login and all non-owners are refused,
+including privileged non-owners. FORCE RLS, inherited/partitioned tables and
+incompatible expiry columns are unsupported. This report covers v2 only.
+
+Connection establishment and individual statements have 5-second deadlines;
+lock waits have a 1-second limit and client queries a 6-second fallback. Exact
+counts may time out on large tables. Counts share one snapshot per contract;
+contracts have separate observation times. Physical sizes may change during a
+report. Table bytes include TOAST and free allocation, and do not predict disk
+reclaimed by deletion. Cleanup may leave physical allocation unchanged.
+
+Keep these cross-user aggregates in operator monitoring. The command uses
+read-only transactions and short ACCESS SHARE locks and publishes no receipt
+contents. Existing cleanup remains explicit; expired backlog can include rows
+that cleanup temporarily skips due to row or operation locks. See
+[ADR-1675](adr/1675-data-api-receipt-storage-diagnostics.md).
+
+### Durable pending-operation recovery
+
+The optional `persistentTransactionClient` saves the complete original operation
+before its first request. Select a dedicated IndexedDB database and a stable
+application slot that you can find after reload (for example `checkout`). Install
+the paired SDK and regenerate the v2 client to use this opt-in wrapper:
+
+```ts
+import { createIndexedDBMutationStore } from '@gregale/data'
+import { persistentTransactionClient } from './client.js'
+
+const store = createIndexedDBMutationStore({ databaseName: 'my-app-data-mutations' })
+const transaction = persistentTransactionClient({
+  url: dataAPIURL, subject: session.subject, tenant: session.tenant,
+  accessToken: () => session.token, // Keep this provider scoped to this identity.
+}, store)
+const prepared = await transaction.prepare('checkout', { skus: ['a_widget'], quantities: [2] })
+const sent = await transaction.execute(prepared, { timeoutMs: 5000 })
+const checked = await transaction.reconcile(sent.entry, sent.response)
+// A confirmed receipt can coexist with a failed local marker write.
+if (checked.result.outcome === 'confirmed') showOriginalOrder(checked.result.row)
+```
+
+After reload, construct the same client/store and explicitly load the slot:
+
+```ts
+const pending = await transaction.load('checkout') // Sends no request.
+if (pending) {
+  const recovered = await transaction.recover(pending, { timeoutMs: 5000 })
+  if (recovered.result.outcome === 'confirmed' && recovered.persistence === 'saved') {
+    // Explicitly clear only after the application accepts this historical result.
+    await transaction.removeConfirmed(recovered.entry)
+  }
+}
+```
+
+States are `prepared`, `uncertain` and `confirmed`. The first explicit execute
+atomically persists `uncertain` before networking; one tab can claim a prepared
+revision. Loading and recovery never replay writes. Failed storage writes or
+acknowledgements prevent dispatch; uncertain responses keep the original key and
+payload. A callback exception also preserves them, so load again for recovery.
+Recreating a client requires loading a new handle rather than reusing an old one.
+
+The original API URL, fingerprint (if pinned), contract, tenant, subject, key and
+canonical input must match on restore. Changed context, corrupted/unknown records
+and lossy parsers are refused without clearing storage. Missing or expired
+receipts remain unresolved, including after the replay window closes. There is
+no automatic eviction or new-key retry. `removeConfirmed` removes local state
+only, and cannot remove an uncertain operation or a newer revision from another
+tab. Use a new slot only for an explicitly new business operation.
+
+Reconciliation returns `result`, `entry` and `persistence` (`saved`, `unchanged`,
+`conflict` or `storage_failed`). Preserve a validated original receipt even when
+saving its local marker fails; reload the slot to inspect current local state.
+A confirmed marker does not describe current stock/order state or prove that a
+later operation succeeded.
+
+IndexedDB defaults to 100 records and 8 MiB of stored values. Each record is at
+most 1 MiB, slot/database names 256 UTF-8 bytes, and JSON depth 64. Lower count/
+byte budgets can be selected. Quota/unavailable storage fails closed before
+sending and does not use volatile fallback. Payloads are intentionally stored;
+credentials, headers and token providers are excluded from the generated
+projection. Clearing/evicting origin storage or losing the device removes the
+local copy. Close the store when finished. For other runtimes, the SDK's
+`createMutationJournal` accepts an application-owned durable atomic CAS adapter;
+a localStorage get/set pair cannot coordinate this protocol across tabs.
+
+See [ADR-1674](adr/1674-data-api-durable-mutation-journal.md) for the persistence contract.
+
+### Generated runtime input validators
+
+Generate TypeScript types and typed insert/update parsers together:
+
+```sh
+gregale data-api types notes-data --validators --output client/src/database.types.ts
+gregale data-api types notes-data --validators --output client/src/database.types.ts --check
+```
+
+The deployed Data API runtime must include validator generation. Older runtimes fail
+without replacing the output file. `--validators` and `--snapshot` are mutually
+exclusive. For a local runtime with its normal database configuration, the same
+read-only generator is available as `node types.mjs --validators`.
+
+```ts
+import { inputValidators, DataAPIInputError } from './database.types.js'
+
+try {
+  const input = inputValidators.api.notes.insert(formValues)
+  await client.from('notes').insert(input)
+} catch (error) {
+  if (error instanceof DataAPIInputError) showInvalidInput()
+  else throw error
+}
+```
+
+Parsers accept `unknown` and return the generated `Insert` or `Update` type. Insert
+requires nonoptional writable fields; update allows omission. Both reject unknown
+keys, generated/read-only columns, invalid nulls, explicit `undefined`, invalid
+primitive and enum values, nonfinite numbers, cyclic values and object accessors.
+Arrays and supported composites are checked recursively. Successful parsing returns
+a detached JSON object; errors contain a stable `invalid_input` code and no input
+values. Views have no write parsers. No dependency or HTTP request is needed.
+
+Catalog metadata additionally supplies scalar `varchar(n)` limits in Unicode
+code points and intrinsic `smallint`, `integer`, `bigint` and `oid` bounds. Bigint
+inputs must be safe JavaScript integers; larger values need a separately reviewed
+representation. There is no coercion or default insertion. Metadata and the schema
+are read in one read-only transaction using the serving database binding.
+
+Inspect `inputValidationWarnings` during review. Custom CHECK constraints, domain
+rules and unsupported types are flagged rather than interpreted. Unsupported types
+receive JSON-shape validation only; numeric precision/scale, character padding,
+UUID/date formats, array dimensions and custom business rules remain database
+checks. These validators are advisory: PostgreSQL constraints, triggers and RLS
+remain authoritative, including races and tenant authorization. A validator file's
+schema fingerprint identifies the existing API/type contract; extra catalog rules
+do not alter that contract. Use `--validators --check` to detect changes to the
+complete generated file, including those rules. Existing plain type generation
+and contract snapshots keep their format.
+
+For local development, opt in with `gregale data-api dev --validators`. Initial
+startup and each successful migration reload regenerate types and parsers together
+from one read-only catalog transaction, after compatibility and authorization
+checks pass. Use the same flag in CI:
+
+```sh
+gregale data-api dev --validators --check --once
+gregale data-api dev --validators --check-types --once
+```
+
+`--check-types` compares the entire generated module, including catalog-only
+validation rules, and preserves a stale file on failure. Plain generation remains
+the default; keep the generation mode consistent across development and CI.
+The notes starter form uses available generated insert validators after normalizing
+its fields and before creating its idempotency key, reading a token or sending a
+request. Schema violations show field feedback and leave no pending submission.
+Its RPC business rules and database authorization still apply. Without generated
+validators, the starter retains its existing form validation.
+
+Generated `DataAPIInputError` also exposes a readonly `issues` array. Parsers stop
+at the first failure, so the array contains one immutable issue:
+
+```ts
+try {
+  inputValidators.api.notes.insert(formValues)
+} catch (error) {
+  if (error instanceof DataAPIInputError) {
+    // Example: { code: 'too_long', path: ['body'] }
+    showFieldFeedback(error.issues[0])
+  }
+}
+```
+
+`path` is an array of known schema field names and array indices. Nested composites
+can produce paths such as `['address', 'city']`, and typed arrays can produce
+`['tags', 1]`. Root failures use `[]`. Unknown fields report their parent path,
+and arbitrary JSON property names are omitted from paths; neither names supplied
+outside the schema nor submitted values appear in generated errors. The top-level
+error code remains `invalid_input` and its message remains generic.
+
+Stable issue codes are `required`, `null_not_allowed`, `invalid_type`,
+`invalid_enum`, `not_finite`, `invalid_integer`, `out_of_range`, `too_long`,
+`unknown_field`, `invalid_json`, `cyclic_input`, `input_too_complex` and
+`unsupported_object`. Use these codes for application-owned or localized messages.
+The notes starter maps body issues to field feedback, including “This note is too
+long.” It retains generic feedback for rules without a dedicated message. Regenerate
+validator modules to receive the new issue format; plain types remain supported.
+
+### Generated RPC argument parsers
+
+The same `types --validators` and `dev --validators` output now includes a separate
+`rpcValidators` map for exposed functions. Each parser returns that function's
+schema-generated `Args`, and implements the SDK parser interface:
+
+```ts
+import { validatedRpc } from '@gregale/data'
+import { rpcValidators } from './database.types.js'
+
+const outcome = await validatedRpc(
+  untrustedInput,
+  rpcValidators.api.place_order,
+  args => client.schema('api').rpc('place_order', args),
+)
+```
+
+Only already-exposed, supported functions in the normalized contract receive a
+parser; this adds no function grants or API routes. Table and RPC validator maps
+are separate, so identically named relations and functions remain unambiguous.
+Parsers require named arguments without defaults and preserve omitted defaulted
+arguments for PostgreSQL to fill. They never export or evaluate default SQL.
+Explicit null remains permitted, matching generated RPC argument types; the
+function may impose stricter rules. Explicit `undefined` and unknown keys fail.
+Enums, primitives, arrays, composites and supported table-row arguments are checked
+recursively, and successful results are detached JSON objects.
+
+Direct `.parse(input)` failures expose the same immutable field issues as table
+parsers. `validatedRpc` retains its existing redacted failure result and does not
+construct the query when parsing fails; call `.parse` separately when a form needs
+field feedback. Result inference is preserved by the query callback.
+
+Every RPC exports a `rpc_database_rules_require_review` warning: its argument
+contract does not describe function-body rules, domain constraints, UUID/date
+formats, integer widths, array dimensions or cross-argument conditions. Defaults
+can be omitted but cannot be inferred client-side. The transaction starter uses
+the generated parser for argument names/presence/shapes, and keeps a small wrapper
+for its UUID, SKU, quantity and retry-key business rules. SQL and RLS remain
+responsible for atomicity, concurrency and authorization.
+
+### Batch validation before imports
+
+Validator output includes `validateInputRows`, which accepts up to 1,000 rows and a
+synchronous generated parser:
+
+```ts
+import { inputValidators, validateInputRows } from './database.types.js'
+const preview = validateInputRows(mappedRows, inputValidators.api.notes.insert)
+if (!preview.ok) {
+  // Example: { row: 12, code: 'invalid_integer', path: ['priority'] }
+  showImportErrors(preview.errors, preview.invalid, preview.truncated)
+} else {
+  // Present this detached payload for review before explicitly submitting it.
+  showImportApproval(preview.rows)
+}
+```
+
+Every row is checked, even after the report cap is reached. Counts include all
+rows; errors include the first failure per invalid row, with one-based row numbers,
+known field paths and stable reason codes. The default report cap is 100; set
+`maxErrors` from 1 to 1,000 when needed. A failed batch has no `rows` property, so
+there is no partial payload to accidentally submit. Custom parser exceptions are
+redacted to `invalid_input`; parser messages and supplied values are never copied.
+Use trusted synchronous generated parsers; asynchronous parsers are rejected.
+Successful generated parsing produces detached objects and a readonly frozen array.
+Editing those objects requires a fresh preview before approval.
+
+The team CSV preview applies generated `team_orders` insert rules when validator
+output and signed-in identity context are available, after its existing CSV and
+business checks. Tenant and creator come from the application's selected team and
+membership. Reports show at most 100 errors and complete valid/invalid counts;
+any generated schema failure withholds the mapped import payload. The existing
+approval and server-side transactional import checks remain in place.
+
+The notes starter includes `previewNotesCsv` in `client/src/note-import.ts`:
+
+```ts
+const preview = previewNotesCsv(csv, { subject: signedInSubject })
+```
+
+It requires generated validators, accepts mapped body and optional priority columns,
+and supplies subject from application context. Ownership columns in CSV are ignored.
+Numeric conversion is explicit for decimal CSV priority values; empty priority cells
+are omitted for the database default. String values are preserved. CSV input is
+bounded to 1 MiB and 1,000 data records. Reports use CSV record numbers including
+the header (first data record is 2), not physical line numbers for multiline fields.
+Neither helper retrieves tokens, constructs requests nor writes to the database.
+Database constraints, triggers and RLS still enforce rules at submission time.
+
+### Schema-driven form metadata
+
+`types --validators` and `dev --validators` also export
+`formMetadata.<schema>.<table>.insert` and `.update`. Arrays describe writable
+fields only: their names, suggested control (`text`, `number`, `checkbox`, `select`
+or `custom`), required presence, nullability, enum options, supported varchar
+lengths in Unicode code points, intrinsic numeric bounds/steps and review flags.
+Views and generated/read-only columns have no editable metadata. Update fields
+are optional. Defaults are never read or evaluated client-side.
+
+```ts
+const fields = formMetadata.api.notes.insert.map(field => ({
+  ...field,
+  label: labels[field.name] ?? field.name,
+}))
+```
+
+Keep labels, layout, visibility, ownership context and business rules in application
+code. Copy metadata for application overrides instead of editing generated files.
+Use an explicit editable-field allowlist; a writable column may still be an ownership
+or system field. `custom` controls and `requiresReview` fields need application
+review; suggestions do not describe every database constraint. Do not infer
+nullable values or default expressions from blank strings.
+
+The notes browser starter builds its create body field and edit body/priority fields
+from this metadata, retaining hand-authored tag entry and transaction behavior.
+Ownership, IDs and versions stay outside the generated editor. Plain type output
+uses the starter's existing field defaults. After regeneration, forms receive new
+enum choices and supported limits without duplicate schema constants. Browser
+length guidance uses code points; it does not set HTML `maxlength`, whose UTF-16
+count differs. Generated validators enforce the limit and provide field feedback.
+
+Edit uses a note ID and version from a fresh read; blank editable fields are omitted,
+not cleared. Generated update validation runs before token lookup or transport,
+then the existing version-checked update runs once with a five-second deadline.
+Conflicts require a fresh read. An uncertain save is never automatically replayed.
+SQL constraints and RLS remain authoritative.
+
+### Local table browser and reviewed inserts
+
+The local inspector printed by `data-api dev` now includes a generic table browser.
+Select an exposed table or view and a test identity, then read visible rows using
+known readable columns. Filters use a selected scalar column and supported operator;
+pages show up to 50 rows with a one-row lookahead. Offset pages reflect current
+RLS visibility and are not a stable snapshot; refresh after concurrent changes.
+Unusual/reserved column names remain available in the request explorer rather than
+being guessed as filter syntax. RPCs remain in that explorer.
+
+For tables, the inspector builds insert fields from the same bounded schema/catalog
+rules as generated validators, even when types are generated without `--validators`.
+Choose omitted/default, explicit value or NULL as permitted. Complex values use
+JSON entry and require review; default SQL and domain/CHECK expressions are never
+exported or evaluated. Required/enum/type/length/integer checks run locally and show
+field issues before any request. Models exceeding limits disable insert forms while
+leaving reads and the request explorer available.
+
+Validate and review the exact payload and selected identity, then explicitly approve
+and confirm once. Changing fields, identity, table, schema or catalog rules invalidates
+the review. Confirmed inserts use the schema-fingerprint route, the selected local
+JWT, the appropriate schema profile and `return=minimal`; PostgreSQL grants, rules
+and RLS still decide whether insertion is allowed. The inspector never writes using
+migration-owner credentials, auto-retries mutations or stores reviewed payloads in
+project receipts. If the response is lost, read the table before deciding on another
+submission. The inspector remains loopback-only with its existing private capability,
+origin/host checks, CSP and no-store policy. Rows and labels render as text.
+
+This first table-browser increment supports reads and inserts. Row editing and deletion
+remain in the request explorer until a reliable key and concurrency policy can be
+established from the schema; the browser does not infer them from an `id` column.
+
+### Row keys and version-checked inspector edits
+
+Current introspection emits snapshot version 4, adding optional `primary_key` and
+`concurrency` metadata on base tables. Versions 1–3 remain valid baselines. A complete,
+readable primary key is exported with its ordered columns, including composite keys;
+`filterable` identifies conservative scalar representations supported by the editor.
+Keys containing unreadable columns are omitted. Views do not acquire inferred keys.
+Plain generated types also export `tableMetadata.<schema>.<table>`.
+
+A version column requires an explicit owner declaration in a new migration:
+
+```sql
+COMMENT ON COLUMN api.notes.version IS '@gregale:version';
+```
+
+Declare this only when the database manages a nonnullable integer and advances it
+on every successful update. Introspection requires exactly one such readable integer
+column and an enabled, unconditional row-level BEFORE UPDATE trigger covering all
+updates. It does not read or prove the trigger's function body. The owner declaration
+is a contract about that behavior; a name such as `version` alone is insufficient.
+The notes starter includes `migrations/examples/enable-versioned-edits.sql` to copy
+into a new numbered migration after reviewing its existing version trigger. Existing
+applied migrations are not changed automatically.
+
+For a supported primary key and declared version, the inspector shows an Edit action
+on visible rows. It excludes key/version fields, validates the selected patch, shows
+before/after values, and requires explicit approval. The request filters every key
+column and the reviewed version, uses the selected test JWT and schema-fingerprint
+route, and asks for the updated row. Empty results mean the row changed, disappeared
+or is unavailable; read it again. An unexpected key/version response requires review
+of the database declaration. Only one matching row with an advanced safe integer
+version confirms the edit. No automatic retry occurs, and a fresh read is required
+before another edit. RLS still controls reads and mutations.
+
+The editor declines unsupported key types, unusual/reserved filter names, unsafe
+JavaScript integer values and undeclared concurrency. These tables remain browsable
+and keep their request-explorer access. Snapshot/key metadata contributes to the
+schema fingerprint; regenerate types/contracts and review existing accepted-contract
+policies during rollout. Adding metadata is compatible; changing/removing an existing
+key or version declaration is reported as breaking for consumers using those rules.
+
+The local Data API inspector offers Parent and Children actions for exposed foreign keys, including composite keys. Each action reads related rows with every key component under the selected identity and database RLS. Nullable, incomplete, unsupported or unsafe keys have no navigation action. The Back trail restores filters and pagination and re-fetches rows; changing identity or schema clears it. Navigation sends reads only and does not populate write forms.
+
+### Saved relationship views in the local inspector
+
+Choose visible columns, a scalar filter and sorting in **Browse rows**, then
+follow Parent or Children actions to explore a relationship path. In **Saved
+relationship views**, give the workflow a name and select **Save current path**.
+The inspector writes `data-api.views.json` beside `data-api.requests.json` in the
+project using atomic saves and revision checks. Reload the file after another
+editor changes it before saving again.
+
+**Open under selected identity** starts with fresh rows from the first table.
+Choose a visible row and its **Continue saved view** action at each step. The
+view restores each step's columns, filter and sorting, while deriving composite
+key predicates from the newly selected row. Back re-fetches the previous step.
+It does not replay earlier row keys or perform writes. The selected identity and
+PostgreSQL RLS govern every read; changing identity clears the in-memory path.
+
+Definitions store table/column choices, explicit filter values, sorting, named
+foreign keys and the schema fingerprint. They exclude credentials, identity
+names, row results, clicked-row keys and page offsets. Review explicit filter
+values before committing this file to Git. Visible-column selection controls
+the grid; readable row fields remain available to editing and navigation.
+Collections are limited to 100 named views and 64 KiB; each path has at most
+33 steps. Views saved against a different schema fingerprint are marked **needs
+review** and cannot open until you reconstruct, review and save an updated path.
+Reads of an opened saved view also use the pinned contract route so a schema
+change between session refreshes refuses the read.
+
+### Guided RLS checks from a saved relationship view
+
+In the local inspector, select a saved view and open **Guided RLS checks**.
+**Generate read checks from selected saved view** creates a version 3 access-check scaffold
+with a named fixture for each relationship step and an expectation for every
+configured identity. The scaffold sets `status` to `needs_review` and leaves
+fixture keys and row counts empty; it does not infer ownership or copy clicked
+row keys, response contents, token claims or credentials.
+
+Supply synthetic fixture keys matching rows in your SQL fixture or local seed.
+Include every declared filterable primary-key column and every column needed
+by the relationship on either side, including all composite-key components.
+Give each identity an exact expected row count for each step (`0` means hidden,
+`1` means one visible fixture row), then set `status` to `reviewed`. Every step
+requires at least one positive expectation so missing seed data cannot make an
+all-denied check suite pass. Counts are bounded to 0–50, with at most 100 identity
+and step checks across a manifest.
+
+For example, a notes/comments workflow might use these named bindings and
+expectations within its generated manifest:
+
+```json
+{
+  "fixtures": [
+    { "name": "step_1", "schema": "api", "table": "notes", "keys": { "id": 101, "subject": "alice" } },
+    { "name": "step_2", "schema": "api", "table": "comments", "keys": { "id": 201, "subject": "alice", "note_id": 101 } }
+  ],
+  "checks": [
+    { "identity": "alice", "steps": [{ "fixture": "step_1", "rows": 1 }, { "fixture": "step_2", "rows": 1 }] },
+    { "identity": "bob", "steps": [{ "fixture": "step_1", "rows": 0 }, { "fixture": "step_2", "rows": 0 }] }
+  ]
+}
+```
+
+Keep the generated `version`, `status` and `view` fields around this excerpt.
+**Save checks** writes the complete manifest to `data-api.access.json`, using
+revision checks to prevent stale overwrites. **Run saved checks** performs
+read-only GET assertions against the current seeded database. Every identity
+is tested at every relationship step, including child rows when that identity
+cannot see the parent. Named fixture keys scope each query, and saved view
+filters also apply. Visible-column selection and sorting do not change counts.
+Results identify the identity, fixture and relationship step and show counts,
+excluding response data, fixture values and credentials.
+
+Run the same manifest in CI against a disposable migrated database:
+
+```sh
+gregale data-api verify --directory . \
+  --access-checks data-api.access.json --fixture fixture.sql --json
+```
+
+The existing verifier supplies fresh local identity tokens, loads the synthetic
+SQL fixture, checks project authorization, runs the guided assertions and cleans
+up disposable services. A failed expectation, missing fixture, unreviewed
+scaffold, stale schema fingerprint or failed read exits nonzero. Legacy version
+1/2 request-based access checks continue to work. Guided view checks cover read
+visibility; retain explicit request scenarios for mutation, admin and membership
+revocation checks.
+
+### Guided mutation checks in disposable verification
+
+Select a saved view and choose **Export mutation scaffold for CLI** in the
+inspector's Guided RLS checks panel. The downloaded `data-api.mutations.json`
+is an unreviewed version 4 manifest. It retains the version 3 read-baseline
+fields and adds `mutationFixtures` and ordered `mutations`. It leaves payloads,
+fixture selectors and write expectations for review. The inspector continues
+to save and execute version 3 read checks only; mutation files run through the
+CLI against its disposable database.
+
+Review the read fixtures and expectations first. Mutation fixtures name
+additional synthetic rows, for example a row that should be absent before a
+create. Every create payload must include those selector values. Updates and
+deletes must include the full declared filterable primary key in their fixture
+binding. Each operation specifies an identity, fixture, method, explicit body
+(`null` for DELETE) and an expectation:
+
+```json
+{
+  "name": "Bob_update_denied",
+  "identity": "bob",
+  "fixture": "step_1",
+  "method": "PATCH",
+  "body": { "body": "synthetic-denied-edit" },
+  "expect": { "status": 204, "rows": 0, "outcome": "unchanged" }
+}
+```
+
+Allowed create/update/delete expectations use outcomes `created`, `updated`
+and `deleted`, respectively, with `rows: 1`. Create expects HTTP 201; update and
+delete expect HTTP 204. Denied writes use `outcome: "unchanged"`, `rows: 0`
+and either HTTP 204 for a filtered-out update/delete, or HTTP 403 with PostgreSQL
+permission code `42501` for an explicit RLS refusal. Denied creates require the
+403 permission refusal. Authentication errors and unrelated constraint failures
+cannot satisfy a denial expectation.
+
+Set `status` to `reviewed`, seed the named synthetic rows in `fixture.sql`, then
+run:
+
+```sh
+gregale data-api verify --directory . \
+  --access-checks data-api.mutations.json --fixture fixture.sql --json
+```
+
+Read baselines must pass before any mutation executes. Operations run in manifest
+order against the disposable database and use `Prefer: return=minimal`, so an
+ownership transfer cannot appear denied just because its returned row becomes
+unreadable. The verifier uses a separate owner connection in read-only,
+repeatable-read transactions to observe all physical tables exposed by the
+contract before and after writes. Denial expectations require identical table
+row state, including fields hidden from the acting identity; sequence counters
+are outside that comparison. Allowed writes require the expected fixture
+cardinality and payload values after the operation. Updates must attempt an
+actual change, rather than passing as a no-op.
+
+The observer bounds synthetic datasets to 64 physical tables, 1,000 rows per
+table, 64 KiB per serialized row and 1 MiB of total serialized row state.
+Tables outside the exposed contract are outside this check. State remains
+private to the verifier; reports contain operation/identity names and boolean
+state assertions, excluding fixture values, row contents and credentials.
+A failed or uncertain write stops later mutations without retrying. Successful
+mutations remain in the disposable database until normal verifier cleanup;
+they do not run against the inspector database or a hosted endpoint.
+
+### Authorization lifecycle checkpoints
+
+Choose **Export authorization lifecycle scaffold for CLI** in the inspector to
+create `data-api.lifecycle.json`. This version 5 manifest extends the disposable
+mutation format with ordered GET checkpoints between writes. The scaffold
+contains a before-change read, an authorization change, member read/write checks
+and an unaffected-member read. Identities, membership table/selectors, payloads
+and expectations remain empty for explicit review. Choose DELETE to test
+membership removal or PATCH with a role payload to test a downgrade. No admin
+identity, membership model or permission outcome is inferred.
+
+The version 3 read-baseline fields and version 4 write expectations still apply.
+Version 5 requires at least one write and one read checkpoint in its ordered
+`mutations` list. A read checkpoint has a null body and HTTP 200 expectation,
+with `outcome: "visible"` and an exact row count of `0` or `1`:
+
+```json
+{
+  "name": "Former_member_cannot_read",
+  "identity": "member",
+  "fixture": "step_1",
+  "method": "GET",
+  "body": null,
+  "expect": { "status": 200, "rows": 0, "outcome": "visible" }
+}
+```
+
+Supply the authorization row and unaffected member's data as named
+`mutationFixtures`. Keep the data fixture itself present when revoking membership:
+checkpoints require exactly one matching row through the private observer both
+before and after the read, even when the acting identity must see zero rows.
+Deleting the data cannot make a permission denial checkpoint pass. Checkpoint
+queries use the named fixture selectors rather than saved-view filters or
+sorting, and require unchanged exposed-table row state. They do not perform
+writes. Version 4 continues to reject GET steps.
+
+For a downgrade, check that the member can still read but can no longer update,
+then verify that an unaffected member retains access. For revocation, check
+that reads and writes are denied using the same named data fixture, and check
+another member again. The verifier issues identity tokens before the baseline
+and reuses those exact tokens throughout the workflow; it does not refresh
+claims after an authorization change. This exposes policies that continue to
+trust stale role or membership claims instead of current authorization state.
+Expectations remain customer-defined because some products intentionally retain
+permissions until token expiry.
+
+Run the reviewed scaffold with your synthetic seed or an explicit SQL fixture:
+
+```sh
+gregale data-api verify --directory . \
+  --access-checks data-api.lifecycle.json --fixture fixture.sql --json
+```
+
+Results identify each operation, identity and fixture, with checkpoint row counts
+and state assertions. Row contents and JWTs remain excluded. Any failed checkpoint
+or failed/uncertain mutation skips the remaining workflow; disposable-service
+cleanup still runs. Lifecycle manifests retain the 64 KiB collection and 100
+baseline-plus-operation limits and the mutation observer's dataset bounds.
+Inspector save/run endpoints remain version 3 and read-only; exported version
+4/5 workflows execute only through disposable CLI verification.
+
+### Schema-aware CSV imports in the local inspector
+
+Select a writable table and local test identity, then open **Import CSV into the
+selected table**. Choose a UTF-8 CSV file or paste CSV text and select **Load
+headers**. The parser supports a BOM, CRLF, quoted commas, escaped quotes and
+multiline quoted cells. Limits are 1 MiB, 1,000 data records and 256 CSV columns.
+Record numbers in previews and reports include the header as record 1; multiline
+cells do not create additional records.
+
+Each header maps to one writable database column or **Ignore this CSV column**.
+Exact writable names are mapped initially; generated/readonly fields such as
+identity columns remain ignored. Choose blank-cell handling separately for each
+mapped column: preserve the value (including an empty string), omit it to use a
+database default, or send SQL NULL. Nullability and required fields are still
+validated. Strings and enums preserve their data-cell contents; numbers use
+strict decimal notation, booleans accept true/false, and arrays, composites and
+JSON use JSON cell values. Supply ownership and foreign-key values explicitly;
+relationship navigation does not populate CSV payloads.
+
+**Validate and preview** converts cells and runs the same server-generated input
+model used by the inspector's insert form. It checks supported scalar types,
+enums, Unicode length, integer ranges, nullability and structured input limits.
+Any invalid record blocks the entire import before sending writes. Errors show
+record numbers and known field paths without input values; the first 100 errors
+are retained while full valid/invalid counts are reported. A serialized row must
+fit the 64 KiB batch limit. Database CHECK/domain rules, triggers and RLS remain
+final database checks.
+
+The preview shows exact insert payloads in pages of 50 records, with the selected
+table, identity and total count. Select the approval checkbox, then **Import
+approved rows**. Changes to CSV, mappings, identity, table or schema invalidate
+approval. Imports use the pinned contract route with the approved identity;
+source and mapping controls are disabled during a run. **Stop import** cancels
+the active request and prevents later batches.
+
+Each request contains at most 25 rows and 64 KiB of JSON. Batches commit
+independently; a confirmed transaction refusal means none of that batch's rows
+were inserted. Later batches can still succeed. A batch is confirmed only after
+HTTP 201 with an exact affected-row count matching the submitted count. Missing
+or mismatched counts, including trigger-suppressed inserts, are uncertain rather
+than falsely reported as imported. Timeouts, network errors and unrecognized
+responses also mark the active batch uncertain and stop later requests. No
+automatic retry occurs.
+
+Reports label each original CSV record `confirmed`, `refused`, `uncertain` or
+`not_sent`, with HTTP statuses where available. **Preview refused or unsent rows**
+creates a new approval preview from the same validated payloads; confirmed and
+uncertain records are excluded. Changing data or mappings starts a new import,
+so prepare its CSV using the prior report to avoid repeating earlier inserts.
+Read the table before deciding whether to import uncertain records manually.
+**Download outcome report** exports table/identity names, schema fingerprint,
+record outcomes and counts, excluding CSV values and credentials. CSV payloads
+and retry state remain in browser memory and are not saved to request/view
+collections; approved records are persisted by the Data API as normal inserts.
+
+### Export inspector views to CSV
+
+The inspector exports the selected columns under the selected identity and RLS,
+including current filters and relationship predicates. Reopen a saved view to
+reuse its projection and sort before exporting. Export starts at the first page,
+adds readable primary-key columns as sorting tie breakers, and reads beyond the
+visible page without adding those keys to the downloaded projection.
+
+Choose a row limit (default 1,000; maximum 10,000). Progress reports rows and
+bytes; one extra row detects whether the row limit truncated the result. Exports
+are bounded to 10 MiB, with bounded response pages and timeouts. Stop, a changed
+context, or a failed read cancels the download; no partial file is offered.
+These are live ordered OFFSET reads, not a database snapshot: concurrent writes
+can shift subsequent pages, and relations without unique keys can have sorting
+ties. Use narrower filters when a stable result is required.
+
+Spreadsheet mode protects formula-like text with a leading apostrophe and emits
+NULL as an empty cell. Data-preserving mode instead JSON-encodes each cell,
+distinguishing NULL, empty strings, booleans, arrays, and objects. It preserves
+numeric lexemes, including PostgreSQL integers and decimals beyond JavaScript
+precision. Select **JSON-encoded cells** in the import wizard to preview that
+format for re-import. Values that cannot be represented exactly by the current
+JavaScript input model are rejected with `precision_loss`; readonly columns
+remain unmapped and inserts still require review and database authorization.
+
+The existing import bounds still apply (1 MiB and 1,000 records per preview);
+split larger exports into smaller files before re-importing them.
+
+### Bulk updates and deletes in the inspector
+
+Select rows using the checkboxes beside their actions, then choose Update or
+Delete. Selection covers at most 50 rows on the current page. Rows need a
+readable, filterable primary key and declared integer version, as single-row
+edits do. For updates, enter a JSON object using the listed writable fields;
+keys and the version field cannot be changed. Preview shows each key, reviewed
+version, and before/after values, or an explicit deletion, under the selected
+identity. Approval applies only to that exact preview.
+
+Each row runs independently through the contract-pinned REST API with key and
+version predicates and normal database authorization/RLS. Returned keys and
+versions must match before an operation is confirmed. Zero affected rows are
+conflicts: the row changed, disappeared, or became unavailable. Read fresh rows
+before reviewing those again. Failed or cancelled requests whose commit cannot
+be established are uncertain and stop subsequent writes. Responses and elapsed
+time are bounded; no automatic retry occurs.
+
+Results show row indexes, HTTP statuses, and confirmed/refused/conflict/uncertain/
+unsent outcomes without row contents or credentials. The retry button creates a
+new preview only for refused or unsent rows, retaining their original key/version
+snapshots and requiring fresh approval. Confirmed, conflicting, and uncertain
+operations are excluded. Changing the identity, table, view, filters, selection,
+or changes invalidates approval; re-reading or changing the browsing context
+clears the selection. Selected-row mode operates on the current page. Matching-view mode is described
+below. Neither mode is a multi-row transaction.
+
+
+### Apply bulk writes to a matching view
+
+Choose **All rows matching this view**, select a preview limit from 1 to 1,000,
+and validate the update or deletion. The inspector reads ordered pages through
+the contract-pinned API under the selected identity/RLS, preserving the current
+filter and relationship predicates. It fetches primary keys, declared versions,
+and changed columns for the before/after preview. Sorting uses primary-key tie
+breakers. Saved views can supply the browsing context as usual.
+
+The complete matching result must fit within the chosen limit. An extra matching
+row blocks approval; increase the limit or narrow the view rather than approving
+a partial result. Zero matches, failed reads, malformed rows, duplicate keys,
+changed context, and cancellation also produce no approved operation. Reads
+are bounded to 1 MiB per response and 5 MiB per preview, with timeouts and progress.
+
+Preview displays the affected count and exact reviewed keys, versions, and
+changes. Approval freezes that list. Execution uses individual key/version
+predicates, never a freshly evaluated broad filter. Rows that start matching
+later are excluded; concurrent changes to reviewed rows produce conflicts. The
+reads are live OFFSET pages, not a consistent database snapshot, so concurrent
+writes can shift page membership during collection. Inspect the reviewed list
+before approval. Writes retain independent commits, per-row progress,
+cancellation, and reviewed retries for refused or unsent original snapshots.
+
+### Download bulk-operation reports
+
+After a selected-row or matching-view run, **Download last operation report**
+saves `data-api.bulk-report.json`. Version 1 reports include a random run ID,
+operation and source, schema/table, identity name, schema fingerprint, start and
+finish timestamps, termination state, total count, summary counts, and every
+reviewed row's outcome and HTTP status when available. Cancelled and stopped
+runs include unsent rows rather than omitting them.
+
+Separate reconciliation lists contain conflicting and uncertain row indexes.
+The retryable list contains only refused or unsent indexes. Reports exclude
+primary keys, versions, before/after values, filters, relationship values,
+request/response bodies, JWTs, and session credentials. Indexes refer to the
+reviewed preview; the report alone cannot identify records or reconstruct writes.
+Use the original preview to reconcile those indexes with records.
+
+A retry still uses the current in-memory approved snapshots, requires a new
+preview and approval, and excludes confirmed, conflicting, and uncertain rows.
+Its preview and report link to the immediate prior run ID and original row
+indexes (`retry_of` and `source_index`). Download each report to retain the chain.
+Reports are not executable manifests and cannot be imported to replay writes.
+
+The latest finished report remains downloadable across changes of identity,
+view, filters, or table. A cancelled or failed matching-read preview does not
+replace it. The operation history below persists redacted reports in the project. Write
+snapshots remain in the current tab only; download reports for an independent
+durable copy. Nothing is uploaded to a hosted service.
+
+### Preflight bulk writes before approval
+
+After reviewing selected or matching rows, choose **Check readiness** before
+approving. Read-only preflight checks that the schema fingerprint and known
+writable fields still match, and reads each reviewed key under the selected
+identity/RLS to verify visibility and the expected integer version. It fetches
+only keys and versions through the pinned contract API. Changed rows and
+unavailable rows are reported separately; unavailable covers both hidden and
+deleted records without distinguishing them.
+
+The readiness summary lists row indexes and check statuses without row contents
+or credentials. Approval is enabled only after every reviewed row is ready, and
+checks expire after 60 seconds. Expiration clears approval and requires checking
+again. Any failed, malformed, refused, cancelled, or context-invalid check clears
+the preview and requires a fresh preview. In selected-row mode, read fresh rows
+before selecting and previewing again. Checks never refresh reviewed versions
+silently, never perform writes, and do not replace the latest operation report.
+Requests, response bytes, and elapsed time are bounded, with progress and Stop.
+
+Readiness validates current reads and metadata; it cannot prove UPDATE/DELETE
+policies, constraints, or trigger behavior without executing the write. Data can
+change after a check. Execution retains contract pinning, individual version
+guards, independent commits, and per-row outcomes, so a later concurrent edit
+still produces a conflict rather than being overwritten. Retry previews require
+the same readiness checks and new approval.
+
+### Reconcile conflicting and uncertain bulk writes
+
+Choose **Read unresolved rows** after a run to re-read conflicting and uncertain
+keys under the original identity/RLS and pinned schema. The inspector displays
+reviewed and current versions, and reviewed, desired, and current field values.
+It labels visible rows as current, changed, or potentially applied when an
+update's requested values currently match. Missing or hidden rows are unavailable.
+Read errors and unchecked rows are displayed without becoming selectable.
+Reads have per-response and total retained-data bounds, timeouts, progress, and Stop.
+
+Reconciliation never changes the original outcomes or operation report.
+Matching values may have come from another writer; unavailable rows do not prove
+that a deletion committed. An uncertain operation therefore remains uncertain.
+The ordinary retry button continues to exclude both conflicts and uncertain rows.
+
+Select visible reconciled rows to **Preview a new operation** with their freshly
+read versions. Selecting an uncertain row requires acknowledging that its earlier
+write may already have committed and a new write may run triggers again. This is
+a separate operation, not an automatic retry. Review its current before/after
+values, run readiness checks, and explicitly approve it. Reports link to the
+original run with `reconciliation_of` and `source_index`, excluding row contents
+and credentials as usual. Changes after reconciliation remain protected by the
+new version predicates and preflight checks.
+
+Reconciliation uses the current in-memory run snapshots, not imported reports.
+Changing identity, table, schema, filters, operation, or changes clears the active
+snapshot. Available session snapshots may be reopened from operation history
+under the original identity and matching schema. A failed schema or metadata check requires reading fresh rows
+and creating a new preview independently. Cancellation discards the reconciliation
+read; no follow-up operation is approved or sent.
+
+### Bulk-operation history and retention
+
+The inspector keeps redacted operation reports in `data-api.bulk-history.json`
+next to the saved views and requests. History is bounded to 20 runs and 2 MiB,
+with a default retention of 30 days. Adjust the run count (1–20) and age (1–365
+days), then apply retention to remove older reports. Age-expired reports are
+hidden when loaded and pruned from the file on the next save. Complete reports
+are retained or removed as a whole; individual outcome lists are never truncated.
+Saving uses revision checks, atomic replacement, and private file permissions.
+Concurrent changes require reloading before explicit retention or clearing;
+automatic report appends reload and merge once on a revision conflict.
+
+Select a run to view counts, timestamps, termination state, and retry or
+reconciliation links, and download its report. Links can point to a run removed
+by retention; the inspector indicates whether the parent report remains present.
+The server rejects report fields outside the redacted schema, including row keys,
+values, write payloads, read predicates, and credentials. A failed history save
+does not alter database outcomes; download the last report to retain a copy.
+
+Up to 20 run snapshots and 10 MiB of keys, reviewed values, and browsing context
+remain in the current inspector tab only. Reopen an available snapshot to restore
+its original identity, table, and view and perform fresh reconciliation reads or
+review an eligible retry. Reopening sends no writes and restores no approval.
+Schema, writable-model, and identity-subject changes prevent restoring an old
+snapshot. Follow-up operations still require fresh previews, preflight, and
+approval. Snapshot eviction leaves the redacted report downloadable.
+
+After restarting or reopening the inspector, project reports remain available,
+but snapshots do not: reports cannot reconstruct keys or replay writes. Clearing
+history requires the explicit clear checkbox and removes stored reports and
+current-tab snapshots. It does not modify application records. Other already-open
+tabs clear their retained snapshots when they reload the changed history.
+
+### Read-only support views
+
+Support identities can browse focused saved views, filter rows (including
+case-insensitive `ilike` text matching with `*term*` wildcards), navigate exposed
+relationships, and export the same identity/RLS-visible projection to CSV.
+The inspector disables application write forms, imports, bulk writes and
+mutating request methods for these identities.
+
+In `data-api.dev.json`, set `read_only: true` on a local identity. Local token
+issuance adds the reserved signed claim `gregale_read_only: true`; custom claims
+cannot override it. For deployed applications, configure your trusted JWT issuer
+to include that boolean claim on support tokens. The runtime verifies the token
+and rejects POST, PATCH and DELETE before forwarding, including opted-in RPC
+POSTs. Non-boolean values are rejected as invalid tokens. GET/HEAD continue through
+normal database permissions and RLS. The SQL role remains the binding login:
+external role claims cannot choose an owner, administrator, or another binding.
+
+To save a support view, select a configured read-only identity and choose **Save
+as a read-only support view**. Its definition retains the identity name, selected
+columns, filters, sorting and relationship path, excluding subjects and credentials.
+Reopening chooses that read-only identity and rejects missing or writable identity
+configurations. Schema changes still require reviewing and resaving the view.
+The mode and projection organize the UI; they are not authorization boundaries.
+
+For database-backed restrictions, the starter includes
+`migrations/examples/support/support.sql` and its README. Copy the example into
+a new numbered migration and adapt it deliberately. It creates private support
+cases/replies with sensitive columns, grants the binding role SELECT only on safe
+base columns, denies base writes, and applies tenant/claim-aware SELECT RLS.
+Security-invoker, security-barrier views expose the safe columns in `api` while
+preserving base grants and RLS. Keep the private schema out of `DATA_API_SCHEMAS`.
+Readable private base columns can supply complete FK lineage between exposed
+views; private relations and unreadable columns never enter generated API types.
+
+Do not grant broad access to the private base tables or expose functions that
+return sensitive fields. Use a separate restricted binding/API when existing
+base grants or exposed resources cannot satisfy support restrictions. Test the
+intended support identities against safe reads, tenant isolation, hidden-column
+requests and write rejections before exposing customer data. The local inspector
+capability grants all local test identities; it is a development tool, not a
+production support-staff authentication portal. A customer application must
+use authenticated support tokens and reviewed database grants/RLS.
+
+### Customer-facing support console starter
+
+Generate a standalone support workspace with:
+
+~~~sh
+gregale init --template data-api-support-console --path support-console
+cd support-console
+npm ci
+npm test
+npm run demo
+~~~
+
+The synthetic demo includes organization sign-in through OIDC code/PKCE, two
+tenant-scoped staff identities, 120 cases, related replies, search, filters,
+paging and bounded CSV export. It is separate from the development inspector and
+uses no staging credentials. The production entrypoint does not use the demo.
+
+Configure a real OIDC application and the same JWT issuer/JWKS used by your support
+Data API. Staff access tokens must have the correct API audience, a tenant claim,
+and the trusted boolean read-only claim. The console keeps tokens out of browser
+JavaScript in authenticated encrypted HttpOnly cookies, verifies tokens before
+each read, and forwards only approved GET requests with a pinned schema contract.
+The server allowlists view columns, search/filter/sort choices and complete
+relationship mappings, and strips unapproved upstream properties. Database
+column grants and RLS remain the authorization boundary for direct API clients.
+
+The starter includes a configurable approved-view file, an authorization test
+suite, Dockerfile, Gregale hosting configuration and deployment instructions.
+Follow its README to register the callback, configure scopes/audience and client
+authentication, set private session keys, connect reviewed views and pin the
+schema fingerprint before deploying. Sessions expire at token expiry or 30
+minutes without refresh tokens. Sign-out clears the browser cookie; immediate
+provider/session revocation requires provider-specific support. Test real staff
+and tenant authorization against your issuer and database before exposing customer
+records. No deployment or provider account provisioning happens automatically.
+
+## Local load and recovery verification
+
+Run `make data-api-load-check` for portable verifier contracts and
+`make data-api-load-verify` for disposable PostgreSQL REST/RPC traffic, pressure,
+write reconciliation and recovery checks. The [load verifier guide](../tests/data-api/load/README.md)
+describes explicit configuration, workload bounds, redacted evidence and cleanup.
+The acceptance workflow includes these checks. The [manual staging canary](../tests/data-api/staging/README.md#hosted-load-and-recovery)
+also includes a hosted adapter for public-edge traffic, receipt reconciliation,
+managed restart and observed park/wake, with explicit unsupported coverage.
+Hosted capacity and native lifecycle qualification require live evidence.

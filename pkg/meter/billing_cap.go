@@ -2,8 +2,6 @@ package meter
 
 import (
 	"context"
-	"math"
-	"math/big"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -15,19 +13,18 @@ import (
 // (ADR-1162). An hour that crosses it is billed exactly up to the cap and then
 // settled; usage beyond the cap is never billed, even if the cap is raised
 // later, and schedd parks the account's workloads while the cap holds. The
-// allowances below are exact: rational arithmetic compares costs before any
-// rounding, so fractional meters that fit the cap together are billed and
-// nothing above it is, without overflow for large but valid quantities.
+// allowances below use the exact cap arithmetic in pkg/billing, which
+// month-close object storage shares.
 
 // capComputeAllowance returns the largest cumulative billable compute quantity
 // (mb_seconds) the cap allows once egress, the month's live egress overage, is
 // reserved. A nil policy reserves no egress. Invalid inputs fail closed (0).
 func capComputeAllowance(capCents, egress int64, policy *billing.MeterUsagePolicy) int64 {
-	remaining, ok := capRemainingMillicents(capCents, egress, policy)
+	remaining, ok := billing.CapRemainingMillicents(capCents, 0, egress, policy)
 	if !ok {
 		return 0
 	}
-	return floorQuantity(remaining, api.SecondsPerGBHour, api.OverageMillicentsPerGBHour)
+	return billing.FloorCapQuantity(remaining, api.SecondsPerGBHour, api.OverageMillicentsPerGBHour)
 }
 
 // capEgressAllowance returns the largest cumulative billable egress quantity
@@ -36,47 +33,11 @@ func capEgressAllowance(capCents, compute int64, policy billing.MeterUsagePolicy
 	if policy.UnitQuantity <= 0 || policy.MillicentsPerUnit <= 0 {
 		return 0
 	}
-	remaining, ok := capRemainingMillicents(capCents, 0, nil)
-	if !ok || compute < 0 {
+	remaining, ok := billing.CapRemainingMillicents(capCents, compute, 0, nil)
+	if !ok {
 		return 0
 	}
-	remaining.Sub(remaining, new(big.Rat).SetFrac(
-		new(big.Int).Mul(big.NewInt(compute), big.NewInt(api.OverageMillicentsPerGBHour)),
-		big.NewInt(api.SecondsPerGBHour)))
-	return floorQuantity(remaining, policy.UnitQuantity, policy.MillicentsPerUnit)
-}
-
-// capRemainingMillicents is the cap in exact millicents minus the reserved
-// egress cost. ok=false fails the caller closed.
-func capRemainingMillicents(capCents, egress int64, policy *billing.MeterUsagePolicy) (*big.Rat, bool) {
-	if capCents < 0 || egress < 0 {
-		return nil, false
-	}
-	remaining := new(big.Rat).SetInt(new(big.Int).Mul(big.NewInt(capCents), big.NewInt(api.MillicentsPerCent)))
-	if policy == nil || egress == 0 {
-		return remaining, true
-	}
-	if policy.UnitQuantity <= 0 || policy.MillicentsPerUnit <= 0 {
-		return nil, false
-	}
-	remaining.Sub(remaining, new(big.Rat).SetFrac(
-		new(big.Int).Mul(big.NewInt(egress), big.NewInt(policy.MillicentsPerUnit)),
-		big.NewInt(policy.UnitQuantity)))
-	return remaining, true
-}
-
-// floorQuantity converts remaining millicents to whole units of a meter priced
-// at millicentsPer per unitQuantity, rounding down and saturating at MaxInt64.
-func floorQuantity(remaining *big.Rat, unitQuantity, millicentsPer int64) int64 {
-	if remaining.Sign() <= 0 {
-		return 0
-	}
-	q := new(big.Rat).Mul(remaining, new(big.Rat).SetFrac(big.NewInt(unitQuantity), big.NewInt(millicentsPer)))
-	n := new(big.Int).Quo(q.Num(), q.Denom())
-	if !n.IsInt64() {
-		return math.MaxInt64
-	}
-	return n.Int64()
+	return billing.FloorCapQuantity(remaining, policy.UnitQuantity, policy.MillicentsPerUnit)
 }
 
 // clampToAllowance bills [before, after) only up to allowance.

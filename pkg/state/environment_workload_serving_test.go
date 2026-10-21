@@ -387,6 +387,11 @@ func TestMemStoreGitOpsPullQueueCompletionFencesClaimAttempt(t *testing.T) {
 	if err != nil || current.State != InvocationDispatching || !current.QuotaReserved {
 		t.Fatalf("stale attempt changed invocation: %+v, err=%v", current, err)
 	}
+	revoked, cancel := WithOrgAccessFence(t.Context(), OrgAccessFence{OrgID: uuid.NewString(), AccountID: accountID, Revision: 1})
+	defer cancel(nil)
+	if err := store.CompleteEnvironmentGitOpsPullQueueDelivery(revoked, invocationID, 2, deploymentID, nil); !errors.Is(err, ErrOrgAccessRevoked) {
+		t.Fatalf("completion discarded its authorization context: %v", err)
+	}
 	result := []byte(`{"ok":true}`)
 	if err := store.CompleteEnvironmentGitOpsPullQueueDelivery(t.Context(), invocationID, 2, deploymentID, result); err != nil {
 		t.Fatalf("current attempt completion: %v", err)

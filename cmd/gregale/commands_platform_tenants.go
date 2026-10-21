@@ -15,11 +15,14 @@ import (
 // cmdPlatformTenants manages one account customer across several apps.
 func cmdPlatformTenants(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|activity|suspend|resume|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff> [flags]", "platform-tenants")
+		PrintUsage(os.Stderr, "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|activity|suspend|resume|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history> [flags]", "platform-tenants")
 		return 1
 	}
 	verb := args[0]
 	if handled, code := cmdPlatformTenantBilling(verb, args[1:]); handled {
+		return code
+	}
+	if handled, code := cmdPlatformTenantPlans(verb, args[1:]); handled {
 		return code
 	}
 	fs := newFlagSet("platform-tenants-"+verb, flag.ContinueOnError)

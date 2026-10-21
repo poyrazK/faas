@@ -1,11 +1,12 @@
 // adr: 462 — release-only managed migration credential delivery.
+// adr: 1190 — auth bindings reach serving processes and release tasks.
 
 package state
 
 import "testing"
 
 func TestManagedPostgresSecretDeliveryPolicy(t *testing.T) {
-	for _, access := range []string{"read_write", "data_api"} {
+	for _, access := range []string{"read_write", "data_api", "auth"} {
 		t.Run(access, func(t *testing.T) { testManagedPostgresSecretDeliveryPolicy(t, access) })
 	}
 }

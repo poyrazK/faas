@@ -38,11 +38,19 @@ type workloadIdentityResponse struct {
 // listener association is the credential: a guest cannot request a token for
 // another app/account because the instance id is never supplied on the wire.
 type WorkloadIdentityReceiver struct {
-	ctx    context.Context
-	log    *slog.Logger
-	mgr    *fcvm.Manager
-	signer *workloadidentity.Signer
-	now    func() time.Time
+	ctx     context.Context
+	log     *slog.Logger
+	mgr     *fcvm.Manager
+	signer  *workloadidentity.Signer
+	now     func() time.Time
+	metrics *workloadIdentityMetrics
+}
+
+// UseMetrics counts token request outcomes (ADR-1141).
+func (r *WorkloadIdentityReceiver) UseMetrics(m *workloadIdentityMetrics) {
+	if r != nil {
+		r.metrics = m
+	}
 }
 
 // StartWorkloadIdentityReceiver binds the host endpoint. A nil signer keeps
@@ -78,34 +86,44 @@ func (r *WorkloadIdentityReceiver) handleGuestStream(instance string, conn net.C
 	}
 	body, err := readIdentityFrame(conn)
 	if err != nil {
+		r.metrics.observe(workloadIdentityInvalidRequest)
 		_ = r.writeResponse(conn, workloadIdentityResponse{Error: "invalid_request"})
 		return "read", fmt.Errorf("workload identity read: %w", err)
 	}
 	var req workloadIdentityRequest
 	if err := json.Unmarshal(body, &req); err != nil {
+		r.metrics.observe(workloadIdentityInvalidRequest)
 		_ = r.writeResponse(conn, workloadIdentityResponse{Error: "invalid_request"})
 		return "protocol", fmt.Errorf("workload identity request: %w", err)
 	}
-	if req.Audience == workloadidentity.OutboundRelayAudience {
+	if req.Audience == workloadidentity.OutboundRelayAudience || workloadidentity.IsRehearsalRelayAudience(req.Audience) {
 		// ADR-989: the relay audience is minted only by vmmd for its own
 		// outboundd connections, never for guest code.
-		return responseResult(r.writeResponse(conn, workloadIdentityResponse{Error: "invalid_audience"}))
+		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "invalid_audience"})
 	}
 	if r.signer == nil {
-		return responseResult(r.writeResponse(conn, workloadIdentityResponse{Error: "identity_not_configured"}))
+		return r.respond(conn, workloadIdentityNotConfigured, workloadIdentityResponse{Error: "identity_not_configured"})
 	}
 	if r.mgr == nil {
-		return responseResult(r.writeResponse(conn, workloadIdentityResponse{Error: "instance_not_found"}))
+		return r.respond(conn, workloadIdentityInstanceNotFound, workloadIdentityResponse{Error: "instance_not_found"})
 	}
-	appID, accountID, err := r.mgr.InstanceIdentity(instance)
+	appID, accountID, err := r.mgr.InstanceExternalActionIdentity(r.ctx, instance)
+	if errors.Is(err, fcvm.ErrRehearsalExternalActionDenied) {
+		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "rehearsal_identity_unavailable"})
+	}
 	if err != nil || appID == "" || accountID == "" {
-		return responseResult(r.writeResponse(conn, workloadIdentityResponse{Error: "instance_not_found"}))
+		return r.respond(conn, workloadIdentityInstanceNotFound, workloadIdentityResponse{Error: "instance_not_found"})
 	}
 	tok, err := r.signer.Mint(r.now(), accountID, appID, instance, req.Audience)
 	if err != nil {
-		return responseResult(r.writeResponse(conn, workloadIdentityResponse{Error: "invalid_audience"}))
+		return r.respond(conn, workloadIdentityInvalidAudience, workloadIdentityResponse{Error: "invalid_audience"})
 	}
-	return responseResult(r.writeResponse(conn, workloadIdentityResponse{Token: tok}))
+	return r.respond(conn, workloadIdentityMinted, workloadIdentityResponse{Token: tok})
+}
+
+func (r *WorkloadIdentityReceiver) respond(conn net.Conn, result string, response workloadIdentityResponse) (string, error) {
+	r.metrics.observe(result)
+	return responseResult(r.writeResponse(conn, response))
 }
 
 // Qualification candidates receive no federated workload identity. A candidate

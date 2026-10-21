@@ -95,6 +95,11 @@ const (
 	detNameOther      = "other"
 )
 
+// DetectorCompose is Detection.Detector for a workload a Compose file
+// declares. Project apply honors such a service's declared build context
+// (ADR-1288).
+const DetectorCompose = detNameCompose
+
 // workloadSeed is the internal carrier produced by each tier
 // detector before merge.go collapses them into a sorted
 // []Workload. Keeping it lighter than Workload makes per-tier

@@ -34,7 +34,9 @@ type accountMetricsSnapshot struct {
 	wakeErr      error
 }
 
-// fetchAccountMetricsSnapshot evaluates the two raw 24h scans sequentially,
+// fetchAccountMetricsSnapshot evaluates the two heavy scans sequentially,
+// reading the recorded gateway rollups for windows past an hour
+// (appmetrics.AccountIncreaseQuery),
 // then fans out the cheap metric families. Running the request counter and
 // latency-bucket scans together can saturate a small Prometheus and make both
 // exceed their independent budgets even though each finishes comfortably
@@ -56,9 +58,8 @@ func fetchAccountMetricsSnapshot(ctx context.Context, client *promql.Client, app
 	}
 	matcher := appmetrics.AppIDMatcher(appIDs)
 
-	rows, err := client.QueryVector(ctx, fmt.Sprintf(
-		`sum by (app, class)(increase(gateway_request_duration_seconds_count{%s}[%s]))`,
-		matcher, window))
+	rows, err := client.QueryVector(ctx, appmetrics.AccountIncreaseQuery(
+		appmetrics.AccountRequestCount, "app, class", matcher, window))
 	if err != nil {
 		out.requestsErr = err
 		return out
@@ -81,9 +82,8 @@ func fetchAccountMetricsSnapshot(ctx context.Context, client *promql.Client, app
 		}
 	}
 
-	out.latencyBucketsByApp, out.latencyErr = client.QueryBuckets(ctx, fmt.Sprintf(
-		`sum by (app, le)(increase(gateway_request_duration_seconds_bucket{%s,class="2xx"}[%s]))`,
-		matcher, window))
+	out.latencyBucketsByApp, out.latencyErr = client.QueryBuckets(ctx, appmetrics.AccountIncreaseQuery(
+		appmetrics.AccountRequestBuckets, "app, le", matcher+`,class="2xx"`, window))
 	if out.latencyErr != nil {
 		return out
 	}

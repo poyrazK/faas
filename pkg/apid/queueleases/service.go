@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -71,9 +72,15 @@ func (s Service) WorkloadScope(r *http.Request) (state.Account, state.App, strin
 	if err != nil || app.AccountID != c.AccountID || app.Slug != r.PathValue("slug") || app.Status == state.AppDeleted {
 		return state.Account{}, state.App{}, "", errors.New("token does not name this app")
 	}
-	acct, err := store.AccountByID(r.Context(), c.AccountID)
-	if err != nil || acct.Status != state.AccountActive {
+	acct, err := state.AppResourceAccount(r.Context(), store, app)
+	if err != nil || !acct.Active() {
 		return state.Account{}, state.App{}, "", errors.New("account is not active")
+	}
+	if organization := r.PathValue("organization"); organization != "" {
+		org, err := store.OrgByID(r.Context(), app.OrgID)
+		if err != nil || org.Personal || org.Slug != organization {
+			return state.Account{}, state.App{}, "", errors.New("token does not name this organization")
+		}
 	}
 	instance, err := store.InstanceByID(r.Context(), c.InstanceID)
 	if err != nil || instance.AppID != app.ID || !state.State(instance.State).CountsForConcurrency() {
@@ -119,6 +126,10 @@ func (s Service) Lease(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	leases, err := s.lease(r.Context(), store, state.QueueLeaseRequest{AccountID: acct.ID, AppID: app.ID, QueueName: r.PathValue("queue"),
 		MaxMessages: req.MaxMessages, VisibilitySeconds: req.VisibilityTimeoutSeconds, InstanceID: instanceID},
 		time.Duration(req.WaitSeconds)*time.Second)
+	if errors.Is(err, state.ErrOrgAccessRevoked) {
+		writeError(w, acct, r.PathValue("queue"), err)
+		return
+	}
 	if r.Context().Err() != nil {
 		return // the consumer went away; anything leased is redelivered after its timeout
 	}
@@ -218,10 +229,7 @@ func (s Service) Nack(w http.ResponseWriter, r *http.Request, acct state.Account
 		if req.DelaySeconds < 0 || req.DelaySeconds > api.QueueBindingRetryMaxSeconds {
 			return state.QueueLeaseOutcome{}, state.ErrInvalidArgument
 		}
-		lastError := req.Error
-		if len(lastError) > errorMaxBytes {
-			lastError = lastError[:errorMaxBytes]
-		}
+		lastError := safetext.Truncate(req.Error, errorMaxBytes)
 		return store.NackQueueLeases(r.Context(), acct.ID, app.ID, r.PathValue("queue"), req.Receipts,
 			time.Duration(req.DelaySeconds)*time.Second, lastError)
 	})
@@ -260,6 +268,8 @@ func (s Service) settle(w http.ResponseWriter, r *http.Request, acct state.Accou
 func writeError(w http.ResponseWriter, acct state.Account, queue string, err error) {
 	limits := api.MustLimitsFor(acct.Plan)
 	switch {
+	case errors.Is(err, state.ErrOrgAccessRevoked):
+		api.WriteProblem(w, api.ErrOrgRoleForbidden("consume queues after organization access was revoked"))
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Pull binding not found",
 			fmt.Sprintf("queue %q has no enabled pull binding on this app", queue)))

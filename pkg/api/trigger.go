@@ -44,7 +44,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // TriggerKind is the closed-vocabulary discriminator. The set is
@@ -66,7 +70,45 @@ const (
 	TriggerKindRedisStreams TriggerKind = "redis_streams"
 	TriggerKindSQSCompat    TriggerKind = "sqs_compat"
 	TriggerKindQueue        TriggerKind = "queue"
+	// TriggerKindRealtime delivers each message of a bound realtime
+	// consumer group as one invocation (ADR-1322).
+	TriggerKindRealtime TriggerKind = "realtime"
 )
+
+// RealtimeTriggerConfig is the config of a kind=realtime trigger
+// (ADR-1322). The named consumer group must already exist; its ordering,
+// filter, retry and retention settings govern delivery.
+type RealtimeTriggerConfig struct {
+	EndpointID string `json:"endpoint_id"`
+	Channel    string `json:"channel"`
+	Group      string `json:"group"`
+	// MaxConcurrency bounds parallel invocations; 0 means 1. The plan's
+	// MaxConcurrency and QueuePushDispatchSlotsPerNode also cap it.
+	MaxConcurrency int `json:"max_concurrency,omitempty"`
+}
+
+// Validate checks the config's shape. Group and channel naming rules,
+// ownership and the group's lease are checked when apid binds the group.
+func (c RealtimeTriggerConfig) Validate() error {
+	if _, err := uuid.Parse(c.EndpointID); err != nil {
+		return errors.New("realtime config requires endpoint_id to be a UUID")
+	}
+	if c.Channel == "" || len(c.Channel) > 256 {
+		return errors.New("realtime config requires a channel of 1-256 bytes")
+	}
+	if c.Group == "" || len(c.Group) > RealtimeConsumerGroupNameMaxBytes {
+		return fmt.Errorf("realtime config requires a group of 1-%d bytes", RealtimeConsumerGroupNameMaxBytes)
+	}
+	if c.MaxConcurrency < 0 || c.MaxConcurrency > QueuePushDispatchSlotsPerNode {
+		return fmt.Errorf("realtime config max_concurrency must be 0-%d", QueuePushDispatchSlotsPerNode)
+	}
+	return nil
+}
+
+// Concurrency returns the configured lane ceiling before plan caps.
+func (c RealtimeTriggerConfig) Concurrency() int {
+	return max(c.MaxConcurrency, 1)
+}
 
 const (
 	KafkaSASLPasswordMaxBytes = 4 * 1024
@@ -116,6 +158,9 @@ type Trigger struct {
 	BatchSizeMax  int             `json:"batch_size_max"`
 	BatchWindowMs int             `json:"batch_window_ms"`
 	MaxAttempts   int             `json:"max_attempts"`
+	// Delivery is "record" (one invocation per record) or "batch" (one
+	// invocation per dispatch batch; ADR-1321).
+	Delivery string `json:"delivery"`
 	// RetryPolicy controls the retry delay curve for failed records.
 	// MaxAttempts on the trigger remains the authoritative attempt cap;
 	// this policy carries the delay/jitter settings (and is persisted in
@@ -201,6 +246,8 @@ type CreateTriggerRequest struct {
 	BatchWindowMs *int            `json:"batch_window_ms,omitempty"`
 	MaxAttempts   *int            `json:"max_attempts,omitempty"`
 	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
+	// Delivery is "record" (default) or "batch" (ADR-1321).
+	Delivery *string `json:"delivery,omitempty"`
 	// PayloadMaxBytes is the broker-payload byte cap per record.
 	// nil → default 6291456 (6 MiB); the SQL CHECK rejects values
 	// outside [1024, 67108864].
@@ -238,6 +285,8 @@ type UpdateTriggerRequest struct {
 	RetryPolicy          *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	PayloadMaxBytes      *int            `json:"payload_max_bytes,omitempty"`
 	BrokerPoisonStrategy *string         `json:"broker_poison_strategy,omitempty"`
+	// Delivery switches between "record" and "batch" (ADR-1321).
+	Delivery *string `json:"delivery,omitempty"`
 	// FilterCriteria is a partial update — supplying a non-nil
 	// pointer replaces the stored tree atomically. nil means
 	// "leave unchanged" (same semantics as the other pointer
@@ -268,6 +317,9 @@ type UpdateTriggerRequest struct {
 //	              next_fire_at is in the future
 //	"dead_letter" attempts == max_attempts OR poisoned; row in
 //	              trigger_dead_letter
+//
+// Attempts counts failed deliveries only, so a record delivered on its
+// first try has 0.
 type TriggerRecord struct {
 	ID               string     `json:"id"`
 	TriggerID        string     `json:"trigger_id"`
@@ -464,4 +516,30 @@ type KafkaTriggerConfig struct {
 	Group   string           `json:"group,omitempty"`
 	TLS     *KafkaTLSConfig  `json:"tls,omitempty"`
 	SASL    *KafkaSASLConfig `json:"sasl,omitempty"`
+}
+
+// Trigger delivery modes (ADR-1321). Record delivery invokes the function once
+// per record; batch delivery invokes it once per dispatch batch with every
+// claimed record, and the function reports failed records in
+// batchItemFailures.
+const (
+	TriggerDeliveryRecord = "record"
+	TriggerDeliveryBatch  = "batch"
+)
+
+// ValidateTriggerDelivery accepts record delivery for every kind and batch
+// delivery for kinds whose records may share an invocation: not cron (no
+// records) and not queue (each record is its own durable invocation).
+func ValidateTriggerDelivery(kind TriggerKind, delivery string) error {
+	switch delivery {
+	case TriggerDeliveryRecord:
+		return nil
+	case TriggerDeliveryBatch:
+		if kind == TriggerKindCron || kind == TriggerKindQueue {
+			return fmt.Errorf("delivery %q is not available for %s triggers; use %q", TriggerDeliveryBatch, kind, TriggerDeliveryRecord)
+		}
+		return nil
+	default:
+		return fmt.Errorf("delivery must be %q or %q", TriggerDeliveryRecord, TriggerDeliveryBatch)
+	}
 }

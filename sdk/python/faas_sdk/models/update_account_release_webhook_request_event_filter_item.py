@@ -1,7 +1,7 @@
 from typing import Literal
 
 UpdateAccountReleaseWebhookRequestEventFilterItem = Literal[
-    "deployment.failed", "deployment.live", "rollout.aborted", "rollout.completed"
+    "deployment.failed", "deployment.live", "environment.gitops.changed", "rollout.aborted", "rollout.completed"
 ]
 
 UPDATE_ACCOUNT_RELEASE_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[
@@ -9,6 +9,7 @@ UPDATE_ACCOUNT_RELEASE_WEBHOOK_REQUEST_EVENT_FILTER_ITEM_VALUES: set[
 ] = {
     "deployment.failed",
     "deployment.live",
+    "environment.gitops.changed",
     "rollout.aborted",
     "rollout.completed",
 }

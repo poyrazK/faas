@@ -16,7 +16,7 @@ import type { TracingConfig } from './TracingConfig.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
 /**
- * App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest.
+ * App creation payload: slug, type (app|function), runtime (required for function; must be omitted for app), RAM MB, max concurrency, idle timeout, and optional manifest.
  */
 export type CreateAppRequest = {
   profiling?: ProfilingConfig;
@@ -75,6 +75,10 @@ export type CreateAppRequest = {
    */
   request_timeout_s?: number;
   /**
+   * Requests one Node or Python function worker may serve at once (ADR-1342). Omitted, 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads.
+   */
+  function_concurrency?: number;
+  /**
    * Lifecycle contract for the app. Default is request; service/worker/job are plan-gated.
    */
   execution_mode?: 'request' | 'service' | 'worker' | 'job';
@@ -84,6 +88,10 @@ export type CreateAppRequest = {
   restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
   after_restore?: AfterRestoreHook;
   before_checkpoint?: BeforeCheckpointHook;
+  /**
+   * When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never.
+   */
+  pause?: 'between_requests' | 'when_idle' | 'never';
   /**
    * Upper bound on time-to-ready in seconds. 0 uses the plan default.
    */
@@ -151,6 +159,14 @@ export type CreateAppRequest = {
    * Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning.
    */
   revision_pin_ttl_seconds?: number;
+  /**
+   * Default rollout for production releases that name no rollout policy (ADR-1446, ADR-1450). Omit for safe.
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449).
+   */
+  release_probe_paths?: Array<string>;
   /**
    * Per-app streaming flag. Omitted at create-time → apid applies the plan default (issue #471).
    */

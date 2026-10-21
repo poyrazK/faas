@@ -22,15 +22,17 @@ const buildCacheRecipeVersion = 4
 // The build environment partitions toolchain and platform changes separately
 // from the runtime base consumed by the produced application layer.
 type BuildCacheRecipe struct {
-	SourceSHA256        string    `json:"source_sha256"`
-	SourceRoot          string    `json:"source_root"`
-	DockerfilePath      string    `json:"dockerfile_path,omitempty"`
-	Framework           Framework `json:"framework"`
-	Plan                api.Plan  `json:"plan"`
-	RuntimeBaseRef      string    `json:"runtime_base_ref"`
-	Function            bool      `json:"function"`
-	BuilderBaseIdentity string    `json:"builder_base_identity"`
-	TargetPlatform      string    `json:"target_platform"`
+	BuildDependencyDigest string            `json:"build_dependency_digest,omitempty"`
+	PublicBuildURLs       map[string]string `json:"public_build_urls,omitempty"`
+	SourceSHA256          string            `json:"source_sha256"`
+	SourceRoot            string            `json:"source_root"`
+	DockerfilePath        string            `json:"dockerfile_path,omitempty"`
+	Framework             Framework         `json:"framework"`
+	Plan                  api.Plan          `json:"plan"`
+	RuntimeBaseRef        string            `json:"runtime_base_ref"`
+	Function              bool              `json:"function"`
+	BuilderBaseIdentity   string            `json:"builder_base_identity"`
+	TargetPlatform        string            `json:"target_platform"`
 
 	// DevWatchCommand separates watch-mode developer images (ADR-1170) from
 	// production-shaped builds of the same source. Omitted when empty, so
@@ -39,6 +41,8 @@ type BuildCacheRecipe struct {
 	// DevWatchHost is baked into the watch-mode image's environment, so two
 	// developer apps with the same source never share one image.
 	DevWatchHost string `json:"dev_watch_host,omitempty"`
+	// Separate opted-in output from older builders that ignored the config.
+	IssueSourceMapsDirectory string `json:"issue_source_maps_directory,omitempty"`
 }
 
 const (

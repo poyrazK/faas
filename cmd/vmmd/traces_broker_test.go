@@ -13,6 +13,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type fakeTraceIdentities map[string]fcvm.TraceInstanceIdentity
@@ -127,6 +129,13 @@ func TestTraceBrokerRoutesLogFrames(t *testing.T) {
 	client.rpc = ""
 	if _, _ = runTraceBroker(t, b, "vm", traceTestFrame(api.TraceCodecProtobuf, []byte("spans"))); client.rpc != "spans" {
 		t.Fatalf("trace frame went to %q", client.rpc)
+	}
+
+	// Version skew: an apid without IngestGuestLogs refuses permanently so
+	// the app's SDK stops retrying, instead of looping on unavailable.
+	client.err = status.Error(codes.Unimplemented, "unknown method IngestGuestLogs")
+	if ack, reason := runTraceBroker(t, b, "vm", traceTestFrame(api.TraceCodecProtobuf|api.TraceCodecLogsSignal, []byte("logs"))); ack != api.TraceAckRejected || reason != "unsupported" {
+		t.Fatalf("old apid: ack=%d reason=%q", ack, reason)
 	}
 }
 

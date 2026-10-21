@@ -28,6 +28,11 @@ func NewPostgresBackend(pool *pgxpool.Pool) (*PostgresBackend, error) {
 	return &PostgresBackend{pool: pool}, nil
 }
 
+// Admit decides one call in three pipelined round trips inside one
+// transaction (ADR-1120): the policy reads, then the locked state reads, then
+// the writes. The integration's admission-state row is locked from the second
+// round trip to the commit, so every gateway process still consumes one token
+// bucket and one lease set.
 func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision, error) {
 	if err := ctx.Err(); err != nil {
 		return Decision{}, err
@@ -60,6 +65,12 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if err != nil {
 		return Decision{}, fmt.Errorf("%w: integration id must be a UUID", ErrInvalidIntegration)
 	}
+	var bindingAppID uuid.UUID
+	if spec.BindingAppID != "" {
+		if bindingAppID, err = uuid.Parse(spec.BindingAppID); err != nil {
+			return Decision{}, fmt.Errorf("%w: binding app id must be a UUID", ErrInvalidIntegration)
+		}
+	}
 	ttl := spec.LeaseTTL
 	if ttl <= 0 {
 		ttl = 30 * time.Second
@@ -70,102 +81,33 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var now time.Time
-	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
-		return Decision{}, err
-	}
-	// Lock the account first. Explicitly bound admissions then lock their
-	// binding before the integration row, matching binding-policy writes and
-	// preventing a stale resolver snapshot from bypassing a completed update.
-	var plan, ownerKind string
-	var storedDailyRequestLimit, storedDailyAITokenLimit int64
-	var storedDailyAICostLimit, storedMonthlyAICostLimit, storedBindingAITokenLimit int64
-	var storedBindingRequestsPerMinute, storedBindingTokensPerMinute int64
-	var storedUserTokenLimit, storedUserCostLimit int64
-	var requestPolicy api.OutboundRequestPolicy
-	err = tx.QueryRow(ctx, `
-		SELECT account.plan
-		  FROM accounts account
-		  JOIN outbound_integrations integration ON integration.account_id = account.id
-		 WHERE integration.id = $1
-		 FOR SHARE OF account`, integrationID).Scan(&plan)
+	policy, err := readAdmissionPolicy(ctx, tx, integrationID, bindingAppID)
 	if err != nil {
 		return Decision{}, err
 	}
-	var observedOwnerKind string
-	if err := tx.QueryRow(ctx, `SELECT owner_kind FROM outbound_integrations WHERE id = $1`, integrationID).Scan(&observedOwnerKind); err != nil {
-		return Decision{}, err
+	if policy.notAttached {
+		return Decision{Reason: ReasonAppNotAttached}, nil
 	}
-	var bindingAppID uuid.UUID
 	var bindingDailyRequestLimit *int64
-	if observedOwnerKind == "customer" && spec.BindingAppID == "" {
-		return Decision{}, fmt.Errorf("%w: customer integration admission requires a binding app ID", ErrInvalidIntegration)
-	}
-	if spec.BindingAppID != "" {
-		bindingAppID, err = uuid.Parse(spec.BindingAppID)
-		if err != nil {
-			return Decision{}, fmt.Errorf("%w: binding app id must be a UUID", ErrInvalidIntegration)
-		}
-		var storedBindingDailyRequestLimit int64
-		err = tx.QueryRow(ctx, `
-			SELECT COALESCE(daily_request_limit, 0), COALESCE(ai_daily_token_limit, 0),
-			       COALESCE(ai_requests_per_minute, 0), COALESCE(ai_tokens_per_minute, 0)
-			  FROM outbound_app_bindings
-			 WHERE integration_id = $1 AND app_id = $2
-			 FOR SHARE`, integrationID, bindingAppID).Scan(&storedBindingDailyRequestLimit, &storedBindingAITokenLimit,
-			&storedBindingRequestsPerMinute, &storedBindingTokensPerMinute)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Decision{Reason: ReasonAppNotAttached}, nil
-		}
-		if err != nil {
-			return Decision{}, err
-		}
-		if storedBindingDailyRequestLimit > 0 {
-			maximum, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(plan))
-			if !ok {
-				return Decision{}, fmt.Errorf("%w: account plan has no outbound request budget ceiling", ErrInvalidIntegration)
-			}
-			if storedBindingDailyRequestLimit > maximum {
-				storedBindingDailyRequestLimit = maximum
-			}
-			bindingDailyRequestLimit = &storedBindingDailyRequestLimit
-		}
-	}
-	err = tx.QueryRow(ctx, `
-		SELECT COALESCE(daily_request_limit, 0), rate_per_second, burst,
-		       max_in_flight, request_timeout_ms, max_retries, response_cache_ttl_seconds,
-		       circuit_breaker_failure_threshold, circuit_breaker_open_seconds, retry_budget_per_minute, owner_kind,
-		       COALESCE(ai_daily_token_limit, 0),
-		       COALESCE(ai_daily_cost_limit_millicents, 0), COALESCE(ai_monthly_cost_limit_millicents, 0),
-		       COALESCE(ai_user_daily_token_limit, 0), COALESCE(ai_user_daily_cost_limit_millicents, 0)
-		  FROM outbound_integrations
-		 WHERE id = $1
-		 FOR SHARE`, integrationID).
-		Scan(&storedDailyRequestLimit, &requestPolicy.RatePerSecond, &requestPolicy.Burst,
-			&requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS, &requestPolicy.MaxRetries,
-			&requestPolicy.ResponseCacheTTLSeconds, &requestPolicy.CircuitBreakerFailureThreshold,
-			&requestPolicy.CircuitBreakerOpenSeconds, &requestPolicy.RetryBudgetPerMinute, &ownerKind,
-			&storedDailyAITokenLimit, &storedDailyAICostLimit, &storedMonthlyAICostLimit,
-			&storedUserTokenLimit, &storedUserCostLimit)
-	if err != nil {
-		return Decision{}, err
-	}
-	if ownerKind != observedOwnerKind {
-		return Decision{}, fmt.Errorf("%w: outbound integration owner changed during admission", ErrInvalidIntegration)
-	}
-	var dailyRequestLimit *int64
-	if storedDailyRequestLimit > 0 {
-		maximum, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(plan))
+	if policy.bindingDailyRequestLimit > 0 {
+		maximum, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(policy.plan))
 		if !ok {
 			return Decision{}, fmt.Errorf("%w: account plan has no outbound request budget ceiling", ErrInvalidIntegration)
 		}
-		if storedDailyRequestLimit > maximum {
-			storedDailyRequestLimit = maximum
-		}
-		dailyRequestLimit = &storedDailyRequestLimit
+		limit := min(policy.bindingDailyRequestLimit, maximum)
+		bindingDailyRequestLimit = &limit
 	}
-	if ownerKind == "customer" {
-		requestPolicy, ok := api.EffectiveOutboundRequestPolicyForPlan(api.Plan(plan), requestPolicy)
+	var dailyRequestLimit *int64
+	if policy.dailyRequestLimit > 0 {
+		maximum, ok := api.OutboundRequestsPerDayMaxForPlan(api.Plan(policy.plan))
+		if !ok {
+			return Decision{}, fmt.Errorf("%w: account plan has no outbound request budget ceiling", ErrInvalidIntegration)
+		}
+		limit := min(policy.dailyRequestLimit, maximum)
+		dailyRequestLimit = &limit
+	}
+	if policy.ownerKind == "customer" {
+		requestPolicy, ok := api.EffectiveOutboundRequestPolicyForPlan(api.Plan(policy.plan), policy.requestPolicy)
 		if !ok {
 			return Decision{}, fmt.Errorf("%w: customer outbound request policy is invalid", ErrInvalidIntegration)
 		}
@@ -177,75 +119,256 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		spec.RetryBudgetPerMinute = requestPolicy.RetryBudgetPerMinute
 		ttl = time.Duration(requestPolicy.RequestTimeoutMS) * time.Millisecond
 	}
-	// The state row is created lazily. The lock below serializes all admissions
-	// for this integration; leases are still deleted by expiry during admission.
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO outbound_admission_state (integration_id, tokens, last_refill)
-		VALUES ($1, $2, $3) ON CONFLICT (integration_id) DO NOTHING`, integrationID, float64(spec.Burst), now); err != nil {
+	now := policy.now
+	utcNow := now.UTC()
+	today := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
+	thisMonth := time.Date(utcNow.Year(), utcNow.Month(), 1, 0, 0, 0, 0, time.UTC)
+	userLimited := spec.AIEndUser != "" && (policy.userTokenLimit > 0 || policy.userCostLimit > 0)
+	state, err := lockAdmissionState(ctx, tx, admissionLock{
+		integrationID: integrationID, now: now, burst: spec.Burst, bindingAppID: bindingAppID,
+		today: today, minuteWindow: utcNow.Truncate(time.Minute), endUser: spec.AIEndUser, userLimited: userLimited,
+		tags: spec.AITags,
+	})
+	if err != nil {
 		return Decision{}, err
 	}
-	var tokens float64
-	var lastRefill time.Time
-	var usageDate time.Time
-	var dailyRequestCount, dailyAITokenCount, dailyAICost, monthlyAICost int64
-	var usageMonth time.Time
-	var circuitFailureCount int
-	var circuitOpenUntil pgtype.Timestamptz
-	var circuitProbeLeaseID pgtype.UUID
-	var circuitPolicyThreshold, circuitPolicyOpenSeconds int
-	var retryBudgetTokens float64
-	var retryBudgetRefilledAt time.Time
-	var retryBudgetPolicyPerMinute int
-	if err := tx.QueryRow(ctx, `
+	if state.circuitPolicyThreshold != spec.CircuitBreakerFailureThreshold || state.circuitPolicyOpenSeconds != spec.CircuitBreakerOpenSeconds {
+		state.circuitFailureCount = 0
+		state.circuitOpenUntil = pgtype.Timestamptz{}
+		state.circuitProbeLeaseID = pgtype.UUID{}
+		state.circuitPolicyThreshold = spec.CircuitBreakerFailureThreshold
+		state.circuitPolicyOpenSeconds = spec.CircuitBreakerOpenSeconds
+	}
+	if state.circuitProbeLeaseID.Valid && !state.probeLeaseLive {
+		// Expired admission-lease deletion clears the foreign key in SQL, but
+		// the state row was read before that deletion.
+		state.circuitProbeLeaseID = pgtype.UUID{}
+	}
+	if state.retryBudgetPolicyPerMinute != spec.RetryBudgetPerMinute {
+		state.retryBudgetTokens = float64(spec.RetryBudgetPerMinute)
+		state.retryBudgetRefilledAt = now
+		state.retryBudgetPolicyPerMinute = spec.RetryBudgetPerMinute
+	} else if elapsed := now.Sub(state.retryBudgetRefilledAt).Seconds(); elapsed > 0 {
+		state.retryBudgetTokens += elapsed * float64(spec.RetryBudgetPerMinute) / 60
+		state.retryBudgetRefilledAt = now
+	}
+	if state.retryBudgetTokens > float64(spec.RetryBudgetPerMinute) {
+		state.retryBudgetTokens = float64(spec.RetryBudgetPerMinute)
+	}
+	if !state.usageDate.UTC().Truncate(24 * time.Hour).Equal(today) {
+		state.dailyRequestCount = 0
+		state.dailyAITokenCount = 0
+		state.dailyAICost = 0
+	}
+	if !state.usageMonth.UTC().Equal(thisMonth) {
+		state.monthlyAICost = 0
+	}
+	if elapsed := now.Sub(state.lastRefill).Seconds(); elapsed > 0 {
+		state.tokens += elapsed * spec.RatePerSecond
+		state.lastRefill = now
+	}
+	if state.tokens > float64(spec.Burst) {
+		state.tokens = float64(spec.Burst)
+	}
+	reserve := aiReservationFromSpec(spec)
+	reason, retry := admissionRejection(utcNow, today, ttl, spec, state, admissionLimits{
+		daily: dailyRequestLimit, bindingDaily: bindingDailyRequestLimit, ai: aiBudgetLimits{
+			dailyTokens: positiveLimit(policy.dailyAITokenLimit), bindingTokens: positiveLimit(policy.bindingAITokenLimit),
+			dailyCost: positiveLimit(policy.dailyAICostLimit), monthlyCost: positiveLimit(policy.monthlyAICostLimit),
+		},
+		bindingRequestsPerMinute: positiveLimit(policy.bindingRequestsPerMinute),
+		bindingTokensPerMinute:   positiveLimit(policy.bindingTokensPerMinute),
+	}, userLimited, policy, reserve, bindingAppID != uuid.Nil)
+	write := admissionWrite{integrationID: integrationID, today: today, thisMonth: thisMonth, state: state}
+	if reason != "" {
+		// Persist refill progress even when the request is rejected. This
+		// prevents repeated callers from repeatedly receiving a stale
+		// Retry-After value.
+		if err := writeAdmission(ctx, tx, write); err != nil {
+			return Decision{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Decision{}, err
+		}
+		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
+	}
+	write.state.tokens--
+	write.state.dailyRequestCount++
+	write.lease = &admissionLease{id: uuid.New(), expiresAt: now.Add(ttl), bindingAppID: bindingAppID,
+		reserve: reserve, endUser: spec.AIEndUser, tags: spec.AITags}
+	if err := writeAdmission(ctx, tx, write); err != nil {
+		return Decision{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Decision{}, err
+	}
+	decision := Decision{
+		Granted: true, LeaseID: write.lease.id.String(), RequestTimeout: ttl,
+		CircuitBreakerFailureThreshold: spec.CircuitBreakerFailureThreshold,
+		CircuitBreakerOpenSeconds:      spec.CircuitBreakerOpenSeconds,
+		RetryBudgetPerMinute:           spec.RetryBudgetPerMinute,
+		CircuitClosed:                  spec.CircuitBreakerFailureThreshold > 0 && !state.circuitOpenUntil.Valid,
+	}
+	if state.providerCooldownRevision == spec.PolicyRevision {
+		gate := ProviderCooldownDecision{Allowed: true}
+		if state.providerCooldownUntil.Valid && state.providerCooldownUntil.Time.After(now) {
+			gate = ProviderCooldownDecision{RetryAfter: state.providerCooldownUntil.Time.Sub(now)}
+		}
+		decision.ProviderGate = &gate
+	}
+	return decision, nil
+}
+
+// admissionPolicy is what admission reads before it locks the integration's
+// state row: the database clock, the account plan, and the stored limits of
+// the integration and of the app's binding.
+type admissionPolicy struct {
+	now                                                     time.Time
+	plan, ownerKind                                         string
+	notAttached                                             bool
+	bindingDailyRequestLimit, bindingAITokenLimit           int64
+	bindingRequestsPerMinute, bindingTokensPerMinute        int64
+	dailyRequestLimit                                       int64
+	dailyAITokenLimit, dailyAICostLimit, monthlyAICostLimit int64
+	userTokenLimit, userCostLimit                           int64
+	requestPolicy                                           api.OutboundRequestPolicy
+}
+
+// readAdmissionPolicy reads the policy in one round trip. It locks the
+// account first, then an explicit binding, then the integration, matching
+// binding-policy writes and preventing a stale resolver snapshot from
+// bypassing a completed update.
+func readAdmissionPolicy(ctx context.Context, tx pgx.Tx, integrationID, bindingAppID uuid.UUID) (admissionPolicy, error) {
+	batch := &pgx.Batch{}
+	batch.Queue(`
+		SELECT now(), account.plan, integration.owner_kind
+		  FROM accounts account
+		  JOIN outbound_integrations integration ON integration.account_id = account.id
+		 WHERE integration.id = $1
+		 FOR SHARE OF account`, integrationID)
+	if bindingAppID != uuid.Nil {
+		batch.Queue(`
+			SELECT COALESCE(daily_request_limit, 0), COALESCE(ai_daily_token_limit, 0),
+			       COALESCE(ai_requests_per_minute, 0), COALESCE(ai_tokens_per_minute, 0)
+			  FROM outbound_app_bindings
+			 WHERE integration_id = $1 AND app_id = $2
+			 FOR SHARE`, integrationID, bindingAppID)
+	}
+	batch.Queue(`
+		SELECT COALESCE(daily_request_limit, 0), rate_per_second, burst,
+		       max_in_flight, request_timeout_ms, max_retries, response_cache_ttl_seconds,
+		       circuit_breaker_failure_threshold, circuit_breaker_open_seconds, retry_budget_per_minute, owner_kind,
+		       COALESCE(ai_daily_token_limit, 0),
+		       COALESCE(ai_daily_cost_limit_millicents, 0), COALESCE(ai_monthly_cost_limit_millicents, 0),
+		       COALESCE(ai_user_daily_token_limit, 0), COALESCE(ai_user_daily_cost_limit_millicents, 0)
+		  FROM outbound_integrations
+		 WHERE id = $1
+		 FOR SHARE`, integrationID)
+	results := tx.SendBatch(ctx, batch)
+	policy, err := scanAdmissionPolicy(results, bindingAppID)
+	if closeErr := results.Close(); err == nil {
+		err = closeErr
+	}
+	return policy, err
+}
+
+func scanAdmissionPolicy(results pgx.BatchResults, bindingAppID uuid.UUID) (admissionPolicy, error) {
+	var policy admissionPolicy
+	if err := results.QueryRow().Scan(&policy.now, &policy.plan, &policy.ownerKind); err != nil {
+		return policy, err
+	}
+	if policy.ownerKind == "customer" && bindingAppID == uuid.Nil {
+		return policy, fmt.Errorf("%w: customer integration admission requires a binding app ID", ErrInvalidIntegration)
+	}
+	if bindingAppID != uuid.Nil {
+		err := results.QueryRow().Scan(&policy.bindingDailyRequestLimit, &policy.bindingAITokenLimit,
+			&policy.bindingRequestsPerMinute, &policy.bindingTokensPerMinute)
+		if errors.Is(err, pgx.ErrNoRows) {
+			policy.notAttached = true
+			return policy, nil
+		}
+		if err != nil {
+			return policy, err
+		}
+	}
+	var ownerKind string
+	request := &policy.requestPolicy
+	if err := results.QueryRow().Scan(&policy.dailyRequestLimit, &request.RatePerSecond, &request.Burst,
+		&request.MaxInFlight, &request.RequestTimeoutMS, &request.MaxRetries,
+		&request.ResponseCacheTTLSeconds, &request.CircuitBreakerFailureThreshold,
+		&request.CircuitBreakerOpenSeconds, &request.RetryBudgetPerMinute, &ownerKind,
+		&policy.dailyAITokenLimit, &policy.dailyAICostLimit, &policy.monthlyAICostLimit,
+		&policy.userTokenLimit, &policy.userCostLimit); err != nil {
+		return policy, err
+	}
+	if ownerKind != policy.ownerKind {
+		return policy, fmt.Errorf("%w: outbound integration owner changed during admission", ErrInvalidIntegration)
+	}
+	return policy, nil
+}
+
+// admissionLock names what the locked read needs.
+type admissionLock struct {
+	integrationID uuid.UUID
+	now           time.Time
+	burst         int
+	bindingAppID  uuid.UUID
+	today         time.Time
+	minuteWindow  time.Time
+	endUser       string
+	userLimited   bool
+	// tags are the call's usage tags, whose limits admission reads
+	// (ADR-1436).
+	tags []string
+}
+
+// lockedAdmission is the integration's admission state as admission holds
+// it locked, with the app's binding counters, the live leases and, for an
+// end user with limits, that user's day.
+type lockedAdmission struct {
+	tokens                                              float64
+	lastRefill, usageDate, usageMonth                   time.Time
+	dailyRequestCount, dailyAITokenCount, dailyAICost   int64
+	monthlyAICost                                       int64
+	circuitFailureCount                                 int
+	circuitOpenUntil                                    pgtype.Timestamptz
+	circuitProbeLeaseID                                 pgtype.UUID
+	circuitPolicyThreshold, circuitPolicyOpenSeconds    int
+	retryBudgetTokens                                   float64
+	retryBudgetRefilledAt                               time.Time
+	retryBudgetPolicyPerMinute                          int
+	providerCooldownUntil                               pgtype.Timestamptz
+	providerCooldownRevision                            int64
+	bindingDailyRequestCount, bindingAITokenCount       int64
+	minute                                              aiMinuteState
+	inFlight                                            int
+	earliestExpiry                                      time.Time
+	inflightTokens, inflightBindingTokens, inflightCost int64
+	probeLeaseLive                                      bool
+	user                                                aiBudgetState
+	tags                                                []aiTagState
+}
+
+// lockAdmissionState creates the state row on first use, locks it, and reads
+// everything admission decides on in one round trip. Expired leases are
+// deleted on the way; the lease totals count only live ones (ADR-991).
+func lockAdmissionState(ctx context.Context, tx pgx.Tx, lock admissionLock) (lockedAdmission, error) {
+	batch := &pgx.Batch{}
+	batch.Queue(`
+		INSERT INTO outbound_admission_state (integration_id, tokens, last_refill)
+		VALUES ($1, $2, $3) ON CONFLICT (integration_id) DO NOTHING`, lock.integrationID, float64(lock.burst), lock.now)
+	batch.Queue(`
 		SELECT tokens, last_refill, daily_usage_date, daily_request_count,
 		       circuit_failure_count, circuit_open_until, circuit_probe_lease_id,
 		       circuit_policy_failure_threshold, circuit_policy_open_seconds,
 		       retry_budget_tokens, retry_budget_refilled_at, retry_budget_policy_per_minute,
-		       daily_ai_token_count, daily_ai_cost_millicents, monthly_usage_month, monthly_ai_cost_millicents
-		FROM outbound_admission_state
-		WHERE integration_id = $1
-		FOR UPDATE`, integrationID).Scan(&tokens, &lastRefill, &usageDate, &dailyRequestCount,
-		&circuitFailureCount, &circuitOpenUntil, &circuitProbeLeaseID,
-		&circuitPolicyThreshold, &circuitPolicyOpenSeconds,
-		&retryBudgetTokens, &retryBudgetRefilledAt, &retryBudgetPolicyPerMinute,
-		&dailyAITokenCount, &dailyAICost, &usageMonth, &monthlyAICost); err != nil {
-		return Decision{}, err
-	}
-	if circuitPolicyThreshold != spec.CircuitBreakerFailureThreshold || circuitPolicyOpenSeconds != spec.CircuitBreakerOpenSeconds {
-		circuitFailureCount = 0
-		circuitOpenUntil = pgtype.Timestamptz{}
-		circuitProbeLeaseID = pgtype.UUID{}
-		circuitPolicyThreshold = spec.CircuitBreakerFailureThreshold
-		circuitPolicyOpenSeconds = spec.CircuitBreakerOpenSeconds
-	}
-	if retryBudgetPolicyPerMinute != spec.RetryBudgetPerMinute {
-		retryBudgetTokens = float64(spec.RetryBudgetPerMinute)
-		retryBudgetRefilledAt = now
-		retryBudgetPolicyPerMinute = spec.RetryBudgetPerMinute
-	} else if elapsed := now.Sub(retryBudgetRefilledAt).Seconds(); elapsed > 0 {
-		retryBudgetTokens += elapsed * float64(spec.RetryBudgetPerMinute) / 60
-		retryBudgetRefilledAt = now
-	}
-	if retryBudgetTokens > float64(spec.RetryBudgetPerMinute) {
-		retryBudgetTokens = float64(spec.RetryBudgetPerMinute)
-	}
-	utcNow := now.UTC()
-	today := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
-	if !usageDate.UTC().Truncate(24 * time.Hour).Equal(today) {
-		usageDate = today
-		dailyRequestCount = 0
-		dailyAITokenCount = 0
-		dailyAICost = 0
-	}
-	thisMonth := time.Date(utcNow.Year(), utcNow.Month(), 1, 0, 0, 0, 0, time.UTC)
-	if !usageMonth.UTC().Equal(thisMonth) {
-		monthlyAICost = 0
-	}
-	var bindingDailyRequestCount, bindingAITokenCount int64
-	var minute aiMinuteState
-	minuteWindow := utcNow.Truncate(time.Minute)
-	if bindingAppID != uuid.Nil {
-		if err := tx.QueryRow(ctx, `
+		       daily_ai_token_count, daily_ai_cost_millicents, monthly_usage_month, monthly_ai_cost_millicents,
+		       provider_cooldown_until, provider_cooldown_policy_revision
+		  FROM outbound_admission_state
+		 WHERE integration_id = $1
+		 FOR UPDATE`, lock.integrationID)
+	if lock.bindingAppID != uuid.Nil {
+		batch.Queue(`
 			INSERT INTO outbound_app_binding_usage (integration_id, app_id, daily_usage_date, daily_request_count, minute_window_start)
 			VALUES ($1, $2, $3, 0, $4)
 			ON CONFLICT (integration_id, app_id) DO UPDATE
@@ -268,185 +391,221 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 			       END,
 			       minute_window_start = EXCLUDED.minute_window_start
 			RETURNING daily_request_count, daily_ai_token_count, minute_request_count, minute_ai_token_count`,
-			integrationID, bindingAppID, today, minuteWindow).
-			Scan(&bindingDailyRequestCount, &bindingAITokenCount, &minute.requests, &minute.tokens); err != nil {
-			return Decision{}, err
+			lock.integrationID, lock.bindingAppID, lock.today, lock.minuteWindow)
+	}
+	// The DELETE runs whether or not the outer query reads it; the outer
+	// query sees the leases as of the statement start, so it filters out the
+	// expired ones itself.
+	batch.Queue(`
+		WITH expired AS (
+		    DELETE FROM outbound_admission_leases WHERE integration_id = $1 AND expires_at <= $2 RETURNING lease_id)
+		SELECT count(*)::int, COALESCE(min(expires_at), $2),
+		       -- ADR-1431: a created batch's reservation counts until it settles.
+		       (COALESCE(sum(ai_reserved_tokens), 0) +
+		        (SELECT COALESCE(sum(reserved_tokens), 0) FROM outbound_ai_batches
+		          WHERE integration_id = $1 AND state <> 'settled'))::bigint,
+		       (COALESCE(sum(ai_reserved_tokens) FILTER (WHERE binding_app_id = $3), 0) +
+		        (SELECT COALESCE(sum(reserved_tokens), 0) FROM outbound_ai_batches
+		          WHERE integration_id = $1 AND state <> 'settled' AND binding_app_id = $3))::bigint,
+		       (COALESCE(sum(ai_reserved_cost_millicents), 0) +
+		        (SELECT COALESCE(sum(reserved_cost_millicents), 0) FROM outbound_ai_batches
+		          WHERE integration_id = $1 AND state <> 'settled'))::bigint,
+		       COALESCE(bool_or(lease_id = (SELECT circuit_probe_lease_id FROM outbound_admission_state
+		                                     WHERE integration_id = $1)), false)
+		  FROM outbound_admission_leases
+		 WHERE integration_id = $1 AND expires_at > $2`, lock.integrationID, lock.now, lock.bindingAppID)
+	if lock.userLimited {
+		queueAIUserState(batch, lock.integrationID, lock.today, lock.endUser)
+	}
+	if len(lock.tags) > 0 {
+		queueAITagState(batch, lock.integrationID, lock.today, lock.now, lock.tags)
+	}
+	results := tx.SendBatch(ctx, batch)
+	state, err := scanLockedAdmission(results, lock)
+	if closeErr := results.Close(); err == nil {
+		err = closeErr
+	}
+	return state, err
+}
+
+func scanLockedAdmission(results pgx.BatchResults, lock admissionLock) (lockedAdmission, error) {
+	var state lockedAdmission
+	if _, err := results.Exec(); err != nil {
+		return state, err
+	}
+	if err := results.QueryRow().Scan(&state.tokens, &state.lastRefill, &state.usageDate, &state.dailyRequestCount,
+		&state.circuitFailureCount, &state.circuitOpenUntil, &state.circuitProbeLeaseID,
+		&state.circuitPolicyThreshold, &state.circuitPolicyOpenSeconds,
+		&state.retryBudgetTokens, &state.retryBudgetRefilledAt, &state.retryBudgetPolicyPerMinute,
+		&state.dailyAITokenCount, &state.dailyAICost, &state.usageMonth, &state.monthlyAICost,
+		&state.providerCooldownUntil, &state.providerCooldownRevision); err != nil {
+		return state, err
+	}
+	if lock.bindingAppID != uuid.Nil {
+		if err := results.QueryRow().Scan(&state.bindingDailyRequestCount, &state.bindingAITokenCount,
+			&state.minute.requests, &state.minute.tokens); err != nil {
+			return state, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM outbound_admission_leases WHERE integration_id = $1 AND expires_at <= $2`, integrationID, now); err != nil {
-		return Decision{}, err
+	if err := results.QueryRow().Scan(&state.inFlight, &state.earliestExpiry, &state.inflightTokens,
+		&state.inflightBindingTokens, &state.inflightCost, &state.probeLeaseLive); err != nil {
+		return state, err
 	}
-	// ADR-991: live leases hold their calls' AI reservations.
-	var inflightTokens, inflightBindingTokens, inflightCost int64
-	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(sum(ai_reserved_tokens), 0)::bigint,
-		       COALESCE(sum(ai_reserved_tokens) FILTER (WHERE binding_app_id = $2), 0)::bigint,
-		       COALESCE(sum(ai_reserved_cost_millicents), 0)::bigint
-		  FROM outbound_admission_leases WHERE integration_id = $1`, integrationID, bindingAppID).
-		Scan(&inflightTokens, &inflightBindingTokens, &inflightCost); err != nil {
-		return Decision{}, err
+	state.minute.inflightTokens = state.inflightBindingTokens
+	if lock.userLimited {
+		user, err := scanAIUserState(results)
+		if err != nil {
+			return state, err
+		}
+		state.user = user
 	}
-	minute.inflightTokens = inflightBindingTokens
-	var userLimits aiBudgetLimits
-	var user aiBudgetState
-	if spec.AIEndUser != "" && (storedUserTokenLimit > 0 || storedUserCostLimit > 0) {
+	if len(lock.tags) > 0 {
+		tags, err := scanAITagState(results)
+		if err != nil {
+			return state, err
+		}
+		state.tags = tags
+	}
+	return state, nil
+}
+
+// admissionLimits are the request and AI limits one admission enforces.
+type admissionLimits struct {
+	daily, bindingDaily                              *int64
+	ai                                               aiBudgetLimits
+	bindingRequestsPerMinute, bindingTokensPerMinute *int64
+}
+
+// admissionRejection returns the first limit that refuses the call and when
+// to retry, or an empty reason when the call is admitted.
+func admissionRejection(utcNow, today time.Time, ttl time.Duration, spec AdmissionSpec, state lockedAdmission,
+	limits admissionLimits, userLimited bool, policy admissionPolicy, reserve aiReservation, bound bool) (string, time.Duration) {
+	untilTomorrow := max(today.Add(24*time.Hour).Sub(utcNow), time.Millisecond)
+	switch {
+	case state.inFlight >= spec.MaxInFlight:
+		retry := ttl
+		if now := utcNow; state.earliestExpiry.After(now) && state.earliestExpiry.Sub(now) < retry {
+			retry = state.earliestExpiry.Sub(now)
+		}
+		return ReasonConcurrency, max(retry, time.Millisecond)
+	case state.tokens < 1:
+		return ReasonRate, max(time.Duration((1-state.tokens)/spec.RatePerSecond*float64(time.Second)), time.Millisecond)
+	case limits.daily != nil && state.dailyRequestCount >= *limits.daily:
+		return ReasonDailyLimit, untilTomorrow
+	case limits.bindingDaily != nil && state.bindingDailyRequestCount >= *limits.bindingDaily:
+		return ReasonDailyLimit, untilTomorrow
+	}
+	// Tokens and cost settle after each response (ADR-988, ADR-990); live
+	// reservations make the stored limits hard caps (ADR-991).
+	ai := limits.ai
+	if userLimited {
 		// ADR-994: the end user's settled day and live reservations.
-		userLimits.userTokens, userLimits.userCost = positiveLimit(storedUserTokenLimit), positiveLimit(storedUserCostLimit)
-		if user, err = postgresAIUserState(ctx, tx, integrationID, today, spec.AIEndUser); err != nil {
-			return Decision{}, err
+		ai.userTokens, ai.userCost = positiveLimit(policy.userTokenLimit), positiveLimit(policy.userCostLimit)
+	}
+	if reason, retry, limited := aiBudgetExhausted(utcNow, aiBudgetState{
+		dailyTokens: state.dailyAITokenCount, bindingTokens: state.bindingAITokenCount,
+		dailyCost: state.dailyAICost, monthlyCost: state.monthlyAICost,
+		inflightTokens: state.inflightTokens, inflightBindingTokens: state.inflightBindingTokens, inflightCost: state.inflightCost,
+		userTokens: state.user.userTokens, userCost: state.user.userCost,
+		inflightUserTokens: state.user.inflightUserTokens, inflightUserCost: state.user.inflightUserCost,
+		userUntracked: state.user.userUntracked,
+	}, ai, reserve); limited {
+		return reason, retry
+	}
+	if reason, retry, limited := aiTagBudgetExhausted(utcNow, state.tags, reserve); limited {
+		return reason, retry
+	}
+	if bound {
+		if reason, retry, limited := aiMinuteExhausted(utcNow, state.minute, limits.bindingRequestsPerMinute,
+			limits.bindingTokensPerMinute, reserve); limited {
+			return reason, retry
 		}
 	}
-	if circuitProbeLeaseID.Valid {
-		var probeExpiresAt time.Time
-		probeErr := tx.QueryRow(ctx, `SELECT expires_at FROM outbound_admission_leases WHERE integration_id = $1 AND lease_id = $2`, integrationID, uuid.UUID(circuitProbeLeaseID.Bytes)).Scan(&probeExpiresAt)
-		if errors.Is(probeErr, pgx.ErrNoRows) || (probeErr == nil && !probeExpiresAt.After(now)) {
-			// Expired admission-lease deletion clears the foreign key in SQL, but
-			// this transaction's earlier row snapshot still contains the ID.
-			circuitProbeLeaseID = pgtype.UUID{}
-		} else if probeErr != nil {
-			return Decision{}, probeErr
-		}
-	}
-	if elapsed := now.Sub(lastRefill).Seconds(); elapsed > 0 {
-		tokens += elapsed * spec.RatePerSecond
-		lastRefill = now
-	}
-	if tokens > float64(spec.Burst) {
-		tokens = float64(spec.Burst)
-	}
-	// Persist refill progress even when the request is rejected. This prevents
-	// repeated callers from repeatedly receiving a stale Retry-After value.
-	if _, err := tx.Exec(ctx, `UPDATE outbound_admission_state
+	return "", 0
+}
+
+// admissionLease is the lease a granted admission inserts.
+type admissionLease struct {
+	id           uuid.UUID
+	expiresAt    time.Time
+	bindingAppID uuid.UUID
+	reserve      aiReservation
+	endUser      string
+	tags         []string
+}
+
+// admissionWrite is the state an admission persists, and the lease it
+// inserts when it grants the call.
+type admissionWrite struct {
+	integrationID    uuid.UUID
+	today, thisMonth time.Time
+	state            lockedAdmission
+	lease            *admissionLease
+}
+
+// writeAdmission persists the state, and for a granted call its lease and
+// the app's request counters, in one round trip.
+func writeAdmission(ctx context.Context, tx pgx.Tx, write admissionWrite) error {
+	state := write.state
+	batch := &pgx.Batch{}
+	batch.Queue(`UPDATE outbound_admission_state
 		SET tokens = $2, last_refill = $3, daily_usage_date = $4, daily_request_count = $5,
 		    circuit_failure_count = $6, circuit_open_until = $7, circuit_probe_lease_id = $8,
 		    circuit_policy_failure_threshold = $9, circuit_policy_open_seconds = $10,
 		    retry_budget_tokens = $11, retry_budget_refilled_at = $12, retry_budget_policy_per_minute = $13,
 		    daily_ai_token_count = $14, daily_ai_cost_millicents = $15,
 		    monthly_usage_month = $16, monthly_ai_cost_millicents = $17
-		WHERE integration_id = $1`, integrationID, tokens, lastRefill, today, dailyRequestCount,
-		circuitFailureCount, circuitOpenUntil, circuitProbeLeaseID, circuitPolicyThreshold, circuitPolicyOpenSeconds,
-		retryBudgetTokens, retryBudgetRefilledAt, retryBudgetPolicyPerMinute, dailyAITokenCount,
-		dailyAICost, thisMonth, monthlyAICost); err != nil {
-		return Decision{}, err
-	}
-	var inFlight int
-	var earliest time.Time
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*)::int, COALESCE(min(expires_at), $2)
-		FROM outbound_admission_leases WHERE integration_id = $1`, integrationID, now).Scan(&inFlight, &earliest); err != nil {
-		return Decision{}, err
-	}
-	if inFlight >= spec.MaxInFlight {
-		retry := ttl
-		if earliest.After(now) && earliest.Sub(now) < retry {
-			retry = earliest.Sub(now)
+		WHERE integration_id = $1`, write.integrationID, state.tokens, state.lastRefill, write.today, state.dailyRequestCount,
+		state.circuitFailureCount, state.circuitOpenUntil, state.circuitProbeLeaseID,
+		state.circuitPolicyThreshold, state.circuitPolicyOpenSeconds,
+		state.retryBudgetTokens, state.retryBudgetRefilledAt, state.retryBudgetPolicyPerMinute,
+		state.dailyAITokenCount, state.dailyAICost, write.thisMonth, state.monthlyAICost)
+	lease := write.lease
+	if lease != nil {
+		var leaseBindingApp *uuid.UUID
+		if lease.bindingAppID != uuid.Nil {
+			leaseBindingApp = &lease.bindingAppID
 		}
-		if retry < time.Millisecond {
-			retry = time.Millisecond
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return Decision{}, err
-		}
-		return Decision{RetryAfter: retry, Reason: ReasonConcurrency, RequestTimeout: ttl}, nil
-	}
-	if tokens < 1 {
-		retry := time.Duration((1 - tokens) / spec.RatePerSecond * float64(time.Second))
-		if retry < time.Millisecond {
-			retry = time.Millisecond
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return Decision{}, err
-		}
-		return Decision{RetryAfter: retry, Reason: ReasonRate, RequestTimeout: ttl}, nil
-	}
-	if dailyRequestLimit != nil && dailyRequestCount >= *dailyRequestLimit {
-		retry := today.Add(24 * time.Hour).Sub(utcNow)
-		if retry < time.Millisecond {
-			retry = time.Millisecond
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return Decision{}, err
-		}
-		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
-	}
-	if bindingDailyRequestLimit != nil && bindingDailyRequestCount >= *bindingDailyRequestLimit {
-		retry := today.Add(24 * time.Hour).Sub(utcNow)
-		if retry < time.Millisecond {
-			retry = time.Millisecond
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return Decision{}, err
-		}
-		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
-	}
-	// Tokens and cost settle after each response (ADR-988, ADR-990); live
-	// reservations make the stored limits hard caps (ADR-991).
-	reserve := aiReservationFromSpec(spec)
-	if reason, retry, limited := aiBudgetExhausted(utcNow, aiBudgetState{
-		dailyTokens: dailyAITokenCount, bindingTokens: bindingAITokenCount,
-		dailyCost: dailyAICost, monthlyCost: monthlyAICost,
-		inflightTokens: inflightTokens, inflightBindingTokens: inflightBindingTokens, inflightCost: inflightCost,
-		userTokens: user.userTokens, userCost: user.userCost,
-		inflightUserTokens: user.inflightUserTokens, inflightUserCost: user.inflightUserCost,
-		userUntracked: user.userUntracked,
-	}, aiBudgetLimits{
-		dailyTokens: positiveLimit(storedDailyAITokenLimit), bindingTokens: positiveLimit(storedBindingAITokenLimit),
-		dailyCost: positiveLimit(storedDailyAICostLimit), monthlyCost: positiveLimit(storedMonthlyAICostLimit),
-		userTokens: userLimits.userTokens, userCost: userLimits.userCost,
-	}, reserve); limited {
-		if err := tx.Commit(ctx); err != nil {
-			return Decision{}, err
-		}
-		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
-	}
-	if bindingAppID != uuid.Nil {
-		if reason, retry, limited := aiMinuteExhausted(utcNow, minute, positiveLimit(storedBindingRequestsPerMinute),
-			positiveLimit(storedBindingTokensPerMinute), reserve); limited {
-			if err := tx.Commit(ctx); err != nil {
-				return Decision{}, err
-			}
-			return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
+		batch.Queue(`
+			INSERT INTO outbound_admission_leases
+			    (lease_id, integration_id, expires_at, binding_app_id, ai_reserved_tokens, ai_reserved_cost_millicents, ai_end_user,
+			     ai_tags)
+			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8)`, lease.id, write.integrationID, lease.expiresAt, leaseBindingApp,
+			lease.reserve.tokens, lease.reserve.cost, lease.endUser, nilIfEmpty(lease.tags))
+		if lease.bindingAppID != uuid.Nil {
+			batch.Queue(`UPDATE outbound_app_binding_usage
+				SET daily_request_count = daily_request_count + 1, minute_request_count = minute_request_count + 1
+				WHERE integration_id = $1 AND app_id = $2 AND daily_usage_date = $3`, write.integrationID, lease.bindingAppID, write.today)
 		}
 	}
-	tokens--
-	dailyRequestCount++
-	leaseID := uuid.New()
-	var leaseBindingApp *uuid.UUID
-	if bindingAppID != uuid.Nil {
-		leaseBindingApp = &bindingAppID
+	results := tx.SendBatch(ctx, batch)
+	err := execAdmissionWrites(results, lease)
+	if closeErr := results.Close(); err == nil {
+		err = closeErr
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO outbound_admission_leases
-		    (lease_id, integration_id, expires_at, binding_app_id, ai_reserved_tokens, ai_reserved_cost_millicents, ai_end_user)
-		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))`, leaseID, integrationID, now.Add(ttl), leaseBindingApp,
-		reserve.tokens, reserve.cost, spec.AIEndUser); err != nil {
-		return Decision{}, err
+	return err
+}
+
+func execAdmissionWrites(results pgx.BatchResults, lease *admissionLease) error {
+	if _, err := results.Exec(); err != nil {
+		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE outbound_admission_state
-		SET tokens = $2, last_refill = $3, daily_usage_date = $4, daily_request_count = $5
-		WHERE integration_id = $1`, integrationID, tokens, lastRefill, today, dailyRequestCount); err != nil {
-		return Decision{}, err
+	if lease == nil {
+		return nil
 	}
-	if bindingAppID != uuid.Nil {
-		result, err := tx.Exec(ctx, `UPDATE outbound_app_binding_usage
-			SET daily_request_count = daily_request_count + 1, minute_request_count = minute_request_count + 1
-			WHERE integration_id = $1 AND app_id = $2 AND daily_usage_date = $3`, integrationID, bindingAppID, today)
+	if _, err := results.Exec(); err != nil {
+		return err
+	}
+	if lease.bindingAppID != uuid.Nil {
+		tag, err := results.Exec()
 		if err != nil {
-			return Decision{}, err
+			return err
 		}
-		if result.RowsAffected() != 1 {
-			return Decision{}, fmt.Errorf("outbound binding usage row disappeared during admission")
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("outbound binding usage row disappeared during admission")
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Decision{}, err
-	}
-	return Decision{
-		Granted: true, LeaseID: leaseID.String(), RequestTimeout: ttl,
-		CircuitBreakerFailureThreshold: spec.CircuitBreakerFailureThreshold,
-		CircuitBreakerOpenSeconds:      spec.CircuitBreakerOpenSeconds,
-		RetryBudgetPerMinute:           spec.RetryBudgetPerMinute,
-	}, nil
+	return nil
 }
 
 func (b *PostgresBackend) ConsumeRetryToken(ctx context.Context, integrationID string, retryBudgetPerMinute int) (bool, error) {
@@ -680,6 +839,26 @@ func (b *PostgresBackend) RecordCircuitOutcome(ctx context.Context, integrationI
 	if err != nil {
 		return fmt.Errorf("invalid outbound lease id: %w", err)
 	}
+	var failures, storedThreshold, storedOpenSeconds int
+	var openUntil pgtype.Timestamptz
+	var probeLease pgtype.UUID
+	// ADR-1120: most outcomes change nothing (a success with no failure
+	// streak, or any outcome while another call holds the breaker open), so
+	// read the state without its lock first. Skipping places the outcome at
+	// this read, which is a valid order for concurrent calls.
+	err = b.pool.QueryRow(ctx, `
+		SELECT circuit_failure_count, circuit_open_until, circuit_probe_lease_id,
+		       circuit_policy_failure_threshold, circuit_policy_open_seconds
+		  FROM outbound_admission_state
+		 WHERE integration_id = $1`, integrationUUID).
+		Scan(&failures, &openUntil, &probeLease, &storedThreshold, &storedOpenSeconds)
+	if err != nil {
+		return err
+	}
+	if circuitOutcomeChangesNothing(failures, openUntil, probeLease, storedThreshold, storedOpenSeconds,
+		threshold, openSeconds, leaseUUID, outcome) {
+		return nil
+	}
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -689,9 +868,6 @@ func (b *PostgresBackend) RecordCircuitOutcome(ctx context.Context, integrationI
 	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
 		return err
 	}
-	var failures, storedThreshold, storedOpenSeconds int
-	var openUntil pgtype.Timestamptz
-	var probeLease pgtype.UUID
 	err = tx.QueryRow(ctx, `
 		SELECT circuit_failure_count, circuit_open_until, circuit_probe_lease_id,
 		       circuit_policy_failure_threshold, circuit_policy_open_seconds
@@ -742,6 +918,21 @@ func (b *PostgresBackend) RecordCircuitOutcome(ctx context.Context, integrationI
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// circuitOutcomeChangesNothing reports whether recording the outcome would
+// leave the breaker as it is: a stale policy, a disabled breaker, a call that
+// is not the probe while the breaker is open, or a non-probe success or
+// neutral outcome with no failure streak.
+func circuitOutcomeChangesNothing(failures int, openUntil pgtype.Timestamptz, probeLease pgtype.UUID,
+	storedThreshold, storedOpenSeconds, threshold, openSeconds int, lease uuid.UUID, outcome CircuitBreakerOutcome) bool {
+	if storedThreshold != threshold || storedOpenSeconds != openSeconds || threshold == 0 {
+		return true
+	}
+	if probeLease.Valid && probeLease.Bytes == [16]byte(lease) {
+		return false
+	}
+	return openUntil.Valid || outcome == CircuitOutcomeNeutral || (outcome == CircuitOutcomeSuccess && failures == 0)
 }
 
 func (b *PostgresBackend) Release(ctx context.Context, integrationID, leaseID string) error {

@@ -10,6 +10,10 @@ import (
 // AppOperationalSummary joins read-only, independently observed operational
 // facts. A deployment smoke receipt is deliberately not current health.
 type AppOperationalSummary struct {
+	Scope           string                         `json:"scope,omitempty"`
+	ProjectID       string                         `json:"project_id,omitempty"`
+	EnvironmentID   string                         `json:"environment_id,omitempty"`
+	Health          *AppHealthResponse             `json:"health,omitempty"`
 	Version         int                            `json:"version"`
 	AppID           string                         `json:"app_id"`
 	CheckedAt       time.Time                      `json:"checked_at"`
@@ -19,16 +23,17 @@ type AppOperationalSummary struct {
 }
 
 type AppOperationalMonitoring struct {
-	Available          bool                    `json:"available"`
-	Status             string                  `json:"status"`
-	Reason             string                  `json:"reason"`
-	Coverage           string                  `json:"coverage"`
-	DeploymentID       string                  `json:"deployment_id,omitempty"`
-	CheckedAt          *time.Time              `json:"checked_at,omitempty"`
-	WindowStart        *time.Time              `json:"window_start,omitempty"`
-	WindowEnd          *time.Time              `json:"window_end,omitempty"`
-	IncidentsAvailable bool                    `json:"incidents_available"`
-	Incident           *AppOperationalIncident `json:"incident,omitempty"`
+	RouteBudgets       *ScopedRouteBudgetReport `json:"route_budgets,omitempty"`
+	Available          bool                     `json:"available"`
+	Status             string                   `json:"status"`
+	Reason             string                   `json:"reason"`
+	Coverage           string                   `json:"coverage"`
+	DeploymentID       string                   `json:"deployment_id,omitempty"`
+	CheckedAt          *time.Time               `json:"checked_at,omitempty"`
+	WindowStart        *time.Time               `json:"window_start,omitempty"`
+	WindowEnd          *time.Time               `json:"window_end,omitempty"`
+	IncidentsAvailable bool                     `json:"incidents_available"`
+	Incident           *AppOperationalIncident  `json:"incident,omitempty"`
 }
 
 // Incident is metadata only: customer identities and saved request evidence
@@ -40,6 +45,8 @@ type AppOperationalIncident struct {
 }
 
 type AppOperationalRecovery struct {
+	Workers            *AppWorkerRecovery                   `json:"workers,omitempty"`
+	Coverage           string                               `json:"coverage,omitempty"`
 	RollbacksAvailable bool                                 `json:"rollbacks_available"`
 	RestartsAvailable  bool                                 `json:"restarts_available"`
 	RollbacksTruncated bool                                 `json:"rollbacks_truncated"`

@@ -17,18 +17,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-type routingAdmissionTestStore interface {
-	recipientClaimTestStore
-	state.PublishedEventRecipientAdmissionStore
-	state.AppWorkPolicyStore
-	state.EventWorkBindingStore
-}
+type routingAdmissionTestStore = contractTestStore
 
 func forRoutingAdmissionStores(t *testing.T, test func(*testing.T, routingAdmissionTestStore, *pgxpool.Pool, bool)) {
 	for _, adopted := range []bool{false, true} {
 		t.Run(fmt.Sprintf("independent=%t", adopted), func(t *testing.T) {
 			forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, pool *pgxpool.Pool) {
-				test(t, store.(routingAdmissionTestStore), pool, adopted)
+				test(t, store, pool, adopted)
 			})
 		})
 	}
@@ -205,9 +200,8 @@ func TestEventRoutingAdmissionCancellationDoesNotCancelLaterWork(t *testing.T) {
 }
 
 func TestEventRoutingAdmissionUnknownResponsePreservesCheckpoint(t *testing.T) {
-	forRecipientClaimStores(t, func(t *testing.T, base recipientClaimTestStore, _ *pgxpool.Pool) {
-		ctx, _, _, receipt := seedRecipientClaims(t, base)
-		store := base.(routingAdmissionTestStore)
+	forRecipientClaimStores(t, func(t *testing.T, store recipientClaimTestStore, _ *pgxpool.Pool) {
+		ctx, _, _, receipt := seedRecipientClaims(t, store)
 		claim := state.PublishedEventRoutingClaim{OutboxID: receipt.ID, SubscriptionID: receipt.RecipientSnapshot[0].ID, ClaimToken: receipt.ClaimToken}
 		result, err := store.AdmitPublishedEventRecipient(ctx, claim)
 		if err != nil || result.ReceiptSettled {
@@ -415,9 +409,7 @@ func TestPgEventRoutingAdmissionRejectsTransferredTarget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := pool.Exec(ctx, `UPDATE apps SET account_id=$1 WHERE id=$2`, other.ID, receipt.RecipientSnapshot[0].AppID); err != nil {
-				t.Fatal(err)
-			}
+			seedLegacyForeignCreatingAccount(t, ctx, pool, receipt.RecipientSnapshot[0].AppID, other.ID)
 			_, err = pg.AdmitPublishedEventRecipient(ctx, claim)
 			var classified *state.EventRecipientAdmissionError
 			if !errors.As(err, &classified) || !errors.Is(err, state.ErrNotFound) || classified.Retryable || classified.FailureCode != state.EventFanoutFailureCodeTargetUnavailable {

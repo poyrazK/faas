@@ -15,6 +15,10 @@ const (
 	appTaskDialWindow  = 5 * time.Second
 	appTaskDialStep    = 20 * time.Millisecond
 	appTaskDialTimeout = 200 * time.Millisecond
+	// jobSessionDialWindow covers a job guest that is still booting when its
+	// client attaches (ADR-1330): vmmd registers the session before guest-init
+	// listens.
+	jobSessionDialWindow = 30 * time.Second
 )
 
 // AppTaskSession owns one connected task guest. It cannot restore or boot a
@@ -107,6 +111,24 @@ type AppTaskDialer interface {
 // protocol request sent over the returned session is therefore the exact
 // point at which customer code becomes executable.
 func (v *JailerVMM) DialAppTask(ctx context.Context, lease Lease) (*AppTaskSession, error) {
+	return v.dialGuestSession(ctx, lease, appTaskDialWindow, func(destroyCtx context.Context) error {
+		return v.Kill(destroyCtx, lease)
+	})
+}
+
+// JobSessionDialer connects to an interactive job guest's session port
+// (ADR-1330). The session never destroys the VM: the job exit path does.
+type JobSessionDialer interface {
+	DialJobSession(context.Context, Lease) (*AppTaskSession, error)
+}
+
+// DialJobSession waits for guest-init to listen, which can trail the boot by
+// the guest's startup time.
+func (v *JailerVMM) DialJobSession(ctx context.Context, lease Lease) (*AppTaskSession, error) {
+	return v.dialGuestSession(ctx, lease, jobSessionDialWindow, nil)
+}
+
+func (v *JailerVMM) dialGuestSession(ctx context.Context, lease Lease, window time.Duration, destroyVM func(context.Context) error) (*AppTaskSession, error) {
 	if v == nil {
 		return nil, fmt.Errorf("fcvm: dial app task: nil vmm")
 	}
@@ -120,7 +142,7 @@ func (v *JailerVMM) DialAppTask(ctx context.Context, lease Lease) (*AppTaskSessi
 		return nil, err
 	}
 
-	deadline := time.Now().Add(appTaskDialWindow)
+	deadline := time.Now().Add(window)
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
 	}
@@ -135,9 +157,7 @@ func (v *JailerVMM) DialAppTask(ctx context.Context, lease Lease) (*AppTaskSessi
 		cancel()
 		if err == nil {
 			if err := completeAppTaskConnect(ctx, conn); err == nil {
-				return NewAppTaskSession(conn, func(destroyCtx context.Context) error {
-					return v.Kill(destroyCtx, lease)
-				})
+				return NewAppTaskSession(conn, destroyVM)
 			} else {
 				lastErr = err
 				_ = conn.Close()

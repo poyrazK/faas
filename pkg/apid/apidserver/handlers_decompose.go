@@ -30,6 +30,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectmigration"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -111,6 +112,11 @@ func (s *server) scanProject(w http.ResponseWriter, r *http.Request, acct state.
 //nolint:contextcheck // r carries reqbudget.Detached(r.Context()) on purpose (ADR-093 amendment)
 func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	ctx, cancel := reqbudget.Detached(r.Context(), api.ProjectApplyTimeout) // ADR-093 amendment
+	if run := projectmigration.FromContext(ctx); run != nil {
+		originalCancel := cancel
+		ctx, cancel = context.WithDeadline(ctx, run.Deadline())
+		defer originalCancel()
+	}
 	defer cancel()
 	r = r.WithContext(ctx)
 	planToken := r.URL.Query().Get("plan_token")
@@ -213,9 +219,11 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 		slugToID := make(map[string]string, len(added)+len(changed))
 		for _, a := range added {
 			slugToID[a.Slug] = a.ID
+			slugToID[a.WorkloadName] = a.ID
 		}
 		for _, a := range changed {
 			slugToID[a.Slug] = a.ID
+			slugToID[a.WorkloadName] = a.ID
 		}
 		for i, name := range resp.CronNames {
 			appID := slugToID[name]
@@ -277,12 +285,11 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 		ProjectID string         `json:"project_id"`
 		AppIDs    []appSummary   `json:"apps"`
 		Builds    []appliedBuild `json:"builds,omitempty"`
+		Unchanged []string       `json:"unchanged"`
 	}
 	currentApps, err := s.store.AppsForProject(r.Context(), acct.ID, insertedProject.ID)
 	if err != nil {
-		writeCustomerInternalProblem(w, r, s.log, "load apps after applying project",
-			"Gregale could not finish loading the project after applying the changes.",
-			"Reload the project before retrying the operation.", err)
+		s.writeProjectApplyLoadError(w, r, err)
 		return
 	}
 	appIDs := make([]appSummary, 0, len(currentApps))
@@ -295,6 +302,7 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 		ProjectID:        insertedProject.ID,
 		AppIDs:           appIDs,
 		Builds:           builds,
+		Unchanged:        unchangedProjectMembers(appIDs, builds),
 	}
 
 	s.audit.Emit(r.Context(), "project.created", &acct.ID, map[string]any{
@@ -438,7 +446,7 @@ func (s *server) emitProjectApplyExclusionAudits(
 				rows[i].ID = appIDs[strings.ToLower(rows[i].Slug)]
 			}
 		}
-		emitSkippedAuditRows(ctx, s.audit, actor, acct.ID, project.ID, resp.SourceSHA256, rows)
+		emitSkippedAuditRows(ctx, s.audit, actor, acct.ID, project.ID, resp.SourceSHA256, rows, resp.WorkloadNames)
 	}
 
 	if len(resp.PersistedExclusions) == 0 {
@@ -577,3 +585,22 @@ func quotaProblem(plan api.Plan, l api.Limits, qe *state.QuotaError) *api.Proble
 var (
 	_ = json.Marshal
 )
+
+// unchangedProjectMembers lists the project members this apply did not
+// rebuild. The response's apps is the whole membership while builds holds only
+// what was enqueued, so the CLI counted every untouched workload as a missing
+// build: editing one service of a two-service project printed "applied with
+// failures" and exited 1 (hunt #10, H10-88).
+func unchangedProjectMembers(apps []appSummary, builds []appliedBuild) []string {
+	built := make(map[string]bool, len(builds))
+	for _, build := range builds {
+		built[build.AppID] = true
+	}
+	unchanged := []string{}
+	for _, app := range apps {
+		if !built[app.ID] {
+			unchanged = append(unchanged, app.Slug)
+		}
+	}
+	return unchanged
+}

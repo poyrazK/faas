@@ -209,6 +209,9 @@ type JobRunOptions struct {
 	FailurePolicy        string
 	EligibleAt           *time.Time
 	LatestStartAt        *time.Time
+	// Attach admits the run as an interactive image run (ADR-1330). The
+	// session row is written in the run's transaction.
+	Attach *JobRunAttach
 }
 
 // JobInput binds an ordered input identity to one task. InputRef is passed to

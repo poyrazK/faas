@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -11,6 +12,7 @@ from ..models.realtime_consumer_group_dead_letter_policy import (
     RealtimeConsumerGroupDeadLetterPolicy,
     check_realtime_consumer_group_dead_letter_policy,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.realtime_consumer_group_filter import RealtimeConsumerGroupFilter
@@ -87,6 +89,8 @@ class RealtimeConsumerGroup:
     groups require skip policy. Missing or empty values have no deadline. Malformed values become terminal
     invalid_delivery_deadline failures. Frozen on assignment; existing snapshots are unchanged. Deadlines prevent
     expired claims and cap leases."""
+    trigger_id: UUID | Unset = UNSET
+    """Realtime trigger consuming this group (ADR-1322). Absent when workers consume it directly."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -166,6 +170,10 @@ class RealtimeConsumerGroup:
 
         filtered_messages = self.filtered_messages
 
+        trigger_id: str | Unset = UNSET
+        if not isinstance(self.trigger_id, Unset):
+            trigger_id = str(self.trigger_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -208,6 +216,8 @@ class RealtimeConsumerGroup:
                 "filtered_messages": filtered_messages,
             }
         )
+        if trigger_id is not UNSET:
+            field_dict["trigger_id"] = trigger_id
 
         return field_dict
 
@@ -301,6 +311,13 @@ class RealtimeConsumerGroup:
 
         filtered_messages = d.pop("filtered_messages")
 
+        _trigger_id = d.pop("trigger_id", UNSET)
+        trigger_id: UUID | Unset
+        if isinstance(_trigger_id, Unset):
+            trigger_id = UNSET
+        else:
+            trigger_id = UUID(_trigger_id)
+
         realtime_consumer_group = cls(
             deduplication_metadata_key=deduplication_metadata_key,
             deduplication_window_seconds=deduplication_window_seconds,
@@ -338,6 +355,7 @@ class RealtimeConsumerGroup:
             expired_deliveries=expired_deliveries,
             filter_=filter_,
             filtered_messages=filtered_messages,
+            trigger_id=trigger_id,
         )
 
         realtime_consumer_group.additional_properties = d

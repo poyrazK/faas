@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dataapi"
 )
 
 func dataAPIDiffFixture() dataAPISnapshot {
@@ -276,5 +277,20 @@ func TestDataAPIDiffRefusesSymlinkBaselineBeforeInspection(t *testing.T) {
 	f := authedFakeAPI(t, `{}`, http.StatusCreated)
 	if code := cmdDataAPI([]string{"diff", "notes", "--baseline", link, "--check"}); code == 0 || f.sawMethod != "" {
 		t.Fatal("symlink baseline was inspected")
+	}
+}
+
+func TestDataAPIDiffRowMetadata(t *testing.T) {
+	before := dataAPIDiffFixture()
+	after := dataAPIDiffFixture()
+	after.Version = 4
+	after.Tables[0].PrimaryKey = &dataapi.PrimaryKey{Columns: []string{after.Tables[0].Columns[0].Name}, Filterable: true}
+	changes := diffDataAPISnapshots(before, after)
+	if len(changes) != 1 || changes[0].Breaking || !strings.HasSuffix(changes[0].Path, ".primary_key") {
+		t.Fatalf("addition: %+v", changes)
+	}
+	changes = diffDataAPISnapshots(after, before)
+	if len(changes) != 1 || !changes[0].Breaking {
+		t.Fatalf("removal: %+v", changes)
 	}
 }

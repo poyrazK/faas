@@ -71,7 +71,7 @@ func (p *recordedRuntimeManifestPuller) PullManifest(ctx context.Context, ref st
 }
 func TestFunctionArtifactUsesRecordedRuntimeInsteadOfDaemonDefault(t *testing.T) {
 	archive := goArtifactFixture(t, "app/handler.js", map[string]any{})
-	config := minimalConfigBytes(0)
+	config := minimalConfigBytes()
 	digest := digestFor(t, config)
 	pull := &recordedRuntimeManifestPuller{minimalManifestPuller: &minimalManifestPuller{manifest: oci.Manifest{Config: oci.Descriptor{Digest: digest}}, layers: map[string][]byte{digest: config}}}
 	h := &Handler{oci: pull, deployBaseRefOverride: "ghcr.io/test/new-default@sha256:" + strings.Repeat("2", 64)}

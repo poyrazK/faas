@@ -1,0 +1,6 @@
+[Service]
+# ADR-1141 cluster workload-identity trust; see roles/control_plane_service/tasks/workload_trust.yml.
+Environment=FAAS_WORKLOAD_JWKS_PATH={{ faas_workload_jwks_path }}
+{% if faas_workload_identity_issuer | length > 0 %}
+Environment=FAAS_WORKLOAD_ISSUER={{ faas_workload_identity_issuer }}
+{% endif %}

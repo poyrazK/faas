@@ -57,15 +57,13 @@ func (h *AppTaskAttachHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		}
 		h.attach(w, r, acct, app)
 	})
-	chain := h.Auth.RequireScope(api.ScopesDeployWriteSurface...)(h.Auth.RequireMFA(inner))
+	chain := h.Auth.RequireScope(api.ScopesDeployWriteSurface...)(h.Auth.RequireMFA(wrapControlPlaneAppAccess(h.Auth, inner)))
 	h.Auth.RequireLimited(chain)(w, r)
 }
 
 func (h *AppTaskAttachHandler) attach(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) {
-	token := r.Header.Get(api.AppTaskAttachTokenHeader)
-	if token == "" || len(r.Header.Values(api.AppTaskAttachTokenHeader)) != 1 {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Attach token required", "send the token from the task's create response in "+api.AppTaskAttachTokenHeader))
+	token, ok := attachToken(w, r)
+	if !ok {
 		return
 	}
 	target, err := h.Targets.AppTaskAttachTarget(r.Context(), acct.ID, app.ID, r.PathValue("id"))
@@ -84,17 +82,47 @@ func (h *AppTaskAttachHandler) attach(w http.ResponseWriter, r *http.Request, ac
 			"Session ended", "the interactive task has already finished"))
 		return
 	case target.TaskStatus != state.AppTaskRunning || target.NodeID == "":
-		w.Header().Set("Retry-After", "1")
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Session not ready", "the task VM is still starting; retry shortly"))
+		writeAttachNotReady(w)
 		return
 	}
+	h.open(w, r, target.NodeID, target.TaskID, token)
+}
+
+// attachToken returns the request's one attach token, or answers 401.
+func attachToken(w http.ResponseWriter, r *http.Request) (string, bool) {
+	token := r.Header.Get(api.AppTaskAttachTokenHeader)
+	if token == "" || len(r.Header.Values(api.AppTaskAttachTokenHeader)) != 1 {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+			"Attach token required", "send the token from the create response in "+api.AppTaskAttachTokenHeader))
+		return "", false
+	}
+	return token, true
+}
+
+func writeAttachNotReady(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "1")
+	api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+		"Session not ready", "the task VM is still starting; retry shortly"))
+}
+
+// open presents the token to the node's vmmd for instance and, once vmmd
+// confirms the attach, upgrades to the WebSocket and relays the session.
+func (h *AppTaskAttachHandler) open(w http.ResponseWriter, r *http.Request, nodeID, instance, token string) {
 	rows, cols := attachTerminalSize(r)
 
-	sessionCtx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
+	requestCtx := r.Context()
+	sessionCtx, cancel := context.WithCancel(context.WithoutCancel(requestCtx))
 	defer cancel()
+	// The upgraded session owns its normal disconnect lifecycle, but must
+	// still terminate when its organization authorization is revoked.
+	stopRevocation := context.AfterFunc(requestCtx, func() {
+		if errors.Is(context.Cause(requestCtx), state.ErrOrgAccessRevoked) {
+			cancel()
+		}
+	})
+	defer stopRevocation()
 	dialCtx, cancelDial := context.WithTimeout(sessionCtx, appTaskAttachDialTimeout)
-	client, closer, ok := h.Nodes.ClientFor(dialCtx, target.NodeID)
+	client, closer, ok := h.Nodes.ClientFor(dialCtx, nodeID)
 	cancelDial()
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeInternal,
@@ -105,7 +133,7 @@ func (h *AppTaskAttachHandler) attach(w http.ResponseWriter, r *http.Request, ac
 	stream, err := client.AttachAppTask(sessionCtx)
 	if err == nil {
 		err = stream.Send(&vmmdpb.AttachAppTaskRequest{Frame: &vmmdpb.AttachAppTaskRequest_Start{
-			Start: &vmmdpb.AttachAppTaskStart{Instance: target.TaskID, AttachToken: token, Rows: rows, Cols: cols},
+			Start: &vmmdpb.AttachAppTaskStart{Instance: instance, AttachToken: token, Rows: rows, Cols: cols},
 		}})
 	}
 	var first *vmmdpb.AttachAppTaskEvent
@@ -302,7 +330,7 @@ type appTaskAttachCarveOut struct {
 }
 
 func (c appTaskAttachCarveOut) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if c.attach != nil && r.Method == http.MethodGet && api.IsAppTaskAttachPath(r.URL.Path) {
+	if c.attach != nil && r.Method == http.MethodGet && (api.IsAppTaskAttachPath(r.URL.Path) || api.IsJobTaskAttachPath(r.URL.Path)) {
 		c.attach.ServeHTTP(w, r)
 		return
 	}

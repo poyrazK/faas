@@ -8,18 +8,27 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.app_health_response import AppHealthResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
+    *,
+    environment: str | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/apps/{slug}/health".format(
             slug=quote(str(slug), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -74,12 +83,13 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Response[AppHealthResponse | Problem]:
     """Explain observed app serving health.
 
-     Read-only assessment of default-scope HTTP serving deployments,
+     Read-only assessment of selected-scope HTTP serving deployments,
     replica readiness, node evidence and the last 5 minutes of request
-    telemetry scoped to current traffic-bearing default releases. It never wakes
+    telemetry scoped to current traffic-bearing releases in the selected scope. It never wakes
     or probes a workload. Structural evidence is available on every plan;
     request telemetry follows the existing Hobby+ metrics entitlement.
     Missing, failed, stale or truncated evidence cannot confirm health.
@@ -90,6 +100,7 @@ def sync_detailed(
 
     Args:
         slug (str):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -101,6 +112,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        environment=environment,
     )
 
     response = client.get_httpx_client().request(
@@ -114,12 +126,13 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> AppHealthResponse | Problem | None:
     """Explain observed app serving health.
 
-     Read-only assessment of default-scope HTTP serving deployments,
+     Read-only assessment of selected-scope HTTP serving deployments,
     replica readiness, node evidence and the last 5 minutes of request
-    telemetry scoped to current traffic-bearing default releases. It never wakes
+    telemetry scoped to current traffic-bearing releases in the selected scope. It never wakes
     or probes a workload. Structural evidence is available on every plan;
     request telemetry follows the existing Hobby+ metrics entitlement.
     Missing, failed, stale or truncated evidence cannot confirm health.
@@ -130,6 +143,7 @@ def sync(
 
     Args:
         slug (str):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -142,6 +156,7 @@ def sync(
     return sync_detailed(
         slug=slug,
         client=client,
+        environment=environment,
     ).parsed
 
 
@@ -149,12 +164,13 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Response[AppHealthResponse | Problem]:
     """Explain observed app serving health.
 
-     Read-only assessment of default-scope HTTP serving deployments,
+     Read-only assessment of selected-scope HTTP serving deployments,
     replica readiness, node evidence and the last 5 minutes of request
-    telemetry scoped to current traffic-bearing default releases. It never wakes
+    telemetry scoped to current traffic-bearing releases in the selected scope. It never wakes
     or probes a workload. Structural evidence is available on every plan;
     request telemetry follows the existing Hobby+ metrics entitlement.
     Missing, failed, stale or truncated evidence cannot confirm health.
@@ -165,6 +181,7 @@ async def asyncio_detailed(
 
     Args:
         slug (str):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,6 +193,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         slug=slug,
+        environment=environment,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -187,12 +205,13 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> AppHealthResponse | Problem | None:
     """Explain observed app serving health.
 
-     Read-only assessment of default-scope HTTP serving deployments,
+     Read-only assessment of selected-scope HTTP serving deployments,
     replica readiness, node evidence and the last 5 minutes of request
-    telemetry scoped to current traffic-bearing default releases. It never wakes
+    telemetry scoped to current traffic-bearing releases in the selected scope. It never wakes
     or probes a workload. Structural evidence is available on every plan;
     request telemetry follows the existing Hobby+ metrics entitlement.
     Missing, failed, stale or truncated evidence cannot confirm health.
@@ -203,6 +222,7 @@ async def asyncio(
 
     Args:
         slug (str):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -216,5 +236,6 @@ async def asyncio(
         await asyncio_detailed(
             slug=slug,
             client=client,
+            environment=environment,
         )
     ).parsed

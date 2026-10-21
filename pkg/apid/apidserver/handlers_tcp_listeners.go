@@ -116,7 +116,7 @@ func (s *server) createAppTCPListener(w http.ResponseWriter, r *http.Request, ac
 	}
 	if !appDeclaresTCPListener(app, name, req.GuestPort) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid TCP listener", "name and guest_port must match a declared TCP listener in the app manifest"))
+			"Invalid TCP listener", fmt.Sprintf("name and guest_port must match a declared TCP listener in the app manifest; declare the port in a Compose project's ports (the listener is named tcp-<port>) or in the app's ports field (PATCH /v1/apps/%s), then retry", app.Slug)))
 		return
 	}
 	if req.PublicPort != 0 && (req.PublicPort < state.TCPListenerPublicPortMin || req.PublicPort > state.TCPListenerPublicPortMax) {

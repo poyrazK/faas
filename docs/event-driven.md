@@ -454,6 +454,11 @@ pick up the job's current configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 
+Trigger delivery records (`gregale triggers records`) are kept at least 7 days
+after their last dispatch, and trigger dead letters (`gregale triggers dlq`) at
+least 30 days, unless a record carries its own retention; after that they may
+be deleted. Retry or export dead letters you still need before then.
+
 Keep synchronous endpoints small and return an acknowledgement only after the event is durably accepted. Verify webhook signatures and record the source, schema version, and correlation id in application logs.
 
 Async invocations may name existing app webhook subscriptions as terminal
@@ -623,7 +628,11 @@ and final traffic percentage. A build that fails before going live emits
 `deployment.failed` instead of `rollout.aborted`.
 
 Both payloads include `app_id`, `deployment_id`, and `rollout_state`, plus
-`completed_at` or `aborted_at` respectively. An outcome is enqueued once per
+`completed_at` or `aborted_at` respectively. When the safe-release circuit
+breaker, a person, or the worker lease expiry decided the outcome, the payload
+also carries `decision`: the rule and the request, 5xx, probe, latency, OOM and
+restart counts for both revisions behind it
+([ADR-1447](adr/1447-explained-rollout-decisions.md)). An outcome is enqueued once per
 state transition, in the same transaction as the state change; updating an
 already-terminal rollout does not enqueue another event. Webhook delivery is
 at least once, so receivers must deduplicate by the stable delivery id.
@@ -3067,3 +3076,375 @@ the subscriber snapshot and the retained Commit receipt. Each subscriber recover
 independently. Relay retries after event retention return the original Commit
 receipt rather than publishing again. This destination remains under the existing
 Commit qualification gates.
+
+### Limit one subscription's live delivery backlog
+
+```sh
+gregale events subscription-capacity APP SUB --max-pending 16 --yes
+gregale events subscription-status APP SUB
+gregale events subscription-capacity APP SUB --max-pending 0 --yes
+```
+
+`PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity`
+accepts `{ "max_pending_deliveries": 16 }`. The field is required and non-null;
+zero restores the current plan default. Positive values must fit the current plan's
+per-consumer ceiling (Free 64, Hobby 256, Pro 1024, Scale 4096). The operation requires
+deploy-write/admin scope and MFA. It changes capacity independently of pause,
+resume pacing and circuit controls. Controls survive subscription removal.
+
+This ceiling counts trusted pending plus dispatching invocations, including replay
+children. It does not limit publication, routing leases, or running handlers
+separately. Lowering below current usage leaves existing deliveries intact and
+blocks new admission until usage drains below the effective ceiling. Plan changes
+clamp the effective value; zero follows the current plan, while a saved positive
+value remains configured. App/account limits remain shared gates, so configuring
+one consumer does not reserve capacity for another.
+
+Status exposes `max_pending_deliveries`, `effective_max_pending_deliveries` and
+`live_deliveries`. Routing pending/processing counts describe a different stage;
+legacy invocations without trusted slots are excluded from live delivery counts.
+Reads are observations, not admission reservations. Go, Node and Python SDKs expose
+`SetEventSubscriptionCapacity` / generated `setEventSubscriptionCapacity` operations.
+
+Configured capacity uses existing durable `capacity_consumer` waits and health
+metrics. A wait spends no routing-failure budget; five-second polling retries when
+capacity drains. Delivery age limits still apply. Routing and replay share the
+ceiling, live-to-live retries retain slots, and keep-latest/cancellation semantics
+remain unchanged. Fair account/consumer scheduling preferences and captured lane
+ordering still apply. There is no global FIFO or exactly-once execution guarantee;
+consumers retain their normal application-level deduplication.
+
+Apply migration `20261013210000001_subscription_delivery_capacity.sql` and upgrade
+all routing/replay writers before relying on custom ceilings. Older routing writers
+only enforce plan limits. Downgrade restores the earlier replay guard and plan
+limits, discarding overrides. This implementation does not execute the migration.
+See [ADR-1174](adr/1174-configurable-subscription-delivery-capacity.md).
+
+### Diagnose subscription capacity pressure
+
+```sh
+gregale --json events subscription-delivery-health APP SUB
+```
+
+The existing delivery-health response adds optional `capacity_pressure`, containing
+its own `observed_at`, complete aggregate coverage, configured subscription ceiling,
+and `blocking_scope`. This blocker reflects current trusted live slot counts,
+checking consumer, app, then account limits. An empty blocker means no full ceiling
+was observed. It does not establish eligibility past ordering, pause/circuit,
+filtering or other delivery gates.
+
+The three `scopes` show current live usage, effective limit, `at_limit`, this
+subscription's effective capacity-waiting recipient count, oldest waiting event's
+acceptance timestamp/age, and operator advice. Consumer usage covers this
+subscription; app/account usage includes sibling deliveries. Consumer limits clamp
+the saved setting to the current plan. Trusted live slots include pending and
+dispatching invocations and replay descendants; untagged legacy work is excluded.
+
+Waiting counts cover all retained pending application recipients in the snapshot,
+using the existing backlog waiting-reason precedence. They are independent of the
+bounded pending sample and health history window. Recorded waits can remain after
+capacity drains, so they do not imply current saturation. The age is since event
+acceptance, not how long a continuous capacity wait has lasted. Empty groups omit
+the oldest timestamp and report zero age.
+
+For consumer pressure, inspect its live backlog and review its configured ceiling
+within plan limits. For app/account pressure, inspect sibling backlogs and allow
+live work to drain; raising only this subscription's limit does not remove those
+shared ceilings. Advice is informational and performs no mutation.
+
+Pressure has one consistent read-only snapshot, while routing, execution,
+capacity-wait counts and other combined health components remain independent
+reads. Compare their timestamps before interpreting differences. These
+observations reserve no capacity and guarantee neither immediate admission nor
+delivery order. Go/Node/Python SDKs expose the optional pressure models; existing
+watch thresholds and at-least-once execution behavior remain unchanged. See
+[ADR-1175](adr/1175-subscription-capacity-pressure-diagnostics.md).
+
+### Preview a subscription capacity change
+
+```sh
+gregale --json events subscription-capacity-preview APP SUB --max-pending 16
+gregale events subscription-capacity-preview APP SUB --max-pending 0 --timeout 5s --max-age 30s
+```
+
+This CLI command resolves the app UUID and reads existing delivery health, without
+sending controls or writing files. Pressure now exposes
+`plan_max_pending_deliveries`, the current plan allowance before applying the saved
+subscription setting. Preview requires this field; upgrade older servers before
+using it. It rejects missing, incomplete, mismatched, stale, future-dated or
+inconsistent pressure snapshots rather than inventing usable capacity. Default
+total read timeout is five seconds; max-age defaults to thirty seconds and uses
+existing watch bounds (100ms to 24h). Interrupting reads exits 130.
+
+The JSON report includes `read_only`, `advisory`, `valid`, the requested value,
+validated `pressure`, and a `projection` for valid proposals. Zero projects the
+current plan default. Positive values must fit the observed plan ceiling. Invalid
+proposals return `valid: false`, a validation error, no projection, and exit 1.
+Valid proposals exit 0 even if their projection would block new admission.
+
+Projection shows the effective consumer limit, available consumer slots, and
+`required_consumer_drain` before one additional ordinary delivery could fit. At
+exactly the limit, one delivery must drain. Lowering does not evict existing work.
+The projected first blocker follows consumer/app/account priority, while
+`shared_blocking_scopes` lists every full app/account ceiling. Increasing only the
+consumer setting cannot remove these shared limits. Usage counts trusted pending
+plus dispatching slots, including replay descendants, as in current diagnostics.
+
+`capacity_only_ready` does not establish full delivery eligibility or write
+permission/MFA. Pause, pacing, circuit, ordering, filters and per-recipient
+admission exceptions remain separate. Preview reserves nothing; plan and usage
+can change before apply. Review the report, then explicitly use
+`subscription-capacity APP SUB --max-pending N --yes` if desired. Server validation
+still controls admission, with no immediate-delivery, ordering or exactly-once
+promise. See [ADR-1176](adr/1176-guarded-subscription-capacity-preview.md).
+
+### Apply a reviewed capacity change with value guards
+
+```sh
+gregale --json events subscription-capacity-preview APP SUB --max-pending 16
+gregale events subscription-capacity APP SUB --max-pending 16 --expected-max-pending 0 --expected-plan-max-pending 256 --yes
+```
+
+Use the actual saved setting and plan allowance from your preview; the numbers
+above are an example. Valid preview JSON includes an `expected` object, and human
+output prints both expectation flags. Both flags must be supplied together.
+Neither flag keeps legacy apply behavior; malformed/partial expectations fail
+locally. Apply still requires --yes and normal write scope/MFA.
+
+The existing capacity PUT accepts:
+
+```json
+{
+  "max_pending_deliveries": 16,
+  "expected": { "max_pending_deliveries": 0, "plan_max_pending_deliveries": 256 }
+}
+```
+
+The expectation object requires both explicit fields. Compare saved configuration,
+including zero, rather than the effective clamped limit. A saved setting above a
+downgraded plan is allowed as an expectation, but the new setting must fit the
+current plan. PostgreSQL holds the plan row and existing capacity/subscription
+locks through the comparison and commit; MemStore checks under its mutex.
+
+Changed expectations return HTTP 409, code `event_subscription_capacity_changed`,
+with no committed control change. Refresh and review a preview before retrying;
+the CLI never retries without guards or invents new expectations. Go/Node/Python
+request models expose the optional guard. Upgrade capacity writers before relying
+on it; older strict decoders reject the new request field.
+
+These are current-value guards. An intervening change that returns to the same
+values can pass. They do not fence app/subscription reincarnation, reserve live
+capacity, compare pause/pacing/circuit state, or guarantee admission/order. Those
+controls remain intact, and already admitted work is not evicted. After an uncertain
+response, inspect status and review again; a repeat conflict is not proof of success.
+Plan changes can occur after commit. See
+[ADR-1177](adr/1177-guarded-subscription-capacity-apply.md).
+
+### Recover an uncertain capacity change with a command UUID
+
+```sh
+gregale events subscription-capacity APP SUB --max-pending 16 --expected-max-pending 0 --expected-plan-max-pending 256 --command-id 5c531f54-4f73-4f41-83bb-eb8771993256 --yes
+```
+
+Choose and save a fresh nonzero UUID before first use. After a timeout, repeat the
+same command UUID, proposed value and original expectations. Do not refresh guards
+on a retained repeat. The example values are illustrative; use your reviewed
+preview expectations. The existing PUT accepts optional `command_id` alongside
+`max_pending_deliveries` and `expected`.
+
+A successful request stores its setting change and acknowledgment atomically. A
+known matching repeat returns `capacity_command_receipt` without reapplying,
+changing control timestamps, consuming another slot or extending retention. The
+response's ordinary fields report current state; the receipt reports the original
+requested/previous setting, plan/effective allowance, expectations, applied or
+unchanged outcome, recording time and deadline. It remains an acknowledgment even
+if later commands or plan changes produced different current state.
+
+Different normalized values or guards for an already retained UUID return 409,
+`event_subscription_capacity_command_changed`. New commands still check current
+guards and plan ceilings. A subscription can retain 128 successful receipts,
+including no-ops; a new UUID at the cap returns 429,
+`event_subscription_capacity_command_limit`, without applying. Known repeats and
+commands without UUIDs remain available. Rejections do not retain successful
+receipts or reserve the UUID. No UUID means legacy behavior without command evidence.
+
+Receipts expire thirty days after first success. Repeats do not extend that period.
+Expiry frees budget, and a bounded scheduler cleanup removes expired evidence
+without changing settings. Parent deletion ends availability. After expiry or
+missing evidence, inspect status and review a fresh command rather than assuming
+an old UUID can prove success; an expired unguarded request may apply again.
+
+The CLI verifies the original receipt before reporting acknowledgment and displays
+its outcome separately from current settings. An incompatible success response is
+unconfirmed. It does not manufacture replacement UUIDs, alter expectations or
+retry without guards. Current ownership, write scope and MFA still apply to every
+repeat. Go/Node/Python expose the optional request UUID and receipt models.
+
+Apply migration `20261013220000001_subscription_capacity_commands.sql` before
+upgrading API/scheduler writers and relying on receipts. Downgrade requires retained
+evidence to be pruned first. The implementation does not execute this migration.
+See [ADR-1178](adr/1178-idempotent-subscription-capacity-commands.md).
+
+### Inspect a capacity command without applying it
+
+Use the same command UUID with the read-only lookup:
+
+```sh
+gregale events subscription-capacity-command APP SUBSCRIPTION_ID COMMAND_UUID --timeout 5s
+```
+
+The GET endpoint `/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}` requires `apps:read` or `admin` and MFA. Go `GetEventSubscriptionCapacityCommand`, Node `getEventSubscriptionCapacityCommand` and Python `faas_sdk.api.events.get_event_subscription_capacity_command` (`sync` or `asyncio`) return the original receipt. `--json` includes the original proposed value, reviewed expectations, previous setting, outcome, original effective and plan ceilings, recording time and fixed retention deadline. The lookup does not change controls or extend the thirty-day retention window.
+
+A receipt describes the original successful command, even if later commands changed capacity. A 404 means retained evidence is unavailable for the owned target; it does not establish that the command never ran. Inspect current controls separately before deciding whether a new change is needed.
+
+### Discover recent capacity commands
+
+```sh
+gregale events subscription-capacity-commands APP SUBSCRIPTION_ID --outcome any --limit 25
+# Continue using next_after from the response and the same scope/filter:
+gregale events subscription-capacity-commands APP SUBSCRIPTION_ID --outcome any --limit 25 --after CURSOR
+```
+
+The read-only GET collection at `/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands` requires `apps:read` or `admin` and MFA. Outcome can be `any`, `applied`, or `unchanged`. The page limit defaults to 25 and accepts 1–100; explicit HTTP zero is invalid. Go `ListEventSubscriptionCapacityCommands`, Node `listEventSubscriptionCapacityCommands`, and Python `faas_sdk.api.events.list_event_subscription_capacity_commands` (`sync` or `asyncio`) expose the same listing. `--json` includes scope, normalized filter, observation time, original receipts, `has_more`, and `next_after` when available. The CLI fetches one page per invocation.
+
+Receipts sort newest first by recording time, with command UUID descending as a tie-breaker. Cursors are bound to account, app, subscription and outcome filter; changing page size is allowed. Each page observes current retained evidence, so expiry can remove entries and newer commands above a continuation boundary require refreshing from the first page. An accessible empty history returns an empty array. Recording order does not imply delivery order, and missing evidence does not prove a command never ran. Listing never changes controls or extends receipt retention.
+
+### Check capacity-command receipt slots
+
+`events subscription-status APP SUB` and `events subscription-capacity-preview APP SUB --max-pending N` now show a complete advisory receipt budget: retained receipts out of 128, remaining slots, observation time, whether the budget is full, and the earliest retained receipt expiry. Both applied commands and successful no-ops count. Expired receipts stop consuming quota immediately, even before scheduler cleanup.
+
+The existing delivery-control GET returns optional `capacity_command_budget`; delivery-health pressure includes the same metadata from its own snapshot, with the same observation time as pressure. Go, Node and Python response models expose these fields. Preview JSON includes `new_command_receipt_slot_available` when known and a `receipt_budget_warning` when full or unavailable. Older servers without metadata report unknown receipt availability while preserving the existing capacity proposal and projection. Mutation responses may omit the budget.
+
+A full budget warns that new command UUIDs can be rejected; it does not prevent known unchanged-input command repeats. Commands without UUIDs remain available but have no idempotent receipt evidence. Earliest expiry can free a slot, but concurrent commands can consume it. Status and preview reserve no slots, never prune receipts or extend deadlines, and do not establish write authorization or execution readiness. A valid preview still returns success when the budget is full; inspect the separate receipt-budget diagnostic before deciding to issue a new command.
+
+### Watch for a full capacity-command receipt budget
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --receipt-budget-full-threshold 30s --interval 5s --timeout 10m
+```
+
+The optional threshold defaults to zero (disabled) and accepts the existing 100ms–24h duration range. Go SDK users set `EventDeliveryHealthWatchOptions.ReceiptBudgetFull` on `WatchEventConsumerDeliveryHealth`. The metric `capacity_command_receipt_budget_full_seconds` measures locally confirmed fullness: an incident opens only after at least two fresh full observations and the configured elapsed duration. A fresh valid budget with remaining receipt slots resolves it. It does not measure the age of a command or prove continuous fullness between polls.
+
+Missing budget metadata on older servers, incomplete or malformed counts, scope/time mismatches, stale or repeated observations, and future-dated samples mean unknown. An active alert loses confirmation rather than falsely reporting recovery; sample gaps reset confirmation. Resume requires fresh sustained evidence and does not count downtime. Existing `--checkpoint`, `--resume`, `--alerts-json`, and acknowledgment handling apply, including persistence before notification and the usual matching watch-selection requirement. Older checkpoint readers must be upgraded before reading checkpoints containing the new metric. Node and Python can continue reading the budget through their health response models.
+
+The watcher only reads health. A full receipt budget can reject new command UUIDs, while retained commands repeated with their original inputs remain available. Alerts never apply capacity changes, reserve slots, prune receipts or extend retention.
+
+### Warn before receipt slots run out
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --receipt-budget-remaining-threshold 16 --receipt-budget-low-sustain 30s --interval 5s --timeout 10m
+```
+
+The remaining-slot threshold defaults to zero (disabled); enabled values are 1–128. A warning opens when remaining slots stay **strictly below** N across at least two fresh observations and the confirmation duration. It clears when a fresh valid budget has N or more remaining slots. Confirmation defaults to 30 seconds and accepts 100ms–24h; selecting `--receipt-budget-low-sustain` requires an enabled remaining threshold. Go users set `EventDeliveryHealthWatchOptions.ReceiptBudgetRemaining` and optional `ReceiptBudgetLowSustain`.
+
+Alerts use metric `capacity_command_receipt_budget_used_slots`, with raw retained receipt usage and converted threshold `128 - N + 1`. For N=16, 113 or more retained receipts means 15 or fewer remaining slots. Alerts also carry `minimum_samples: 2` and `sustain_seconds`. This warning can run alongside `--receipt-budget-full-threshold`; each condition has its own incident. Existing checkpoint, resume and acknowledgment handling apply. Resume must use the same threshold and confirmation duration, and older checkpoint readers need upgrading for the new metric.
+
+Missing, stale, incomplete, repeated, future-dated or scope-mismatched evidence remains unknown; active warnings lose confirmation rather than falsely resolving. Gaps reset confirmation and downtime does not count. Warnings do not reserve receipt slots, predict time to exhaustion, extend retention or change capacity.
+
+### Stabilize receipt-budget warning recovery
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --receipt-budget-remaining-threshold 16 --receipt-budget-low-sustain 30s --receipt-budget-recovery-threshold 24 --receipt-budget-recovery-sustain 30s --interval 5s --timeout 10m
+```
+
+This warns below 16 remaining receipt slots and clears only after at least two fresh observations at **24 or more** remaining slots spanning 30 seconds. A confirmed incident remains firing between those boundaries and during pending recovery. Dropping below the recovery boundary resets recovery confirmation. Invalid or unavailable evidence loses confirmation and resets both timers. A resumed incident stays unknown in the middle band until a warning or recovery is freshly confirmed; downtime does not count.
+
+Recovery is opt-in. Set a recovery threshold between the warning threshold and 128, or select only a recovery duration to reuse the warning boundary. Recovery confirmation defaults to 30 seconds when enabled and accepts 100ms–24h. Both recovery options zero preserve immediate clearing at the original warning boundary. Go users set `ReceiptBudgetRecoveryRemaining` and `ReceiptBudgetRecoverySustain` in `EventDeliveryHealthWatchOptions`. The separate full-budget duration condition is unaffected.
+
+Conditions and alerts retain the used-slot metric and add `recovery_threshold` (inclusive maximum used slots) and `recovery_sustain_seconds`. In the example, opening usage is at least 113 and recovery usage is at most 104. A zero maximum used-slot recovery threshold may be omitted from JSON when recovery requires all 128 slots; the positive recovery duration identifies the enabled policy. Checkpoints with recovery enabled use **version 2**, which older readers reject. Watches without recovery keep version 1. Resume requires the same opening and recovery settings; use a new checkpoint when changing policy. Alerts remain advisory and perform no capacity or retention changes.
+
+### Inspect watcher confirmation progress
+
+Add `--confirmation-progress` to a receipt-budget watch to print live text details on stdout. Final human output also shows them. Lifecycle alerts stay on stderr, so `--alerts-json` remains an alert-only JSON stream. Omit the live text flag with `--json`; the final JSON watch result includes `confirmations`, and Go `OnProgress` callbacks receive the same observations.
+
+Each selected receipt-budget condition shows its phase: pending warning, firing, pending recovery, waiting for fresh confirmation after resume, clear, unknown, or blocked by a full alert outbox. Active windows include fresh sample counts, elapsed and required duration, and remaining confirmation seconds. Required sample count zero means no active confirmation window. The elapsed duration ends at the latest accepted observation; it does not advance just because output is read later. Remaining seconds are not a promised recovery time and the next observation can reset confirmation.
+
+The most recent local confirmation loss includes its time and a reason such as stale or future evidence, a repeated or out-of-order observation, unavailable evidence, or a sample gap. This diagnostic history is distinct from the current phase. Unknown evidence never reports a successful recovery. Diagnostics and timer counts are not stored in checkpoint conditions; resume starts with fresh sample count zero and never credits old progress or downtime. Existing version-1/version-2 checkpoint and acknowledgment behavior remains unchanged.
+
+### Inspect an application event execution attempt
+
+Authenticated application event handlers can read dispatcher-authored context:
+
+| Header | Meaning |
+| --- | --- |
+| `X-Faas-Invocation-Id` | Current execution invocation UUID. A child replay has a new UUID. |
+| `X-Faas-Invocation-Source` | `async_invoke` for ordinary application-event work or `replay` for a child replay. |
+| `X-Faas-Invocation-Attempt` | Positive execution attempt within the current retry budget; signed-int32 range. |
+| `X-Faas-Invocation-Replay-Generation` | Nonnegative signed-int64 retry-budget reset generation. Zero is explicitly sent. |
+| `X-Faas-Invocation-Replayed-From` | Immediate parent invocation UUID, when available. |
+| `X-Faas-Invocation-Replay-Root` | Replay root invocation UUID, when available. |
+
+Use Go `EventConsumerDeliveryContextFromHTTP(request, originalBody, accountID, appID)`, Node `eventConsumerDeliveryContextFromHeaders(headers, originalBody, accountId, appId)`, or Python `event_consumer_delivery_context_from_headers(headers, original_body, account_id, app_id)`. Each validates the existing stable event identity and body before returning diagnostic counters, invocation source/ID and optional lineage. Node preserves replay generation as a decimal string rather than a floating-point number. Duplicate/empty headers, partial counter context, noncanonical or out-of-range numbers, invalid source/UUIDs and immediate lineage cycles are rejected. Completely absent attempt metadata raises the SDK's unavailable-context error; upgrade scheduler and gateway rather than guessing values.
+
+Execution attempts differ from routing attempts before admission. An ordinary retry retains its invocation ID; an in-place retry-budget reset increases generation. A new child replay has a new invocation ID and can start at generation **zero**, so zero alone does not prove an original delivery. Parent/root IDs can clarify lineage when available; absence is not proof that no replay occurred.
+
+The gateway overrides producer-supplied counter/lineage headers using private dispatch fields and forwards them only for scheduler-marked synthetic work. Public HTTP requests cannot forward these reserved headers to guests. Upgrade gateways before the scheduler for rollout; older components do not guarantee the new context. Headers are still not signatures: authenticate delivery and supply trusted owner scope before using any SDK helper.
+
+Continue deduplicating by the existing owned event acceptance and subscription consumer identity. Keep attempt, invocation ID, generation and lineage out of the business receipt key and input digest; the existing transactional helpers remain unchanged. The new metadata adds no ordering or exactly-once guarantee and does not change retry, replay, capacity or retention policies.
+
+### Deferred application processing
+
+Subscriptions can opt into [deferred acknowledgments](event-deferred-acknowledgments.md).
+HTTP 202 then transfers the delivery lease to a durable consumer worker, which
+renews and explicitly completes using an app-authorized, attempt-scoped token.
+Expiry retries only that consumer and respects a finite attempt budget. Ordinary
+subscriptions keep HTTP-success completion. This remains at least once; consumer
+receipts and external-effect idempotency remain necessary.
+
+### Transactional application event outbox
+
+The standalone Go SDK can atomically stage publication intent alongside business
+writes and recover it after commit. Publication requests may include
+`expected_app_id`, a canonical application UUID guard; publication and read-only
+content verification return 409 on a mismatch before acceptance/comparison. The
+outbox always supplies this guard, preserves the producer key, and bounds retries
+to an immutable window shorter than normal acceptance retention. See
+[the application outbox guide](event-outbox.md) for setup, recovery and limitations.
+
+
+### Deadline count alerts from the CLI
+
+`events subscription-delivery-health --watch` supports total upcoming/expired
+counts, waiting-reason counts and separate recovery boundaries:
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --deadline-window 5m --deadline-upcoming-threshold 50 --deadline-upcoming-recovery 20 --deadline-expired-threshold 1 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
+```
+
+Use repeatable `--deadline-upcoming-reason REASON=N` and
+`--deadline-expired-reason REASON=N`, with matching `-reason-recovery` flags for
+inclusive recovery counts. Existing checkpoint/resume and JSON alert delivery
+apply. See [CLI configuration, validation and recovery semantics](event-subscription-deadline-window.md#cli-watch).
+
+
+### Expired backlog percentage alerts
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --deadline-window 5m --deadline-expired-ratio-threshold 10 --deadline-expired-ratio-recovery 5 --deadline-expired-ratio-min-recipients 100 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
+```
+
+This opens at >=10% expired among at least 100 pending deadline-bearing recipients
+and confirms recovery at <=5%. Insufficient cohorts stay unknown. Text progress
+shows the observed percentage and raw cohort; JSON retains basis-point units and
+raw counts. Existing checkpoint/resume and alert acknowledgments apply. See
+[ratio validation and lifecycle semantics](event-deadline-ratio-alerts.md#cli-ratio-watch).
+
+### Investigate a saved deadline alert
+
+```sh
+gregale events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25
+gregale events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25 --explain
+gregale --json events deadline-alert-investigate APP --alert-file ./deadline-alert.json --limit 25 --cursor 'NEXT_CURSOR'
+```
+
+Supply one saved Go/CLI lifecycle alert object. The command selects the current
+matching cohort, lists delivery identities/deadlines/waiting reasons and keeps alert
+notification time separate from current triage observation. It is read-only, bounded
+to one page and does not acknowledge or replay anything. See
+[file format, pagination and observation semantics](event-deadline-alert-investigation.md#cli-investigation).
+
+`--explain` adds one acceptance-guarded blocker batch for pages of at most 50 rows,
+within the same read budget. It reports ordering blockers, current waiting reasons,
+capacity scope, target availability and scheduling metadata with separate diagnostic
+timestamps and explicit unavailable/error states. See
+[blocker explanations](event-deadline-alert-investigation.md#blocker-explanations).

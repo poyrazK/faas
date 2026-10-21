@@ -11,8 +11,206 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const eventSubscriptionCapacityAccount = `-- name: EventSubscriptionCapacityAccount :one
+SELECT plan FROM accounts WHERE id=$1::uuid FOR SHARE
+`
+
+func (q *Queries) EventSubscriptionCapacityAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityAccount, accountID)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
+const eventSubscriptionCapacityCommandBudget = `-- name: EventSubscriptionCapacityCommandBudget :one
+SELECT count(*)::bigint AS retained_receipts,min(retain_until)::timestamptz AS earliest_expiry_at
+FROM event_subscription_capacity_commands
+WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid
+ AND retain_until>$4::timestamptz
+`
+
+type EventSubscriptionCapacityCommandBudgetParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	ObservedAt     pgtype.Timestamptz
+}
+
+type EventSubscriptionCapacityCommandBudgetRow struct {
+	RetainedReceipts int64
+	EarliestExpiryAt pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacityCommandBudget(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandBudgetParams) (EventSubscriptionCapacityCommandBudgetRow, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityCommandBudget,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.ObservedAt,
+	)
+	var i EventSubscriptionCapacityCommandBudgetRow
+	err := row.Scan(&i.RetainedReceipts, &i.EarliestExpiryAt)
+	return i, err
+}
+
+const eventSubscriptionCapacityCommandGet = `-- name: EventSubscriptionCapacityCommandGet :one
+SELECT subscription_id, command_id, account_id, app_id, request, receipt, recorded_at, retain_until FROM event_subscription_capacity_commands WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND command_id=$4::uuid AND retain_until>$5::timestamptz
+`
+
+type EventSubscriptionCapacityCommandGetParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	CommandID      pgtype.UUID
+	NowAt          pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacityCommandGet(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandGetParams) (EventSubscriptionCapacityCommand, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityCommandGet,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.CommandID,
+		arg.NowAt,
+	)
+	var i EventSubscriptionCapacityCommand
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.CommandID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Request,
+		&i.Receipt,
+		&i.RecordedAt,
+		&i.RetainUntil,
+	)
+	return i, err
+}
+
+const eventSubscriptionCapacityCommandInsert = `-- name: EventSubscriptionCapacityCommandInsert :exec
+INSERT INTO event_subscription_capacity_commands(subscription_id,command_id,account_id,app_id,request,receipt,recorded_at,retain_until)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::jsonb,$6::jsonb,$7::timestamptz,$8::timestamptz)
+`
+
+type EventSubscriptionCapacityCommandInsertParams struct {
+	SubscriptionID pgtype.UUID
+	CommandID      pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Request        []byte
+	Receipt        []byte
+	RecordedAt     pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacityCommandInsert(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandInsertParams) error {
+	_, err := db.Exec(ctx, eventSubscriptionCapacityCommandInsert,
+		arg.SubscriptionID,
+		arg.CommandID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Request,
+		arg.Receipt,
+		arg.RecordedAt,
+		arg.RetainUntil,
+	)
+	return err
+}
+
+const eventSubscriptionCapacityCommandsCount = `-- name: EventSubscriptionCapacityCommandsCount :one
+SELECT count(*)::bigint FROM event_subscription_capacity_commands WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND retain_until>$4::timestamptz
+`
+
+type EventSubscriptionCapacityCommandsCountParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	NowAt          pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacityCommandsCount(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandsCountParams) (int64, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityCommandsCount,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.NowAt,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const eventSubscriptionCapacityCommandsExpire = `-- name: EventSubscriptionCapacityCommandsExpire :exec
+DELETE FROM event_subscription_capacity_commands WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND retain_until<=$4::timestamptz
+`
+
+type EventSubscriptionCapacityCommandsExpireParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	NowAt          pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacityCommandsExpire(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandsExpireParams) error {
+	_, err := db.Exec(ctx, eventSubscriptionCapacityCommandsExpire,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.NowAt,
+	)
+	return err
+}
+
+const eventSubscriptionCapacityOverride = `-- name: EventSubscriptionCapacityOverride :one
+SELECT coalesce((SELECT max_pending_deliveries FROM event_subscription_delivery_controls
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+AND subscription_id::text=$3::text),0)::integer AS max_pending_deliveries
+`
+
+type EventSubscriptionCapacityOverrideParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+}
+
+func (q *Queries) EventSubscriptionCapacityOverride(ctx context.Context, db DBTX, arg EventSubscriptionCapacityOverrideParams) (int32, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityOverride, arg.AccountID, arg.AppID, arg.SubscriptionID)
+	var max_pending_deliveries int32
+	err := row.Scan(&max_pending_deliveries)
+	return max_pending_deliveries, err
+}
+
+const eventSubscriptionCapacitySet = `-- name: EventSubscriptionCapacitySet :exec
+INSERT INTO event_subscription_delivery_controls(subscription_id,account_id,app_id,max_pending_deliveries,updated_at)
+VALUES ($1::uuid,$2::uuid,$3::uuid,$4::integer,$5::timestamptz)
+ON CONFLICT(subscription_id) DO UPDATE SET max_pending_deliveries=excluded.max_pending_deliveries,updated_at=excluded.updated_at
+WHERE event_subscription_delivery_controls.account_id=excluded.account_id AND event_subscription_delivery_controls.app_id=excluded.app_id
+`
+
+type EventSubscriptionCapacitySetParams struct {
+	SubscriptionID       pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	MaxPendingDeliveries int32
+	NowAt                pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacitySet(ctx context.Context, db DBTX, arg EventSubscriptionCapacitySetParams) error {
+	_, err := db.Exec(ctx, eventSubscriptionCapacitySet,
+		arg.SubscriptionID,
+		arg.AccountID,
+		arg.AppID,
+		arg.MaxPendingDeliveries,
+		arg.NowAt,
+	)
+	return err
+}
+
 const eventSubscriptionControlGet = `-- name: EventSubscriptionControlGet :one
-SELECT subscription_id, account_id, app_id, paused, rate_per_second, window_started_at, window_count, updated_at, paused_at FROM event_subscription_delivery_controls WHERE subscription_id=$1::uuid AND app_id=$2::uuid AND account_id=$3::uuid
+SELECT subscription_id, account_id, app_id, paused, rate_per_second, window_started_at, window_count, updated_at, paused_at, max_pending_deliveries, rate_enabled, rate_interval_ms, rate_burst, rate_credit_ms, rate_refilled_at, rate_revision, rate_sequence FROM event_subscription_delivery_controls WHERE subscription_id=$1::uuid AND app_id=$2::uuid AND account_id=$3::uuid
 `
 
 type EventSubscriptionControlGetParams struct {
@@ -34,6 +232,14 @@ func (q *Queries) EventSubscriptionControlGet(ctx context.Context, db DBTX, arg 
 		&i.WindowCount,
 		&i.UpdatedAt,
 		&i.PausedAt,
+		&i.MaxPendingDeliveries,
+		&i.RateEnabled,
+		&i.RateIntervalMs,
+		&i.RateBurst,
+		&i.RateCreditMs,
+		&i.RateRefilledAt,
+		&i.RateRevision,
+		&i.RateSequence,
 	)
 	return i, err
 }
@@ -140,4 +346,632 @@ type EventSubscriptionControlUsePermitParams struct {
 func (q *Queries) EventSubscriptionControlUsePermit(ctx context.Context, db DBTX, arg EventSubscriptionControlUsePermitParams) error {
 	_, err := db.Exec(ctx, eventSubscriptionControlUsePermit, arg.NowAt, arg.SubscriptionID)
 	return err
+}
+
+const eventSubscriptionDeadlinePage = `-- name: EventSubscriptionDeadlinePage :many
+WITH deadlines AS (
+ SELECT b.outbox_id,b.accepted_at,b.next_attempt_at,b.lease_until::timestamptz AS lease_until,b.routing_mode,b.capacity_scope,
+ o.source,o.event_id,
+ event_recipient_delivery_deadline(coalesce(r.recipient,(SELECT v FROM jsonb_array_elements(o.recipient_snapshot) v WHERE v->>'id'=b.subscription_id LIMIT 1)),o.created_at,o.recipient_progress->b.subscription_id)::timestamptz AS deadline_at
+ FROM event_routing_backlog_source b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id
+ LEFT JOIN event_fanout_recipients r ON r.outbox_id=b.outbox_id AND r.subscription_id=b.subscription_id
+ WHERE b.account_id=$2::uuid AND b.app_id=$3::uuid AND b.subscription_id=$4::text AND b.consumer_kind='application' AND b.routing_state='pending' AND b.accepted_at<=$5::timestamptz
+), page AS MATERIALIZED (
+ SELECT outbox_id, accepted_at, next_attempt_at, lease_until, routing_mode, capacity_scope, source, event_id, deadline_at FROM deadlines WHERE deadline_at IS NOT NULL
+ AND ($6::bigint=0 OR deadline_at<$5::timestamptz+$6::bigint*interval '1 millisecond')
+ AND ($7::text='' OR (CASE WHEN NOT (routing_mode='event' AND coalesce(lease_until>$1::timestamptz,false)) AND event_subscription_delivery_waiting_reason($2::uuid,$3::uuid,$4::text,$1::timestamptz)<>'' THEN event_subscription_delivery_waiting_reason($2::uuid,$3::uuid,$4::text,$1::timestamptz) ELSE event_backlog_waiting_reason('pending',capacity_scope,routing_mode,lease_until,next_attempt_at,'application',NULL,$1::timestamptz) END)=$7::text)
+ AND ($8::timestamptz IS NULL OR deadline_at>=$8::timestamptz)
+ AND ($9::timestamptz IS NULL OR deadline_at<$9::timestamptz)
+ AND ($10::text<>'expired' OR deadline_at<=$5::timestamptz)
+ AND ($10::text<>'upcoming' OR deadline_at>$5::timestamptz)
+ AND (NOT $11::boolean OR (deadline_at,accepted_at,outbox_id)>($12::timestamptz,$13::timestamptz,$14::bigint))
+ ORDER BY deadline_at,accepted_at,outbox_id LIMIT $15::integer
+)
+SELECT page.outbox_id, page.accepted_at, page.next_attempt_at, page.lease_until, page.routing_mode, page.capacity_scope, page.source, page.event_id, page.deadline_at,(CASE WHEN NOT (page.routing_mode='event' AND coalesce(page.lease_until>$1::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason('pending',page.capacity_scope,page.routing_mode,page.lease_until,page.next_attempt_at,'application',NULL,$1::timestamptz) END)::text AS waiting_reason
+FROM page CROSS JOIN LATERAL (SELECT event_subscription_delivery_waiting_reason($2::uuid,$3::uuid,$4::text,$1::timestamptz) AS reason) control
+ORDER BY page.deadline_at,page.accepted_at,page.outbox_id
+`
+
+type EventSubscriptionDeadlinePageParams struct {
+	ObservedAt      pgtype.Timestamptz
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	SubscriptionID  string
+	WindowAt        pgtype.Timestamptz
+	WithinMillis    int64
+	WaitingReason   string
+	DeadlineFrom    pgtype.Timestamptz
+	DeadlineBefore  pgtype.Timestamptz
+	StatusFilter    string
+	HasAfter        bool
+	AfterDeadlineAt pgtype.Timestamptz
+	AfterAcceptedAt pgtype.Timestamptz
+	AfterOutboxID   int64
+	PageLimit       int32
+}
+
+type EventSubscriptionDeadlinePageRow struct {
+	OutboxID      int64
+	AcceptedAt    pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	LeaseUntil    pgtype.Timestamptz
+	RoutingMode   string
+	CapacityScope string
+	Source        string
+	EventID       string
+	DeadlineAt    pgtype.Timestamptz
+	WaitingReason string
+}
+
+func (q *Queries) EventSubscriptionDeadlinePage(ctx context.Context, db DBTX, arg EventSubscriptionDeadlinePageParams) ([]EventSubscriptionDeadlinePageRow, error) {
+	rows, err := db.Query(ctx, eventSubscriptionDeadlinePage,
+		arg.ObservedAt,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.WindowAt,
+		arg.WithinMillis,
+		arg.WaitingReason,
+		arg.DeadlineFrom,
+		arg.DeadlineBefore,
+		arg.StatusFilter,
+		arg.HasAfter,
+		arg.AfterDeadlineAt,
+		arg.AfterAcceptedAt,
+		arg.AfterOutboxID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventSubscriptionDeadlinePageRow{}
+	for rows.Next() {
+		var i EventSubscriptionDeadlinePageRow
+		if err := rows.Scan(
+			&i.OutboxID,
+			&i.AcceptedAt,
+			&i.NextAttemptAt,
+			&i.LeaseUntil,
+			&i.RoutingMode,
+			&i.CapacityScope,
+			&i.Source,
+			&i.EventID,
+			&i.DeadlineAt,
+			&i.WaitingReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventSubscriptionDeadlineWindowCounts = `-- name: EventSubscriptionDeadlineWindowCounts :many
+WITH pending AS (
+ SELECT b.accepted_at,b.next_attempt_at,b.lease_until,b.routing_mode,b.capacity_scope,
+ event_recipient_delivery_deadline(coalesce(r.recipient,(SELECT v FROM jsonb_array_elements(o.recipient_snapshot) v WHERE v->>'id'=b.subscription_id LIMIT 1)),o.created_at,o.recipient_progress->b.subscription_id)::timestamptz AS deadline_at
+ FROM event_routing_backlog_source b JOIN event_fanout_outbox o ON o.id=b.outbox_id AND o.account_id=b.account_id
+ LEFT JOIN event_fanout_recipients r ON r.outbox_id=b.outbox_id AND r.subscription_id=b.subscription_id
+ WHERE b.account_id=$3::uuid AND b.app_id=$4::uuid AND b.subscription_id=$5::text AND b.consumer_kind='application' AND b.routing_state='pending'
+), control AS MATERIALIZED (
+ SELECT event_subscription_delivery_waiting_reason($3::uuid,$4::uuid,$5::text,$1::timestamptz) AS reason
+)
+SELECT observation.reason::text AS waiting_reason,
+ count(*)::bigint AS pending_recipients,count(deadline_at)::bigint AS deadline_recipients,
+ count(*) FILTER (WHERE deadline_at<=$1::timestamptz)::bigint AS expired_recipients,
+ count(*) FILTER (WHERE deadline_at>$1::timestamptz AND deadline_at<$2::timestamptz)::bigint AS upcoming_recipients,
+ min(deadline_at) FILTER (WHERE isfinite(deadline_at))::timestamptz AS earliest_deadline_at,
+ min(deadline_at) FILTER (WHERE deadline_at>$1::timestamptz AND deadline_at<$2::timestamptz AND isfinite(deadline_at))::timestamptz AS earliest_upcoming_deadline_at,
+ coalesce(bool_or(accepted_at IS NULL OR NOT isfinite(accepted_at) OR accepted_at>$1::timestamptz OR (deadline_at IS NOT NULL AND NOT isfinite(deadline_at)) OR (next_attempt_at IS NOT NULL AND NOT isfinite(next_attempt_at)) OR (lease_until IS NOT NULL AND NOT isfinite(lease_until))),false)::boolean AS clock_invalid,
+ coalesce(bool_or(lease_until>$1::timestamptz),false)::boolean AS active_leases,
+ coalesce(bool_or(next_attempt_at>$1::timestamptz),false)::boolean AS scheduled_retries
+FROM pending CROSS JOIN control CROSS JOIN LATERAL (
+ SELECT CASE WHEN deadline_at<=$1::timestamptz OR deadline_at<$2::timestamptz THEN
+ CASE WHEN NOT (routing_mode='event' AND coalesce(lease_until>$1::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason('pending',capacity_scope,routing_mode,lease_until,next_attempt_at,'application',NULL,$1::timestamptz) END ELSE '' END AS reason
+) observation GROUP BY observation.reason
+`
+
+type EventSubscriptionDeadlineWindowCountsParams struct {
+	ObservedAt     pgtype.Timestamptz
+	WindowEndAt    pgtype.Timestamptz
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+}
+
+type EventSubscriptionDeadlineWindowCountsRow struct {
+	WaitingReason              string
+	PendingRecipients          int64
+	DeadlineRecipients         int64
+	ExpiredRecipients          int64
+	UpcomingRecipients         int64
+	EarliestDeadlineAt         pgtype.Timestamptz
+	EarliestUpcomingDeadlineAt pgtype.Timestamptz
+	ClockInvalid               bool
+	ActiveLeases               bool
+	ScheduledRetries           bool
+}
+
+func (q *Queries) EventSubscriptionDeadlineWindowCounts(ctx context.Context, db DBTX, arg EventSubscriptionDeadlineWindowCountsParams) ([]EventSubscriptionDeadlineWindowCountsRow, error) {
+	rows, err := db.Query(ctx, eventSubscriptionDeadlineWindowCounts,
+		arg.ObservedAt,
+		arg.WindowEndAt,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventSubscriptionDeadlineWindowCountsRow{}
+	for rows.Next() {
+		var i EventSubscriptionDeadlineWindowCountsRow
+		if err := rows.Scan(
+			&i.WaitingReason,
+			&i.PendingRecipients,
+			&i.DeadlineRecipients,
+			&i.ExpiredRecipients,
+			&i.UpcomingRecipients,
+			&i.EarliestDeadlineAt,
+			&i.EarliestUpcomingDeadlineAt,
+			&i.ClockInvalid,
+			&i.ActiveLeases,
+			&i.ScheduledRetries,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventSubscriptionPendingSummary = `-- name: EventSubscriptionPendingSummary :one
+WITH pending AS (
+ SELECT b.accepted_at,b.next_attempt_at,b.lease_until,
+ event_recipient_delivery_deadline(coalesce(r.recipient,(SELECT v FROM jsonb_array_elements(o.recipient_snapshot) v WHERE v->>'id'=b.subscription_id LIMIT 1)),o.created_at,o.recipient_progress->b.subscription_id)::timestamptz AS deadline_at
+ FROM event_routing_backlog_source b JOIN event_fanout_outbox o ON o.id=b.outbox_id
+ LEFT JOIN event_fanout_recipients r ON r.outbox_id=b.outbox_id AND r.subscription_id=b.subscription_id
+ WHERE b.account_id=$2::uuid AND b.app_id=$3::uuid AND b.subscription_id=$4::text AND b.consumer_kind='application' AND b.routing_state='pending'
+)
+SELECT count(*)::bigint AS pending_recipients,
+ count(deadline_at)::bigint AS deadline_recipients,
+ count(*) FILTER (WHERE deadline_at<=$1::timestamptz)::bigint AS already_expired_count,
+ min(deadline_at) FILTER (WHERE isfinite(deadline_at))::timestamptz AS earliest_deadline_at,
+ coalesce(bool_or(accepted_at IS NULL OR NOT isfinite(accepted_at) OR accepted_at>$1::timestamptz OR (deadline_at IS NOT NULL AND NOT isfinite(deadline_at)) OR (next_attempt_at IS NOT NULL AND NOT isfinite(next_attempt_at)) OR (lease_until IS NOT NULL AND NOT isfinite(lease_until))),false)::boolean AS clock_invalid,
+ coalesce(bool_or(lease_until>$1::timestamptz),false)::boolean AS active_leases,
+ coalesce(bool_or(next_attempt_at>$1::timestamptz),false)::boolean AS scheduled_retries
+FROM pending
+`
+
+type EventSubscriptionPendingSummaryParams struct {
+	ObservedAt     pgtype.Timestamptz
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+}
+
+type EventSubscriptionPendingSummaryRow struct {
+	PendingRecipients   int64
+	DeadlineRecipients  int64
+	AlreadyExpiredCount int64
+	EarliestDeadlineAt  pgtype.Timestamptz
+	ClockInvalid        bool
+	ActiveLeases        bool
+	ScheduledRetries    bool
+}
+
+func (q *Queries) EventSubscriptionPendingSummary(ctx context.Context, db DBTX, arg EventSubscriptionPendingSummaryParams) (EventSubscriptionPendingSummaryRow, error) {
+	row := db.QueryRow(ctx, eventSubscriptionPendingSummary,
+		arg.ObservedAt,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+	)
+	var i EventSubscriptionPendingSummaryRow
+	err := row.Scan(
+		&i.PendingRecipients,
+		&i.DeadlineRecipients,
+		&i.AlreadyExpiredCount,
+		&i.EarliestDeadlineAt,
+		&i.ClockInvalid,
+		&i.ActiveLeases,
+		&i.ScheduledRetries,
+	)
+	return i, err
+}
+
+const eventSubscriptionPendingSummaryBudget = `-- name: EventSubscriptionPendingSummaryBudget :one
+SELECT set_config('statement_timeout',$1::text,true)::text
+`
+
+func (q *Queries) EventSubscriptionPendingSummaryBudget(ctx context.Context, db DBTX, timeoutMillis string) (string, error) {
+	row := db.QueryRow(ctx, eventSubscriptionPendingSummaryBudget, timeoutMillis)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const eventSubscriptionRateClock = `-- name: EventSubscriptionRateClock :one
+SELECT clock_timestamp()::timestamptz
+`
+
+func (q *Queries) EventSubscriptionRateClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, eventSubscriptionRateClock)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const eventSubscriptionRateCommandGet = `-- name: EventSubscriptionRateCommandGet :one
+SELECT account_id, app_id, subscription_id, command_id, sequence, request, receipt, recorded_at, retain_until FROM event_subscription_rate_commands WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND command_id=$4::uuid AND retain_until>$5::timestamptz
+`
+
+type EventSubscriptionRateCommandGetParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	CommandID      pgtype.UUID
+	NowAt          pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionRateCommandGet(ctx context.Context, db DBTX, arg EventSubscriptionRateCommandGetParams) (EventSubscriptionRateCommand, error) {
+	row := db.QueryRow(ctx, eventSubscriptionRateCommandGet,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.CommandID,
+		arg.NowAt,
+	)
+	var i EventSubscriptionRateCommand
+	err := row.Scan(
+		&i.AccountID,
+		&i.AppID,
+		&i.SubscriptionID,
+		&i.CommandID,
+		&i.Sequence,
+		&i.Request,
+		&i.Receipt,
+		&i.RecordedAt,
+		&i.RetainUntil,
+	)
+	return i, err
+}
+
+const eventSubscriptionRateCommandInsert = `-- name: EventSubscriptionRateCommandInsert :exec
+INSERT INTO event_subscription_rate_commands(account_id,app_id,subscription_id,command_id,sequence,request,receipt,recorded_at,retain_until) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::bigint,$6::jsonb,$7::jsonb,$8::timestamptz,$9::timestamptz)
+`
+
+type EventSubscriptionRateCommandInsertParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	CommandID      pgtype.UUID
+	Sequence       int64
+	Request        []byte
+	Receipt        []byte
+	NowAt          pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionRateCommandInsert(ctx context.Context, db DBTX, arg EventSubscriptionRateCommandInsertParams) error {
+	_, err := db.Exec(ctx, eventSubscriptionRateCommandInsert,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.CommandID,
+		arg.Sequence,
+		arg.Request,
+		arg.Receipt,
+		arg.NowAt,
+		arg.RetainUntil,
+	)
+	return err
+}
+
+const eventSubscriptionRateCommandsCount = `-- name: EventSubscriptionRateCommandsCount :one
+SELECT count(*)::bigint FROM event_subscription_rate_commands WHERE subscription_id=$1::uuid AND retain_until>$2::timestamptz
+`
+
+type EventSubscriptionRateCommandsCountParams struct {
+	SubscriptionID pgtype.UUID
+	NowAt          pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionRateCommandsCount(ctx context.Context, db DBTX, arg EventSubscriptionRateCommandsCountParams) (int64, error) {
+	row := db.QueryRow(ctx, eventSubscriptionRateCommandsCount, arg.SubscriptionID, arg.NowAt)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const eventSubscriptionRateCommandsExpire = `-- name: EventSubscriptionRateCommandsExpire :exec
+DELETE FROM event_subscription_rate_commands WHERE subscription_id=$1::uuid AND retain_until<=$2::timestamptz
+`
+
+type EventSubscriptionRateCommandsExpireParams struct {
+	SubscriptionID pgtype.UUID
+	NowAt          pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionRateCommandsExpire(ctx context.Context, db DBTX, arg EventSubscriptionRateCommandsExpireParams) error {
+	_, err := db.Exec(ctx, eventSubscriptionRateCommandsExpire, arg.SubscriptionID, arg.NowAt)
+	return err
+}
+
+const eventSubscriptionRateCommandsList = `-- name: EventSubscriptionRateCommandsList :many
+SELECT receipt FROM event_subscription_rate_commands WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND sequence>$4::bigint AND retain_until>$5::timestamptz ORDER BY sequence LIMIT $6::integer
+`
+
+type EventSubscriptionRateCommandsListParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	AfterSequence  int64
+	NowAt          pgtype.Timestamptz
+	PageLimit      int32
+}
+
+func (q *Queries) EventSubscriptionRateCommandsList(ctx context.Context, db DBTX, arg EventSubscriptionRateCommandsListParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, eventSubscriptionRateCommandsList,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.AfterSequence,
+		arg.NowAt,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var receipt []byte
+		if err := rows.Scan(&receipt); err != nil {
+			return nil, err
+		}
+		items = append(items, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventSubscriptionRateConfigure = `-- name: EventSubscriptionRateConfigure :one
+UPDATE event_subscription_delivery_controls SET
+ rate_enabled=CASE WHEN $1::boolean THEN $2::boolean ELSE rate_enabled END,
+ rate_interval_ms=CASE WHEN $1::boolean THEN $3::bigint ELSE rate_interval_ms END,
+ rate_burst=CASE WHEN $1::boolean THEN $4::bigint ELSE rate_burst END,
+ rate_credit_ms=CASE WHEN $1::boolean THEN $5::bigint ELSE rate_credit_ms END,
+ rate_refilled_at=CASE WHEN $1::boolean THEN $6::timestamptz ELSE rate_refilled_at END,
+ rate_revision=rate_revision+CASE WHEN $1::boolean THEN 1 ELSE 0 END,
+ rate_sequence=rate_sequence+1,updated_at=CASE WHEN $1::boolean THEN $6::timestamptz ELSE updated_at END
+WHERE account_id=$7::uuid AND app_id=$8::uuid AND subscription_id=$9::uuid RETURNING subscription_id, account_id, app_id, paused, rate_per_second, window_started_at, window_count, updated_at, paused_at, max_pending_deliveries, rate_enabled, rate_interval_ms, rate_burst, rate_credit_ms, rate_refilled_at, rate_revision, rate_sequence
+`
+
+type EventSubscriptionRateConfigureParams struct {
+	Applied        bool
+	Enabled        bool
+	IntervalMs     int64
+	Burst          int64
+	CreditMs       int64
+	NowAt          pgtype.Timestamptz
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+}
+
+func (q *Queries) EventSubscriptionRateConfigure(ctx context.Context, db DBTX, arg EventSubscriptionRateConfigureParams) (EventSubscriptionDeliveryControl, error) {
+	row := db.QueryRow(ctx, eventSubscriptionRateConfigure,
+		arg.Applied,
+		arg.Enabled,
+		arg.IntervalMs,
+		arg.Burst,
+		arg.CreditMs,
+		arg.NowAt,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+	)
+	var i EventSubscriptionDeliveryControl
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Paused,
+		&i.RatePerSecond,
+		&i.WindowStartedAt,
+		&i.WindowCount,
+		&i.UpdatedAt,
+		&i.PausedAt,
+		&i.MaxPendingDeliveries,
+		&i.RateEnabled,
+		&i.RateIntervalMs,
+		&i.RateBurst,
+		&i.RateCreditMs,
+		&i.RateRefilledAt,
+		&i.RateRevision,
+		&i.RateSequence,
+	)
+	return i, err
+}
+
+const eventSubscriptionRateConsume = `-- name: EventSubscriptionRateConsume :exec
+UPDATE event_subscription_delivery_controls SET rate_credit_ms=$1::bigint,rate_refilled_at=$2::timestamptz WHERE subscription_id=$3::uuid
+`
+
+type EventSubscriptionRateConsumeParams struct {
+	CreditMs       int64
+	RefilledAt     pgtype.Timestamptz
+	SubscriptionID pgtype.UUID
+}
+
+func (q *Queries) EventSubscriptionRateConsume(ctx context.Context, db DBTX, arg EventSubscriptionRateConsumeParams) error {
+	_, err := db.Exec(ctx, eventSubscriptionRateConsume, arg.CreditMs, arg.RefilledAt, arg.SubscriptionID)
+	return err
+}
+
+const eventSubscriptionRateInitialize = `-- name: EventSubscriptionRateInitialize :exec
+INSERT INTO event_subscription_delivery_controls(account_id,app_id,subscription_id) VALUES($1::uuid,$2::uuid,$3::uuid) ON CONFLICT(subscription_id) DO NOTHING
+`
+
+type EventSubscriptionRateInitializeParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+}
+
+func (q *Queries) EventSubscriptionRateInitialize(ctx context.Context, db DBTX, arg EventSubscriptionRateInitializeParams) error {
+	_, err := db.Exec(ctx, eventSubscriptionRateInitialize, arg.AccountID, arg.AppID, arg.SubscriptionID)
+	return err
+}
+
+const eventSubscriptionRatePreviewPending = `-- name: EventSubscriptionRatePreviewPending :many
+SELECT b.outbox_id,b.accepted_at,b.next_attempt_at,b.lease_until::timestamptz AS lease_until,
+ coalesce(o.payload->>'source','')::text AS event_source,coalesce(o.payload->>'id','')::text AS event_id,
+ event_recipient_delivery_deadline(coalesce(r.recipient,(SELECT v FROM jsonb_array_elements(o.recipient_snapshot) v WHERE v->>'id'=b.subscription_id LIMIT 1)),o.created_at,o.recipient_progress->b.subscription_id)::timestamptz AS deadline_at
+FROM event_routing_backlog_source b JOIN event_fanout_outbox o ON o.id=b.outbox_id
+LEFT JOIN event_fanout_recipients r ON r.outbox_id=b.outbox_id AND r.subscription_id=b.subscription_id
+WHERE b.account_id=$1::uuid AND b.app_id=$2::uuid AND b.subscription_id=$3::text AND b.consumer_kind='application' AND b.routing_state='pending'
+ORDER BY b.accepted_at,b.outbox_id LIMIT $4::integer
+`
+
+type EventSubscriptionRatePreviewPendingParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID string
+	SampleLimit    int32
+}
+
+type EventSubscriptionRatePreviewPendingRow struct {
+	OutboxID      int64
+	AcceptedAt    pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	LeaseUntil    pgtype.Timestamptz
+	EventSource   string
+	EventID       string
+	DeadlineAt    pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionRatePreviewPending(ctx context.Context, db DBTX, arg EventSubscriptionRatePreviewPendingParams) ([]EventSubscriptionRatePreviewPendingRow, error) {
+	rows, err := db.Query(ctx, eventSubscriptionRatePreviewPending,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.SampleLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventSubscriptionRatePreviewPendingRow{}
+	for rows.Next() {
+		var i EventSubscriptionRatePreviewPendingRow
+		if err := rows.Scan(
+			&i.OutboxID,
+			&i.AcceptedAt,
+			&i.NextAttemptAt,
+			&i.LeaseUntil,
+			&i.EventSource,
+			&i.EventID,
+			&i.DeadlineAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventSubscriptionCapacityCommands = `-- name: ListEventSubscriptionCapacityCommands :many
+SELECT subscription_id, command_id, account_id, app_id, request, receipt, recorded_at, retain_until FROM event_subscription_capacity_commands
+WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid
+ AND retain_until>$4::timestamptz AND recorded_at<=$4::timestamptz
+ AND ($5::text='any' OR receipt->>'outcome'=$5::text)
+ AND (NOT $6::boolean OR (recorded_at,command_id)<($7::timestamptz,$8::uuid))
+ORDER BY recorded_at DESC,command_id DESC LIMIT $9::integer
+`
+
+type ListEventSubscriptionCapacityCommandsParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	SubscriptionID  pgtype.UUID
+	NowAt           pgtype.Timestamptz
+	Outcome         string
+	HasAfter        bool
+	AfterRecordedAt pgtype.Timestamptz
+	AfterCommandID  pgtype.UUID
+	PageLimit       int32
+}
+
+func (q *Queries) ListEventSubscriptionCapacityCommands(ctx context.Context, db DBTX, arg ListEventSubscriptionCapacityCommandsParams) ([]EventSubscriptionCapacityCommand, error) {
+	rows, err := db.Query(ctx, listEventSubscriptionCapacityCommands,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.NowAt,
+		arg.Outcome,
+		arg.HasAfter,
+		arg.AfterRecordedAt,
+		arg.AfterCommandID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventSubscriptionCapacityCommand{}
+	for rows.Next() {
+		var i EventSubscriptionCapacityCommand
+		if err := rows.Scan(
+			&i.SubscriptionID,
+			&i.CommandID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Request,
+			&i.Receipt,
+			&i.RecordedAt,
+			&i.RetainUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pruneEventSubscriptionCapacityCommands = `-- name: PruneEventSubscriptionCapacityCommands :execrows
+WITH expired AS (
+ SELECT subscription_id,command_id FROM event_subscription_capacity_commands WHERE retain_until<=$1::timestamptz
+ ORDER BY retain_until,subscription_id,command_id FOR UPDATE SKIP LOCKED LIMIT $2::integer
+)
+DELETE FROM event_subscription_capacity_commands c USING expired e WHERE c.subscription_id=e.subscription_id AND c.command_id=e.command_id
+`
+
+type PruneEventSubscriptionCapacityCommandsParams struct {
+	NowAt      pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) PruneEventSubscriptionCapacityCommands(ctx context.Context, db DBTX, arg PruneEventSubscriptionCapacityCommandsParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneEventSubscriptionCapacityCommands, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

@@ -58,7 +58,7 @@ type addBucketBindingResult struct {
 
 func cmdAdd(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale add <postgres|bucket>", "add")
+		PrintUsage(os.Stderr, "usage: gregale add <postgres|bucket|datadog>", "add")
 		return 1
 	}
 	switch args[0] {
@@ -66,6 +66,8 @@ func cmdAdd(args []string) int {
 		return cmdAddPostgres(args[1:])
 	case "bucket":
 		return cmdAddBucket(args[1:])
+	case "datadog":
+		return cmdAddDatadog(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown add resource %q\n", args[0])
 		return 1
@@ -98,6 +100,12 @@ func cmdAddBucket(args []string) int {
 	}
 	*scope = resolvedScope
 	usage := "usage: gregale add bucket NAME --app APP [--env SCOPE] [--region REGION] [--public --serve-at PATH] [--permission read|write|read_write] [--label LABEL] [--prefix PREFIX] [--wait-timeout DURATION]"
+	if strings.TrimSpace(*scope) == "" {
+		// Outside a linked project the scope has no default; the usage line
+		// alone did not say which argument was missing (Snapbox SB-2).
+		PrintFail(os.Stderr, "--env is required outside a linked project: a standalone app reads the default scope (pass --env default), a project app its environment's scope")
+		return 1
+	}
 	if fs.NArg() != 1 || strings.TrimSpace(*appSlug) == "" || !api.ValidAppSlug(strings.TrimSpace(*appSlug)) ||
 		strings.TrimSpace(*scope) == "" || api.ValidateScope(strings.TrimSpace(*scope)) != nil ||
 		!addBucketNameRE.MatchString(strings.TrimSpace(fs.Arg(0))) || !objectStoragePermissionOK(*permission) ||
@@ -304,7 +312,7 @@ func cmdAddPostgres(args []string) int {
 	scaleToZero := fs.Bool("scale-to-zero", true, "suspend compute when idle")
 	storage := fs.Int64("storage-bytes", 0, "storage limit in bytes (0 uses plan allowance)")
 	restoreWindow := fs.Int64("restore-window-seconds", 0, "point-in-time restore window (0 uses plan allowance)")
-	access := fs.String("access", "read_write", "credential access: read_write|read_only|migration|data_api")
+	access := fs.String("access", "read_write", "credential access: read_write|read_only|migration|data_api|auth")
 	waitTimeout := fs.Duration("wait-timeout", addResourceDefaultWait, "maximum time to wait for the database and binding to become ready")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -314,7 +322,7 @@ func cmdAddPostgres(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	*scope = resolvedScope
-	usage := "usage: gregale add postgres [NAME] --app APP [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only|migration|data_api] [--wait-timeout DURATION]"
+	usage := "usage: gregale add postgres [NAME] --app APP [--env SCOPE] [--database REF] [--region REGION] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--environment-key KEY] [--access read_write|read_only|migration|data_api|auth] [--wait-timeout DURATION]"
 	if fs.NArg() != 0 && fs.NArg() != 1 {
 		PrintUsage(os.Stderr, usage, "add")
 		return 1

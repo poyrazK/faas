@@ -33,15 +33,93 @@ type dynamicEnvironmentRouter struct {
 
 type cachedCustomDomainRouter struct {
 	*fakeRouter
-	active bool
-	checks int
+	active      bool
+	checks      int
+	validateErr error
 }
 
 func (r *dynamicEnvironmentRouter) IsDynamicRouteHost(host string) bool { return host == r.host }
 
 func (r *cachedCustomDomainRouter) CachedCustomDomainRouteActive(context.Context, string, string) (bool, error) {
 	r.checks++
+	if r.validateErr != nil {
+		return false, r.validateErr
+	}
 	return r.active, nil
+}
+
+// adr: 190
+// adr: 1344
+// TestPGBackendCachedCustomDomainSurvivesRegistryOutage pins ADR-1344 §5
+// rule 2: when the per-request custom-domain validation cannot reach the
+// registry, a warm custom domain keeps serving from the stale tier instead
+// of failing every request, and a positive "inactive" answer still removes it.
+func TestPGBackendCachedCustomDomainSurvivesRegistryOutage(t *testing.T) {
+	const host = "shop.example.test"
+	r := &cachedCustomDomainRouter{
+		fakeRouter: &fakeRouter{byID: map[string]gateway.App{host: {ID: "app-1", AccountID: "acct-1", CustomDomainRoute: true}}},
+		active:     true,
+	}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.ID != "app-1" {
+		t.Fatalf("initial route = %+v ok=%v", app, ok)
+	}
+
+	outage := errors.New("postgres unavailable")
+	r.validateErr = outage
+	r.mu.Lock()
+	r.err = outage
+	r.mu.Unlock()
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.ID != "app-1" || !app.CustomDomainRoute {
+		t.Fatalf("registry outage dropped warm custom domain: %+v ok=%v", app, ok)
+	}
+
+	// The registry returns and reports the domain inactive and unrouted:
+	// it must stop routing, and a later outage must not revive it.
+	r.validateErr = nil
+	r.active = false
+	r.mu.Lock()
+	r.err = nil
+	delete(r.byID, host)
+	r.mu.Unlock()
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("deactivated custom domain still routed: %+v", app)
+	}
+	r.validateErr = outage
+	r.mu.Lock()
+	r.err = outage
+	r.mu.Unlock()
+	if app, ok := b.Lookup(context.Background(), host); ok {
+		t.Fatalf("outage revived a removed custom domain: %+v", app)
+	}
+}
+
+// adr: 1344
+// TestPGBackendCustomDomainValidationRefreshesStaleTTL: each successful
+// per-request validation restarts the stale TTL, so a busy custom domain
+// is still within its window when an outage begins long after the route
+// was first resolved.
+func TestPGBackendCustomDomainValidationRefreshesStaleTTL(t *testing.T) {
+	t.Setenv(gateway.RouteStaleTTLEnv, "1s")
+	const host = "shop.example.test"
+	r := &cachedCustomDomainRouter{
+		fakeRouter: &fakeRouter{byID: map[string]gateway.App{host: {ID: "app-1", AccountID: "acct-1", CustomDomainRoute: true}}},
+		active:     true,
+	}
+	b := gateway.NewPGBackend(r, gateway.NewFakeScheduler(""), nil)
+	if _, ok := b.Lookup(context.Background(), host); !ok {
+		t.Fatal("initial route failed")
+	}
+	time.Sleep(600 * time.Millisecond)
+	if _, ok := b.Lookup(context.Background(), host); !ok {
+		t.Fatal("validated warm route failed")
+	}
+	time.Sleep(600 * time.Millisecond)
+	// 1.2 s after the first resolution but 0.6 s after the last validation.
+	r.validateErr = errors.New("postgres unavailable")
+	if app, ok := b.Lookup(context.Background(), host); !ok || app.ID != "app-1" {
+		t.Fatalf("stale TTL was not refreshed by validation: %+v ok=%v", app, ok)
+	}
 }
 
 func TestPGBackendDynamicEnvironmentHostNeverServesCachedOrStaleRelease(t *testing.T) {

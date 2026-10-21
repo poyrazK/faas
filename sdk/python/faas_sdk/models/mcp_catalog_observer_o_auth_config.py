@@ -25,7 +25,10 @@ T = TypeVar("T", bound="MCPCatalogObserverOAuthConfig")
 
 @_attrs_define
 class MCPCatalogObserverOAuthConfig:
-    """Explicit OAuth refresh grant for one app and role; credentials are app default-scope secret references."""
+    """Explicit OAuth refresh grant for one app and role; credentials are app secret references in the connection
+    environment.
+
+    """
 
     token_endpoint: str
     """Explicit public HTTPS token endpoint without query or fragment; redirects and private egress are refused"""
@@ -47,6 +50,8 @@ class MCPCatalogObserverOAuthConfig:
     """Explicit provider behavior; Google requests offline consent and OIDC adds openid and offline_access"""
     token_auth_method: MCPCatalogObserverOAuthConfigTokenAuthMethod | Unset = UNSET
     """Explicit token authentication; defaults to public none or confidential basic except Google confidential post"""
+    browser_redirect_uri: str | Unset = UNSET
+    """Registered HTTPS console callback for guided browser authorization; omitted for loopback flows"""
     callback_port: int | Unset = UNSET
     """Guided loopback callback port; 0 chooses a dynamic port"""
     resource: str | Unset = UNSET
@@ -88,6 +93,8 @@ class MCPCatalogObserverOAuthConfig:
         if not isinstance(self.token_auth_method, Unset):
             token_auth_method = self.token_auth_method
 
+        browser_redirect_uri = self.browser_redirect_uri
+
         callback_port = self.callback_port
 
         resource = self.resource
@@ -122,6 +129,8 @@ class MCPCatalogObserverOAuthConfig:
             field_dict["profile"] = profile
         if token_auth_method is not UNSET:
             field_dict["token_auth_method"] = token_auth_method
+        if browser_redirect_uri is not UNSET:
+            field_dict["browser_redirect_uri"] = browser_redirect_uri
         if callback_port is not UNSET:
             field_dict["callback_port"] = callback_port
         if resource is not UNSET:
@@ -175,6 +184,8 @@ class MCPCatalogObserverOAuthConfig:
         else:
             token_auth_method = check_mcp_catalog_observer_o_auth_config_token_auth_method(_token_auth_method)
 
+        browser_redirect_uri = d.pop("browser_redirect_uri", UNSET)
+
         callback_port = d.pop("callback_port", UNSET)
 
         resource = d.pop("resource", UNSET)
@@ -195,6 +206,7 @@ class MCPCatalogObserverOAuthConfig:
             scopes=scopes,
             profile=profile,
             token_auth_method=token_auth_method,
+            browser_redirect_uri=browser_redirect_uri,
             callback_port=callback_port,
             resource=resource,
             issuer=issuer,

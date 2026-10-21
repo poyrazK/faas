@@ -6,6 +6,22 @@ import (
 )
 
 func deliveryHealthValue(h EventConsumerDeliveryHealth, metric string) (float64, bool, time.Time) {
+	if strings.HasPrefix(metric, "processing_") {
+		return deliveryHealthProcessingValue(h, metric)
+	}
+	if metric == "capacity_command_receipt_budget_used_slots" {
+		_, valid, observed := deliveryHealthReceiptBudgetValue(h)
+		if !valid {
+			return 0, false, observed
+		}
+		return float64(h.CapacityPressure.CapacityCommandBudget.RetainedReceipts), true, observed
+	}
+	if metric == "capacity_command_receipt_budget_full_seconds" {
+		return deliveryHealthReceiptBudgetValue(h)
+	}
+	if strings.HasPrefix(metric, "lineage_retry_") {
+		return deliveryHealthLineageRetryValue(h, metric)
+	}
 	if strings.HasPrefix(metric, "waiting_reason.") {
 		return deliveryHealthWaitingReasonValue(h, metric)
 	}
@@ -95,4 +111,83 @@ func deliveryHealthWaitingReasonValue(h EventConsumerDeliveryHealth, metric stri
 		return 0, valid, counts.ObservedAt
 	}
 	return float64(n), valid && n <= EventDeliveryHealthWatchCountMax, counts.ObservedAt
+}
+
+// Retry-job evidence is independent of execution-root history and the outcome window.
+func deliveryHealthLineageRetryValue(h EventConsumerDeliveryHealth, metric string) (float64, bool, time.Time) {
+	e := h.Execution
+	jobs := e.LineageRetryJobs
+	if jobs == nil {
+		return 0, false, e.ObservedAt
+	}
+	valid := jobs.CountsComplete && jobs.Coverage == "bounded_retained_active_lineage_retry_jobs" &&
+		jobs.JobLimit > 0 && int64(jobs.JobLimit) <= EventDeliveryHealthWatchCountMax &&
+		jobs.InactivityWarningSeconds > 0 && jobs.RetentionWarningSeconds > 0
+	// Validate nonnegative bounded partitions without addition overflow.
+	for _, n := range []int64{jobs.ObservedJobs, jobs.PendingJobs, jobs.PausedJobs, jobs.RemainingCases, jobs.PendingRemainingCases, jobs.PausedRemainingCases, jobs.StalledPendingJobs, jobs.RetentionRiskJobs, jobs.UnknownProgressJobs} {
+		valid = valid && n >= 0 && n <= EventDeliveryHealthWatchCountMax
+	}
+	valid = valid && jobs.ObservedJobs <= int64(jobs.JobLimit) &&
+		jobs.PendingJobs <= jobs.ObservedJobs && jobs.PausedJobs == jobs.ObservedJobs-jobs.PendingJobs &&
+		jobs.PendingRemainingCases <= jobs.RemainingCases && jobs.PausedRemainingCases == jobs.RemainingCases-jobs.PendingRemainingCases &&
+		jobs.StalledPendingJobs <= jobs.PendingJobs && jobs.RetentionRiskJobs <= jobs.ObservedJobs && jobs.UnknownProgressJobs <= jobs.ObservedJobs
+	valid = valid && jobs.PendingRemainingCases >= jobs.PendingJobs && jobs.PausedRemainingCases >= jobs.PausedJobs &&
+		(jobs.PendingJobs != 0 || jobs.PendingRemainingCases == 0) && (jobs.PausedJobs != 0 || jobs.PausedRemainingCases == 0)
+	switch metric {
+	case "lineage_retry_stalled_jobs":
+		return float64(jobs.StalledPendingJobs), valid, e.ObservedAt
+	case "lineage_retry_retention_risk_jobs":
+		return float64(jobs.RetentionRiskJobs), valid, e.ObservedAt
+	case "lineage_retry_paused_seconds":
+		if jobs.PausedJobs > 0 {
+			return 1, valid, e.ObservedAt
+		}
+		return 0, valid, e.ObservedAt
+	}
+	return 0, false, e.ObservedAt
+}
+
+// Receipt budget evidence is independent of routing and execution history coverage.
+func deliveryHealthReceiptBudgetValue(h EventConsumerDeliveryHealth) (float64, bool, time.Time) {
+	pressure := h.CapacityPressure
+	if pressure == nil || pressure.CapacityCommandBudget == nil {
+		return 0, false, time.Time{}
+	}
+	b := pressure.CapacityCommandBudget
+	valid := pressure.Complete && pressure.Coverage == "live_slots_and_all_pending_application_recipients" && b.Complete &&
+		b.AppID != "" && b.SubscriptionID != "" && strings.EqualFold(pressure.AppID, h.Routing.AppID) && strings.EqualFold(pressure.SubscriptionID, h.Routing.SubscriptionID) &&
+		strings.EqualFold(b.AppID, pressure.AppID) && strings.EqualFold(b.SubscriptionID, pressure.SubscriptionID) && b.ObservedAt.Equal(pressure.ObservedAt) &&
+		b.Limit == EventSubscriptionCapacityCommandMaxReceipts && b.RetainedReceipts >= 0 && b.RetainedReceipts <= b.Limit &&
+		b.RemainingSlots == b.Limit-b.RetainedReceipts && b.Full == (b.RemainingSlots == 0) &&
+		((b.RetainedReceipts == 0) == (b.EarliestExpiryAt == nil)) && (b.EarliestExpiryAt == nil || b.EarliestExpiryAt.After(b.ObservedAt))
+	if b.Full {
+		return 1, valid, b.ObservedAt
+	}
+	return 0, valid, b.ObservedAt
+}
+
+func deliveryHealthProcessingValue(h EventConsumerDeliveryHealth, metric string) (float64, bool, time.Time) {
+	p := h.Processing
+	if p == nil {
+		return 0, false, time.Time{}
+	}
+	valid := p.Complete && p.Coverage == "retained_deferred_invocations" && p.AppID == h.Routing.AppID && p.SubscriptionID == h.Routing.SubscriptionID && p.Processing >= 0 && p.Expired >= 0 && p.NearExpiry >= 0 && p.NearExpiry <= p.Processing && p.NearExpirySeconds == int(EventProcessingNearExpiry/time.Second)
+	if !valid {
+		return 0, false, p.ObservedAt
+	}
+	switch metric {
+	case "processing_lease_risk_seconds":
+		return float64(p.NearExpiry), true, p.ObservedAt
+	case "processing_expired_seconds":
+		return float64(p.Expired), true, p.ObservedAt
+	case "processing_oldest_seconds":
+		if p.Processing == 0 {
+			return 0, p.OldestProcessingOfferedAt == nil, p.ObservedAt
+		}
+		if p.OldestProcessingOfferedAt == nil || p.OldestProcessingOfferedAt.IsZero() || p.OldestProcessingOfferedAt.After(p.ObservedAt) {
+			return 0, false, p.ObservedAt
+		}
+		return p.ObservedAt.Sub(*p.OldestProcessingOfferedAt).Seconds(), true, p.ObservedAt
+	}
+	return 0, false, p.ObservedAt
 }

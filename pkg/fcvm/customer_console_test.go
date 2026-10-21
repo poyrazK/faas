@@ -183,6 +183,15 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 		"2026/10/14 00:58:50 INFO event publish proxy started endpoint=http://169.254.169.254/v1/events:publish\n",
 		"2026/10/14 00:58:50 INFO outbound relay started endpoint=http://127.0.0.1:2774\n",
 		"2026/10/14 00:58:50 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err=\"invalid argument\"\n",
+		// H10-56: boot characterization and port normalization.
+		"2026/10/14 15:46:06 WARN portnorm DNAT install failed rule=\"-t nat -A OUTPUT -p tcp --dport 8080 -j REDIRECT --to-ports 7000\"\n",
+		"2026/10/14 15:46:06 WARN portnorm forward failed; host will see listen mismatch port=7000\n",
+		"2026/10/14 15:46:06 INFO characterization complete mode=forward port=7000 class=http exit=-1 shipped=true\n",
+		// Every boot's proxy and environment lines.
+		"2026/10/14 19:44:14 INFO tail_events proxy started socket=/run/guest-init/tail-events.sock vsock_port=1027\n",
+		"2026/10/14 19:44:14 INFO framework_ready stream proxy started vsock_port=1027\n",
+		"2026/10/14 19:44:14 INFO secrets loaded count=3\n",
+		"2026/10/14 19:44:14 INFO api_env loaded count=10\n",
 		"2026-10-14T07:14:45.514973340 [c26f50da-1f34-494c-9ecc-acd797734558:main] Vmm is stopping.\n",
 		"2026-10-14T07:14:45.515204584 [c26f50da-1f34-494c-9ecc-acd797734558:main] Killing vCPU threads\n",
 		"2026/10/14 00:58:51 INFO order created id=42\n",

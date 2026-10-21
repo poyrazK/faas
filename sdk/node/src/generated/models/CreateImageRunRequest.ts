@@ -34,5 +34,13 @@ export type CreateImageRunRequest = {
    * always re-pulls a cached image so a moved tag is resolved again.
    */
   pull?: 'missing' | 'always';
+  /**
+   * ADR-1330: hold the command until one client attaches to the run's task. The run has no retries and timeout_sec is at most 3600. Needs the operator gate FAAS_INTERACTIVE_IMAGE_RUNS; otherwise 501.
+   */
+  interactive?: boolean;
+  /**
+   * Give the interactive command a pseudo-terminal. Requires interactive.
+   */
+  tty?: boolean;
 };
 

@@ -32,6 +32,7 @@
         <section>
           <h2>Git source</h2>
           <dl>
+            <dt>Provider</dt><dd>{{if eq $source.Spec.Provider "gitlab"}}GitLab.com{{else}}GitHub{{end}}</dd>
             <dt>Repository and ref</dt><dd><code>{{$source.Spec.Repository}} · {{$source.Spec.Ref}}</code></dd>
             <dt>Definition</dt><dd><code>{{$source.Spec.ManifestPath}}</code></dd>
             <dt>Approval policy</dt><dd>{{$source.Spec.ApprovalPolicy}}</dd>
@@ -48,7 +49,23 @@
             <label>Commit to review <input type="text" name="commit_sha" pattern="[a-f0-9]{40}" minlength="40" maxlength="40" required placeholder="Full immutable commit SHA" value="{{$source.SourceCommitSHA}}"></label>
             <button type="submit">Review Git definition</button>
           </form>
+          <form method="POST" action="{{$target}}/plan">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <label>Candidate commit <input type="text" name="commit_sha" pattern="[a-f0-9]{40}" minlength="40" maxlength="40" required placeholder="Full immutable commit SHA" value="{{$source.SourceCommitSHA}}"></label>
+            <button type="submit">Preview field changes</button>
+          </form>
         </section>
+        {{with .PlanPreview}}
+          <section class="{{if .Plan.BlockingReasons}}blocked{{end}}">
+            <h2>Candidate plan</h2>
+            <p>Commit <code>{{.Plan.CommitSHA}}</code> · source generation {{.Plan.Generation}} · observed intent {{.Plan.ObservedVersion}}</p>
+            <p>This preview changes nothing. Values are redacted. Re-run after source or environment changes; this plan does not approve or deploy the candidate.</p>
+            {{if .Plan.BlockingReasons}}<h3>Blocking reasons</h3><ul>{{range .Plan.BlockingReasons}}<li>{{.}}</li>{{end}}</ul>{{end}}
+            <table><thead><tr><th>Resource</th><th>Field</th><th>Action</th><th>Reason</th></tr></thead><tbody>
+              {{range .Plan.Changes}}<tr><td><code>{{.Resource}}</code></td><td><code>{{.Path}}</code></td><td>{{.Action}}</td><td>{{.Reason}}</td></tr>{{end}}
+            </tbody></table>
+          </section>
+        {{end}}
         {{if .Review}}
           {{$review := .Review}}
           <section>
@@ -73,6 +90,9 @@
             <table><thead><tr><th>Resource</th><th>Field</th><th>Action</th><th>Reason</th></tr></thead><tbody>
               {{range .Changes}}<tr><td><code>{{.Resource}}</code></td><td><code>{{.Path}}</code></td><td>{{.Action}}</td><td>{{.Reason}}</td></tr>{{end}}
             </tbody></table>
+            {{if .RetirementImpacts}}<h3>Workloads proposed for retirement</h3>
+            <p>Counts are a review-time snapshot. All accepted work remains retained.</p>
+            {{range .RetirementImpacts}}<p><code>{{.Resource}}</code> · app <code>{{.AppID}}</code> · routes {{len .Routes}} · queues {{len .QueueBindingIDs}} · consumers {{len .ConsumerIDs}}{{if .JobID}} · Job <code>{{.JobID}}</code>{{end}} · pending invocations {{.PendingInvocations}} · in flight {{.InFlightInvocations}} · queued tasks {{.QueuedTasks}} · running tasks {{.InFlightTasks}}</p>{{end}}{{end}}
             {{if .CanApply}}<form method="POST" action="{{$target}}/adopt">
               <input type="hidden" name="csrf_token" value="{{$csrf}}">
               <input type="hidden" name="plan_hash" value="{{.Hash}}">
@@ -97,6 +117,15 @@
           </section>
           {{end}}
         {{end}}
+        {{if .Status.WorkloadRetirements}}
+        <section>
+          <h2>Retained workloads</h2>
+          <p>Retirement closes this environment while retaining configuration and accepted work. Recovery uses the original app identity and fresh qualification.</p>
+          <table><thead><tr><th>Workload</th><th>Phase</th><th>Original app</th><th>Gateway acknowledgements</th><th>Retained queues</th></tr></thead><tbody>
+          {{range .Status.WorkloadRetirements}}<tr><td><code>{{.Resource}}</code></td><td>{{.Phase}}</td><td><code>{{.AppID}}</code></td><td>{{len .AcknowledgedGateways}} / {{len .ExpectedGateways}}</td><td>{{len .QueueBindingIDs}}</td></tr>{{end}}
+          </tbody></table>
+        </section>
+        {{end}}
         <section>
           <h2>Source binding</h2>
           <p>In report mode, rebind or disconnect releases Git field ownership and preserves existing values. Rebinding requires a new approval and adoption. Pending execution and retained qualification records block either action.</p>
@@ -105,7 +134,8 @@
             <input type="hidden" name="expected_generation" value="{{$source.Generation}}">
             <label>Ref <input name="ref" value="{{$source.Spec.Ref}}" required></label>
             <label>Manifest path <input name="manifest_path" value="{{$source.Spec.ManifestPath}}" required></label>
-            <label>Approval policy <select name="approval_policy"><option value="manual">Manual</option><option value="protected_branch" {{if eq $source.Spec.ApprovalPolicy "protected_branch"}}selected{{end}}>Protected branch</option></select></label>
+            {{if eq $source.Spec.Provider "gitlab"}}<input type="hidden" name="approval_policy" value="manual"><p>GitLab.com uses manual approval.</p>{{else}}
+            <label>Approval policy <select name="approval_policy"><option value="manual">Manual</option><option value="protected_branch" {{if eq $source.Spec.ApprovalPolicy "protected_branch"}}selected{{end}}>Protected branch</option></select></label>{{end}}
             <button type="submit">Release ownership and rebind</button>
           </form></details>
           <form method="POST" action="{{$target}}/unbind">
@@ -119,7 +149,7 @@
             <input type="hidden" name="csrf_token" value="{{$csrf}}">
             <input type="hidden" name="expected_generation" value="{{$source.Generation}}">
             <label>Mode <select name="mode"><option value="report" {{if eq $source.Spec.Mode "report"}}selected{{end}}>Report</option><option value="enforce" disabled {{if eq $source.Spec.Mode "enforce"}}selected{{end}}>Enforce (unavailable in preview)</option></select></label>
-            <label><input type="checkbox" name="prune" value="true" {{if $source.Spec.Prune}}checked{{end}}> Allow removal of previously owned fields omitted from Git</label>
+            {{if eq $source.Spec.Provider "gitlab"}}<p>GitLab.com reporting preserves fields omitted from Git.</p>{{else}}<label><input type="checkbox" name="prune" value="true" {{if $source.Spec.Prune}}checked{{end}}> Allow removal of previously owned fields omitted from Git</label>{{end}}
             <label><input type="checkbox" name="suspended" value="true" {{if $source.Suspended}}checked{{end}}> Suspend reconciliation and retain ownership</label>
             <button type="submit">Update controls</button>
           </form>
@@ -159,13 +189,27 @@
       {{else}}
         <section>
           <h2>Connect an environment definition</h2>
-          <p>The source uses this project's verified GitHub repository. Start in report mode, review an immutable commit, then adopt existing fields for drift reporting.</p>
+          <p>Start in report mode, review an immutable commit, then adopt existing fields for drift reporting.</p>
+          <h3>GitHub</h3>
+          <p>Use this project's verified GitHub repository.</p>
           <form method="POST" action="{{$target}}/bind">
             <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <input type="hidden" name="provider" value="github">
             <label>Definition path in Git <input type="text" name="manifest_path" placeholder="environments/{{.Environment}}.yaml" required></label>
             <label>Git ref <input type="text" name="ref" placeholder="Defaults to the project production branch"></label>
             <label>Approval policy <select name="approval_policy"><option value="manual">Manual review in Gregale</option><option value="protected_branch">Verified reviewed merges on a protected branch</option></select></label>
             <button type="submit">Connect in report mode</button>
+          </form>
+          <h3>GitLab.com</h3>
+          <p><a href="/dashboard/account">Connect your GitLab account</a>, then choose the repository and definition. GitLab.com supports manual approval and preserves omitted fields.</p>
+          <form method="POST" action="{{$target}}/bind">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <input type="hidden" name="provider" value="gitlab">
+            <input type="hidden" name="approval_policy" value="manual">
+            <label>Repository <input type="text" name="repository" placeholder="group/subgroup/service" required></label>
+            <label>Git ref <input type="text" name="ref" value="refs/heads/main" required></label>
+            <label>Definition path in Git <input type="text" name="manifest_path" placeholder="environments/{{.Environment}}.yaml" required></label>
+            <button type="submit">Connect GitLab in report mode</button>
           </form>
         </section>
       {{end}}

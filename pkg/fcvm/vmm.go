@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/guestmemproto"
 	"github.com/onebox-faas/faas/pkg/jailsetup"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -159,7 +160,11 @@ type JailerVMM struct {
 	// evictedLine receives lines that cross the per-instance ring byte
 	// budget. Production supplies a bounded async archive sink; the callback
 	// must not perform disk or network I/O while the ring mutex is held.
-	evictedLine func(instance string, line logbuf.Line)
+	evictedLine           func(instance string, line logbuf.Line)
+	committedLine         func(appID string, line logbuf.Line)
+	instancePauseObserver func(string, bool)
+	instanceLogObserver   func(appID, deploymentID, instance string) (func(logbuf.Line), func())
+	instanceLogStops      map[string]func()
 	// retiredLines receives the lines a ring still holds when its VM is
 	// torn down. Without it a log volume under the ring budget never
 	// reaches the archive, so a parked instance had no retained logs.
@@ -174,8 +179,11 @@ type JailerVMM struct {
 	// each instance so Kill/DestroyWithExport can Remove them on teardown.
 	// Without this, the tmp files (in /tmp) outlive the chroot and leak
 	// across thousands of wakes on a busy box.
-	materialisedTmp      map[string][]string
-	materialisedIdentity map[string]resourceFileIdentity
+	materialisedTmp        map[string][]string
+	verifiedRuntimeSources *runtimeSourceCache
+	runtimeSourceRoot      string
+	runtimeDriveHandoffs   map[string]*runtimeDriveHandoff
+	materialisedIdentity   map[string]resourceFileIdentity
 	// bindMounts tracks image bind mounts used when a source and the jail
 	// chroot are on different filesystems (the production jail is tmpfs).
 	// The source mode is restored after the VM exits.
@@ -460,8 +468,13 @@ func guestInitStageLine(line []byte) bool {
 // on every boot (hunt #10, H10-15). The console file keeps them for operators.
 var guestInitPlatformMessages = []string{
 	"workload identity proxy ", "event publish proxy ", "outbound relay ",
-	"stateless advisory", "trace bridge ", "tail events proxy ", "vsock ",
+	"stateless advisory", "trace bridge ", "tail_events proxy ", "vsock ",
 	"sidecar ", "healthcheck: ", "WatchOOM",
+	// Every boot also logged these four; the tail_events prefix above was
+	// spelled with a space and never matched (hunt #10, after rc.261).
+	"framework_ready ", "secrets loaded", "api_env loaded",
+	// Boot characterization and port normalization (H10-56).
+	"characterization ", "portnorm ",
 	// Job exit/cancel delivery over vsock: "INFO job-exit shipped ... attempt=1"
 	// ended every job task log, its attempt being the vsock retry rather than
 	// the task attempt the log header names (hunt #10).
@@ -627,8 +640,32 @@ func (v *JailerVMM) LogRing(instance string) *logbuf.Ring {
 // Returns the ring pointer for callers that want to pre-publish a line
 // (e.g. M6 builder VMs writing the build-done marker).
 func (v *JailerVMM) registerRing(instance string) *logbuf.Ring {
+	return v.registerAppRing(instance, "")
+}
+
+func (v *JailerVMM) registerAppRing(instance, appID string) *logbuf.Ring {
+	return v.registerDeploymentRing(instance, appID, "")
+}
+
+// registerLeaseRing registers the lease's ring with the app and deployment
+// identity the wake carried in its correlation fields. Builder VMs get an
+// anonymous ring, so build output never counts as the app's log lines
+// (ADR-746) or reaches app log observers.
+func (v *JailerVMM) registerLeaseRing(ctx context.Context, l Lease) *logbuf.Ring {
+	if l.IsBuilder {
+		return v.registerRing(l.Instance)
+	}
+	fields, _ := wire.FromContext(ctx)
+	return v.registerDeploymentRing(l.Instance, fields.AppID, fields.DeploymentID)
+}
+
+func (v *JailerVMM) registerDeploymentRing(instance, appID, deploymentID string) *logbuf.Ring {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if stop := v.instanceLogStops[instance]; stop != nil {
+		stop()
+		delete(v.instanceLogStops, instance)
+	}
 	if old, ok := v.rings[instance]; ok {
 		_ = old.Close()
 	}
@@ -649,6 +686,26 @@ func (v *JailerVMM) registerRing(instance string) *logbuf.Ring {
 		evictedLine := v.evictedLine
 		r.SetEvictCallback(func(line logbuf.Line) {
 			evictedLine(instance, line)
+		})
+	}
+	var observe func(logbuf.Line)
+	if v.instanceLogObserver != nil && appID != "" {
+		var stop func()
+		observe, stop = v.instanceLogObserver(appID, deploymentID, instance)
+		if v.instanceLogStops == nil {
+			v.instanceLogStops = map[string]func(){}
+		}
+		v.instanceLogStops[instance] = stop
+	}
+	if (v.committedLine != nil || observe != nil) && appID != "" {
+		cb := v.committedLine
+		r.SetCommitCallback(func(line logbuf.Line) {
+			if cb != nil {
+				cb(appID, line)
+			}
+			if observe != nil {
+				observe(line)
+			}
 		})
 	}
 	v.rings[instance] = r
@@ -678,6 +735,40 @@ func (v *JailerVMM) WithSlowSubscriberCallback(cb func()) *JailerVMM {
 	v.slowSubscriber = cb
 	v.mu.Unlock()
 	return v
+}
+
+// WithLogCommitCallback observes newly received app log lines. App identity
+// comes from the scheduler's correlation envelope captured before guest startup.
+func (v *JailerVMM) WithLogCommitCallback(cb func(appID string, line logbuf.Line)) *JailerVMM {
+	v.mu.Lock()
+	v.committedLine = cb
+	v.mu.Unlock()
+	return v
+}
+
+// WithInstanceLogObserver installs bounded, non-blocking lifecycle and log callbacks.
+// Identities come from host context. Stop must be idempotent.
+func (v *JailerVMM) WithInstanceLogObserver(cb func(string, string, string) (func(logbuf.Line), func())) *JailerVMM {
+	v.mu.Lock()
+	v.instanceLogObserver = cb
+	v.mu.Unlock()
+	return v
+}
+
+// WithInstancePauseObserver reports successful host pause/resume transitions.
+func (v *JailerVMM) WithInstancePauseObserver(cb func(string, bool)) *JailerVMM {
+	v.mu.Lock()
+	v.instancePauseObserver = cb
+	v.mu.Unlock()
+	return v
+}
+func (v *JailerVMM) observeInstancePause(instance string, paused bool) {
+	v.mu.Lock()
+	cb := v.instancePauseObserver
+	v.mu.Unlock()
+	if cb != nil {
+		cb(instance, paused)
+	}
 }
 
 // WithLogEvictionCallback installs the per-line callback every future ring
@@ -734,6 +825,10 @@ func (v *JailerVMM) unregisterRing(instance string) {
 func (v *JailerVMM) retireRing(instance string, archive bool) {
 	v.mu.Lock()
 	r, ok := v.rings[instance]
+	if stop := v.instanceLogStops[instance]; stop != nil {
+		stop()
+		delete(v.instanceLogStops, instance)
+	}
 	if ok {
 		delete(v.rings, instance)
 	}
@@ -1090,7 +1185,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 			_ = v.Kill(context.WithoutCancel(ctx), l)
 		}
 	}()
-	_ = v.registerRing(l.Instance)
+	_ = v.registerLeaseRing(ctx, l)
 
 	cfg = v.withBalloon(cfg)
 	cfg = v.withPmemBase(l, cfg)
@@ -1100,6 +1195,9 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return fmt.Errorf("vmm: provision chroot: %w", err)
 	}
 	provisionedAt := time.Now()
+	if err := v.pinApprovedRuntimeDrives(ctx, l, root, jailed); err != nil {
+		return fmt.Errorf("vmm: verify staged runtime drives: %w", err)
+	}
 	if err := v.stagePreBootFilesForOwner(ctx, stagingOwner, l.Instance, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask); err != nil {
 		return fmt.Errorf("vmm: stage pre-boot workload state: %w", err)
 	}
@@ -1173,6 +1271,9 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		}
 	}
 	cgroupReadyAt := time.Now()
+	if err := v.measureFinalRuntimeDrives(ctx, l, root, cfgBytes); err != nil {
+		return fmt.Errorf("vmm: measure runtime drive handoff: %w", err)
+	}
 	if err = writeConfigFIFO(ctx, cfgPath, cfgBytes); err != nil {
 		return fmt.Errorf("vmm: write config: %w", err)
 	}
@@ -1251,6 +1352,9 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		if !quotaRestoredAt.IsZero() {
 			breakdown.QuotaRestoreMs = quotaRestoredAt.Sub(readyAt).Milliseconds()
 		}
+	}
+	if err := v.observeApprovedRuntimeDrives(ctx, l); err != nil {
+		return fmt.Errorf("vmm: observe native runtime drive handles: %w", err)
 	}
 	return nil
 }
@@ -1835,6 +1939,9 @@ func (v *JailerVMM) cancelStartupCPUBoostTail(instance string) {
 // HTTP GET <path> against <HostIP>:8080 and accepts 2xx as ready. The
 // Manager threads WakeRequest.HealthcheckPath into this field at bringUp.
 func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err error) {
+	if err := v.beginProtectedNativeRestore(ctx, l, spec); err != nil {
+		return err
+	}
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
 	}
@@ -1863,7 +1970,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	chrootReady := time.Now()
 	defer func() {
-		if err != nil {
+		if err != nil && spec.verifiedSnapshot == nil {
 			_ = v.Kill(context.WithoutCancel(ctx), l)
 		}
 	}()
@@ -1876,7 +1983,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// /srv/fc/snap and the resolution is essentially a stat; the OCI
 	// driver streams the bytes over HTTP. Tmp cleanup happens via the
 	// deferred Kill (chroot lives on tmpfs and disappears with it).
-	memSrc, memTiming, err := v.resolveRestoreBlob(ctx, l.Instance, "mem", spec.StorageKey, spec.VMStatePath)
+	memSrc, memTiming, err := v.resolveRestoreBlobForInputs(ctx, l, spec, "mem", spec.StorageKey, spec.VMStatePath)
 	if err != nil {
 		return err
 	}
@@ -1904,8 +2011,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// nil-error/empty-result materialization falls back to it too (the
 	// backend surfaced no file for this key). It adds only the source and
 	// byte attribution that mem and vmstate previously lacked.
-	stateSrc, stateTiming, gerr := v.resolveRestoreBlob(
-		ctx, l.Instance, "vmstate", spec.VMStateStorageKey, spec.VMStatePath)
+	stateSrc, stateTiming, gerr := v.resolveRestoreBlobForInputs(
+		ctx, l, spec, "vmstate", spec.VMStateStorageKey, spec.VMStatePath)
 	if gerr != nil {
 		return gerr
 	}
@@ -1973,7 +2080,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 			})
 		}
 	}
-	resolvedArtifacts, err := v.resolveRestoreArtifacts(ctx, l.Instance, artifacts)
+	resolvedArtifacts, err := v.resolveRestoreArtifactsForInputs(ctx, l, spec, artifacts)
 	if err != nil {
 		return err
 	}
@@ -2019,11 +2126,14 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// cannot escape quota accounting by writing past its read-only
 	// boundary).
 	for i := 1; i < len(resolvedWorkloads); i++ {
-		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], filepath.Base(resolvedWorkloads[i]), l.Instance); err != nil {
+		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], snapshotRestoreSidecarName(spec, i, resolvedWorkloads[i]), l.Instance); err != nil {
 			return fmt.Errorf("vmm: stage sidecar %d: %w", i-1, err)
 		}
 	}
 	tStageDrives := time.Now()
+	if err := v.pinVerifiedSnapshotDrives(ctx, l, root, spec); err != nil {
+		return fmt.Errorf("vmm: pin protected restore drives: %w", err)
+	}
 	// The pre-boot write loop-mounts drive1 (a clone already bound into the
 	// jail) on a private host mountpoint; nothing staged next — the snapshot
 	// binds, chroot ownership, vsock listeners, mount helper, TUN source —
@@ -2072,6 +2182,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err != nil {
 		return fmt.Errorf("vmm: stage vmstate: %w", err)
 	}
+	if err := v.pinVerifiedSnapshotBlobs(ctx, l, root, spec, memName, stateName); err != nil {
+		return fmt.Errorf("vmm: pin protected snapshot blobs: %w", err)
+	}
 	tMemState := time.Now()
 	// firecracker (as the jailer uid) writes the API socket and, later, snapshot
 	// output into the chroot root — it must own that directory.
@@ -2103,7 +2216,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// Move 4 (issue #254): register the per-instance ring BEFORE
 	// startJailer so cmd.Stdout captures every byte the resumed FC
 	// writes, including the boot echo and the resume hook's ack.
-	_ = v.registerRing(l.Instance)
+	_ = v.registerLeaseRing(ctx, l)
 	networkWait, networkSetup, err := awaitWakeNetwork(ctx)
 	if err != nil {
 		return err
@@ -2141,9 +2254,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"mem_backend":   map[string]any{"backend_type": "File", "backend_path": memName},
 		"resume_vm":     !spec.KeepPaused,
 	}
-	if err = v.apiPut(ctx, l.Instance, "/snapshot/load", body); err != nil {
+	if err = v.loadRestoredSnapshot(ctx, l, root, spec, body); err != nil {
 		return fmt.Errorf("vmm: load snapshot: %w", err)
 	}
+	v.observeInstancePause(l.Instance, spec.KeepPaused)
 	tLoad := time.Now()
 	// A warm-pool restore deliberately remains paused. The guest resume hook
 	// and readiness probe belong to the later in-place resume, after the
@@ -2164,6 +2278,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tReady := time.Now()
+	if err := v.observeVerifiedSnapshotDrives(ctx, l, spec); err != nil {
+		return fmt.Errorf("vmm: observe protected restore drives: %w", err)
+	}
 	v.applyBlockRateLimitAfterRestore(ctx, l, spec.Workloads)
 	// Snapshot load, lazy memory faults, and the mandatory guest resume hook
 	// are startup work. Applying a customer's sustained CPU shape before those
@@ -2701,16 +2818,19 @@ func readConnectAck(conn net.Conn) (string, error) {
 // shared entropy is exactly the failure mode V6 rejects, so we refuse
 // to declare it ready.
 func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
-	return retryResumeTransport(ctx, func(callCtx context.Context) error {
-		return v.triggerResumeHookOnce(callCtx, l, hostTimeUnixNano)
-	})
+	_, err := v.triggerResumeHookObserved(ctx, l, hostTimeUnixNano)
+	return err
 }
 
-func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTimeUnixNano int64) error {
-	return v.triggerResumeHookOnceWithPeer(ctx, l, hostTimeUnixNano, nil)
+func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTimeUnixNano int64, observed *runtimeResumeHookAcknowledgment) error {
+	return v.triggerResumeHookObservedWithPeer(ctx, l, hostTimeUnixNano, nil, observed)
 }
 
 func (v *JailerVMM) triggerResumeHookOnceWithPeer(ctx context.Context, l Lease, hostTimeUnixNano int64, validatePeer func(net.Conn) error) error {
+	return v.triggerResumeHookObservedWithPeer(ctx, l, hostTimeUnixNano, validatePeer, nil)
+}
+
+func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lease, hostTimeUnixNano int64, validatePeer func(net.Conn) error, observed *runtimeResumeHookAcknowledgment) error {
 	// Defense-in-depth: refuse to dial with a half-built VMM or empty instance.
 	// Without this guard, a refactor that passes an uninitialised JailerVMM
 	// (test seam, future caller) would dial a malformed UDS path and return a
@@ -2755,7 +2875,7 @@ func (v *JailerVMM) triggerResumeHookOnceWithPeer(ctx context.Context, l Lease, 
 			// Step 1: FC CONNECT-port handshake. "CONNECT <port>\n" — ASCII,
 			// newline-terminated. Guest listens on port VsockResumePort (1024).
 			connectCmd := fmt.Sprintf("CONNECT %d\n", resumeHookGuestPort)
-			if _, err = c.Write([]byte(connectCmd)); err == nil {
+			if err = writeResumeHookFrame(c, []byte(connectCmd)); err == nil {
 				// Step 2: read "OK <hostside_port>\n". FC prefixes the host-assigned
 				// ephemeral port with "OK ". We don't care about the value (it's
 				// for connection-multiplexing bookkeeping on the FC side), only
@@ -2835,7 +2955,7 @@ func (v *JailerVMM) triggerResumeHookOnceWithPeer(ctx context.Context, l Lease, 
 			return err
 		}
 	}
-	if _, err := conn.Write(msg); err != nil {
+	if err := writeResumeHookFrame(conn, msg); err != nil {
 		return fmt.Errorf("vmm: write resume request: %w", err)
 	}
 
@@ -2863,6 +2983,14 @@ func (v *JailerVMM) triggerResumeHookOnceWithPeer(ctx context.Context, l Lease, 
 		if err := validatePeer(conn); err != nil {
 			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if observed != nil {
+		*observed = runtimeResumeHookAcknowledgment{Version: 1,
+			PayloadHash:      runtimeResumePayloadHash("gregale.runtime-resume.hook.v1\x00", msg),
+			HostTimeUnixNano: hostTimeUnixNano, CompletedAtUnixNano: time.Now().UnixNano()}
 	}
 	// Keep host transport setup separate from waiting for the guest hook.
 	// Durations and the lease ID are sufficient; never log the entropy payload.
@@ -3250,8 +3378,17 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		// refuse before hooks, pause, file creation or failed-capture deletion.
 		return SnapshotInfo{}, fmt.Errorf("native recovery: snapshot publication producer is unavailable: %w", state.ErrConflict)
 	}
+	capture, err := v.beginNativeSnapshot(ctx, l, spec)
+	if err != nil {
+		return SnapshotInfo{}, err
+	}
+	if capture != nil {
+		ctx = capture.ctx //nolint:contextcheck // beginNativeSnapshot derives this cancellable flight context from the incoming ctx.
+		defer capture.finish()
+	}
 	defer func() {
 		if retErr != nil {
+			info = SnapshotInfo{}
 			v.cleanupFailedSnapshotCapture(ctx, spec)
 			return
 		}
@@ -3294,6 +3431,15 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		}
 	}()
 	const memName, stateName = "mem", "vmstate"
+	if capture != nil {
+		// Release Firecracker's tmpfs outputs before restoring the ordinary
+		// memory fence, including partial snapshot/create and upload failures.
+		defer func() {
+			if err := removeNativeSnapshotOutputs(root); err != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("vmm: remove native snapshot outputs: %w", err))
+			}
+		}()
+	}
 	create := map[string]any{
 		"snapshot_type": "Full",
 		"snapshot_path": stateName,
@@ -3324,7 +3470,14 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if freezeErr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: freeze snapshot private drive: %w", freezeErr)
 		}
-		defer func() { _ = os.Remove(frozenDrivePath) }()
+		defer func() {
+			if err := os.Remove(frozenDrivePath); capture != nil && err != nil && !os.IsNotExist(err) {
+				retErr = errors.Join(retErr, fmt.Errorf("vmm: remove frozen snapshot drive: %w", err))
+			}
+		}()
+	}
+	if capture != nil {
+		return v.publishNativeSnapshot(l, spec, root, frozenDrivePath, capture)
 	}
 	if spec.ResumeBeforePublish {
 		// The snapshot files are complete once Firecracker returns from
@@ -3359,7 +3512,6 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 	var memPublishedPath string
 	var memBytes int64
 	memContent := int64(-1)
-	var err error
 	memPublishedLocally := false
 	// In OCI mode, never rename into a cache path returned by LocalPath:
 	// the cache is only a read-through copy and must not become the sole
@@ -3684,7 +3836,7 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 	// applies on a long-paused VM that just got hit by /snapshot/
 	// create — the socket is fine, but defensive retries are
 	// cheap).
-	err := v.apiPatch(ctx, l.Instance, "/vm", map[string]any{"state": "Resumed"})
+	_, err := v.resumeVMObserved(ctx, l)
 	if err == nil {
 		return nil
 	}
@@ -3695,6 +3847,7 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 	// a real failure and bubbles up.
 	var apiErr *fcAPIError
 	if errors.As(err, &apiErr) && apiErr.statusCode == http.StatusConflict {
+		v.observeInstancePause(l.Instance, false)
 		return nil
 	}
 	return fmt.Errorf("vmm: resume: %w", err)
@@ -3703,10 +3856,20 @@ func (v *JailerVMM) ResumeVM(ctx context.Context, l Lease) error {
 // Kill stops the jailer process (if any) and removes the chroot. Idempotent.
 // SIGKILL'd instances don't get an artifact export — that's Builderd's path
 // (use DestroyWithExport).
-func (v *JailerVMM) Kill(ctx context.Context, l Lease) error {
+func (v *JailerVMM) Kill(ctx context.Context, l Lease) (err error) {
+	if err := v.cancelSnapshotRestoreLoad(l); err != nil {
+		return err
+	}
+	// Failed retirement retains sealed sources alongside all other ownership.
+	defer func() {
+		if err == nil {
+			err = v.releaseRuntimeSources(l.Instance)
+		}
+	}()
 	if v.nativeRecovery != nil {
 		return v.killNative(ctx, l)
 	}
+	v.cancelNativeSnapshot(l.Instance)
 	v.cancelStartupCPUBoostTail(l.Instance)
 	v.mu.Lock()
 	cmd := v.proc[l.Instance]
@@ -4394,8 +4557,8 @@ const layerImageName = "layer.ext4"
 const (
 	kernelImageName     = "vmlinux"
 	baseImageName       = "base.ext4"
-	memSnapshotName     = "snap-in-mem"
-	vmstateSnapshotName = "snap-in-vmstate"
+	memSnapshotName     = runtimeadmission.SnapshotMemoryName
+	vmstateSnapshotName = runtimeadmission.SnapshotVMStateName
 )
 
 func stableReadOnlyName(src, fallback string) string {
@@ -6416,19 +6579,29 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		case "worker":
 			return true, nil
 		case "job", "http", "graphql", "grpc":
-			return true, fmt.Errorf("execution mode %q conflicts with characterized class %q (port=%d, exit_code=%d)", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode)
+			return true, executionModeConflict(executionMode, report)
 		}
 	case api.ExecutionModeJob:
 		switch report.ObservedClass {
 		case "job":
 			return true, nil
 		case "worker", "http", "graphql", "grpc":
-			return true, fmt.Errorf("execution mode %q conflicts with characterized class %q (port=%d, exit_code=%d)", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode)
+			return true, executionModeConflict(executionMode, report)
 		}
 	default:
 		return true, fmt.Errorf("unsupported execution mode %q", executionMode)
 	}
 	return false, nil
+}
+
+// executionModeConflict is the customer's declared mode disagreeing with what
+// the workload did at startup: a worker that bound a port or exited, a job
+// that served. production-us hunt #10 (H10-135): the plain error surfaced as
+// "internal", so the status page counted it as a platform failure and the
+// owner got no stable code.
+func executionModeConflict(executionMode string, report api.CharacterizationReport) error {
+	return api.NewProblem(422, api.CodeExecutionModeConflict, "execution mode conflicts with the app's behavior",
+		fmt.Sprintf("execution mode %q conflicts with characterized class %q (port=%d, exit_code=%d)", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode))
 }
 
 // loopbackBindProblem names a readiness failure whose only observed listener
@@ -7252,7 +7425,15 @@ func (v *JailerVMM) apiPut(ctx context.Context, instance, path string, body any)
 }
 
 func (v *JailerVMM) apiPatch(ctx context.Context, instance, path string, body any) error {
-	return v.apiCall(ctx, http.MethodPatch, instance, path, body)
+	err := v.apiCall(ctx, http.MethodPatch, instance, path, body)
+	if err == nil && path == "/vm" {
+		if payload, ok := body.(map[string]any); ok {
+			if state, ok := payload["state"].(string); ok && (state == "Paused" || state == "Resumed") {
+				v.observeInstancePause(instance, state == "Paused")
+			}
+		}
+	}
+	return err
 }
 
 // fcAPIError (issue #470 / PR #470-FU-A) is the typed error

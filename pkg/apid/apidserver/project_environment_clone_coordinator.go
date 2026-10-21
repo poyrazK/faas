@@ -248,7 +248,7 @@ func (s *server) copyProjectEnvironmentClone(ctx context.Context, store projectE
 	if err != nil {
 		return lease, fmt.Errorf("prepare clone object credentials: %w", err)
 	}
-	account, err := s.store.AccountByID(ctx, lease.Operation.AccountID)
+	account, err := state.ProjectResourceAccountByID(ctx, s.store, lease.Operation.ProjectID)
 	if err != nil {
 		return lease, err
 	}

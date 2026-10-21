@@ -39,7 +39,7 @@ func (f *doctorImageFlags) validate(fs *flag.FlagSet) error {
 	visited := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { visited[f.Name] = true })
 	if fs.NArg() > 1 || (f.image != "" && fs.NArg() != 0) {
-		return errors.New("choose one source path or --image REF; put flags before the source path")
+		return errors.New("choose one source path or --image REF")
 	}
 	if visited["image"] {
 		if _, err := reference.ParseNormalizedNamed(f.image); err != nil {
@@ -84,8 +84,8 @@ func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspect
 		// Reuse the maximum credential size accepted by the platform.
 		password, err := io.ReadAll(io.LimitReader(osStdin, int64(api.MaxRegistryPasswordBytes)+1))
 		if err != nil || len(password) > api.MaxRegistryPasswordBytes || len(strings.TrimSpace(string(password))) == 0 {
-			_, _ = fmt.Fprintln(osStderr, "cannot read a nonempty registry credential within the platform size limit")
-			return 2
+			PrintUsage(osStderr, "cannot read a nonempty registry credential within the platform size limit", "doctor")
+			return 1
 		}
 		auth = &oci.BasicAuth{Username: flags.user, Password: strings.TrimRight(string(password), "\r\n")}
 	}
@@ -224,11 +224,12 @@ func describeDoctorImage(result oci.ImageInspection) *doctorImage {
 	if hc := cfg.Healthcheck; hc != nil {
 		m.Healthcheck = &api.AppManifestHealthcheck{Test: hc.Test, IntervalS: hc.IntervalS, TimeoutS: hc.TimeoutS, Retries: hc.Retries, StartPeriodS: hc.StartPeriodS, ImageTiming: hc.ImageTiming}
 	}
-	if m.User == "" || m.User == "1000" {
-		m.User = api.DefaultAppUser
-	}
+	// Report the user imaged actually starts the process as. ADR-1239 runs an
+	// image without USER as root, like Docker; the manifest default ("app") is
+	// for platform-built runtimes, so showing it here told the customer the
+	// opposite of what runs (H10-58).
+	m.User = oci.ImageProcessUser(cfg.User)
 	if manifest, err := oci.ManifestFromConfig(oci.Config{Entrypoint: cfg.Entrypoint, Cmd: cfg.Cmd, User: cfg.User, ExposedPorts: cfg.ExposedPorts}); err == nil {
-		m.User = manifest.EffectiveUser()
 		m.ServingPort = manifest.EffectivePort()
 	}
 	if m.WorkingDir == "" {

@@ -1,0 +1,140 @@
+---
+# zswap (ADR-906 decision 6, ADR-1151) — memory-only compressed swap for
+# frozen VMs. With faas_zswap_enabled the host gets:
+#
+#   - zswap on (lz4, a bounded pool, no shrinker) in front of a swapfile that
+#     only provides zswap's slots;
+#   - memory.zswap.writeback=0 on faas-tenant.slice, so tenant memory that
+#     goes to swap stays compressed in RAM and never reaches the disk;
+#   - MemoryZSwapMax on faas-tenant.slice, the compressed bytes tenants may hold;
+#   - MemorySwapMax=0 on the control-plane, builder, system and user slices
+#     and on init.scope (PID 1), so nothing else swaps at all.
+#
+# vmmd closes swap (memory.swap.max=0) on every running VM and opens it only
+# while a VM is frozen, and only once it sees this setup in place. Without
+# this role a frozen VM keeps its memory resident and memory pressure parks
+# it, as before. The role does nothing when disabled; see README.md to turn
+# it off on a host that has it.
+
+- name: zswap — read the systemd version
+  ansible.builtin.command: systemctl --version
+  register: zswap_systemd_version
+  changed_when: false
+  check_mode: false
+  when: faas_zswap_enabled | bool
+
+- name: zswap — assert the kernel and systemd support it
+  ansible.builtin.assert:
+    that:
+      - ansible_kernel is version('6.8', '>=')
+      - (zswap_systemd_version.stdout_lines[0].split()[1] | int) >= 253
+    fail_msg: >-
+      zswap for frozen VMs needs Linux 6.8+ (memory.zswap.writeback) and
+      systemd 253+ (MemoryZSwapMax); this host runs kernel {{ ansible_kernel }}
+      and {{ zswap_systemd_version.stdout_lines[0] }}.
+  when: faas_zswap_enabled | bool
+
+- name: zswap — create the swapfile directory
+  ansible.builtin.file:
+    path: "{{ faas_zswap_swapfile | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: faas_zswap_enabled | bool
+
+# A swapfile must have no holes, so it is written once rather than
+# fallocated. It is never written again: no slice may write swap to disk.
+- name: zswap — write the swapfile
+  ansible.builtin.command:
+    cmd: dd if=/dev/zero of={{ faas_zswap_swapfile }} bs=1M count={{ faas_zswap_swapfile_size_mb }} status=none
+    creates: "{{ faas_zswap_swapfile }}"
+  register: zswap_swapfile
+  when: faas_zswap_enabled | bool
+
+- name: zswap — restrict the swapfile to root
+  ansible.builtin.file:
+    path: "{{ faas_zswap_swapfile }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: faas_zswap_enabled | bool
+
+- name: zswap — format the swapfile
+  ansible.builtin.command: mkswap {{ faas_zswap_swapfile }}
+  changed_when: true
+  when: faas_zswap_enabled | bool and zswap_swapfile is changed
+
+- name: zswap — install the setup script
+  ansible.builtin.template:
+    src: faas-zswap-setup.sh.j2
+    dest: /usr/local/sbin/faas-zswap-setup
+    owner: root
+    group: root
+    mode: "0755"
+  register: zswap_script
+  when: faas_zswap_enabled | bool
+
+- name: zswap — install faas-zswap.service
+  ansible.builtin.template:
+    src: faas-zswap.service.j2
+    dest: /etc/systemd/system/faas-zswap.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: zswap_unit
+  when: faas_zswap_enabled | bool
+
+- name: zswap — create drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [faas-tenant.slice, faas-cp.slice, faas-cp-build.slice, system.slice, user.slice, init.scope]
+  when: faas_zswap_enabled | bool
+
+- name: zswap — bound the compressed bytes tenants may hold
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-tenant.slice.d/80-faas-zswap.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # ADR-906 decision 6: frozen VMs compress into at most this much RAM.
+      [Slice]
+      MemoryZSwapMax={{ faas_zswap_tenant_max }}
+  register: zswap_tenant_dropin
+  when: faas_zswap_enabled | bool
+
+# Besides the slices, PID 1 sits directly under the root cgroup in
+# init.scope, which takes the same drop-in (daemon-reload applies it). The
+# root cgroup itself has no swap limit; it holds only kernel threads.
+- name: zswap — keep everything else out of swap
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item }}.d/80-faas-noswap.conf"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # ADR-906 decision 6: only frozen tenant VMs swap, and only into zswap.
+      [{{ 'Scope' if item.endswith('.scope') else 'Slice' }}]
+      MemorySwapMax=0
+  loop: [faas-cp.slice, faas-cp-build.slice, system.slice, user.slice, init.scope]
+  register: zswap_noswap_dropins
+  when: faas_zswap_enabled | bool
+
+- name: zswap — daemon-reload
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: >-
+    faas_zswap_enabled | bool and
+    (zswap_unit is changed or zswap_tenant_dropin is changed or zswap_noswap_dropins is changed)
+
+- name: zswap — enable and start faas-zswap.service
+  ansible.builtin.systemd:
+    name: faas-zswap.service
+    enabled: true
+    state: "{{ 'restarted' if (zswap_script is changed or zswap_unit is changed) else 'started' }}"
+  when: faas_zswap_enabled | bool

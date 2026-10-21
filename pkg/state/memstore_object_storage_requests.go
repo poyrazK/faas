@@ -14,12 +14,16 @@ func objectProviderRequestKey(bucketID string, periodStart time.Time) string {
 	return bucketID + "\x00" + ObjectStoragePeriod(periodStart).Format(time.RFC3339)
 }
 
-func (m *MemStore) RecordObjectStorageProviderRequest(_ context.Context, bucketID string, at time.Time) error {
+func (m *MemStore) RecordObjectStorageProviderRequest(ctx context.Context, bucketID string, at time.Time) error {
 	if bucketID == "" || at.IsZero() || at.After(time.Now().UTC().Add(time.Minute)) {
 		return ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	bucket, ok := m.objectBuckets[bucketID]
 	if !ok || bucket.State == "deleted" {
 		return ErrNotFound
@@ -36,12 +40,16 @@ func (m *MemStore) RecordObjectStorageProviderRequest(_ context.Context, bucketI
 	return nil
 }
 
-func (m *MemStore) RecordObjectStorageProviderEgress(_ context.Context, bucketID string, bytes int64, at time.Time) error {
+func (m *MemStore) RecordObjectStorageProviderEgress(ctx context.Context, bucketID string, bytes int64, at time.Time) error {
 	if bucketID == "" || bytes < 0 || bytes > api.MaxObjectStoragePolicyValue || at.IsZero() || at.After(time.Now().UTC().Add(time.Minute)) {
 		return ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	bucket, ok := m.objectBuckets[bucketID]
 	if !ok || bucket.State == "deleted" {
 		return ErrNotFound
@@ -57,9 +65,14 @@ func (m *MemStore) RecordObjectStorageProviderEgress(_ context.Context, bucketID
 	return nil
 }
 
-func (m *MemStore) ListObjectStorageProviderRequestMetrics(_ context.Context, backendID, fingerprint string, periodStart time.Time) ([]ObjectStorageProviderRequestMetric, error) {
+func (m *MemStore) ListObjectStorageProviderRequestMetrics(ctx context.Context, backendID, fingerprint string, periodStart time.Time) ([]ObjectStorageProviderRequestMetric, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectStorageProviderRequestMetric
+		return zero0, err
+	}
+
 	periodStart = ObjectStoragePeriod(periodStart)
 	out := make([]ObjectStorageProviderRequestMetric, 0)
 	for id, bucket := range m.objectBuckets {
@@ -67,7 +80,7 @@ func (m *MemStore) ListObjectStorageProviderRequestMetrics(_ context.Context, ba
 			continue
 		}
 		out = append(out, ObjectStorageProviderRequestMetric{
-			BucketID: id, AccountID: bucket.AccountID, BackendID: bucket.BackendID,
+			BucketID: id, AccountID: m.objectBillingSubjectForPeriodLocked(bucket, periodStart), BackendID: bucket.BackendID,
 			BackendFingerprint: bucket.BackendFingerprint, PhysicalName: bucket.PhysicalName,
 			PeriodStart: periodStart, RequestCount: m.objectProviderRequests[objectProviderRequestKey(id, periodStart)],
 			EgressBytes: m.objectProviderRequests[objectProviderRequestKey(id, periodStart)+"\x00egress"],
@@ -82,12 +95,18 @@ func (m *MemStore) ListObjectStorageProviderRequestMetrics(_ context.Context, ba
 	return out, nil
 }
 
-func (m *MemStore) ListObjectStorageProviderBuckets(_ context.Context, backendID, fingerprint string) ([]ObjectBucket, error) {
+func (m *MemStore) ListObjectStorageProviderBuckets(ctx context.Context, backendID, fingerprint string) ([]ObjectBucket, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectBucket
+		return zero0, err
+	}
+
 	out := make([]ObjectBucket, 0)
 	for _, bucket := range m.objectBuckets {
 		if bucket.BackendID == backendID && bucket.BackendFingerprint == fingerprint {
+			bucket.UsageSubjectID = m.objectBillingSubjectForPeriodLocked(bucket, objectUsagePeriod(ctx))
 			out = append(out, bucket)
 		}
 	}

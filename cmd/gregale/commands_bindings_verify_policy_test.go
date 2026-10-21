@@ -15,13 +15,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/bindings"
 	"github.com/onebox-faas/faas/pkg/bindingprobe"
 )
 
 // The actual CLI submits existing reserved commands. Execute their real S3
 // probe code against an owned loopback fixture, then project recorded stages.
 // This does not simulate a VM, real provider, scheduler or state-store fence.
-type storagePolicyCLIFixture struct {
+type bindingPolicyCLIFixture struct {
 	mu               sync.Mutex
 	t                *testing.T
 	server           *httptest.Server
@@ -33,16 +34,17 @@ type storagePolicyCLIFixture struct {
 	reads            int
 	policies         int
 	cancels          int
-	hook             func(*storagePolicyCLIFixture, *http.Request)
+	hook             func(*bindingPolicyCLIFixture, *http.Request)
 	queued           bool
 	badTask          string
 	failRead         bool
 	ignoreDeployment bool
+	outboundBindings []api.OutboundAppBinding
 }
 
-func newStoragePolicyCLIFixture(t *testing.T) *storagePolicyCLIFixture {
+func newBindingPolicyCLIFixture(t *testing.T) *bindingPolicyCLIFixture {
 	t.Helper()
-	f := &storagePolicyCLIFixture{t: t, inventory: storageReleaseCheckInventory("", "", ""), policy: storageReleaseCheckPolicy()}
+	f := &bindingPolicyCLIFixture{t: t, inventory: storageReleaseCheckInventory("", "", ""), policy: storageReleaseCheckPolicy()}
 	f.inventory.Bindings[0].Verification, f.inventory.Bindings[0].VerificationStatus = nil, "unknown"
 	var storageMu sync.Mutex
 	objects := map[string][]byte{}
@@ -86,7 +88,7 @@ func newStoragePolicyCLIFixture(t *testing.T) *storagePolicyCLIFixture {
 	return f
 }
 
-func (f *storagePolicyCLIFixture) serve(w http.ResponseWriter, r *http.Request) {
+func (f *bindingPolicyCLIFixture) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
@@ -94,6 +96,27 @@ func (f *storagePolicyCLIFixture) serve(w http.ResponseWriter, r *http.Request) 
 		f.hook(f, r)
 	}
 	switch {
+	case r.Method == "POST" && r.URL.Path == "/v1/apps/api/bindings/verification-runs/review":
+		var in api.ReviewBindingVerificationRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			f.t.Error(err)
+			w.WriteHeader(400)
+			return
+		}
+		i := f.inventory
+		i.Bindings = append([]api.AppBindingInventoryItem(nil), i.Bindings...)
+		i.Scope = f.policy.Scope
+		i.RequestedDeploymentID = i.VerificationDeploymentID
+		i.ServiceTargets = in.ServiceTargets
+		for n := range i.Bindings {
+			if i.Bindings[n].Type == api.BindingTypeService {
+				i.Bindings[n].ServiceTargetDeploymentID = in.ServiceTargets[i.Bindings[n].Name]
+			}
+		}
+		if f.ignoreDeployment {
+			i.RequestedDeploymentID = ""
+		}
+		_ = json.NewEncoder(w).Encode(bindings.BuildVerificationReview(i, f.policy, time.Now()))
 	case r.Method == "GET" && r.URL.Path == "/v1/apps/api":
 		serveStorageReleaseCheckApp(w)
 	case r.Method == "GET" && r.URL.Path == "/v1/apps/api/bindings":
@@ -111,6 +134,8 @@ func (f *storagePolicyCLIFixture) serve(w http.ResponseWriter, r *http.Request) 
 			f.t.Error("policy read did not use the selected deployment scope")
 		}
 		_ = json.NewEncoder(w).Encode(f.policy)
+	case r.Method == "GET" && r.URL.Path == "/v1/apps/api/outbound-bindings":
+		_ = json.NewEncoder(w).Encode(api.OutboundAppBindingList{Items: f.outboundBindings})
 	case r.Method == "POST" && r.URL.Path == "/v1/apps/api/tasks":
 		f.createTask(w, r)
 	case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/apps/api/tasks/"):
@@ -132,7 +157,7 @@ func (f *storagePolicyCLIFixture) serve(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func (f *storagePolicyCLIFixture) createTask(w http.ResponseWriter, r *http.Request) {
+func (f *bindingPolicyCLIFixture) createTask(w http.ResponseWriter, r *http.Request) {
 	var req api.CreateAppTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Command) < 2 || req.VerificationDeploymentID != releaseCheckDeploymentID || req.CommandShell {
 		f.t.Error("unpinned or invalid policy verification admission")
@@ -140,6 +165,10 @@ func (f *storagePolicyCLIFixture) createTask(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	f.requests = append(f.requests, req)
+	if req.Command[0] != api.AppTaskObjectStorageBindingProbeCommand && req.Command[0] != api.AppTaskObjectStorageWriteProbeCommand {
+		f.createNonStoragePolicyTask(w, req)
+		return
+	}
 	prefix, mode := req.Command[1], ""
 	if len(req.Command) == 3 {
 		mode = req.Command[2]
@@ -194,11 +223,11 @@ func (f *storagePolicyCLIFixture) createTask(w http.ResponseWriter, r *http.Requ
 	_ = json.NewEncoder(w).Encode(f.task)
 }
 
-func (f *storagePolicyCLIFixture) run(args ...string) (int, storagePolicyVerificationReport, string) {
+func (f *bindingPolicyCLIFixture) run(args ...string) (int, bindingPolicyVerificationReport, string) {
 	f.t.Helper()
 	command := append([]string{"bindings", "verify", "api", "--release-policy", "--json", "--poll-interval", "1ms", "--wait-timeout", "3s"}, args...)
 	code, output, stderr := captureBindingCLI(f.t, f.server.URL, command...)
-	var report storagePolicyVerificationReport
+	var report bindingPolicyVerificationReport
 	if err := json.Unmarshal([]byte(output), &report); err != nil {
 		f.t.Fatalf("expected one JSON report: exit=%d error=%v out=%s stderr=%s", code, err, output, stderr)
 	}
@@ -211,7 +240,7 @@ func (f *storagePolicyCLIFixture) run(args ...string) (int, storagePolicyVerific
 func TestBindingsVerifyReleasePolicyCLIJourney(t *testing.T) {
 	for _, permission := range []string{"read", "write", "read_write"} {
 		t.Run(permission, func(t *testing.T) {
-			f := newStoragePolicyCLIFixture(t)
+			f := newBindingPolicyCLIFixture(t)
 			f.inventory.Bindings[0].Access = permission
 			f.policy.ObjectStorageRequirements["ASSETS"] = permission
 			args := []string{}
@@ -231,7 +260,7 @@ func TestBindingsVerifyReleasePolicyCLIJourney(t *testing.T) {
 func TestBindingsVerifyReleasePolicyWholePlanConsentAndPreview(t *testing.T) {
 	for _, mode := range []string{"preview", "missing consent", "execute"} {
 		t.Run(mode, func(t *testing.T) {
-			f := newStoragePolicyCLIFixture(t)
+			f := newBindingPolicyCLIFixture(t)
 			f.policy.ObjectStorageRequirements = map[string]string{"A_READ": "read", "B_WRITE": "write", "C_COMBINED": "write"}
 			base := f.inventory.Bindings[0]
 			f.inventory.Bindings = nil
@@ -270,14 +299,14 @@ func TestBindingsVerifyReleasePolicyWholePlanConsentAndPreview(t *testing.T) {
 }
 
 func TestBindingsVerifyReleasePolicyRejectsPlanBeforeAnyTask(t *testing.T) {
-	for _, scenario := range []string{"off", "empty", "missing", "ambiguous", "inactive", "rotation", "unknown rotation", "permission", "incomplete", "stamp", "future stamp", "policy app", "policy scope", "invalid policy", "old server"} {
+	for _, scenario := range []string{"off", "unknown family", "missing", "ambiguous", "inactive", "rotation", "unknown rotation", "permission", "incomplete", "stamp", "future stamp", "policy app", "policy scope", "invalid policy", "old server"} {
 		t.Run(scenario, func(t *testing.T) {
-			f := newStoragePolicyCLIFixture(t)
+			f := newBindingPolicyCLIFixture(t)
 			switch scenario {
 			case "off":
 				f.policy.Mode = "off"
-			case "empty":
-				f.policy.ObjectStorageRequirements = nil
+			case "unknown family":
+				f.inventory.Bindings = append(f.inventory.Bindings, api.AppBindingInventoryItem{Type: "future", Name: "unknown"})
 			case "missing":
 				f.inventory.Bindings = nil
 			case "ambiguous":
@@ -316,17 +345,17 @@ func TestBindingsVerifyReleasePolicyRejectsPlanBeforeAnyTask(t *testing.T) {
 }
 
 func TestBindingsVerifyReleasePolicyInterruptDuringTaskRead(t *testing.T) {
-	f := newStoragePolicyCLIFixture(t)
+	f := newBindingPolicyCLIFixture(t)
 	f.queued = true
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	f.hook = func(_ *storagePolicyCLIFixture, r *http.Request) {
+	f.hook = func(_ *bindingPolicyCLIFixture, r *http.Request) {
 		if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/apps/api/tasks/") {
 			cancel()
 			<-r.Context().Done()
 		}
 	}
-	report, code := executeStoragePolicyVerification(ctx, api.NewClient(f.server.URL, "fp_live_test"), "api", "", false, true, time.Millisecond, time.Second)
+	report, code := executeBindingPolicyVerification(ctx, api.NewClient(f.server.URL, "fp_live_test"), "api", "", false, true, time.Millisecond, time.Second)
 	if code != 130 || report.Passed || report.Status != "cancelled" || len(f.requests) != 1 || f.cancels != 1 || len(report.Probes) != 1 || report.Probes[0].Report.TaskID == "" {
 		t.Fatalf("interrupted read lost the admitted task: exit=%d report=%+v cancellations=%d", code, report, f.cancels)
 	}
@@ -336,10 +365,10 @@ func TestBindingsVerifyReleasePolicyStopsOnChangedSnapshot(t *testing.T) {
 	for _, phase := range []string{"before first admission", "after first canary", "final preflight"} {
 		for _, change := range []string{"revision", "same revision requirements", "mode", "binding", "config stamp", "rotation", "missing metadata", "scope", "app", "policy unavailable"} {
 			t.Run(phase+"/"+change, func(t *testing.T) {
-				f := newStoragePolicyCLIFixture(t)
+				f := newBindingPolicyCLIFixture(t)
 				triggered := false
-				f.hook = func(f *storagePolicyCLIFixture, r *http.Request) {
-					trigger := phase == "before first admission" && f.reads == 2 || phase == "after first canary" && len(f.requests) == 1 || phase == "final preflight" && f.reads == 4
+				f.hook = func(f *bindingPolicyCLIFixture, r *http.Request) {
+					trigger := phase == "before first admission" && f.reads == 2 || phase == "after first canary" && len(f.requests) == 1 || phase == "final preflight" && len(f.requests) == 1 && r.Method == "GET" && r.URL.Path == "/v1/apps/api/bindings"
 					if !trigger || triggered {
 						return
 					}
@@ -383,16 +412,14 @@ func TestBindingsVerifyReleasePolicyStopsOnChangedSnapshot(t *testing.T) {
 }
 
 func TestBindingsVerifyReleasePolicyTaskFailuresAndFinalGate(t *testing.T) {
-	for _, failure := range []string{"cleanup", "legacy", "deployment", "app", "command", "truncated", "ACK", "other binding", "lost status", "timeout"} {
+	for _, failure := range []string{"cleanup", "legacy", "deployment", "app", "command", "truncated", "ACK", "lost status", "timeout"} {
 		t.Run(failure, func(t *testing.T) {
-			f := newStoragePolicyCLIFixture(t)
+			f := newBindingPolicyCLIFixture(t)
 			f.badTask = failure
 			args := []string{"--object-storage-write"}
 			switch failure {
 			case "ACK":
 				f.policy.RequireApplicationAck = true
-			case "other binding":
-				f.inventory.Bindings = append(f.inventory.Bindings, api.AppBindingInventoryItem{Type: api.BindingTypeService, Name: "billing", Binding: "BILLING", State: "enforced"})
 			case "lost status":
 				f.queued, f.failRead = true, true
 			case "timeout":
@@ -403,7 +430,7 @@ func TestBindingsVerifyReleasePolicyTaskFailuresAndFinalGate(t *testing.T) {
 			if code != 1 || report.Passed || len(f.requests) != 1 || len(report.Probes) != 1 {
 				t.Fatalf("unqualified receipt accepted: exit=%d report=%+v tasks=%d", code, report, len(f.requests))
 			}
-			if failure == "ACK" || failure == "other binding" {
+			if failure == "ACK" {
 				if report.Probes[0].Status != "passed" || report.Preflight == nil || report.Preflight.Passed || report.ErrorCode != "preflight_blocked" || len(report.Preflight.Blockers) == 0 {
 					t.Fatalf("canary confused with release readiness: %+v", report)
 				}
@@ -411,8 +438,8 @@ func TestBindingsVerifyReleasePolicyTaskFailuresAndFinalGate(t *testing.T) {
 			if (failure == "deployment" || failure == "app" || failure == "command") && f.cancels != 1 {
 				t.Fatal("unconfirmed admission was not cancelled")
 			}
-			if failure == "timeout" && (report.Probes[0].Report.TaskID == "" || !strings.Contains(report.Error, "running") || f.cancels != 0) {
-				t.Fatal("ordinary timeout lost the still-running task or implicitly cancelled it")
+			if failure == "timeout" && (report.Probes[0].Report.TaskID == "" || report.ErrorCode != "verification_timeout" || f.cancels != 1) {
+				t.Fatalf("ordinary timeout lost task identity or cleanup: report=%+v cancels=%d", report, f.cancels)
 			}
 		})
 	}

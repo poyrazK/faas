@@ -467,6 +467,8 @@ type translatingWriter struct {
 	data       []byte
 	frames     awsEventStreamReader
 	wrote      bool
+	// aborted marks a stream a response check ended (ADR-1435).
+	aborted bool
 }
 
 func newTranslatingWriter(dst http.ResponseWriter, translator aiResponseTranslator) *translatingWriter {
@@ -490,6 +492,14 @@ func (w *translatingWriter) WriteHeader(status int) {
 	case mediaType == awsEventStreamMediaType && readsAWS && status >= 200 && status <= 299:
 		w.mode = translateAWSEventStream
 		w.frames.onMessage = func(messageType, eventType string, payload []byte) {
+			if w.aborted {
+				return
+			}
+			if code, message := gatewayErrorCode(payload); messageType == "exception" && code != "" {
+				_, _ = w.dst.Write(openAIGatewayErrorEvent(code, message))
+				w.aborted = true
+				return
+			}
 			_, _ = w.dst.Write(awsTranslator.awsEvent(messageType, eventType, payload))
 		}
 	case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"):
@@ -543,7 +553,7 @@ func (w *translatingWriter) writeEvents(p []byte) {
 		line := bytes.TrimSuffix(w.line, []byte{'\r'})
 		if len(line) == 0 {
 			if len(w.data) > 0 && !bytes.Equal(w.data, []byte("[DONE]")) {
-				_, _ = w.dst.Write(w.translator.event(w.data))
+				w.dispatch(w.data)
 			}
 			w.data = w.data[:0]
 		} else if value, ok := bytes.CutPrefix(line, []byte("data:")); ok {
@@ -554,6 +564,20 @@ func (w *translatingWriter) writeEvents(p []byte) {
 		}
 		w.line = w.line[:0]
 	}
+}
+
+// dispatch translates one provider event. A response check's error event
+// ends the translated stream with an OpenAI error event (ADR-1435).
+func (w *translatingWriter) dispatch(data []byte) {
+	if w.aborted {
+		return
+	}
+	if code, message := gatewayErrorCode(data); code != "" {
+		_, _ = w.dst.Write(openAIGatewayErrorEvent(code, message))
+		w.aborted = true
+		return
+	}
+	_, _ = w.dst.Write(w.translator.event(data))
 }
 
 // Flush passes streamed output through promptly.
@@ -574,13 +598,17 @@ func (w *translatingWriter) finish() {
 		_, _ = w.dst.Write(w.translator.json(w.status, w.body.Bytes()))
 	case translateEventStream:
 		if len(w.data) > 0 && !bytes.Equal(w.data, []byte("[DONE]")) {
-			_, _ = w.dst.Write(w.translator.event(w.data))
+			w.dispatch(w.data)
 			w.data = w.data[:0]
 		}
-		_, _ = w.dst.Write(w.translator.end())
+		if !w.aborted {
+			_, _ = w.dst.Write(w.translator.end())
+		}
 		w.Flush()
 	case translateAWSEventStream:
-		_, _ = w.dst.Write(w.translator.end())
+		if !w.aborted {
+			_, _ = w.dst.Write(w.translator.end())
+		}
 		w.Flush()
 	}
 }

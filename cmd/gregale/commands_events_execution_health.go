@@ -43,5 +43,6 @@ func cmdEventsSubscriptionExecutionHealth(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "History %s (%s) | collection start %v | evidence lost %v\n", oneLine(h.HistoryStatus), oneLine(h.HistoryReason), h.CoverageStartedAt, h.CoverageLostAt)
 	_, _ = fmt.Fprintf(osStdout, "Window evidence %s (%s) | scope %s | collection start %v | lost through %v | retain until %v\n", oneLine(h.WindowHistoryStatus), oneLine(h.WindowHistoryReason), oneLine(h.WindowCoverage), h.WindowCoverageStartedAt, h.WindowCoverageLostThroughAt, h.WindowEvidenceRetainUntil)
 	_, _ = fmt.Fprintf(osStdout, "Coverage %s | retained roots %d | missing roots %d | truncated %t | history complete %t\n", oneLine(h.Coverage), h.RetainedRoots, h.MissingRoots, h.Truncated, h.HistoryComplete)
+	printLineageRetryJobHealth(h.LineageRetryJobs)
 	return 0
 }

@@ -9,6 +9,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.mcpo_auth_retirement_state import MCPOAuthRetirementState, check_mcpo_auth_retirement_state
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.mcp_catalog_o_auth_revocation import MCPCatalogOAuthRevocation
@@ -38,6 +39,8 @@ class MCPOAuthRetirement:
     allow_active_grant_revocation: bool
     """Explicit operator authorization to retire a grant despite a matching active connection"""
     history: list[MCPOAuthRetirementEvent]
+    scope: str | Unset = UNSET
+    """Environment of the retired MCP OAuth connection. Empty means default."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +69,8 @@ class MCPOAuthRetirement:
             history_item = history_item_data.to_dict()
             history.append(history_item)
 
+        scope = self.scope
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -83,6 +88,8 @@ class MCPOAuthRetirement:
                 "history": history,
             }
         )
+        if scope is not UNSET:
+            field_dict["scope"] = scope
 
         return field_dict
 
@@ -119,6 +126,8 @@ class MCPOAuthRetirement:
 
             history.append(history_item)
 
+        scope = d.pop("scope", UNSET)
+
         mcpo_auth_retirement = cls(
             id=id,
             app_id=app_id,
@@ -131,6 +140,7 @@ class MCPOAuthRetirement:
             revocation=revocation,
             allow_active_grant_revocation=allow_active_grant_revocation,
             history=history,
+            scope=scope,
         )
 
         mcpo_auth_retirement.additional_properties = d
