@@ -24,9 +24,10 @@ func (t *Trigger) rememberWorkerPoolApps(apps map[string]state.App) {
 // the last tick saw, outside admission backoff, with no serving instance in
 // the ledger (a frozen worker holds no concurrency); a pool with a serving
 // worker leaves the message to that worker's lease and the tick. The run is
-// the tick's per-account run, so a run already going for the account starts
-// nothing. ctx must outlive the run, as Tick's does. It reports whether a run
-// started.
+// the tick's per-account run. While the account's run is going, which may be
+// freezing this pool's worker, the wake is queued for that run, which checks
+// it again when it finishes. ctx must outlive the run, as Tick's does. It
+// reports whether it started a run.
 func (t *Trigger) WakeWorkerPool(ctx context.Context, appID string) bool {
 	if t == nil || appID == "" {
 		return false
@@ -34,17 +35,23 @@ func (t *Trigger) WakeWorkerPool(ctx context.Context, appID string) bool {
 	t.workerAppsMu.Lock()
 	app, ok := t.workerApps[appID]
 	t.workerAppsMu.Unlock()
-	if !ok || t.admissionBackoffActive(appID, time.Now()) {
-		return false
-	}
-	if t.ledger != nil && t.ledger.Concurrency(appID) > 0 {
+	if !ok {
 		return false
 	}
 	pool, ok := t.engine.(ScopedWorkerPoolEngine)
-	if !ok {
+	if !ok || t.deferWorkerPoolWake(app) || !t.wakeNeeded(appID) {
 		return false
 	}
 	var runs workerPoolRuns
 	runs.add(pool, app)
 	return t.startWorkerPoolRuns(ctx, runs) > 0
+}
+
+// wakeNeeded reports whether a woken app is outside admission backoff and has
+// no serving instance.
+func (t *Trigger) wakeNeeded(appID string) bool {
+	if t.admissionBackoffActive(appID, time.Now()) {
+		return false
+	}
+	return t.ledger == nil || t.ledger.Concurrency(appID) == 0
 }

@@ -93,33 +93,57 @@ func TestTrigger_WakeWorkerPoolReconcilesOnlyAnIdleQueuePool(t *testing.T) {
 	}
 }
 
-func TestTrigger_WakeWorkerPoolJoinsTheAccountsRun(t *testing.T) {
-	store := &fakeStore{apps: []state.App{queueWorkerApp("w", "acct")}}
-	release := make(chan struct{})
-	engine := &gatedWorkerPools{workerPoolFakeEngine: &workerPoolFakeEngine{fakeEngine: &fakeEngine{}},
-		started: make(chan string, 4), gates: map[string]chan struct{}{"w": release}}
-	tr := New(store, nil, engine, &fakeLedger{}, Options{QueueStatsReader: &fakeQueueStats{}})
-	ctx := context.Background()
-	if err := tr.Tick(ctx); err != nil {
-		t.Fatal(err)
+// A message can land while the account's run is freezing the pool's only
+// worker: the row is FROZEN before the ledger releases the worker. The wake
+// waits for that run and is checked again when it finishes.
+func TestTrigger_WakeWorkerPoolDuringTheAccountsRunWaitsForIt(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		serving int // the app's serving instances when the run finishes
+		want    []string
+	}{
+		{name: "pool idle when the run finishes", want: []string{"w", "w"}},
+		{name: "pool serving when the run finishes", serving: 1, want: []string{"w"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeStore{apps: []state.App{queueWorkerApp("w", "acct")}}
+			release := make(chan struct{})
+			engine := &gatedWorkerPools{workerPoolFakeEngine: &workerPoolFakeEngine{fakeEngine: &fakeEngine{}},
+				started: make(chan string, 4), gates: map[string]chan struct{}{"w": release}}
+			ledger := &fakeLedger{conc: map[string]int{"w": 1}}
+			tr := New(store, nil, engine, ledger, Options{QueueStatsReader: &fakeQueueStats{}})
+			ctx := context.Background()
+			if err := tr.Tick(ctx); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-engine.started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the tick started no reconcile")
+			}
+			// Mid-run the ledger still counts the worker being frozen.
+			if tr.WakeWorkerPool(ctx, "w") {
+				t.Fatal("a wake started a second run while the account's run was going")
+			}
+			ledger.mu.Lock()
+			ledger.conc["w"] = tc.serving
+			ledger.mu.Unlock()
+			close(release)
+			tr.waitWorkerPoolRuns()
+			engine.mu.Lock()
+			calls := slices.Clone(engine.calls)
+			engine.mu.Unlock()
+			if !slices.Equal(calls, tc.want) {
+				t.Fatalf("reconciles = %v, want %v", calls, tc.want)
+			}
+			// The run released its account: the next wake starts one.
+			ledger.mu.Lock()
+			ledger.conc["w"] = 0
+			ledger.mu.Unlock()
+			if !tr.WakeWorkerPool(ctx, "w") {
+				t.Fatal("a wake after the account's run returned started no run")
+			}
+			tr.waitWorkerPoolRuns()
+		})
 	}
-	select {
-	case <-engine.started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the tick started no reconcile")
-	}
-	if tr.WakeWorkerPool(ctx, "w") {
-		t.Fatal("a wake started a second run while the account's run was going")
-	}
-	close(release)
-	tr.waitWorkerPoolRuns()
-	if !tr.WakeWorkerPool(ctx, "w") {
-		t.Fatal("a wake after the account's run returned started no run")
-	}
-	select {
-	case <-engine.started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the woken run never reconciled")
-	}
-	tr.waitWorkerPoolRuns()
 }

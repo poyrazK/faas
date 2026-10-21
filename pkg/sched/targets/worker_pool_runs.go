@@ -4,6 +4,8 @@ package targets
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -21,11 +23,16 @@ type workerPoolRuns struct {
 	byKey map[string]*workerPoolRun
 }
 
-func (r *workerPoolRuns) add(pool ScopedWorkerPoolEngine, app state.App) {
-	key := app.AccountID
-	if key == "" {
-		key = "app:" + app.ID
+// workerPoolRunKey is the account whose run reconciles app.
+func workerPoolRunKey(app state.App) string {
+	if app.AccountID == "" {
+		return "app:" + app.ID
 	}
+	return app.AccountID
+}
+
+func (r *workerPoolRuns) add(pool ScopedWorkerPoolEngine, app state.App) {
+	key := workerPoolRunKey(app)
 	if r.byKey == nil {
 		r.byKey = map[string]*workerPoolRun{}
 	}
@@ -45,8 +52,9 @@ func (r *workerPoolRuns) add(pool ScopedWorkerPoolEngine, app state.App) {
 // in tick order in one background run, so each reconcile computes the
 // account's worker cap while no other run changes the account's workers. An
 // account whose previous run is still going is skipped and picked up by a
-// later tick. Runs use Tick's context, which schedd keeps for the loop's
-// lifetime. It returns the number of runs it started.
+// later tick. A run then reconciles the wakes that WakeWorkerPool queued for
+// its account while it was going. Runs use Tick's context, which schedd keeps
+// for the loop's lifetime. It returns the number of runs it started.
 func (t *Trigger) startWorkerPoolRuns(ctx context.Context, runs workerPoolRuns) int {
 	started := 0
 	for _, key := range runs.order {
@@ -58,21 +66,32 @@ func (t *Trigger) startWorkerPoolRuns(ctx context.Context, runs workerPoolRuns) 
 		t.workerRuns.Add(1)
 		go func() {
 			defer t.workerRuns.Done()
-			defer t.releaseWorkerPoolRun(key)
-			for _, app := range run.apps {
-				if ctx.Err() != nil {
+			for apps := run.apps; len(apps) > 0; apps = t.finishWorkerPoolRun(key) {
+				if !t.reconcileWorkerPoolApps(ctx, run.pool, apps) {
+					t.releaseWorkerPoolRun(key)
 					return
 				}
-				if err := run.pool.ReconcileWorkerPools(ctx, app.ID, workerPoolTriggerTargets); err != nil {
-					t.recordAdmissionFailure(app.ID, time.Now())
-					t.log.Warn("targets: reconcile worker environments failed", "app_id", app.ID, "err", err)
-					continue
-				}
-				t.clearAdmissionBackoff(app.ID)
 			}
 		}()
 	}
 	return started
+}
+
+// reconcileWorkerPoolApps reconciles apps in order. It returns false when ctx
+// ended first.
+func (t *Trigger) reconcileWorkerPoolApps(ctx context.Context, pool ScopedWorkerPoolEngine, apps []state.App) bool {
+	for _, app := range apps {
+		if ctx.Err() != nil {
+			return false
+		}
+		if err := pool.ReconcileWorkerPools(ctx, app.ID, workerPoolTriggerTargets); err != nil {
+			t.recordAdmissionFailure(app.ID, time.Now())
+			t.log.Warn("targets: reconcile worker environments failed", "app_id", app.ID, "err", err)
+			continue
+		}
+		t.clearAdmissionBackoff(app.ID)
+	}
+	return true
 }
 
 func (t *Trigger) claimWorkerPoolRun(key string) bool {
@@ -91,7 +110,50 @@ func (t *Trigger) claimWorkerPoolRun(key string) bool {
 func (t *Trigger) releaseWorkerPoolRun(key string) {
 	t.workerRunMu.Lock()
 	delete(t.workerRunning, key)
+	delete(t.workerWakes, key)
 	t.workerRunMu.Unlock()
+}
+
+// deferWorkerPoolWake queues a wake of app for its account's run and reports
+// true when that run is going; otherwise it queues nothing.
+func (t *Trigger) deferWorkerPoolWake(app state.App) bool {
+	key := workerPoolRunKey(app)
+	t.workerRunMu.Lock()
+	defer t.workerRunMu.Unlock()
+	if !t.workerRunning[key] {
+		return false
+	}
+	if t.workerWakes == nil {
+		t.workerWakes = map[string]map[string]state.App{}
+	}
+	if t.workerWakes[key] == nil {
+		t.workerWakes[key] = map[string]state.App{}
+	}
+	t.workerWakes[key][app.ID] = app
+	return true
+}
+
+// finishWorkerPoolRun returns the wakes queued for the account's run that
+// still need a reconcile, keeping the run claimed for them, or releases the
+// run when there are none. A queued wake is checked again here: the run may
+// have frozen or stopped the pool's last worker, or started one.
+func (t *Trigger) finishWorkerPoolRun(key string) []state.App {
+	t.workerRunMu.Lock()
+	defer t.workerRunMu.Unlock()
+	queued := t.workerWakes[key]
+	delete(t.workerWakes, key)
+	var apps []state.App
+	for _, app := range queued {
+		if t.wakeNeeded(app.ID) {
+			apps = append(apps, app)
+		}
+	}
+	if len(apps) == 0 {
+		delete(t.workerRunning, key)
+		return nil
+	}
+	slices.SortFunc(apps, func(a, b state.App) int { return strings.Compare(a.ID, b.ID) })
+	return apps
 }
 
 // waitWorkerPoolRuns blocks until every background worker reconcile has

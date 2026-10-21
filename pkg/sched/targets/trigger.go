@@ -497,8 +497,11 @@ type Trigger struct {
 
 	// Worker pools reconcile in background runs, one per account at a time
 	// (ADR-20261018101500); workerRunning holds the accounts with a run in progress.
+	// workerWakes holds, per account with a run in progress, the apps
+	// WakeWorkerPool queued for that run.
 	workerRunMu   sync.Mutex
 	workerRunning map[string]bool
+	workerWakes   map[string]map[string]state.App
 	workerRuns    sync.WaitGroup
 
 	// workerApps holds the queue-driven worker pool apps the last tick saw,

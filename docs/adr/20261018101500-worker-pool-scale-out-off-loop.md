@@ -47,8 +47,12 @@
      instead of at the next tick, when the last tick saw the app as a
      queue-driven worker pool, the app is outside admission backoff and the
      node ledger counts no serving instance of it (a frozen worker holds
-     none). It is the tick's per-account run, so a run already going for
-     the account starts nothing, and the tick still covers a dropped
+     none). It is the tick's per-account run. A wake that finds the
+     account's run going is queued for that run, which checks it again
+     when it finishes and reconciles the app if it still qualifies: on n2
+     a message sent while that run was freezing the pool's only worker
+     (the row is FROZEN before the ledger releases the worker) otherwise
+     waited for the next tick. The tick still covers a dropped
      notification. A pool with a serving worker leaves the message to that
      worker's lease and the tick, so a busy queue adds no reconciles.
 - **Consequences:** A pool's later workers are ready about 1 s after their
@@ -82,7 +86,8 @@
   for a blocked reconcile, one run per account at a time in tick order, and
   another account's run going ahead meanwhile; a queue wake that reconciles
   only an idle queue-driven pool the last tick saw, honors admission
-  backoff and joins the account's run; and, in `cmd/schedd`, which
+  backoff, and during the account's run waits for it and is checked again
+  when it ends; and, in `cmd/schedd`, which
   notifications are queue messages. `pkg/fcvm` tests cover the
   boot argument (declared workers only) and which boots prove or forget a
   deployment; `guest/init` tests cover the short window and the kernel
