@@ -574,7 +574,10 @@ spending. It does not establish a strict compute or full-invoice ceiling.
 ## Strict app compute candidate
 
 This implementation is local; native KVM acceptance and release review remain
-required. Configure `scope={kind:app,id:APP_ID}`, `mode=strict`,
+required. Strict budgets are released per account through the `strict_budgets`
+platform flag. Until it includes your account, creating or enabling one returns
+422 `financial_budget_activation_unavailable` ("Strict budgets not released").
+Configure `scope={kind:app,id:APP_ID}`, `mode=strict`,
 `basis=gross_usage`, `meters=[compute]`, `action=suspend_workloads`,
 `drain_seconds=0`, and `notify_millicents=[]`. A separate monitored policy can
 send spending alerts. Subscription, storage, network egress, taxes, builds and
