@@ -452,6 +452,17 @@ func (s *Service) openConnection(ctx context.Context, store state.StatementInvoi
 		daysUntilDue: stored.DaysUntilDue, automaticTax: stored.AutomaticTax}, nil
 }
 
+// StripeKey opens the account's Stripe connection for consumer sign-up
+// (ADR-20261021143000).
+func (s *Service) StripeKey(ctx context.Context, accountID string) (string, bool, *api.Problem) {
+	store, ok := s.Host.Store().(state.StatementInvoiceExportStore)
+	if !ok {
+		return "", false, api.ErrInternal("billing connections are unavailable")
+	}
+	conn, problem := s.openConnection(ctx, store, accountID, state.BillingProviderStripe, stripeProvider{client: s.stripeInvoiceClient()})
+	return conn.key, conn.livemode, problem
+}
+
 func (s *Service) openKey(accountID string, stored state.BillingConnection) (string, bool) {
 	namespace, plain, err := s.Host.OpenSecret(stored.SealedSecret)
 	if err != nil || namespace != keyNamespace(stored.Provider, accountID) {

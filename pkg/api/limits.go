@@ -605,6 +605,26 @@ const (
 	ConsumerSpendCapBatchSize     = 500
 )
 
+// Consumer self-service sign-up (ADR-20261021143000).
+const (
+	// An app takes this many sign-ups per UTC day unless its settings say
+	// otherwise, and at most the maximum.
+	ConsumerSignupDailyLimitDefault = 100
+	ConsumerSignupDailyLimitMax     = 1000
+	// One client address starts at most this many sign-ups an hour, and
+	// reads the form or completes a sign-up at most this often a minute.
+	ConsumerSignupPerIPPerHour        = 10
+	ConsumerSignupReadsPerIPPerMinute = 60
+	// A sign-up completes within its TTL; its Checkout Session expires an
+	// hour earlier, so a customer who saved a card can still claim the key.
+	ConsumerSignupTTL         = 24 * time.Hour
+	ConsumerSignupCheckoutTTL = 23 * time.Hour
+	// Pending sign-ups are deleted this long after they expire.
+	ConsumerSignupRetention = 7 * 24 * time.Hour
+	// The owner's sign-up list shows at most this many.
+	ConsumerSignupListMax = 100
+)
+
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
 // ADR-1324).
 const (

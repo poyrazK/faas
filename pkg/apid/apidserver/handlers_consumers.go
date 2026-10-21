@@ -280,45 +280,51 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid expiry", "expires_at must be in the future"))
 		return
 	}
-	appCount, err := s.countConsumerKeys(r.Context(), acct.ID, app.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not count consumer keys"))
+	k, plaintext, problem := s.issueConsumerKey(r.Context(), acct, c, strings.TrimSpace(req.Name), req.Scopes, req.ExpiresAt)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusCreated, consumerKeyResponse(k, plaintext))
+}
+
+// issueConsumerKey creates a key for an active consumer within the plan's
+// per-app and per-account key quotas and returns its plaintext once. The
+// owner's key route and consumer sign-up (ADR-20261021143000) share it.
+func (s *server) issueConsumerKey(ctx context.Context, acct state.Account, c state.APIConsumer, name string, scopes []string,
+	expiresAt *time.Time) (state.ConsumerKey, string, *api.Problem) {
+	appCount, err := s.countConsumerKeys(ctx, acct.ID, c.AppID)
+	if err != nil {
+		return state.ConsumerKey{}, "", api.ErrInternal("could not count consumer keys")
 	}
 	if appCount >= acct.Plan.ConsumerKeysPerApp() {
-		api.WriteProblem(w, api.ErrConsumerKeyQuota(acct.Plan, api.PlanQuotaScopeApp, acct.Plan.ConsumerKeysPerApp(), appCount))
-		return
+		return state.ConsumerKey{}, "", api.ErrConsumerKeyQuota(acct.Plan, api.PlanQuotaScopeApp, acct.Plan.ConsumerKeysPerApp(), appCount)
 	}
-	accountCount, err := s.countAccountConsumerKeys(r.Context(), acct.ID)
+	accountCount, err := s.countAccountConsumerKeys(ctx, acct.ID)
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not count account consumer keys"))
-		return
+		return state.ConsumerKey{}, "", api.ErrInternal("could not count account consumer keys")
 	}
 	if accountCount >= acct.Plan.ConsumerKeysPerAccount() {
-		api.WriteProblem(w, api.ErrConsumerKeyQuota(acct.Plan, api.PlanQuotaScopeAccount, acct.Plan.ConsumerKeysPerAccount(), accountCount))
-		return
+		return state.ConsumerKey{}, "", api.ErrConsumerKeyQuota(acct.Plan, api.PlanQuotaScopeAccount, acct.Plan.ConsumerKeysPerAccount(), accountCount)
 	}
 	plaintext, prefix, hash, err := api.GenerateConsumerKey()
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not generate consumer key"))
-		return
+		return state.ConsumerKey{}, "", api.ErrInternal("could not generate consumer key")
 	}
-	k, err := s.store.CreateConsumerKeyForConsumer(r.Context(), acct.ID, c.ID, strings.TrimSpace(req.Name), prefix, hash, req.Scopes, req.ExpiresAt)
+	k, err := s.store.CreateConsumerKeyForConsumer(ctx, acct.ID, c.ID, name, prefix, hash, scopes, expiresAt)
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-				"Consumer key already exists", "a key with this name or generated prefix already exists for the app"))
-			return
+			return state.ConsumerKey{}, "", api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Consumer key already exists", "a key with this name or generated prefix already exists for the app")
 		}
-		api.WriteProblem(w, api.ErrInternal("could not create consumer key"))
-		return
+		return state.ConsumerKey{}, "", api.ErrInternal("could not create consumer key")
 	}
-	s.audit.Emit(r.Context(), "consumer_key.created", &acct.ID, map[string]any{
-		"app_id": app.ID, "consumer_id": c.ID, "key_id": k.ID, "name": k.Name,
+	s.audit.Emit(ctx, "consumer_key.created", &acct.ID, map[string]any{
+		"app_id": c.AppID, "consumer_id": c.ID, "key_id": k.ID, "name": k.Name,
 		"scopes": k.Scopes,
 	})
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusCreated, consumerKeyResponse(k, plaintext))
+	return k, plaintext, nil
 }
 
 func (s *server) revokeConsumerKey(w http.ResponseWriter, r *http.Request, acct state.Account) {
