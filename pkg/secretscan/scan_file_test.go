@@ -130,6 +130,35 @@ func TestScanFile_PEMDedup(t *testing.T) {
 	}
 }
 
+// A committed CA bundle is public: its base64 body must not read as
+// high_entropy secrets, while a key or provider token beside it still does.
+func TestScanFile_CertificateBlocksArePublic(t *testing.T) {
+	body := strings.Repeat("MIIBPjCB5qADAgECAgEBMAoGCCqGSM49BAMCMA8xDTALBgNVBAMTBGRpYWcwHhcN\n", 6)
+	cert := "-----BEGIN CERTIFICATE-----\n" + body + "-----END CERTIFICATE-----\n"
+	cases := []struct {
+		name, contents string
+		want           []string // providers, in order
+	}{
+		{"certificate bundle", cert + cert, nil},
+		{"certificate request", strings.ReplaceAll(cert, "CERTIFICATE", "CERTIFICATE REQUEST"), nil},
+		{"key after certificate", cert + "-----BEGIN EC PRIVATE KEY-----\n" + body + "-----END EC PRIVATE KEY-----\n", []string{"private_key_block"}},
+		{"body after certificate", cert + strings.SplitAfter(body, "\n")[0], []string{"high_entropy"}},
+		{"provider token inside certificate", "-----BEGIN CERTIFICATE-----\nGITHUB_TOKEN=ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789\n-----END CERTIFICATE-----\n", []string{"github_pat"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ScanFile("runtime/ca.pem", []byte(tc.contents))
+			providers := make([]string, 0, len(got))
+			for _, f := range got {
+				providers = append(providers, f.Provider)
+			}
+			if strings.Join(providers, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("providers = %v, want %v (%+v)", providers, tc.want, got)
+			}
+		})
+	}
+}
+
 func TestScanFile_NoRawValueInSnippet(t *testing.T) {
 	// Privacy guard: snippet must never contain the full raw value.
 	contents := "STRIPE_SECRET_KEY=" + fakeStripeLiveKey + "\n"
