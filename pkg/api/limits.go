@@ -11963,6 +11963,15 @@ const (
 	// The user-token audience a runtime reports, so live reads verify
 	// tokens as the Data API does.
 	DataAPIAudienceMaxBytes = 256
+	// File storage (ADR-20261021101510), mirrored in the runtime's limits:
+	// the default and largest object an owner may allow, the transfers one
+	// instance streams at once, how long one transfer may take, and how long
+	// a signed download link works.
+	DataAPIStorageObjectDefaultBytes = 25 << 20
+	DataAPIStorageObjectMaxBytes     = 100 << 20
+	DataAPIStorageTransfers          = 4
+	DataAPIStorageTransferTimeout    = 120 * time.Second
+	DataAPIStorageSignedURLTTL       = 60 * time.Second
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour
