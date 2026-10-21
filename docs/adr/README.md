@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261021150000: Rehearsal capture of workflow starts and events](20261021150000-rehearsal-workflow-capture.md)
 - [ADR-20261021120000: Rehearsal capture of public-API event publishes](20261021120000-rehearsal-public-api-event-capture.md)
 - [ADR-20261021090000: Rehearsal queue capture](20261021090000-rehearsal-queue-capture.md)
 - [ADR-20261020200000: Rehearsal crons fire from the recipe, not the clock](20261020200000-rehearsal-crons-fire-from-the-recipe.md)

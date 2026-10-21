@@ -186,6 +186,45 @@ FROM scenario_captured_queue_messages m JOIN scenario_test_action_policies p ON 
 WHERE m.account_id=sqlc.arg(account_id)::text::uuid AND m.run_id=sqlc.arg(run_id)::text
 ORDER BY m.created_at,m.id LIMIT 257;
 
+-- name: ScenarioPlatformCaptureState :one
+SELECT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE account_id=sqlc.arg(account_id)::text::uuid
+  AND run_id=sqlc.arg(run_id)::text AND sealed_at IS NOT NULL)::boolean AS sealed,
+ (SELECT count(*) FROM scenario_captured_platform_calls WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text)::bigint AS captured;
+
+-- name: ScenarioPlatformCallsByIdempotencyKey :many
+-- Earlier captures under the same key; each kind applies the production
+-- replay rule to them (ADR-20261021150000).
+SELECT id::text AS id,name,(message IS NOT DISTINCT FROM sqlc.narg(message)::jsonb AND oversized=sqlc.arg(oversized)::boolean)::boolean AS same
+FROM scenario_captured_platform_calls
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text AND app_id=sqlc.arg(app_id)::text::uuid
+ AND kind=sqlc.arg(kind)::text AND target=sqlc.arg(target)::text AND idempotency_key=sqlc.arg(idempotency_key)::text
+ORDER BY created_at,id LIMIT 257;
+
+-- name: ScenarioCapturedWorkflowRunReference :one
+-- A captured workflow run is named by its starter, target, workflow and
+-- start ordinal, so a later event to it compares across sibling runs.
+SELECT ('run:' || p.workload_name || '/' || c.target || '/' || c.name || '#' ||
+ (SELECT count(*) FROM scenario_captured_platform_calls x WHERE x.account_id=c.account_id AND x.run_id=c.run_id AND x.app_id=c.app_id
+   AND x.kind='workflow_run' AND x.target=c.target AND x.name=c.name AND (x.created_at,x.id)<=(c.created_at,c.id))::text)::text AS reference
+FROM scenario_captured_platform_calls c JOIN scenario_test_action_policies p ON p.app_id=c.app_id
+WHERE c.id=sqlc.arg(id)::text::uuid AND c.account_id=sqlc.arg(account_id)::text::uuid AND c.run_id=sqlc.arg(run_id)::text AND c.kind='workflow_run';
+
+-- name: ScenarioExternalWorkflowRunInAccount :one
+SELECT EXISTS(SELECT 1 FROM workflow_runs wr JOIN apps a ON a.id=wr.app_id
+ WHERE wr.id=sqlc.arg(id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid)::boolean AS present;
+
+-- name: InsertScenarioCapturedPlatformCall :one
+INSERT INTO scenario_captured_platform_calls(account_id,run_id,app_id,kind,target,name,idempotency_key,message,oversized)
+VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(kind)::text,sqlc.arg(target)::text,
+ sqlc.arg(name)::text,nullif(sqlc.arg(idempotency_key)::text,''),sqlc.narg(message)::jsonb,sqlc.arg(oversized)::boolean)
+RETURNING id::text AS id;
+
+-- name: ScenarioCapturedPlatformCalls :many
+SELECT c.id::text AS id,p.workload_name AS workload,c.kind,c.target,c.name,c.message,c.oversized
+FROM scenario_captured_platform_calls c JOIN scenario_test_action_policies p ON p.app_id=c.app_id AND p.account_id=c.account_id AND p.run_id=c.run_id
+WHERE c.account_id=sqlc.arg(account_id)::text::uuid AND c.run_id=sqlc.arg(run_id)::text
+ORDER BY c.created_at,c.id LIMIT 257;
+
 -- name: ScenarioSuppressedWebhookEvents :many
 -- Ordinary webhook deliveries the capture fence suppressed, attributed like
 -- the snapshot summary: the delivery's app first, then the receiver's app.

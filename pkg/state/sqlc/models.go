@@ -12510,6 +12510,20 @@ type ScenarioCapturedEvent struct {
 	EventID       pgtype.Text
 }
 
+type ScenarioCapturedPlatformCall struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	RunID          string
+	AppID          pgtype.UUID
+	Kind           string
+	Target         string
+	Name           string
+	IdempotencyKey pgtype.Text
+	Message        []byte
+	Oversized      bool
+	CreatedAt      pgtype.Timestamptz
+}
+
 type ScenarioCapturedQueueMessage struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

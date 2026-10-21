@@ -439,6 +439,7 @@ type MemStore struct {
 	scenarioActionPolicies    map[string]scenarioActionPolicy
 	scenarioCapturedEvents    []memScenarioCapturedEvent
 	scenarioQueueCaptures     []memScenarioCapturedQueueMessage
+	scenarioPlatformCalls     []memScenarioCapturedPlatformCall
 	scenarioTestChaosPlans    map[string]chaos.Lease
 	scenarioTestChaosMatches  map[string]map[string]int64
 	previewSets               map[string]PRPreviewSet

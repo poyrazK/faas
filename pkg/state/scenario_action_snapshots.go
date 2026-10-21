@@ -44,6 +44,9 @@ func finalizeScenarioActionSnapshot(snapshot *api.ScenarioActionSnapshot, summar
 	for _, message := range snapshot.QueueMessages {
 		combinedBytes += len(message.Message)
 	}
+	for _, call := range snapshot.PlatformCalls {
+		combinedBytes += len(call.Message)
+	}
 	if combinedBytes > api.MaxScenarioActionPayloadBytes {
 		snapshot.IncompleteSimulationAttempts++
 		snapshot.Truncated = true
@@ -66,6 +69,8 @@ func finalizeScenarioActionSnapshot(snapshot *api.ScenarioActionSnapshot, summar
 		snapshot.Status, snapshot.Truncated, snapshot.Reason = "incomplete", true, "published events or suppressed webhook events exceed the evidence format bounds"
 	case snapshot.IncompleteQueueMessages > 0:
 		snapshot.Status, snapshot.Truncated, snapshot.Reason = "incomplete", true, "queue sends or delayed tasks exceed the evidence format bounds"
+	case snapshot.IncompletePlatformCalls > 0:
+		snapshot.Status, snapshot.Truncated, snapshot.Reason = "incomplete", true, "workflow or realtime calls exceed the evidence format bounds"
 	case summary.incomplete > 0:
 		snapshot.Status, snapshot.Reason = "incomplete", "managed effects are missing capture or receiver identity; start a new run with upgraded completion workers"
 	case summary.captured > api.MaxScenarioActionIntents || summary.payloadBytes > api.MaxScenarioActionPayloadBytes:
@@ -85,7 +90,7 @@ func finalizeScenarioActionSnapshot(snapshot *api.ScenarioActionSnapshot, summar
 		snapshot.Intents = []api.ScenarioCapturedAction{}
 		snapshot.SimulatedAttempts = nil
 		snapshot.PublishedEvents, snapshot.SuppressedWebhookEvents = nil, nil
-		snapshot.QueueMessages = nil
+		snapshot.QueueMessages, snapshot.PlatformCalls = nil, nil
 		body, _ = json.Marshal(snapshot) // All remaining fields are bounded metadata.
 	}
 	return body
@@ -183,6 +188,9 @@ func (s *PgStore) SealScenarioTestActions(ctx context.Context, accountID, runID 
 	if err := addScenarioQueueSnapshot(ctx, tx, &snapshot, accountID, runID); err != nil {
 		return empty, err
 	}
+	if err := addScenarioPlatformSnapshot(ctx, tx, &snapshot, accountID, runID); err != nil {
+		return empty, err
+	}
 	body := finalizeScenarioActionSnapshot(&snapshot, summary, intents)
 	if snapshot.Status == "pending" {
 		return snapshot, tx.Commit(ctx)
@@ -269,6 +277,7 @@ func (m *MemStore) SealScenarioTestActions(ctx context.Context, accountID, runID
 	m.addScenarioSuspendSnapshotLocked(&snapshot, appIDs)
 	m.addScenarioEventSnapshotLocked(&snapshot, accountID, runID, members)
 	m.addScenarioQueueSnapshotLocked(&snapshot, accountID, runID, members)
+	m.addScenarioPlatformSnapshotLocked(&snapshot, accountID, runID, members)
 	body := finalizeScenarioActionSnapshot(&snapshot, summary, intents)
 	if snapshot.Status == "pending" {
 		return snapshot, nil

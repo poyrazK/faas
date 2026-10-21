@@ -35,6 +35,33 @@ const (
 	MaxScenarioCapturedQueueMessageBytes = 64 << 10
 )
 
+// ScenarioPlatformCaptureVersion marks snapshots that carry the workflow and
+// realtime calls an enrolled app requested through the run-local platform API
+// (ADR-20261021150000). Zero means an older server.
+const (
+	ScenarioPlatformCaptureVersion       = 1
+	MaxScenarioCapturedPlatformCalls     = 256
+	MaxScenarioCapturedPlatformCallBytes = 64 << 10
+
+	ScenarioPlatformKindWorkflowRun     = "workflow_run"
+	ScenarioPlatformKindWorkflowEvent   = "workflow_event"
+	ScenarioPlatformKindRealtimePublish = "realtime_publish"
+	ScenarioPlatformKindRealtimeSignal  = "realtime_signal"
+)
+
+// ScenarioCapturedPlatformCall is a workflow or realtime call an enrolled app
+// requested. It was never performed; the run's sealed snapshot is its only
+// record. Target names what the call addressed without platform IDs where the
+// run created them; Name is the workflow, event or channel.
+type ScenarioCapturedPlatformCall struct {
+	ID       string          `json:"id"`
+	Workload string          `json:"workload"`
+	Kind     string          `json:"kind"`
+	Target   string          `json:"target"`
+	Name     string          `json:"name"`
+	Message  json.RawMessage `json:"message"`
+}
+
 // Queue capture kinds and the run-local platform API host. "api" is a reserved
 // app slug, so no customer service can be reached at this name.
 const (
@@ -134,6 +161,10 @@ type ScenarioActionSnapshot struct {
 	QueueCaptureVersion     int                            `json:"queue_capture_version,omitempty"`
 	QueueMessages           []ScenarioCapturedQueueMessage `json:"queue_messages,omitempty"`
 	IncompleteQueueMessages int64                          `json:"incomplete_queue_messages,omitempty"`
+	// Platform call capture (ADR-20261021150000) is additive in the same way.
+	PlatformCaptureVersion  int                            `json:"platform_capture_version,omitempty"`
+	PlatformCalls           []ScenarioCapturedPlatformCall `json:"platform_calls,omitempty"`
+	IncompletePlatformCalls int64                          `json:"incomplete_platform_calls,omitempty"`
 }
 
 // ScenarioReceiverFingerprint identifies the destination configuration observed

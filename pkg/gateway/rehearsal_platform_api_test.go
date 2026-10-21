@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,7 @@ type fakeRehearsalPlatformAPIStore struct {
 	captured []state.ScenarioQueueCapture
 	events   []state.ScenarioEventCapture
 	eventRun string
+	calls    []state.ScenarioPlatformCallCapture
 }
 
 const fakeRehearsalAccount = "5b0f6f0e-8a43-4d0e-9a4f-2d8f7a1c9e01"
@@ -52,6 +54,32 @@ func (f *fakeRehearsalPlatformAPIStore) CaptureScenarioEvent(_ context.Context, 
 	f.events = append(f.events, event)
 	return true, nil
 }
+
+// CaptureScenarioPlatformCall records calls; an unknown address is
+// ErrNotFound and a reused key replays the same name, conflicts otherwise.
+func (f *fakeRehearsalPlatformAPIStore) CaptureScenarioPlatformCall(_ context.Context, appID string, call state.ScenarioPlatformCallCapture) (state.ScenarioPlatformCallResult, bool, error) {
+	if appID != "caller" {
+		return state.ScenarioPlatformCallResult{}, false, nil
+	}
+	if f.err != nil {
+		return state.ScenarioPlatformCallResult{}, true, f.err
+	}
+	if call.Address == "missing" {
+		return state.ScenarioPlatformCallResult{}, true, state.ErrNotFound
+	}
+	for i, prior := range f.calls {
+		if call.IdempotencyKey != "" && prior.IdempotencyKey == call.IdempotencyKey && prior.Kind == call.Kind && prior.Address == call.Address {
+			if prior.Name != call.Name {
+				return state.ScenarioPlatformCallResult{}, true, state.ErrScenarioIdempotencyConflict
+			}
+			return state.ScenarioPlatformCallResult{ID: fakeCallID(i), Replayed: true}, true, nil
+		}
+	}
+	f.calls = append(f.calls, call)
+	return state.ScenarioPlatformCallResult{ID: fakeCallID(len(f.calls) - 1)}, true, nil
+}
+
+func fakeCallID(i int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", i) }
 
 func (f *fakeRehearsalPlatformAPIStore) PutEventSchema(context.Context, state.EventSchema) (bool, error) {
 	return false, nil

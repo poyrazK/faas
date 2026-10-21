@@ -22,6 +22,7 @@ type RehearsalPlatformAPIStore interface {
 	state.ScenarioRehearsalNetworkPolicyStore
 	state.ScenarioQueueCaptureStore
 	state.ScenarioEventCaptureStore
+	state.ScenarioPlatformCaptureStore
 	state.EventSchemaStore
 }
 
@@ -84,6 +85,13 @@ func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 	case "/v1/events:publish-batch":
 		return serveRehearsalEventBatch, true
 	}
+	if rest, found := strings.CutPrefix(r.URL.Path, "/v1/workflows/runs/"); found {
+		runID, tail, _ := strings.Cut(rest, "/")
+		if runID != "" && tail == "events" {
+			return workflowEventRoute(runID), true
+		}
+		return nil, false
+	}
 	rest, found := strings.CutPrefix(r.URL.Path, "/v1/apps/")
 	if !found {
 		return nil, false
@@ -97,6 +105,11 @@ func rehearsalPlatformAPIRoute(r *http.Request) (rehearsalPlatformRoute, bool) {
 		return queueCaptureRoute(api.ScenarioQueueKindQueue, slug), true
 	case "delayed-tasks":
 		return queueCaptureRoute(api.ScenarioQueueKindDelayedTask, slug), true
+	}
+	if workflow, ok := strings.CutPrefix(route, "workflows/"); ok {
+		if name, ok := strings.CutSuffix(workflow, "/runs"); ok && name != "" && !strings.Contains(name, "/") {
+			return workflowStartRoute(slug, name), true
+		}
 	}
 	return nil, false
 }

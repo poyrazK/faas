@@ -14649,6 +14649,23 @@
     "kind": "operational"
   },
   {
+    "table": "scenario_captured_platform_calls",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "idempotency_key",
+      "kind",
+      "message",
+      "name",
+      "oversized",
+      "run_id",
+      "target"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "scenario_captured_queue_messages",
     "columns": [
       "account_id",

@@ -20,7 +20,8 @@ func (c *Client) SealScenarioTestActions(ctx context.Context, runID string) (Sce
 	if err != nil || len(body) > MaxScenarioActionSnapshotBytes || !validScenarioActionSnapshotScope(out) || out.RunID != runID ||
 		len(out.Workloads) == 0 || len(out.Workloads) > 16 || len(out.Intents) > MaxScenarioActionIntents || len(out.SimulatedAttempts) > MaxScenarioSimulationAttempts || out.RecorderSessions < 0 || out.RecorderSessions > 256 || out.PendingRecorderSessions > out.RecorderSessions || out.PendingRecorderSessions < 0 || out.IncompleteRecorderSessions < 0 || out.PendingSimulationAttempts < 0 || out.IncompleteSimulationAttempts < 0 || out.CapturedCount < 0 || out.PendingManagedWork < 0 || out.IncompleteManagedEffects < 0 || out.SuppressedDeliveries < 0 ||
 		out.EventCaptureVersion != 0 && out.EventCaptureVersion != ScenarioEventCaptureVersion || len(out.PublishedEvents) > MaxScenarioCapturedEvents || out.IncompleteCapturedEvents < 0 ||
-		out.QueueCaptureVersion != 0 && out.QueueCaptureVersion != ScenarioQueueCaptureVersion || len(out.QueueMessages) > MaxScenarioCapturedQueueMessages || out.IncompleteQueueMessages < 0 {
+		out.QueueCaptureVersion != 0 && out.QueueCaptureVersion != ScenarioQueueCaptureVersion || len(out.QueueMessages) > MaxScenarioCapturedQueueMessages || out.IncompleteQueueMessages < 0 ||
+		out.PlatformCaptureVersion != 0 && out.PlatformCaptureVersion != ScenarioPlatformCaptureVersion || len(out.PlatformCalls) > MaxScenarioCapturedPlatformCalls || out.IncompletePlatformCalls < 0 {
 		return ScenarioActionSnapshot{}, errors.New("server did not return a bounded action snapshot for this run")
 	}
 	if out.Status != "complete" && out.Status != "pending" && out.Status != "incomplete" || out.Status == "complete" && out.SealedAt == "" || out.Status == "pending" && (out.PendingManagedWork == 0 && out.PendingSimulationAttempts == 0 && out.PendingRecorderSessions == 0 || out.SealedAt != "") {

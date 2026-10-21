@@ -1361,6 +1361,19 @@ Requests after sealing are refused with `409`. A customer *secret* named
 routes are not served. See
 [ADR-20261021090000](adr/20261021090000-rehearsal-queue-capture.md).
 
+The same endpoint captures workflow calls:
+`POST /v1/apps/{slug}/workflows/{name}/runs` and
+`POST /v1/workflows/runs/{id}/events`. A start answers `201` with a run in
+status `pending`; an event answers `200 received`. Neither runs anything.
+Idempotency keys replay as in production. An event to a run the rehearsal
+started is named by its starter, workflow and start order
+(`run:primary/workload:billing/invoice#2`), so "the second invoice run" compares
+across runs. Sealed snapshots carry `platform_capture_version: 1` and
+`platform_calls`, compared per workload, kind, target and name by canonical
+content. Workflow definitions, plan gates and run status are not checked, and
+run reads are not served. See
+[ADR-20261021150000](adr/20261021150000-rehearsal-workflow-capture.md).
+
 Database and object-store access require future isolated adapters. Ordinary app tasks,
 live migration, managed application-standard native admission and GitOps
 qualification remain unsupported for contained apps. Explicit
