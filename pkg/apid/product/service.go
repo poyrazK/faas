@@ -4,6 +4,7 @@ package product
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"time"
@@ -54,6 +55,21 @@ type Service struct {
 	// the put also returns the parts it changed.
 	BillingDetails    func(context.Context, state.Account, string) (api.ProductBillingDetails, *api.Problem)
 	PutBillingDetails func(context.Context, state.Account, string, api.PutProductBillingDetailsRequest) (api.ProductBillingDetails, []string, *api.Problem)
+	// PlanPricingEnabled reads the product_control_plan_pricing_enabled
+	// release gate (ADR-20261021154511); nil is off.
+	PlanPricingEnabled func() bool
+}
+
+// errPlanPricingUnavailable refuses a catalog with plan fees or included
+// starts until the release gate is on: a previous apid release would ignore
+// them (ADR-20261021154511).
+var errPlanPricingUnavailable = fmt.Errorf("%w: plan pricing is not enabled", state.ErrConflict)
+
+func (s *Service) checkPlanPricing(spec api.ProductCatalogSpec) error {
+	if productcontrol.UsesPlanPricing(spec) && (s.PlanPricingEnabled == nil || !s.PlanPricingEnabled()) {
+		return errPlanPricingUnavailable
+	}
+	return nil
 }
 
 func (s *Service) Start(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -147,6 +163,10 @@ func (s *Service) PutCatalog(w http.ResponseWriter, r *http.Request, acct state.
 	}
 	var spec api.ProductCatalogSpec
 	if !operation.DecodeOperationBody(w, r, &spec, api.ProductControlMaxCatalogBytes) {
+		return
+	}
+	if err := s.checkPlanPricing(spec); err != nil {
+		respond(w, nil, err)
 		return
 	}
 	if spec.AuthApp != "" {
@@ -266,6 +286,7 @@ func customerViewWithHistory(parent context.Context, store state.ProductControlS
 func populateCustomerView(ctx context.Context, store state.ProductControlStore, view *api.ProductPortal, permissions api.ProductPermissions, period string, observed time.Time, history bool) error {
 	var err error
 	var usage *api.ProductUsage
+	starts := map[string]int64{}
 	if permissions.ViewWork && history {
 		view.Operations, err = productHistory(ctx, store, view.AccountID, view.AppID, view.Customer.TenantID, view.Catalog)
 		if err != nil {
@@ -281,14 +302,11 @@ func populateCustomerView(ctx context.Context, store state.ProductControlStore, 
 			view.Usage = &value
 		}
 		usage = &value
+		for _, line := range value.Lines {
+			starts[line.Feature] += line.Starts
+		}
 		for name, grant := range view.Catalog.Spec.Plans[view.Customer.Plan].Features {
-			remaining := grant.MonthlyStarts
-			for _, line := range value.Lines {
-				if line.Feature == name {
-					remaining -= line.Starts
-				}
-			}
-			view.Allowances[name] = max(0, remaining)
+			view.Allowances[name] = max(0, grant.MonthlyStarts-starts[name])
 		}
 	}
 	if permissions.RunWork || permissions.ViewBilling {
@@ -302,7 +320,7 @@ func populateCustomerView(ctx context.Context, store state.ProductControlStore, 
 			return err
 		}
 		for name := range view.Catalog.Spec.Features {
-			view.Quotes[name] = productcontrol.Quote(view.AccountID, view.AppID, view.Customer.TenantID, name, view.Catalog, view.Customer, period)
+			view.Quotes[name] = productcontrol.Quote(view.AccountID, view.AppID, view.Customer.TenantID, name, view.Catalog, view.Customer, period, starts[name])
 		}
 	}
 	if period == productcontrol.Period(observed) {
@@ -390,6 +408,9 @@ func respond(w http.ResponseWriter, value any, err error) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Product unavailable", "no product catalog or customer plan is available"))
 	case errors.Is(err, state.ErrInvalidArgument):
 		api.WriteProblem(w, api.ErrValidation("invalid product catalog, customer assignment or usage selector"))
+	case errors.Is(err, errPlanPricingUnavailable):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProductPlanPricingUnavailable, "Plan pricing unavailable",
+			"plan fees and included starts are released by the operator's product_control_plan_pricing_enabled setting; publish the catalog without them"))
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "product_configuration_conflict", "Product configuration conflict", "the requested change conflicts with the retained product configuration"))
 	case errors.Is(err, state.ErrProductBindingUnavailable):

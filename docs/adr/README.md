@@ -1,6 +1,7 @@
 # Architecture Decision Records
 
 - [Platform flags: company targeting, full coverage, scheduled and automatic rollouts, self-serve previews](20261021080640-platform-flag-extensions.md)
+- [Product Control plan fees, included starts and overage](20261021154511-product-control-plan-fees-and-overage.md)
 - [Data API file storage](20261021101510-data-api-file-storage.md)
 - [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)
 - [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)

@@ -10,16 +10,31 @@ type ProductCustomerBilling struct {
 // ProductBillingReview is a live, bounded projection of admission-month receipts.
 // Finalization requires a closed UTC month, no unresolved receipts, and this hash.
 type ProductBillingReview struct {
-	TenantID         string                  `json:"tenant_id"`
-	Period           string                  `json:"period"`
-	Currency         string                  `json:"currency"`
-	Closed           bool                    `json:"closed"`
-	Starts           int64                   `json:"starts"`
-	Unresolved       int64                   `json:"unresolved"`
-	AmountMillicents int64                   `json:"amount_millicents"`
-	Lines            []ProductBillingLine    `json:"lines"`
-	ReviewHash       string                  `json:"review_hash"`
-	Finalized        *ProductBillingDocument `json:"finalized,omitempty"`
+	TenantID         string               `json:"tenant_id"`
+	Period           string               `json:"period"`
+	Currency         string               `json:"currency"`
+	Closed           bool                 `json:"closed"`
+	Starts           int64                `json:"starts"`
+	Unresolved       int64                `json:"unresolved"`
+	AmountMillicents int64                `json:"amount_millicents"`
+	Lines            []ProductBillingLine `json:"lines"`
+	// Fees is the month's plan fee (ADR-20261021154511), included in
+	// AmountMillicents; omitted when there is none, so earlier reviews hash
+	// as before.
+	Fees       []ProductBillingFee     `json:"fees,omitempty"`
+	ReviewHash string                  `json:"review_hash"`
+	Finalized  *ProductBillingDocument `json:"finalized,omitempty"`
+}
+
+// ProductBillingFee is the monthly fee of the highest-fee plan a customer
+// held in the month, prorated from ProratedFrom in the month of their first
+// assignment (ADR-20261021154511).
+type ProductBillingFee struct {
+	Plan                 string     `json:"plan"`
+	Revision             string     `json:"revision"`
+	MonthlyFeeMillicents int64      `json:"monthly_fee_millicents"`
+	AmountMillicents     int64      `json:"amount_millicents"`
+	ProratedFrom         *time.Time `json:"prorated_from,omitempty"`
 }
 
 type ProductBillingLine struct {

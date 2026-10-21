@@ -277,8 +277,10 @@ reviews feature inclusion, per-success prices, monthly allowances, used starts
 and remaining starts, then explicitly confirms. Changes apply immediately to
 future starts. Already accepted runs keep their admitted price. Consumed starts
 carry across plans and catalog revisions within the UTC month; a downgrade below
-that count leaves zero starts available. There is no subscription fee, proration,
-payment collection or scheduled downgrade in this release.
+that count leaves zero starts available. A plan's monthly fee follows the
+[monthly fee](#monthly-plan-fees) rule: the month owes the highest fee among the
+plans held in it, so a downgrade lowers the fee from the next month, and the
+review says so. There is no scheduled downgrade.
 
 A review binds the current assignment, both sets of terms, latest catalog head,
 UTC month and relevant consumed starts. Confirmation rechecks these with current
@@ -582,7 +584,8 @@ Use **Preview plan change** to compare prices, access and monthly caps, then
 confirm. Existing Auth organization links are preserved automatically. First
 assignments can supply an organization UUID. Terms change immediately for future
 admissions; starts already used do not reset and accepted runs keep their original
-terms. No subscription proration occurs. An intervening assignment, identity,
+terms. The review shows the plans' monthly fees; the month owes the higher one
+(see [monthly plan fees](#monthly-plan-fees)). An intervening assignment, identity,
 catalog or UTC-month change requires a new preview. Confirmation IDs and
 before/after receipts are durable: retry the same confirmation after a lost
 response; an older retry cannot reapply itself over a newer change. Expired or
@@ -651,6 +654,71 @@ For an intentionally fixed binding, use `init --definition DEFINITION_UUID`.
 Fixed bindings keep the original contract; publish and explicitly assign a new
 catalog before retiring their code. Catalog references alone do not extend
 deployment retention.
+
+### Included starts and overage
+
+A grant can include starts at no charge before its unit price applies
+([ADR-20261021154511](../adr/20261021154511-product-control-plan-fees-and-overage.md)):
+
+```json
+"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}
+```
+
+- **Pricing.** The first 100 starts of the UTC month cost nothing. Starts 101 to
+  1,000 cost €0.20 per verified success. The 1,001st start is refused, as any
+  start beyond `monthly_starts` is. `included_starts` ranges from 0 (the
+  default, today's pricing) to `monthly_starts`.
+- **What counts.** Every admitted start counts, whether it succeeds, fails or is
+  cancelled, across plans and catalog revisions in the month. A customer who
+  moves to a plan with more included starts keeps the starts already used.
+- **Price at admission.** Each run records its own price: 0 for an included start,
+  the unit price otherwise. Statements show included runs as their own line at
+  price 0, which invoices describe as "… included at no charge". A statement that
+  charges nothing is not exported.
+- **Confirmation.** The portal shows the included runs left, then the price. Its
+  quote binds the next start's price, so if another start uses the last included
+  one first, the confirmation fails with 409 `product_quote_changed` and shows
+  the new price. `gregale product quote` returns `included_starts` and
+  `next_start_price_millicents`.
+- **Release gate.** Publishing a catalog with included starts needs the
+  operator's `product_control_plan_pricing_enabled` runtime setting. Without it
+  the publication is refused with 409 `product_plan_pricing_unavailable`. Enable
+  the setting only once every apid replica runs this release, because an earlier
+  apid would charge included starts at the full price. Guided setup edits starts
+  and prices and keeps included starts set through the API.
+
+### Monthly plan fees
+
+A plan can charge a monthly fee besides its run prices
+([ADR-20261021154511](../adr/20261021154511-product-control-plan-fees-and-overage.md)):
+
+```json
+"pro": {"label": "Pro", "monthly_fee_millicents": 2900000, "features": {"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}}}
+```
+
+- **Which fee.** Each UTC month owes, once, the highest monthly fee among the
+  plans (catalog revision and plan) the customer held in it. A customer who
+  upgrades on the 20th owes the higher fee for the month. One who downgrades owes
+  the lower fee from the next month, and the plan-change reviews say so.
+- **First month.** In the month of a customer's first assignment, the fee is
+  prorated by the minute from the assignment to the month's end, rounded half up
+  to the millicent. Included starts are not prorated; cap a late joiner with
+  `monthly_starts`.
+- **Suspension** does not stop the fee. To stop charging, move the customer to a
+  plan without one.
+- **Plan history.** Every assignment change (owner assignment, reviewed owner
+  change, self-service change, onboarding) is recorded with its time. A month's
+  plans are the one in force when it starts and those assigned during it.
+- **Statements.** The review's `fees` names the plan, revision, monthly fee, the
+  amount and `prorated_from`, and `amount_millicents` includes it. A customer
+  whose month owes a fee gets a statement without runs, and billing runs bill
+  such customers too. The invoice item reads "Monthly fee for plan pro", with
+  ", prorated from 2026-10-21" when partial.
+- **Credits.** Credit notes still credit runs only. Refund a fee in your billing
+  provider.
+- **Release gate.** Plan fees need the same `product_control_plan_pricing_enabled`
+  setting as included starts, because an earlier apid would finalize statements
+  without them.
 
 ## Deployment bindings
 
