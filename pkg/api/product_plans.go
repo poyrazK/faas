@@ -33,6 +33,9 @@ type ProductPlanFeatureTerms struct {
 	UnitPriceMillicents int64  `json:"unit_price_millicents"`
 	Starts              int64  `json:"starts"`
 	RemainingStarts     int64  `json:"remaining_starts"`
+	// IncludedStarts come first at no charge (ADR-20261021154511); omitted
+	// when zero, so earlier previews hash as before.
+	IncludedStarts int64 `json:"included_starts,omitempty"`
 }
 
 type ProductPlanTerms struct {

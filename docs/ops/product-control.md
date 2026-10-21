@@ -638,6 +638,38 @@ An assignment pins both plan and catalog revision. Publishing another catalog
 does not migrate existing customers. Assign explicitly to adopt the current
 revision, or supply `--revision HASH` to select an earlier one.
 
+### Included starts and overage
+
+A grant can include starts at no charge before its unit price applies
+([ADR-20261021154511](../adr/20261021154511-product-control-plan-fees-and-overage.md)):
+
+```json
+"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}
+```
+
+- **Pricing.** The first 100 starts of the UTC month cost nothing. Starts 101 to
+  1,000 cost €0.20 per verified success. The 1,001st start is refused, as any
+  start beyond `monthly_starts` is. `included_starts` ranges from 0 (the
+  default, today's pricing) to `monthly_starts`.
+- **What counts.** Every admitted start counts, whether it succeeds, fails or is
+  cancelled, across plans and catalog revisions in the month. A customer who
+  moves to a plan with more included starts keeps the starts already used.
+- **Price at admission.** Each run records its own price: 0 for an included start,
+  the unit price otherwise. Statements show included runs as their own no-charge
+  line ("included successful export runs"), and a statement that charges nothing
+  is not exported.
+- **Confirmation.** The portal shows the included runs left, then the price. Its
+  quote binds the next start's price, so if another start uses the last included
+  one first, the confirmation fails with 409 `product_quote_changed` and shows
+  the new price. `gregale product quote` returns `included_starts` and
+  `next_start_price_millicents`.
+- **Release gate.** Publishing a catalog with included starts needs the
+  operator's `product_control_plan_pricing_enabled` runtime setting. Without it
+  the publication is refused with 409 `product_plan_pricing_unavailable`. Enable
+  the setting only once every apid replica runs this release, because an earlier
+  apid would charge included starts at the full price. Guided setup edits starts
+  and prices and keeps included starts set through the API.
+
 The generated feature follows `export` on the fully serving deployment in
 `default`. Keep that Operation declaration in the source manifest: normal
 source-based `gregale deploy` installs a new immutable definition, and Product Control resolves

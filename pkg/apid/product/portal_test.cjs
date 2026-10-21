@@ -243,6 +243,24 @@ test('changed terms require a second visible confirmation without automatic resu
   await b.submit(8); assert.equal(starts, 2); assert.match(b.confirms.at(-1), /EUR 0.50/);
   assert.equal(JSON.parse(b.calls.filter(c => c.path.endsWith('/start'))[1].options.body).expected_quote, changedQuote);
 });
+// ADR-20261021154511: included starts come first at no charge, then the unit price.
+test('included starts show the included runs left and confirm a free start before the priced ones', async () => {
+  const included = remaining => {
+    const value = fixture(); value.remaining_starts = { export: remaining };
+    value.catalog.spec.plans.starter.features.export = { included_starts: 3, monthly_starts: 10, unit_price_millicents: 20000 };
+    return value;
+  };
+  let remaining = 8;
+  const b = browser(async path => {
+    if (path.endsWith('/start')) { remaining--; return { ok: true, status: 202, json: async () => ({ id: ids.op }) }; }
+    if (path.endsWith('/product')) return { ok: true, status: 200, json: async () => included(remaining) };
+  });
+  await b.signIn();
+  assert.equal(b.get('features').children[0].children[1].textContent, '1 of 3 included runs left, then EUR 0.20 per successful run · 8 of 10 starts remaining this month.');
+  await b.submit(1); assert.match(b.confirms[0], /included in your plan at no charge/);
+  await waitFor(() => b.get('features').children[0].children[1].textContent.startsWith('0 of 3 included runs left'));
+  await b.submit(2); assert.match(b.confirms.at(-1), /EUR 0.20 will be recorded only if it succeeds/);
+});
 test('reload discovers a lost acknowledgement without sending any work', async () => {
   const storage = new Map(), first = browser(async path => { if (path.endsWith('/start')) throw new Error('lost'); }, storage);
   await first.signIn(); await first.submit(8);

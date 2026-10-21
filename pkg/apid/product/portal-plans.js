@@ -91,7 +91,9 @@
       for (const label of ['Feature', 'Current plan', 'Proposed plan']) head.append(node('th', label)); table.append(head);
       const before = new Map(preview.before.features.map(feature => [feature.name, feature]));
       const after = new Map(preview.after.features.map(feature => [feature.name, feature]));
-      const describe = (feature, currency) => feature ? `${this.host.amount(feature.unit_price_millicents, currency)} per successful run · ${feature.monthly_starts} starts/month · ${feature.starts} used · ${feature.remaining_starts} remaining` : 'Not included';
+      // Included starts come first at no charge (ADR-20261021154511).
+      const included = feature => feature.included_starts > 0 ? `${feature.included_starts} included, then ` : '';
+      const describe = (feature, currency) => feature ? `${included(feature)}${this.host.amount(feature.unit_price_millicents, currency)} per successful run · ${feature.monthly_starts} starts/month · ${feature.starts} used · ${feature.remaining_starts} remaining` : 'Not included';
       for (const name of [...new Set([...before.keys(), ...after.keys()])].sort()) {
         const row = node('tr'); row.append(node('th', (after.get(name) || before.get(name)).label), node('td', describe(before.get(name), preview.before.currency)), node('td', describe(after.get(name), preview.after.currency))); table.append(row);
       }

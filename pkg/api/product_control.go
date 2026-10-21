@@ -57,6 +57,25 @@ type ProductPlan struct {
 type ProductFeatureGrant struct {
 	MonthlyStarts       int64 `json:"monthly_starts"`
 	UnitPriceMillicents int64 `json:"unit_price_millicents"`
+	// IncludedStarts are the first starts of a UTC month, admitted at price
+	// 0; later starts cost UnitPriceMillicents up to MonthlyStarts
+	// (ADR-20261021154511). Omitted when zero, so existing catalog
+	// revisions and quotes hash as before.
+	IncludedStarts int64 `json:"included_starts,omitempty"`
+}
+
+// CodeProductPlanPricingUnavailable refuses a catalog with included starts
+// while the product_control_plan_pricing_enabled release gate is off
+// (ADR-20261021154511).
+const CodeProductPlanPricingUnavailable = "product_plan_pricing_unavailable"
+
+// StartPriceMillicents is the price of a start admitted after startsBefore
+// starts of the feature this month.
+func (g ProductFeatureGrant) StartPriceMillicents(startsBefore int64) int64 {
+	if startsBefore < g.IncludedStarts {
+		return 0
+	}
+	return g.UnitPriceMillicents
 }
 
 type ProductCatalog struct {
@@ -135,6 +154,10 @@ type ProductAdmissionEvidence struct {
 	Name               string `json:"name"`
 	MonthlyStarts      int64  `json:"monthly_starts"`
 	StartsBefore       int64  `json:"starts_before"`
+	// IncludedStarts is the grant's included starts when it had any
+	// (ADR-20261021154511); the run was included when StartsBefore was
+	// below it.
+	IncludedStarts int64 `json:"included_starts,omitempty"`
 }
 
 type ProductReceiptEvidence struct {

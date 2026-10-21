@@ -224,15 +224,25 @@ func TenantStatementInvoice(statement state.PlatformTenantStatement, cards ...st
 // ProductControlStatementInvoice groups a finalized Product Control
 // statement's charged successes by feature, plan and admitted unit price
 // (ADR-20261018212918). Catalog revisions at the same price share a line;
-// waived, failed, cancelled and unresolved runs are never invoiced.
+// waived, failed, cancelled and unresolved runs are never invoiced. Runs
+// admitted at price 0, such as included starts, keep a line of their own,
+// and a statement that charges nothing is not invoiced
+// (ADR-20261021154511).
 func ProductControlStatementInvoice(doc api.ProductBillingDocument) (StatementInvoice, error) {
 	inv := StatementInvoice{Currency: doc.Currency}
 	if doc.Kind != "statement" || doc.Snapshot == nil {
 		return inv, fmt.Errorf("%w: only finalized Product Control statements export; credit notes keep their recorded handoff", ErrStatementNotInvoiceable)
 	}
+	if doc.AmountMillicents == 0 {
+		return inv, fmt.Errorf("%w: the statement charges nothing", ErrStatementNotInvoiceable)
+	}
 	lines := map[invoiceLineKey]*StatementInvoiceLine{}
 	for _, line := range doc.Snapshot.Lines {
-		key := invoiceLineKey{price: line.UnitPriceMillicents, label: fmt.Sprintf("successful %s runs on plan %s", line.Feature, line.Plan)}
+		label := fmt.Sprintf("successful %s runs on plan %s", line.Feature, line.Plan)
+		if line.UnitPriceMillicents == 0 {
+			label = fmt.Sprintf("included successful %s runs on plan %s", line.Feature, line.Plan)
+		}
+		key := invoiceLineKey{price: line.UnitPriceMillicents, label: label}
 		if err := inv.add(key, line.Succeeded, lines); err != nil {
 			return inv, err
 		}

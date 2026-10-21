@@ -194,13 +194,25 @@
     try { link = new URL(hold.hosted_invoice_url); } catch { link = null; }
     if (link?.protocol === 'https:') { const a = node('a', 'View and pay invoice'); a.href = link.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; status.append(a); }
   }
+  // Included starts come first at no charge; later ones cost the unit price
+  // up to the monthly limit (ADR-20261021154511).
+  function includedLeft(grant, remaining) {
+    const included = Number.isSafeInteger(grant.included_starts) ? grant.included_starts : 0;
+    return Math.max(0, included - (grant.monthly_starts - remaining));
+  }
+  function featureTerms(grant, remaining) {
+    const price = `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} per successful run`;
+    const starts = `${remaining} of ${grant.monthly_starts} starts remaining this month.`;
+    if (!(grant.included_starts > 0)) return `${price} · ${starts}`;
+    return `${includedLeft(grant, remaining)} of ${grant.included_starts} included runs left, then ${price} · ${starts}`;
+  }
   function updateFeatureTerms() {
     const plan = view.catalog.spec.plans[view.customer.plan];
     for (const [name, card] of cards) {
       const grant = plan.features[name];
       if (!grant) { card.button.disabled = true; card.info.textContent = 'This feature is no longer included in your plan.'; continue; }
       const remaining = Number.isSafeInteger(view.remaining_starts?.[name]) ? view.remaining_starts[name] : 0;
-      card.info.textContent = `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} per successful run · ${remaining} of ${grant.monthly_starts} starts remaining this month.`;
+      card.info.textContent = featureTerms(grant, remaining);
       card.button.disabled = !allowed('run_work') || card.busy || !card.pending && (view.customer.suspended || Boolean(view.overdue_hold) || view.bindings[name]?.available !== true || remaining === 0);
     }
   }
@@ -215,7 +227,7 @@
       const pending = saved && !saved.operationID, input = inputForm(binding?.input_schema, inputs.get(name));
       const button = node('button', pending ? 'Check / retry saved request' : 'Run feature'); button.type = 'submit';
       button.disabled = !pending && (view.customer.suspended || Boolean(view.overdue_hold) || binding?.available !== true || remaining === 0);
-      const info = node('p', `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} per successful run · ${remaining} of ${grant.monthly_starts} starts remaining this month.`);
+      const info = node('p', featureTerms(grant, remaining));
       const cardState = { info, button, pending, busy: false }; cards.set(name, cardState); card.append(node('h3', feature.label), info);
       if (pending) card.append(node('p', 'A saved submission needs confirmation. Enter the original details if it has not been accepted.'));
       if (binding?.available !== true) card.append(node('p', 'This feature is temporarily unavailable while its deployment is being prepared.'));
@@ -239,7 +251,9 @@
         if (observation.state === 'expired') throw new Error('The saved submission has expired. Contact your product team before starting again.');
       }
       const grant = view.catalog.spec.plans[view.customer.plan].features[name];
-      if (!window.confirm(`Run ${view.catalog.spec.features[name].label}?\n${amount(grant.unit_price_millicents, view.catalog.spec.currency)} will be recorded only if it succeeds. This consumes one monthly start even if it fails or is cancelled.`)) return;
+      const remaining = Number.isSafeInteger(view.remaining_starts?.[name]) ? view.remaining_starts[name] : 0;
+      const charge = includedLeft(grant, remaining) > 0 ? 'It is included in your plan at no charge' : `${amount(grant.unit_price_millicents, view.catalog.spec.currency)} will be recorded only if it succeeds`;
+      if (!window.confirm(`Run ${view.catalog.spec.features[name].label}?\n${charge}. This consumes one monthly start even if it fails or is cancelled.`)) return;
       current(generation);
       // Persist before POST. A failed save must prevent submission.
       const receipt = await store.prepare(selectedScope, input, view.quotes[name]); current(generation);

@@ -78,7 +78,8 @@ func productPlanTerms(c api.ProductCatalog, name string, starts map[string]int64
 	p := c.Spec.Plans[name]
 	out := api.ProductPlanTerms{Plan: name, Label: p.Label, Revision: c.Revision, Currency: c.Spec.Currency, Features: []api.ProductPlanFeatureTerms{}}
 	for feature, grant := range p.Features {
-		out.Features = append(out.Features, api.ProductPlanFeatureTerms{Name: feature, Label: c.Spec.Features[feature].Label, MonthlyStarts: grant.MonthlyStarts, UnitPriceMillicents: grant.UnitPriceMillicents, Starts: starts[feature], RemainingStarts: max(0, grant.MonthlyStarts-starts[feature])})
+		out.Features = append(out.Features, api.ProductPlanFeatureTerms{Name: feature, Label: c.Spec.Features[feature].Label, MonthlyStarts: grant.MonthlyStarts, UnitPriceMillicents: grant.UnitPriceMillicents, Starts: starts[feature], RemainingStarts: max(0, grant.MonthlyStarts-starts[feature]),
+			IncludedStarts: grant.IncludedStarts})
 	}
 	sort.Slice(out.Features, func(i, j int) bool { return out.Features[i].Name < out.Features[j].Name })
 	return out

@@ -9,6 +9,11 @@ import (
 
 func TestProductControlPostgres(t *testing.T) { state.ProductControlContract(t, state.XNewPgStore(t)) }
 
+// adr: 20261021154511
+func TestProductIncludedStartsPostgres(t *testing.T) {
+	state.ProductIncludedStartsContract(t, state.XNewPgStore(t))
+}
+
 func TestProductControlDeploymentPilotPostgres(t *testing.T) {
 	s := state.XNewPgStore(t)
 	result := state.ProductDeploymentPilot(t, s)

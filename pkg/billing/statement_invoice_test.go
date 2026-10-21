@@ -100,9 +100,9 @@ func TestProductControlStatementInvoiceLinesAndRounding(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []StatementInvoiceLine{
+		{Label: "included successful validate runs on plan pro", Units: 7},
 		{Label: "successful export runs on plan pro", Units: 1, PriceMillicentsPerUnit: 1500, AmountMillicents: 1500, AmountMinor: 2},
 		{Label: "successful export runs on plan starter", Units: 3, PriceMillicentsPerUnit: 1500, AmountMillicents: 4500, AmountMinor: 5},
-		{Label: "successful validate runs on plan pro", Units: 7},
 	}
 	if len(inv.Lines) != len(want) {
 		t.Fatalf("lines = %+v", inv.Lines)
@@ -135,5 +135,30 @@ func TestProductControlStatementInvoiceLinesAndRounding(t *testing.T) {
 	doc.Currency = "CLF"
 	if _, err := ProductControlStatementInvoice(doc); !errors.Is(err, ErrInvoiceCurrencyUnsupported) {
 		t.Fatalf("four-decimal CLF err = %v", err)
+	}
+}
+
+// adr: 20261021154511 — included starts are admitted at price 0, so their
+// successes get a no-charge line beside the paid overage of the same
+// feature, and a month inside the included starts is not invoiced.
+func TestProductControlStatementInvoiceIncludedStarts(t *testing.T) {
+	included := api.ProductBillingLine{Feature: "export", Plan: "starter", Starts: 100, Succeeded: 96, Failed: 4}
+	overage := api.ProductBillingLine{Feature: "export", Plan: "starter", UnitPriceMillicents: 20000, Starts: 12, Succeeded: 10, Failed: 2, AmountMillicents: 200000}
+	doc := api.ProductBillingDocument{Kind: "statement", Currency: "EUR", AmountMillicents: 200000,
+		Snapshot: &api.ProductBillingReview{Lines: []api.ProductBillingLine{included, overage}}}
+	inv, err := ProductControlStatementInvoice(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []StatementInvoiceLine{
+		{Label: "included successful export runs on plan starter", Units: 96},
+		{Label: "successful export runs on plan starter", Units: 10, PriceMillicentsPerUnit: 20000, AmountMillicents: 200000, AmountMinor: 200},
+	}
+	if len(inv.Lines) != len(want) || inv.Lines[0] != want[0] || inv.Lines[1] != want[1] || inv.TotalMinor != 200 || inv.RoundingMinor != 0 {
+		t.Fatalf("invoice = %+v", inv)
+	}
+	doc.AmountMillicents, doc.Snapshot.Lines = 0, []api.ProductBillingLine{included}
+	if _, err := ProductControlStatementInvoice(doc); !errors.Is(err, ErrStatementNotInvoiceable) {
+		t.Fatalf("statement charging nothing err = %v", err)
 	}
 }

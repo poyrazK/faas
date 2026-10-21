@@ -426,6 +426,8 @@ func (s *Service) ownerError(w http.ResponseWriter, r *http.Request, c *ownerCon
 		status, message = 409, "Only a closed UTC month can be finalized."
 	case errors.Is(err, errDocumentExported):
 		status, message = 409, "This statement was exported to your billing provider, which records its invoice as the handoff."
+	case errors.Is(err, errPlanPricingUnavailable):
+		status, message = 409, "This catalog includes starts, which are not enabled yet. Publish it without included starts."
 	case errors.Is(err, state.ErrConflict):
 		status, message = 409, "This action conflicts with retained evidence. Review current assignments, credit balances, or invoice handoffs."
 	}

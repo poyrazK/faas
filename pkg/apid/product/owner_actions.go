@@ -189,7 +189,12 @@ func ownerGrantDescription(catalog api.ProductCatalog, customer api.ProductCusto
 	if !ok || customer.Suspended {
 		return "No access"
 	}
-	return ownerMoney(catalog.Spec.Currency, grant.UnitPriceMillicents) + " per verified success; " + strconv.FormatInt(grant.MonthlyStarts, 10) + " starts / UTC month"
+	price := ownerMoney(catalog.Spec.Currency, grant.UnitPriceMillicents) + " per verified success; "
+	if grant.IncludedStarts > 0 {
+		// Included starts come first at no charge (ADR-20261021154511).
+		price = strconv.FormatInt(grant.IncludedStarts, 10) + " included, then " + price
+	}
+	return price + strconv.FormatInt(grant.MonthlyStarts, 10) + " starts / UTC month"
 }
 
 func (s *Service) reviewOwnerReceipt(r *http.Request, c *ownerContext, a *ownerAction) error {

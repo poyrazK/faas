@@ -48,7 +48,8 @@ func Compile(spec api.ProductCatalogSpec) (api.ProductCatalog, error) {
 			return api.ProductCatalog{}, fmt.Errorf("invalid plan %q", name)
 		}
 		for feature, grant := range plan.Features {
-			if _, ok := spec.Features[feature]; !ok || grant.MonthlyStarts < 1 || grant.MonthlyStarts > api.ProductControlMaxMonthlyStarts || grant.UnitPriceMillicents < 0 || grant.UnitPriceMillicents > api.ProductControlMaxUnitPriceMillicents {
+			if _, ok := spec.Features[feature]; !ok || grant.MonthlyStarts < 1 || grant.MonthlyStarts > api.ProductControlMaxMonthlyStarts || grant.UnitPriceMillicents < 0 || grant.UnitPriceMillicents > api.ProductControlMaxUnitPriceMillicents ||
+				grant.IncludedStarts < 0 || grant.IncludedStarts > grant.MonthlyStarts {
 				return api.ProductCatalog{}, fmt.Errorf("invalid grant for %s/%s", name, feature)
 			}
 		}
@@ -64,6 +65,19 @@ func Compile(spec api.ProductCatalogSpec) (api.ProductCatalog, error) {
 		return api.ProductCatalog{}, err
 	}
 	return api.ProductCatalog{Revision: hex.EncodeToString(digest[:]), Spec: copy}, nil
+}
+
+// UsesPlanPricing reports whether a catalog includes starts, which a previous
+// apid release would ignore and price every start (ADR-20261021154511).
+func UsesPlanPricing(spec api.ProductCatalogSpec) bool {
+	for _, plan := range spec.Plans {
+		for _, grant := range plan.Features {
+			if grant.IncludedStarts > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func featureBindingKey(feature api.ProductFeature) (string, error) {
