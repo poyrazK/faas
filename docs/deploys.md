@@ -14,6 +14,17 @@ can reuse them after the earlier attempt finishes. Removal, dependencies, declar
 environment keys, schedules, workers, images, migration commands, configuration
 snapshots and progressive rollout are unsupported in this first version.
 
+Atomic project deploys (`--project --atomic`) accept backing services declared
+beside the workloads, such as a compose `db` service using a `postgres` image.
+Gregale never deploys those declarations, so they do not change the release;
+workload dependencies on them must still be valid
+([ADR-20261021110000](adr/20261021110000-backing-services-in-atomic-releases.md)).
+Bind real databases with `gregale add` or the manifest's `databases:` section.
+Existing image services (for example `image: ghcr.io/acme/api:2`) can join an
+atomic release with a new image reference; their other settings must stay the
+same, and a service cannot switch between source and image in an atomic release
+([ADR-20261021113000](adr/20261021113000-image-workloads-in-atomic-releases.md)).
+
 The normal deploy path is source-first and wait-by-default:
 
 ```bash
