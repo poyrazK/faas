@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -25,7 +24,7 @@ func (t *pgFinancialComputeTxn) workloadScopes(key, instance, deployment string)
 		return computeScopes{}, nil
 	}
 	// A key that is not a UUID names no app row, so it has no scopes.
-	if uuid.Validate(key) != nil {
+	if !validUUID(key) {
 		return computeScopes{}, nil
 	}
 	app, _ := parsePgUUID(key)
@@ -40,7 +39,7 @@ func (t *pgFinancialComputeTxn) workloadScopes(key, instance, deployment string)
 }
 
 func (t *pgFinancialComputeTxn) projectEnvironments(project string) ([]string, error) {
-	if uuid.Validate(project) != nil {
+	if !validUUID(project) {
 		return nil, nil
 	}
 	id, _ := parsePgUUID(project)
