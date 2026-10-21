@@ -117,6 +117,10 @@ func New(t *testing.T, catalog *pgxpool.Pool, identity *age.X25519Identity, hmac
 }
 
 func (f *Fixture) Create(t *testing.T, account, app string) (mp.Database, map[mp.CredentialAccess]mp.Binding) {
+	return f.CreateInScope(t, account, app, "default")
+}
+
+func (f *Fixture) CreateInScope(t *testing.T, account, app, scope string) (mp.Database, map[mp.CredentialAccess]mp.Binding) {
 	t.Helper()
 	database, err := f.Service.Create(t.Context(), mp.CreateRequest{AccountID: account, Name: "native-" + uuid.NewString()[:8], Spec: mp.Spec{Region: "us-east-1", PostgresMajor: f.Major, Class: mp.ClassDevelopment, Availability: mp.AvailabilitySingleZone, ScaleToZero: true, StorageLimitBytes: 1 << 30}})
 	if err != nil {
@@ -127,7 +131,7 @@ func (f *Fixture) Create(t *testing.T, account, app string) (mp.Database, map[mp
 		access mp.CredentialAccess
 		key    string
 	}{{mp.CredentialReadWrite, "DATABASE_URL"}, {mp.CredentialReadOnly, "READ_DATABASE_URL"}, {mp.CredentialMigration, "MIGRATION_DATABASE_URL"}} {
-		binding, err := f.Bindings.Create(t.Context(), mp.CreateBindingRequest{AccountID: account, AppID: app, DatabaseID: database.ID, Scope: "default", EnvironmentKey: item.key, Access: item.access})
+		binding, err := f.Bindings.Create(t.Context(), mp.CreateBindingRequest{AccountID: account, AppID: app, DatabaseID: database.ID, Scope: scope, EnvironmentKey: item.key, Access: item.access})
 		if err != nil {
 			t.Fatal(err)
 		}

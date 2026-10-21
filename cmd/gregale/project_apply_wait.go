@@ -30,10 +30,8 @@ func waitForProjectApply(ctx context.Context, c *Client, apply api.ApplyResponse
 		wg.Add(1)
 		go func(i int, build api.AppliedBuild) {
 			defer wg.Done()
-			dep := api.DeploymentResponse{ID: build.DeploymentID, BuildID: build.BuildID}
-			final, ok := waitForDeploymentReceiptUntil(waitCtx, c, dep, deadline)
-			waited := projectApplyWaitResult{deployment: final, ok: ok}
-			if ok && build.BuildID != "" {
+			waited := pollProjectDeployment(waitCtx, c, build)
+			if waited.ok && build.BuildID != "" {
 				buildCtx, cancel := context.WithTimeout(waitCtx, 3*time.Second)
 				var buildErr error
 				waited.build, buildErr = c.GetBuildsId(buildCtx, build.BuildID)
@@ -51,13 +49,30 @@ func waitForProjectApply(ctx context.Context, c *Client, apply api.ApplyResponse
 			continue
 		}
 		waited := result[i]
+		apply.Builds[i].Configuration = waited.deployment.Configuration
+		if apply.Builds[i].Configuration == nil {
+			apply.Builds[i].Configuration = build.Configuration
+		}
 		switch {
 		case !waited.ok:
 			apply.Builds[i].DeploymentStatus = "timeout"
 			if build.BuildID != "" {
 				apply.Builds[i].BuildStatus = "timeout"
 			}
-			apply.Builds[i].Error = "deployment wait timed out"
+			phase := waited.phase
+			if phase == "" {
+				phase = "deployment"
+			}
+			apply.Builds[i].Error = phase + " wait timed out; server continues processing"
+			if ctx.Err() == context.Canceled {
+				apply.Builds[i].Error = phase + " wait interrupted; server continues processing"
+			}
+			if phase != "deployment" {
+				apply.Builds[i].DeploymentStatus = waited.deployment.Status
+				if build.BuildID != "" {
+					apply.Builds[i].BuildStatus = terminalBuildStatusForDeployment(waited.deployment.Status)
+				}
+			}
 			timedOut = true
 		default:
 			apply.Builds[i].DeploymentStatus = waited.deployment.Status
@@ -68,6 +83,7 @@ func waitForProjectApply(ctx context.Context, c *Client, apply api.ApplyResponse
 					apply.Builds[i].BuildStatus = terminalBuildStatusForDeployment(waited.deployment.Status)
 				}
 			}
+			apply.Builds[i].Error = waited.err
 			if waited.buildOK && waited.build.Status != api.BuildStatusSucceeded {
 				apply.Builds[i].Error = "build " + waited.build.Status
 			}
@@ -103,4 +119,6 @@ type projectApplyWaitResult struct {
 	build      api.BuildResponse
 	buildOK    bool
 	ok         bool
+	err        string
+	phase      string
 }

@@ -66,6 +66,7 @@ const (
 	Vmmd_ExecuteOperatorPark_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/ExecuteOperatorPark"
 	Vmmd_StopInstance_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/StopInstance"
 	Vmmd_Stats_FullMethodName                                   = "/onebox.faas.vmmd.v1.Vmmd/Stats"
+	Vmmd_InflightRequestTrace_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/InflightRequestTrace"
 	Vmmd_Ping_FullMethodName                                    = "/onebox.faas.vmmd.v1.Vmmd/Ping"
 	Vmmd_Heartbeat_FullMethodName                               = "/onebox.faas.vmmd.v1.Vmmd/Heartbeat"
 	Vmmd_UpdateEgressAllowlist_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressAllowlist"
@@ -308,6 +309,15 @@ type VmmdClient interface {
 	// admission ledger (M4) and by Prometheus for the `vmmd_ops_total` /
 	// `vmmd_op_duration_seconds` dashboards (ADR-016).
 	Stats(ctx context.Context, in *StatsRequest, opts ...grpc.CallOption) (*StatsResponse, error)
+	// InflightRequestTrace returns the W3C traceparent of the one request the
+	// instance behind a service call's source address is serving, so the
+	// node's service proxy can link a call made without trace context to that
+	// request (ADR-1138). The caller is resolved from the same host-owned live
+	// identity as ResolveServiceCaller. It answers only when exactly one
+	// forward of any kind is in flight and it is an HTTP request that carried a
+	// valid traceparent; otherwise traceparent is empty. Older vmmds answer
+	// Unimplemented, which callers treat as empty.
+	InflightRequestTrace(ctx context.Context, in *InflightRequestTraceRequest, opts ...grpc.CallOption) (*InflightRequestTraceResponse, error)
 	// Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
 	// PR #114). Returns the vmmd process's Firecracker version + the
 	// server-side timestamp at the moment the handler ran; schedd's
@@ -1096,6 +1106,16 @@ func (c *vmmdClient) Stats(ctx context.Context, in *StatsRequest, opts ...grpc.C
 	return out, nil
 }
 
+func (c *vmmdClient) InflightRequestTrace(ctx context.Context, in *InflightRequestTraceRequest, opts ...grpc.CallOption) (*InflightRequestTraceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InflightRequestTraceResponse)
+	err := c.cc.Invoke(ctx, Vmmd_InflightRequestTrace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PingResponse)
@@ -1654,6 +1674,15 @@ type VmmdServer interface {
 	// admission ledger (M4) and by Prometheus for the `vmmd_ops_total` /
 	// `vmmd_op_duration_seconds` dashboards (ADR-016).
 	Stats(context.Context, *StatsRequest) (*StatsResponse, error)
+	// InflightRequestTrace returns the W3C traceparent of the one request the
+	// instance behind a service call's source address is serving, so the
+	// node's service proxy can link a call made without trace context to that
+	// request (ADR-1138). The caller is resolved from the same host-owned live
+	// identity as ResolveServiceCaller. It answers only when exactly one
+	// forward of any kind is in flight and it is an HTTP request that carried a
+	// valid traceparent; otherwise traceparent is empty. Older vmmds answer
+	// Unimplemented, which callers treat as empty.
+	InflightRequestTrace(context.Context, *InflightRequestTraceRequest) (*InflightRequestTraceResponse, error)
 	// Ping is a wire-only liveness probe (issue #97 / ADR-025 axis 3,
 	// PR #114). Returns the vmmd process's Firecracker version + the
 	// server-side timestamp at the moment the handler ran; schedd's
@@ -2106,6 +2135,9 @@ func (UnimplementedVmmdServer) StopInstance(context.Context, *StopInstanceReques
 }
 func (UnimplementedVmmdServer) Stats(context.Context, *StatsRequest) (*StatsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Stats not implemented")
+}
+func (UnimplementedVmmdServer) InflightRequestTrace(context.Context, *InflightRequestTraceRequest) (*InflightRequestTraceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InflightRequestTrace not implemented")
 }
 func (UnimplementedVmmdServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
@@ -2972,6 +3004,24 @@ func _Vmmd_Stats_Handler(srv interface{}, ctx context.Context, dec func(interfac
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_InflightRequestTrace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InflightRequestTraceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).InflightRequestTrace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_InflightRequestTrace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).InflightRequestTrace(ctx, req.(*InflightRequestTraceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PingRequest)
 	if err := dec(in); err != nil {
@@ -3677,6 +3727,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Stats",
 			Handler:    _Vmmd_Stats_Handler,
+		},
+		{
+			MethodName: "InflightRequestTrace",
+			Handler:    _Vmmd_InflightRequestTrace_Handler,
 		},
 		{
 			MethodName: "Ping",

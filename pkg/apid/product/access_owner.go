@@ -56,7 +56,7 @@ func (s *Service) OwnerAccessReview(w http.ResponseWriter, r *http.Request, acct
 	if !ok {
 		return
 	}
-	f, err := ownerParseForm(w, r, []string{"csrf_token", "head", "role", "view_work", "run_work", "view_billing", "manage_plan", "manage_team", "action"})
+	f, err := ownerParseForm(w, r, []string{"csrf_token", "head", "role", "view_work", "run_work", "view_billing", "manage_plan", "manage_team", "manage_billing", "action"})
 	if err == nil {
 		err = s.ownerVerify(r, c, "access_review", acct.ID+"/"+c.app.ID)
 	}
@@ -78,7 +78,7 @@ func ownerAccessPreview(r *http.Request, c *ownerContext, f url.Values) (api.Pro
 	if !accessRevision(f.Get("head")) || !productcontrol.ValidAccessRole(f.Get("role")) || f.Get("action") != "set" && f.Get("action") != "remove" {
 		return api.ProductAccessChangePreview{}, state.ErrInvalidArgument
 	}
-	for _, field := range []string{"view_work", "run_work", "view_billing", "manage_plan", "manage_team"} {
+	for _, field := range []string{"view_work", "run_work", "view_billing", "manage_plan", "manage_team", "manage_billing"} {
 		if f.Has(field) && f.Get(field) != "true" {
 			return api.ProductAccessChangePreview{}, state.ErrInvalidArgument
 		}
@@ -102,7 +102,7 @@ func ownerAccessPreview(r *http.Request, c *ownerContext, f url.Values) (api.Pro
 		for _, entry := range []struct {
 			field      string
 			permission api.ProductPermission
-		}{{"view_work", api.ProductPermissionViewWork}, {"run_work", api.ProductPermissionRunWork}, {"view_billing", api.ProductPermissionViewBilling}, {"manage_plan", api.ProductPermissionManagePlan}, {"manage_team", api.ProductPermissionManageTeam}} {
+		}{{"view_work", api.ProductPermissionViewWork}, {"run_work", api.ProductPermissionRunWork}, {"view_billing", api.ProductPermissionViewBilling}, {"manage_plan", api.ProductPermissionManagePlan}, {"manage_team", api.ProductPermissionManageTeam}, {"manage_billing", api.ProductPermissionManageBilling}} {
 			if f.Get(entry.field) == "true" {
 				permissions = append(permissions, entry.permission)
 			}
@@ -159,6 +159,9 @@ func accessDescription(permissions api.ProductPermissions) string {
 	}
 	if permissions.ManageTeam {
 		labels = append(labels, "Manage team")
+	}
+	if permissions.ManageBilling {
+		labels = append(labels, "Manage billing details")
 	}
 	if len(labels) == 0 {
 		return "No product access"

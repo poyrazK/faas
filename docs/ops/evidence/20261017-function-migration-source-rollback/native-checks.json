@@ -1,0 +1,42 @@
+{
+  "strict_native": {
+    "exit_code": 2,
+    "output": "requires root on the isolated native KVM acceptance host\nmake: *** [Makefile:470: test-function-background-native] Error 1\n"
+  },
+  "leakcheck": {
+    "exit_code": 2,
+    "output": "LEAK: cannot inspect native loop loop0: [Errno 2] No such file or directory: '/dev/loop0'\nLEAK: cannot inspect native loop loop1: [Errno 2] No such file or directory: '/dev/loop1'\nLEAK: cannot inspect native loop loop2: [Errno 2] No such file or directory: '/dev/loop2'\nLEAK: cannot inspect native loop loop3: [Errno 2] No such file or directory: '/dev/loop3'\nLEAK: cannot inspect native loop loop4: [Errno 2] No such file or directory: '/dev/loop4'\nLEAK: cannot inspect native loop loop5: [Errno 2] No such file or directory: '/dev/loop5'\nLEAK: cannot inspect native loop loop6: [Errno 2] No such file or directory: '/dev/loop6'\nLEAK: cannot inspect native loop loop7: [Errno 2] No such file or directory: '/dev/loop7'\nleakcheck FAILED\nmake: *** [Makefile:501: leakcheck] Error 1\n"
+  },
+  "prerequisites": {
+    "uid": 1000,
+    "kvm": false,
+    "kernel_configured": false
+  },
+  "standard_metal": {
+    "command": [
+      "make",
+      "test-metal",
+      "PKGS=./pkg/fcvm"
+    ],
+    "run_regex": "^TestMetalNativeSnapshotCaptureMeasuresWarmAndParkAndPreservesRetry$",
+    "exit_code": 2,
+    "output": "--- FAIL: TestMetalNativeSnapshotCaptureMeasuresWarmAndParkAndPreservesRetry (0.00s)\n    runtime_snapshot_capture_metal_test.go:39: native standards acceptance requires readable FAAS_TEST_KERNEL: open : no such file or directory\nFAIL\nFAIL\tgithub.com/onebox-faas/faas/pkg/fcvm\t0.082s\nFAIL\nmake: *** [Makefile:462: test-metal] Error 1\n"
+  },
+  "native_compile": {
+    "command": [
+      "go",
+      "test",
+      "-p",
+      "1",
+      "-tags",
+      "metal,function_background_native",
+      "-c",
+      "-o",
+      "/tmp/function-migration-native.test",
+      "./cmd/e2e"
+    ],
+    "exit_code": 0,
+    "sha256": "5914016884968fad671117b16081515e9603194d1a602d47a455d1f61dfeaebf",
+    "binary_removed": true
+  }
+}

@@ -1112,7 +1112,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         404: `code: not_found`,
-        409: `code: conflict`,
+        409: `Conflict; deploy_settings_conflict means the guarded app, deployment or targeted settings changed and no settings were updated.`,
         422: `code: invalid_min_instances — must be in [0, plan max_concurrency].`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

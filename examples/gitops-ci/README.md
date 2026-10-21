@@ -38,3 +38,25 @@ observed intent version. It changes no environment state and does not approve,
 adopt, deploy or prove readiness. Rerun after source, ownership, override or
 environment changes. Approval and adoption retain their separate receipts; a
 candidate plan cannot authorize either action.
+
+## Wait after merge
+
+The optional [GitHub Actions rollout example](github-actions-rollout.yaml) and
+[GitLab rollout example](gitlab-ci-rollout.yaml) wait for the exact default-branch
+push commit after merge, using the same read-only API scope. Pin a CLI and API
+version supporting gitops wait and current evidence commit_sha. Bind the selected
+environment to that repository/ref and manifest. Run this only where normal
+approval and qualified controllers are already operating; report mode fails
+explicitly and the command never enables execution.
+
+The GitHub example retains the final JSON in the job summary; GitLab retains it
+as an artifact even on failure. Neither job checks out or runs the application.
+Use protected CI variables/secrets and a runner with the pinned CLI installed.
+Adjust the default branch and timeout for the environment. Scheduled workloads
+may need a deadline long enough to observe a post-activation occurrence.
+
+Exit 0 proves current serving for the requested commit. Exit 2 is failed/blocked,
+3 is timeout, 4 is superseded, 130 is interruption, and 1 is a request/output
+error. A historical healthy release cannot pass this job. See the
+[wait semantics](../../docs/environment-gitops.md#wait-for-a-merged-commit-to-serve).
+Native VM/leak acceptance and production gates remain separate requirements.

@@ -222,9 +222,14 @@ func TestEnvironmentGitOpsHandlersStageScopedWorkloadWithoutClaimingServing(t *t
 		t.Fatalf("API claimed an unprepared serving graph: %d %s", rec.Code, rec.Body.String())
 	}
 	if evidence := status.WorkloadEvidence; evidence == nil || evidence.SourceID != status.Source.ID || evidence.RevisionID != status.Source.ApprovedRevisionID ||
+		evidence.CommitSHA != sha ||
 		evidence.Generation != status.Source.Generation || evidence.IntentVersion != status.Source.IntentVersion || evidence.GraphPhase == "" ||
 		evidence.Activated || evidence.Serving || evidence.Qualified {
 		t.Fatalf("status omitted current held-graph blockers or overstated readiness: %+v", evidence)
+	}
+	if explanation := status.Explanation; explanation == nil || !explanation.ReadOnly || explanation.ServingRevisionID != "" ||
+		len(explanation.Workloads) != 1 || explanation.Workloads[0].Resource != "workload/api" {
+		t.Fatalf("status omitted read-only workload diagnostics: %+v", explanation)
 	}
 	source, err = store.EnvironmentGitSource(t.Context(), account.ID, project.ID, "production")
 	if err != nil || source.AppliedRevisionID != "" {
@@ -237,6 +242,9 @@ func TestEnvironmentGitOpsHandlersStageScopedWorkloadWithoutClaimingServing(t *t
 	var staleStatus api.EnvironmentGitOpsStatusResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &staleStatus) != nil || staleStatus.WorkloadEvidence != nil {
 		t.Fatalf("status exposed a graph after environment intent changed: %d %+v %s", rec.Code, staleStatus.WorkloadEvidence, rec.Body.String())
+	}
+	if explanation := staleStatus.Explanation; explanation == nil || explanation.Status != "unknown" || len(explanation.Workloads) != 0 || explanation.ServingRevisionID != "" {
+		t.Fatalf("status explanation retained stale workload progress: %+v", explanation)
 	}
 }
 

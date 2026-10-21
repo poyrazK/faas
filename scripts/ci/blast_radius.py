@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
 """Report which release binaries a change rebuilds: by import closure and by code.
 
-A per-unit release (docs/adr/1650-per-unit-control-plane-releases.md) ships
-a binary when a file in its import closure changed (affected_units.py).
-That over-approximates: the linker keeps only the code a binary reaches, so
-a fix to one scheduler function can leave most of pkg/sched's importers
+A per-unit release (docs/adr/1650-per-unit-control-plane-releases.md)
+carries a binary when a file in its import closure changed
+(affected_units.py), and restarts it only where its code changed. The
+closure over-approximates: the linker keeps only the code a binary reaches,
+so a fix to one scheduler function can leave most of pkg/sched's importers
 byte-identical, or not, depending on what each one links. This script
 measures both for a change, so a pull request can see how many services its
 rollout restarts and why:
 
   closure  the binary's import closure contains a changed file (or a global
            input or the release build recipe changed): the per-unit release
-           ships it.
+           carries it.
   code     the binary built at head differs from the one built at base,
            with the release build flags (linux/amd64, CGO off, -trimpath,
-           -buildvcs=false, -tags metal for daemons, -s -w), one fixed
-           version stamp and an empty Go build ID. The build ID hashes every
+           -buildvcs=false, the Makefile's DAEMON_TAGS for daemons, -s -w),
+           one fixed version stamp and an empty Go build ID (binary_code.py). The build ID hashes every
            package the binary links, so a release binary's bytes change
            whenever its closure does; blanking it measures the code. A
-           binary whose only differing ELF section is Go's line table
-           (.gopclntab) is "lines": it runs the same code, and only stack
-           trace positions moved (an edit above the functions it links).
+           binary that differs only in Go's line table (.gopclntab), the
+           module data pointing past it and section addresses is "lines":
+           it runs the same code, and only stack trace positions moved (an
+           edit above the functions it links).
 
 Only binaries in the closure set are built: a binary outside it has the
 same inputs at both commits, and release builds are reproducible, so its
@@ -35,12 +37,10 @@ Usage:
                              [--output report.json] [--markdown report.md]
 """
 import argparse
-import hashlib
 import json
 import os
 import re
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
@@ -48,17 +48,13 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import affected_units as au  # noqa: E402
+# The code builds and digests (binary_code.py) the per-unit release selects with.
+from binary_code import LINE_TABLE, VERSION_VAR, build, compare, elf_digests, export_tree  # noqa: E402,F401
 
-VERSION_STAMP = "blast-radius"
-VERSION_VAR = "pkg/wire.Version"
 # The sticky pull-request comment starts with this line.
 MARKER = "<!-- blast-radius -->"
 # How many changed paths a binary's row names.
 REASON_LIMIT = 3
-# The ELF section holding Go's line, file and function-name tables. A
-# binary whose other sections are identical runs the same code; only its
-# stack traces (and slog source positions) differ.
-LINE_TABLE = ".gopclntab"
 
 
 def daemon_tags(makefile):
@@ -66,16 +62,6 @@ def daemon_tags(makefile):
     (comma-separated) when it names them, else metal."""
     m = re.search(r"^DAEMON_TAGS\s*:=\s*(\S+)\s*$", makefile, re.M)
     return m.group(1).split(",") if m else ["metal"]
-
-
-def export_tree(sha, dest, root="."):
-    """Write the files of commit sha into dest."""
-    os.makedirs(dest, exist_ok=True)
-    archive = subprocess.Popen(["git", "archive", "--format=tar", sha], cwd=root, stdout=subprocess.PIPE)
-    untar = subprocess.run(["tar", "-x", "-f", "-", "-C", dest], stdin=archive.stdout, capture_output=True)
-    archive.stdout.close()
-    if archive.wait() != 0 or untar.returncode != 0:
-        raise RuntimeError(f"export {sha}: {untar.stderr.decode().strip()}")
 
 
 class Tree:
@@ -136,66 +122,6 @@ def candidates(paths, base, head, global_inputs):
     return out
 
 
-def elf_digests(path):
-    """(whole file, every section but the line table) sha256 digests of a
-    64-bit little-endian ELF binary."""
-    with open(path, "rb") as fh:
-        data = fh.read()
-    if data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
-        raise RuntimeError(f"{path} is not a 64-bit little-endian ELF binary")
-    shoff, = struct.unpack_from("<Q", data, 0x28)
-    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x3A)
-    headers = [struct.unpack_from("<IIQQQQ", data, shoff + i * shentsize) for i in range(shnum)]
-    names = data[headers[shstrndx][4]:headers[shstrndx][4] + headers[shstrndx][5]]
-    code = hashlib.sha256()
-    for name_off, kind, _, addr, offset, size in headers:
-        name = names[name_off:names.index(b"\0", name_off)]
-        if name.decode() == LINE_TABLE:
-            continue
-        body = b"" if kind == 8 else data[offset:offset + size]  # SHT_NOBITS has no bytes
-        code.update(name + struct.pack("<QQ", addr, size) + hashlib.sha256(body).digest())
-    return hashlib.sha256(data).hexdigest(), code.hexdigest()
-
-
-def build(tree, names, out):
-    """{binary: (file digest, code digest)} of names built from tree with the
-    release flags (elf_digests)."""
-    hashes = {}
-    env = dict(os.environ, GOOS="linux", GOARCH="amd64", CGO_ENABLED="0")
-    ldflags = f"-X {tree.module}/{VERSION_VAR}={VERSION_STAMP} -s -w -buildid="
-    for tags in sorted({tuple(tree.tags(n)) for n in names}):
-        group = sorted(n for n in names if tuple(tree.tags(n)) == tags)
-        if not group:
-            continue
-        cmd = [os.environ.get("GO", "go"), "build", *tree.flags]
-        if tags:
-            cmd.append("-tags=" + ",".join(tags))
-        cmd += ["-ldflags", ldflags, "-o", out + os.sep] + [f"./cmd/{n}" for n in group]
-        run = subprocess.run(cmd, cwd=tree.path, env=env, capture_output=True, text=True)
-        if run.returncode != 0:
-            raise RuntimeError(f"go build at {tree.sha[:12]}: {run.stderr.strip()}")
-        for n in group:
-            hashes[n] = elf_digests(os.path.join(out, n))
-            os.remove(os.path.join(out, n))
-    return hashes
-
-
-def compare(base_hashes, head_hashes, names):
-    """{binary: "changed" | "lines" | "same" | "added" | "removed"} for
-    names. "lines": only the line table differs (build's digests)."""
-    out = {}
-    for n in names:
-        if n not in base_hashes:
-            out[n] = "added"
-        elif n not in head_hashes:
-            out[n] = "removed"
-        elif base_hashes[n] == head_hashes[n]:
-            out[n] = "same"
-        else:
-            out[n] = "lines" if base_hashes[n][1] == head_hashes[n][1] else "changed"
-    return out
-
-
 def assemble(base, head, merge_base, paths, closure, code, lanes):
     """The JSON report. code is None when nothing was built."""
     binaries = {}
@@ -250,8 +176,23 @@ def report(base_ref, head_ref, root=".", config_path=au.DEFAULT_CONFIG, measure=
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def rows(rep, names):
+    """Table rows for names, in report order: changed code first."""
+    order = {"added": 0, "removed": 0, "changed": 0, "lines": 1, "same": 2, None: 3}
+    out = ["| binary | lane | code | first changed inputs |", "| --- | --- | --- | --- |"]
+    for name in sorted(names, key=lambda n: (order[rep["binaries"][n]["code"]], n)):
+        b = rep["binaries"][name]
+        more = f" (+{b['reason_count'] - len(b['reasons'])} more)" if b["reason_count"] > len(b["reasons"]) else ""
+        reasons = ", ".join(f"`{r}`" for r in b["reasons"]) + more
+        out.append(f"| {name} | {b['lane']} | {b['code'] or 'not built'} | {reasons} |")
+    return out
+
+
 def markdown(rep):
-    """The pull-request comment / job summary for a report."""
+    """The pull-request comment / job summary for a report. The binaries
+    whose code changes come first; the rest of the closure, rebuilt with
+    the same code, is folded away: a table of every closure binary made
+    most changes look like they touch a dozen daemons."""
     total = len(rep["binaries"])
     lines = [MARKER, "## Release binaries this change rebuilds", ""]
     span = f"`{rep['merge_base'][:12]}..{rep['head'][:12]}`, {rep['changed_paths']} changed paths"
@@ -260,25 +201,27 @@ def markdown(rep):
         return "\n".join(lines) + "\n"
     shipped = f"the per-unit release ships **{len(rep['closure'])} of {total}** (import closure)"
     if rep["code"] is None:
-        lines += [f"{span}: {shipped}; code was not measured.", ""]
+        lines += [f"{span}: {shipped}; code was not measured.", ""] + rows(rep, rep["closure"])
     else:
-        only_lines = f" ({len(rep['lines'])} more differ only in line tables)" if rep["lines"] else ""
-        lines += [f"{span}: the code of **{len(rep['code'])} of {total}** release binaries changes{only_lines}; "
-                  f"{shipped}.", ""]
-    lines += ["| binary | lane | code | first changed inputs |", "| --- | --- | --- | --- |"]
-    order = {"added": 0, "removed": 0, "changed": 0, "lines": 1, "same": 2, None: 3}
-    for name, b in sorted(rep["binaries"].items(), key=lambda kv: (order[kv[1]["code"]], kv[0])):
-        if not b["closure"]:
-            continue
-        more = f" (+{b['reason_count'] - len(b['reasons'])} more)" if b["reason_count"] > len(b["reasons"]) else ""
-        reasons = ", ".join(f"`{r}`" for r in b["reasons"]) + more
-        lines.append(f"| {name} | {b['lane']} | {b['code'] or 'not built'} | {reasons} |")
+        changed = [n for n in rep["closure"] if n in set(rep["code"])]
+        if changed:
+            lines += [f"{span}: the code of **{len(changed)} of {total}** release binaries changes: "
+                      f"{', '.join(changed)}.", ""] + rows(rep, changed)
+        else:
+            lines += [f"{span}: no release binary's code changes."]
+        same = [n for n in rep["closure"] if n not in set(changed)]
+        if same:
+            only_lines = sum(1 for n in same if rep["binaries"][n]["code"] == "lines")
+            moved = f", {only_lines} with moved line numbers only" if only_lines else ""
+            lines += ["", f"<details><summary>{len(same)} more rebuilt with the same code{moved}: "
+                      "a unit release does not restart them</summary>", ""] + rows(rep, same) + ["", "</details>"]
     lines += ["", "Code is the binary's bytes built with the release flags, one version stamp and an empty Go "
               "build ID (the build ID hashes every linked package, so it changes with the closure). `lines`: "
-              f"only `{LINE_TABLE}` differs, so the binary runs the same code and only stack-trace line "
-              "numbers move. Binaries outside the table have the same inputs at both commits. A binary whose "
-              "closure changed but whose code did not still ships with a per-unit release today, because the "
-              "release selects by closure (`scripts/ci/affected_units.py`)."]
+              f"only `{LINE_TABLE}` (and the addresses after it) differs, so the binary runs the same code "
+              "and only stack-trace line numbers move. Binaries outside the tables have the same inputs at both "
+              "commits. A per-unit release restarts a control-plane or edge daemon only on a host that runs other "
+              "code than the release's (`scripts/ci/affected_units.py --code`, ADR-1650 \"Selection by code\"); "
+              "`shared` and `compute` binaries wait for a full release, which restarts every binary."]
     return "\n".join(lines) + "\n"
 
 

@@ -578,6 +578,7 @@ func cmdDeploymentGet(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "image_digest:", d.ImageDigest)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "kind:", d.Kind)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "status:", d.Status)
+	renderDeploymentConfiguration(d)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "created_at:", d.CreatedAt)
 	// Issue #977 / ADR-116: annotation block. Each field is
 	// conditional on non-empty so pre-feature rows render the

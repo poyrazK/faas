@@ -15,6 +15,9 @@ func validateEnvironmentSourceArtifact(artifact EnvironmentWorkloadSourceArtifac
 	id, err := uuid.Parse(artifact.BuildID)
 	checksum, checksumErr := hex.DecodeString(artifact.SHA256)
 	digest, digestErr := hex.DecodeString(artifact.DefinitionDigest)
+	if artifact.ContextFormat != "" && artifact.ContextFormat != api.EnvironmentGitBuildContextFormat {
+		return fmt.Errorf("%w: unsupported source context format", ErrInvalidArgument)
+	}
 	if err != nil || id.Version() != 7 || checksumErr != nil || len(checksum) != 32 || strings.ToLower(artifact.SHA256) != artifact.SHA256 || artifact.Bytes < 1 ||
 		digestErr != nil || len(digest) != 32 || strings.ToLower(artifact.DefinitionDigest) != artifact.DefinitionDigest || artifact.RevisionID == "" || !environmentCommitRE.MatchString(artifact.CommitSHA) ||
 		!filepath.IsAbs(artifact.Path) || filepath.Clean(artifact.Path) != artifact.Path ||
@@ -41,7 +44,7 @@ func sourceRequest(input Deployment) (EnvironmentWorkloadSourceRequest, error) {
 }
 
 func attachCandidateSource(input Deployment, artifacts map[string]EnvironmentWorkloadSourceArtifact, plan api.Plan) (Deployment, error) {
-	if input.Kind == DeploymentKindImage {
+	if input.Kind == DeploymentKindImage || candidateFrozenInputs(input).Source.BuildArtifactID != "" {
 		return input, nil
 	}
 	frozen := candidateFrozenInputs(input)
@@ -51,6 +54,9 @@ func attachCandidateSource(input Deployment, artifacts map[string]EnvironmentWor
 	}
 	if err := validateEnvironmentSourceArtifact(artifact); err != nil {
 		return input, err
+	}
+	if frozen.Source.ReuseUnchangedBuild != (artifact.ContextFormat == api.EnvironmentGitBuildContextFormat) {
+		return input, ErrInvalidArgument
 	}
 	if artifact.RevisionID != frozen.RevisionID || artifact.CommitSHA != input.CommitSHA || artifact.DefinitionDigest != frozen.DefinitionDigest {
 		return input, ErrConflict

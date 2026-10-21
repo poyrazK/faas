@@ -309,6 +309,9 @@ type Server struct {
 	// constructors; production cmd/vmmd uses
 	// NewWithCPUAndNetAndActivity.
 	activity *activity.ActivityTracker
+	// inflightTraces holds each in-flight HTTP forward's traceparent for
+	// InflightRequestTrace (ADR-1138).
+	inflightTraces inflightTraces
 	// identitySigner mints execution-only assertions for the scheduler's
 	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
 	identitySigner *workloadidentity.Signer
@@ -2339,6 +2342,10 @@ func ParseSeccompLines(r io.Reader) (string, int32, error) {
 func toProblem(err error) *api.Problem {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, fcvm.ErrFunctionWarmCapture) {
+		return api.NewProblem(500, api.CodeInternal,
+			"Function warm capture failed", "function checkpoint or resource recovery did not complete; retire the source VM before replacing it")
 	}
 	if errors.Is(err, financial.ErrComputeUnavailable) || errors.Is(err, financial.ErrComputeFence) {
 		return api.NewProblem(503, "financial_compute_unavailable", "Compute admission unavailable", "The VM compute authority or stable execution attempt could not be verified.")

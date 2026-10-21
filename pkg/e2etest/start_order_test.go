@@ -22,10 +22,7 @@ func TestStart_BootsVMMDBeforeSchedd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	start := regexp.MustCompile(`(?s)func Start\(.*?\n}\n`).Find(src)
-	if start == nil {
-		t.Fatal("cannot locate func Start in harness.go")
-	}
+	start := harnessStartupBody(t, src)
 	vmmd := regexp.MustCompile(`if which&VMMD != 0 \{`).FindIndex(start)
 	schedd := regexp.MustCompile(`if which&Schedd != 0 \{`).FindIndex(start)
 	if vmmd == nil || schedd == nil {
@@ -43,9 +40,9 @@ func TestStart_WaitsForImagedToSubscribe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The wait lives in startImaged now, which Start and StartWithEnv share.
-	// Asserting on the helper rather than on Start's if-block covers BOTH
-	// entry points: StartWithEnv used to ignore the Imaged bit entirely, so a
+	// Start delegates to StartWithAPIDEnv, which shares startImaged with
+	// StartWithEnv. Asserting on the helper covers all three entry points.
+	// StartWithEnv used to ignore the Imaged bit entirely, so a
 	// test could ask for imaged, get none, and see its deployment sit in
 	// `pending` with nothing reported.
 	helper := regexp.MustCompile(`(?s)func startImaged\(.*?\n}\n`).Find(src)
@@ -56,7 +53,8 @@ func TestStart_WaitsForImagedToSubscribe(t *testing.T) {
 		t.Error("startImaged returns as soon as imaged's process is up; imaged stages bases for ~70s " +
 			"before subscribing, and a deployment POSTed before that is lost until the 2h stale sweep")
 	}
-	for _, fn := range []string{`func Start\(`, `func StartWithEnv\(`} {
+	_ = harnessStartupBody(t, src)
+	for _, fn := range []string{`func StartWithAPIDEnv\(`, `func StartWithEnv\(`} {
 		body := regexp.MustCompile(`(?s)` + fn + `.*?\n}\n`).Find(src)
 		if body == nil {
 			t.Fatalf("cannot locate %s in harness.go", fn)
@@ -65,6 +63,21 @@ func TestStart_WaitsForImagedToSubscribe(t *testing.T) {
 			t.Errorf("%s does not delegate to startImaged; a caller asking for imaged would silently get none", fn)
 		}
 	}
+}
+
+// Keep Start's public entry point tied to the implementation whose launch
+// order and readiness waits the contracts inspect.
+func harnessStartupBody(t *testing.T, src []byte) []byte {
+	t.Helper()
+	start := regexp.MustCompile(`(?s)func Start\(.*?\n}\n`).Find(src)
+	if !regexp.MustCompile(`return StartWithAPIDEnv\(t, pool, which, nil, extraEnv\.\.\.\)`).Match(start) {
+		t.Fatal("Start does not forward its daemon mask and environment to StartWithAPIDEnv")
+	}
+	body := regexp.MustCompile(`(?s)func StartWithAPIDEnv\(.*?\n}\n`).Find(src)
+	if body == nil {
+		t.Fatal("cannot locate func StartWithAPIDEnv in harness.go")
+	}
+	return body
 }
 
 // The probe must see a LISTEN, not merely a session: imaged holds pool

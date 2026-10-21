@@ -86,6 +86,13 @@ type cliFlag struct {
 // boundary — adding a customer command to gregalectl or an operator
 // command to gregale fails CI immediately.
 var cliCommands = []cliCommand{
+	{Name: "promotion-rollout", DocSlug: "promotion-rollout", Short: "Inspect readiness and manage signed promotion rollout approvals", Subcommands: []cliSub{
+		{Name: "readiness", Short: "Check a staged policy against an exact APID revision and target", Flags: []cliFlag{{Name: "policy", Short: "rollout policy file"}, {Name: "trust-key", Short: "trusted public key"}, {Name: "revision", Short: "full APID source revision", Req: true}, {Name: "account-id", Short: "account UUID", Req: true}, {Name: "project-id", Short: "project UUID", Req: true}, {Name: "enabled-capabilities", Short: "configured APID boot flags"}, {Name: "require", Short: "capabilities needed for success (default health)"}}},
+		{Name: "keygen", Short: "Create a private signer and public trust key", Flags: []cliFlag{{Name: "sign-key", Short: "new private key path", Req: true}, {Name: "trust-key", Short: "new public key path", Req: true}}},
+		{Name: "sign", Short: "Sign reviewed, complete qualification and runbook evidence", Flags: []cliFlag{{Name: "input", Short: "approval input JSON", Req: true}, {Name: "sign-key", Short: "private signing key", Req: true}, {Name: "native-log", Short: "reviewed combined native log", Req: true}, {Name: "service-graph-log", Short: "reviewed supplemental log required for service_graph"}, {Name: "output", Short: "new signed approval file", Req: true}}},
+		{Name: "pause", Short: "Stop new admissions without changing accepted operations", Flags: []cliFlag{{Name: "policy", Short: "rollout policy file", Req: true}}},
+		{Name: "resume", Short: "Reopen only an already approved rollout scope", Flags: []cliFlag{{Name: "policy", Short: "rollout policy file", Req: true}}},
+	}},
 	{
 		Name: "ci", DocSlug: "ci", Short: "Internal, default-off CI planning and execution controls",
 		Subcommands: []cliSub{
@@ -251,6 +258,7 @@ var cliCommands = []cliCommand{
 		Short:   "Provision, migrate, and verify the fleet-wide sealed-secret identity",
 		Subcommands: []cliSub{
 			{Name: "init", Short: "Create fleet.age and fleet.age.pub", Flags: []cliFlag{{Name: "dir", Short: "fleet identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "retire-release-key", Short: "Verify and retire a recipient from release-secret storage", Flags: []cliFlag{{Name: "kid", Short: "previous age recipient"}, {Name: "current-key", Short: "current fleet identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "database environment file"}, {Name: "dry-run", Short: "read dependencies without retiring"}, {Name: "json", Short: "emit retirement status"}}},
 			{Name: "migrate", Short: "Re-seal cluster and customer material to fleet.age", Flags: []cliFlag{{Name: "fleet-key", Short: "fleet.age identity"}, {Name: "legacy-host-dir", Short: "legacy host identity directory"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
 			{Name: "verify", Short: "Prove customer probe and shared-kid JWT access", Flags: []cliFlag{{Name: "fleet-key", Short: "staged fleet.age identity"}, {Name: "host-key", Short: "per-host host.age identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "json", Short: "emit structured JSON"}}},
 		},

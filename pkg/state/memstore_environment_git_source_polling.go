@@ -65,6 +65,12 @@ func (m *MemStore) FinishEnvironmentGitSourcePoll(_ context.Context, lease Envir
 		if result.Desired.Definition.Project != project.Slug || result.Desired.Definition.Environment != memory.source.EnvironmentSlug {
 			return ErrInvalidArgument
 		}
+		if err := m.validateRecoveryRetentionApprovalLocked(memory.source, result.Desired.Definition); err != nil {
+			return err
+		}
+		if err := m.validateBuildArtifactApprovalLocked(memory.source, result.Desired.Definition); err != nil {
+			return err
+		}
 		var revision EnvironmentDesiredRevision
 		for _, candidate := range memory.revisions {
 			if candidate.CommitSHA == result.CommitSHA && candidate.Digest == result.Digest {
@@ -75,7 +81,7 @@ func (m *MemStore) FinishEnvironmentGitSourcePoll(_ context.Context, lease Envir
 		if revision.ID == "" {
 			definition, _ := json.Marshal(result.Desired.Definition)
 			revision = EnvironmentDesiredRevision{ID: newID(), SourceID: memory.source.ID, CommitSHA: result.CommitSHA, Digest: result.Digest,
-				Definition: definition, ApprovedBy: "github:protected_branch", ApprovedAt: time.Now().UTC()}
+				Definition: definition, ApprovedBy: environmentProtectedApprover(memory.source.Spec.Provider), ApprovedAt: time.Now().UTC()}
 		}
 		changed := memory.source.ApprovedRevisionID != revision.ID
 		generation := memory.source.Generation
@@ -104,5 +110,8 @@ func (m *MemStore) FinishEnvironmentGitSourcePoll(_ context.Context, lease Envir
 		memory.source.SourceCommitSHA, memory.source.SourceDefinitionDigest, memory.source.SourceVerifiedAt = result.CommitSHA, result.Digest, &verified
 	}
 	memory.poll = environmentGitSourcePoll{NextPollAt: next.UTC()}
+	if err := m.environmentGitRolloutNotificationLocked(memory, nil, "", now); err != nil {
+		return err
+	}
 	return m.environmentGitNotificationLocked(memory, "source", environmentGitSourceNotificationStatus(result.ErrorCode), "", result.ErrorCode, api.EnvironmentGitOpsPlan{CommitSHA: result.CommitSHA}, now)
 }

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/api"
 	"sort"
 	"time"
 )
@@ -21,6 +22,17 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(ctx context.Context, promot
 		promotion.ID = newID()
 	}
 	now := time.Now().UTC()
+	health, err := newPromotionHealth(promotion, m.clock())
+	if err != nil {
+		return ProjectEnvironmentPromotion{}, nil, err
+	}
+	if err := admitPromotionHealth(health, m.promotionAdmissionCountsLocked(promotion.AccountID, promotion.ID), m.clock().UTC()); err != nil {
+		return ProjectEnvironmentPromotion{}, nil, err
+	}
+	approval, err := m.findPromotionApprovalLocked(promotion)
+	if err != nil {
+		return ProjectEnvironmentPromotion{}, nil, err
+	}
 	if promotion.Status == "" {
 		promotion.Status = "running"
 	}
@@ -31,7 +43,16 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(ctx context.Context, promot
 		promotion.CreatedAt = now
 	}
 	promotion.UpdatedAt = now
+	var releaseCapture *promotionReleaseConfiguration
 	if promotion.SyncConfig {
+		var err error
+		releaseCapture, err = m.capturePromotionReleaseConfigurationLocked(promotion, workloads)
+		if err != nil {
+			return ProjectEnvironmentPromotion{}, nil, err
+		}
+		if err := m.admitPromotionMigrationLocked(promotion, releaseCapture); err != nil {
+			return ProjectEnvironmentPromotion{}, nil, err
+		}
 		captured, err := m.capturePromotionFeatureFlagsLocked(promotion)
 		if err != nil {
 			return ProjectEnvironmentPromotion{}, nil, err
@@ -41,7 +62,47 @@ func (m *MemStore) CreateProjectEnvironmentPromotion(ctx context.Context, promot
 		}
 		m.projectEnvironmentPromotionFlags[promotion.ID] = captured
 	}
-	m.projectEnvironmentPromotions[promotion.ID] = promotion
+	if releaseCapture != nil {
+		if m.promotionReleaseConfigurations == nil {
+			m.promotionReleaseConfigurations = map[string]promotionReleaseConfiguration{}
+		}
+		if m.releaseEnvironmentPins == nil {
+			m.releaseEnvironmentPins = map[string][]AppEnv{}
+		}
+		m.promotionReleaseConfigurations[promotion.ID] = *releaseCapture
+		for _, w := range releaseCapture.Workloads {
+			if releaseCapture.Secrets != nil {
+				if m.releaseSecretPins == nil {
+					m.releaseSecretPins = map[string][]releaseSecretVersion{}
+				}
+				m.releaseSecretPins[w.Previous.ID] = cloneReleaseSecrets(*w.SecretSnapshot)
+			}
+			m.releaseEnvironmentPins[w.Previous.ID] = releaseVariableRows(w.PreviousVariables)
+		}
+	}
+	if releaseCapture != nil && releaseCapture.Migration != nil {
+		m.promotionMigrations[promotion.ID] = promotionMigrationCapture{}
+	}
+	if health != nil {
+		if m.promotionHealth == nil {
+			m.promotionHealth = map[string]*api.ProjectPromotionHealth{}
+		}
+		m.promotionHealth[promotion.ID] = health
+	}
+	promotion.ReleaseSecrets = nil
+	promotion.HealthPolicy = nil
+	promotion.ResolveServiceBindings = false
+	promotion.Migrate = false
+	promotion.Workers = false
+	if approval != nil {
+		at := m.clock().UTC()
+		approval.ConsumedAt = &at
+		m.projectEnvironmentApprovals[approval.ID] = *approval
+		promotion.ConsumedApproval = approval
+	}
+	stored := promotion
+	stored.Approval, stored.ConsumedApproval = nil, nil
+	m.projectEnvironmentPromotions[promotion.ID] = stored
 	items := make([]ProjectEnvironmentPromotionWorkload, len(workloads))
 	for i, workload := range workloads {
 		if workload.ID == "" {
@@ -123,6 +184,11 @@ func (m *MemStore) UpdateProjectEnvironmentPromotionReleaseSets(ctx context.Cont
 	promotion, ok := m.projectEnvironmentPromotions[id]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
+	}
+	if h := m.promotionHealth[id]; h != nil && h.Control != nil {
+		if targetReleaseSetID != "" && targetReleaseSetID != promotion.TargetReleaseSetID || restoredTargetReleaseSetID != "" && restoredTargetReleaseSetID != promotion.RestoredTargetReleaseSetID {
+			return ProjectEnvironmentPromotion{}, ErrConflict
+		}
 	}
 	if targetReleaseSetID != "" {
 		promotion.TargetReleaseSetID = targetReleaseSetID
@@ -277,6 +343,11 @@ func (m *MemStore) UpdateProjectEnvironmentPromotion(ctx context.Context, accoun
 	promotion, ok := m.projectEnvironmentPromotions[id]
 	if !ok || promotion.AccountID != accountID {
 		return ProjectEnvironmentPromotion{}, ErrNotFound
+	}
+	if h := m.promotionHealth[id]; h != nil {
+		if status == "running" && promotion.Status != "running" || status == "succeeded" && h.Phase != "succeeded" || status == "failed" && h.Phase != "preflight" && h.Phase != "failed" && h.Phase != "conflicted" && h.Phase != "rollback_failed" {
+			return ProjectEnvironmentPromotion{}, ErrConflict
+		}
 	}
 	promotion.Status = status
 	promotion.Error = errorMessage

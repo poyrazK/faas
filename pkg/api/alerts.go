@@ -169,6 +169,7 @@ var AllowedAlertRuleMetrics = []string{
 	// ADR-1192: edge-rule activity from the ADR-960 hourly hit counts.
 	"edge_rule_hits",
 	"edge_rule_log_hits",
+	"edge_rule_activity",
 
 	"new_error_fingerprint",
 	"cold_wake_rate_pct",
@@ -593,6 +594,10 @@ func TrimNonEmpty(s string) (string, bool) {
 const (
 	AlertMetricEdgeRuleHits    = "edge_rule_hits"
 	AlertMetricEdgeRuleLogHits = "edge_rule_log_hits"
+	// AlertMetricEdgeRuleActivity counts a rule's matches in either mode
+	// (enforced + log-mode), so an alert keeps working when the rule is
+	// switched from log mode to enforce (ADR-1192 amendment).
+	AlertMetricEdgeRuleActivity = "edge_rule_activity"
 )
 
 // AlertMetricRouteInsightsDetected counts an app's route insights that
@@ -631,7 +636,7 @@ var EdgeRuleAlertWindowSpecs = []string{"1h", "6h", "24h", "7d"}
 // IsEdgeRuleAlertMetric reports whether metric counts edge-rule hits
 // (ADR-1192).
 func IsEdgeRuleAlertMetric(metric string) bool {
-	return metric == AlertMetricEdgeRuleHits || metric == AlertMetricEdgeRuleLogHits
+	return metric == AlertMetricEdgeRuleHits || metric == AlertMetricEdgeRuleLogHits || metric == AlertMetricEdgeRuleActivity
 }
 
 func IsEventConsumerAlertMetric(metric string) bool {

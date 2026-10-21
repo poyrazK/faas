@@ -1,4 +1,4 @@
-package main_test
+package main
 
 // adr: 050
 
@@ -10,25 +10,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestWaitForProjectApply_ZeroBuilds(t *testing.T) {
-	apply, timedOut := main.WaitForProjectApply(t.Context(), nil, api.ApplyResponse{}, time.Second)
+	apply, timedOut := waitForProjectApply(t.Context(), nil, api.ApplyResponse{}, time.Second)
 	if timedOut || len(apply.Builds) != 0 {
 		t.Fatalf("zero-build wait = %+v, timedOut=%v", apply, timedOut)
 	}
 }
 
 func TestWaitForProjectApply_MixedTerminalStates(t *testing.T) {
+	config := api.NewDeploymentConfigurationStatus("activated", "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/dep-live"):
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep-live", Status: main.StatusLive})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep-live", Status: statusLive, Configuration: &config})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/dep-fail"):
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep-fail", Status: main.DeploymentStatusFailed, Error: "health check failed"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep-fail", Status: deploymentStatusFailed, Error: "health check failed"})
 		case strings.HasPrefix(r.URL.Path, "/v1/builds/build-live"):
 			_ = json.NewEncoder(w).Encode(api.BuildResponse{ID: "build-live", Status: api.BuildStatusSucceeded})
 		case strings.HasPrefix(r.URL.Path, "/v1/builds/build-fail"):
@@ -39,19 +39,22 @@ func TestWaitForProjectApply_MixedTerminalStates(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := main.NewClient(srv.URL, "token")
+	client := NewClient(srv.URL, "token")
 	apply := api.ApplyResponse{Builds: []api.AppliedBuild{
 		{Slug: "live", DeploymentID: "dep-live", BuildID: "build-live"},
 		{Slug: "fail", DeploymentID: "dep-fail", BuildID: "build-fail"},
 	}}
-	got, timedOut := main.WaitForProjectApply(t.Context(), client, apply, time.Second)
+	got, timedOut := waitForProjectApply(t.Context(), client, apply, time.Second)
 	if timedOut {
 		t.Fatal("mixed terminal states reported timeout")
 	}
-	if got.Builds[0].DeploymentStatus != main.StatusLive || got.Builds[0].BuildStatus != api.BuildStatusSucceeded || got.Builds[0].Error != "" {
+	if got.Builds[0].DeploymentStatus != statusLive || got.Builds[0].BuildStatus != api.BuildStatusSucceeded || got.Builds[0].Error != "" {
 		t.Fatalf("live result = %+v", got.Builds[0])
 	}
-	if got.Builds[1].DeploymentStatus != main.DeploymentStatusFailed || got.Builds[1].BuildStatus != api.BuildStatusFailed || !strings.Contains(got.Builds[1].Error, "health check failed") {
+	if got.Builds[0].Configuration == nil || got.Builds[0].Configuration.Crons.Status != "activated" {
+		t.Fatalf("configuration lost: %+v", got.Builds[0])
+	}
+	if got.Builds[1].DeploymentStatus != deploymentStatusFailed || got.Builds[1].BuildStatus != api.BuildStatusFailed || !strings.Contains(got.Builds[1].Error, "health check failed") {
 		t.Fatalf("failed result = %+v", got.Builds[1])
 	}
 }
@@ -63,9 +66,9 @@ func TestWaitForProjectApply_DeadlineMarksEveryPendingBuild(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := main.NewClient(srv.URL, "token")
+	client := NewClient(srv.URL, "token")
 	apply := api.ApplyResponse{Builds: []api.AppliedBuild{{Slug: "queued", DeploymentID: "dep-queued", BuildID: "build-queued"}}}
-	got, timedOut := main.WaitForProjectApply(t.Context(), client, apply, 20*time.Millisecond)
+	got, timedOut := waitForProjectApply(t.Context(), client, apply, 20*time.Millisecond)
 	if !timedOut {
 		t.Fatal("queued project wait did not report timeout")
 	}
@@ -83,8 +86,8 @@ func TestWaitForProjectApply_ImageDeployment(t *testing.T) {
 		wantError  bool
 		timedOut   bool
 	}{
-		{"live", main.StatusLive, main.StatusLive, false, false},
-		{"failed", main.DeploymentStatusFailed, main.DeploymentStatusFailed, true, false},
+		{"live", statusLive, statusLive, false, false},
+		{"failed", deploymentStatusFailed, deploymentStatusFailed, true, false},
 		{"pending", "queued", "timeout", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -103,7 +106,7 @@ func TestWaitForProjectApply_ImageDeployment(t *testing.T) {
 				deadline = 20 * time.Millisecond
 			}
 			apply := api.ApplyResponse{Builds: []api.AppliedBuild{{Slug: "image", DeploymentID: "image-deployment"}}}
-			got, timedOut := main.WaitForProjectApply(t.Context(), main.NewClient(srv.URL, "token"), apply, deadline)
+			got, timedOut := waitForProjectApply(t.Context(), NewClient(srv.URL, "token"), apply, deadline)
 			result := got.Builds[0]
 			if timedOut != tc.timedOut || result.DeploymentStatus != tc.wantStatus || result.BuildStatus != "" || (result.Error != "") != tc.wantError {
 				t.Fatalf("image wait = %+v, timedOut=%v", result, timedOut)

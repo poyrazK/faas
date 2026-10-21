@@ -883,7 +883,7 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			value = snapshot.DueAgeSeconds
 		}
 		return value, compareFloat(value, rule.Comparison, rule.Threshold), ""
-	case state.AlertMetricEdgeRuleHits, state.AlertMetricEdgeRuleLogHits:
+	case state.AlertMetricEdgeRuleHits, state.AlertMetricEdgeRuleLogHits, state.AlertMetricEdgeRuleActivity:
 		return e.observeEdgeRuleHits(ctx, rule)
 	case state.AlertMetricRouteInsightsDetected:
 		return e.observeRouteInsights(ctx, rule)

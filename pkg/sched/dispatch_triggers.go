@@ -1982,12 +1982,23 @@ func (l *Loop) recordTriggerConsumerHealth(ctx context.Context, store storeLike,
 		return
 	}
 	at := time.Now().UTC()
+	if l.now != nil {
+		at = l.now().UTC()
+	}
+	errText := ""
+	if res.Error != nil {
+		errText = res.Error.Error()
+	}
+	// An unchanged outcome is written at most every
+	// triggerHealthWriteInterval; the broker stats below are skipped too.
+	triggerID := t.ID.String()
+	if !l.triggerHealthDue(triggerID, at, errText) {
+		return
+	}
 	observation := state.TriggerConsumerHealthObservation{
 		LastPollAt: at,
 		Success:    res.Error == nil,
-	}
-	if res.Error != nil {
-		observation.Error = res.Error.Error()
+		Error:      errText,
 	}
 	if res.Error == nil {
 		if poller, _, err := l.pollerForTrigger(t); err == nil && poller != nil {
@@ -2022,10 +2033,12 @@ func (l *Loop) recordTriggerConsumerHealth(ctx context.Context, store storeLike,
 		}
 		observation.LagAgeSeconds = &lagAgeSeconds
 	}
-	if err := writer.RecordTriggerConsumerHealth(ctx, t.ID.String(), observation); err != nil {
+	if err := writer.RecordTriggerConsumerHealth(ctx, triggerID, observation); err != nil {
 		l.log.Warn("sched trigger tick: record consumer health",
-			"trigger_id", t.ID.String(), "err", err)
+			"trigger_id", triggerID, "err", err)
+		return
 	}
+	l.triggerHealthWritten(triggerID, at, errText)
 }
 
 func (l *Loop) observeESMRecordProcessingBatch(source string, records []sqlc.TriggerRecord) {

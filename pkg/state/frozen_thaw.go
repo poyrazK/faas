@@ -173,6 +173,7 @@ func (m *MemStore) ThawFrozenInstance(ctx context.Context, t FrozenThaw) (Instan
 	}
 	instance := m.instances[t.InstanceID]
 	instance.State, instance.StartedAt = string(StateRunning), time.Now().UTC()
+	instance.LastRequestAt = instance.StartedAt
 	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[t.InstanceID], instance); err != nil {
 		return Instance{}, err
 	}
