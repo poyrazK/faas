@@ -514,7 +514,7 @@ export function createAuthClient(options: AuthClientOptions) {
      * A new password needs currentPassword, except in a password reset
      * (resetPasswordForEmail's link) or for a user who has no password yet;
      * otherwise it fails with current_password_required or
-     * current_password_mismatch.
+     * current_password_invalid.
      */
     async updateUser(input: { email?: string; password?: string; currentPassword?: string; data?: Record<string, unknown> }): Promise<User> {
       const { currentPassword, ...fields } = input

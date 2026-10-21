@@ -278,8 +278,10 @@ export function start(env = process.env) {
   const tokenHook = config.oauth || config.orgClaims || config.impersonation
   const accessToken = tokenHook ? payload => accessTokenClaims(pool, payload, { orgClaims: config.orgClaims, impersonation: config.impersonation }) : null
   // Sign-up restrictions, and organizations' own identity providers, which
-  // vouch only for their verified domains, need the before-user-created hook.
-  const beforeUserCreated = config.signups || config.orgSSO ? payload => signupRefusal(pool, config.signups, payload) : null
+  // vouch only for their verified domains, need the before-user-created hook;
+  // providers stay connected after AUTH_ORG_SSO is turned off, so it runs
+  // whenever SAML does.
+  const beforeUserCreated = config.signups || config.gotrueEnv.GOTRUE_SAML_ENABLED === 'true' ? payload => signupRefusal(pool, config.signups, payload) : null
   const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app, accessToken, beforeUserCreated, templates: () => loadEmailTemplates(pool) })
   hooks.listen(hookAddress.port, hookAddress.host)
   const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret, { accessToken: tokenHook, beforeUserCreated: Boolean(beforeUserCreated) }), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })

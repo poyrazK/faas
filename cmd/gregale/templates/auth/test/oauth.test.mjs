@@ -56,9 +56,10 @@ test('consent, discovery and client tokens on the front', () => {
   assert.equal(isClientToken(bearerClaims(`Bearer ${token({ sub: user })}`)), false)
   // The scheme is read in any letter case, as GoTrue reads it.
   for (const scheme of ['bearer', 'BEARER', 'BeArEr']) assert.equal(isClientToken(bearerClaims(`${scheme} ${token({ sub: user, client_id: client })}`)), true, scheme)
-  // A bearer token that is not a readable JWT is reported as such.
-  for (const header of ['Bearer gaak_x', 'bearer a.b', 'Bearer a.!!!.c', `Bearer x.${Buffer.from('[1]').toString('base64url')}.y`]) assert.equal(bearerClaims(header), false, header)
-  for (const header of [undefined, '', 'Basic abc', 'Bearer  two-spaces.a.b', 'Bearer']) assert.equal(bearerClaims(header), null, header)
+  // A JWT whose claims cannot be read is reported as such; anything that is
+  // not a JWT (admin keys, placeholder keys) is no token for these checks.
+  for (const header of ['Bearer a.!!!.c', `Bearer x.${Buffer.from('[1]').toString('base64url')}.y`, `bearer x.${Buffer.from('null').toString('base64url')}.y`]) assert.equal(bearerClaims(header), false, header)
+  for (const header of [undefined, '', 'Basic abc', 'Bearer  two-spaces.a.b', 'Bearer', 'Bearer gaak_x', 'bearer a.b', 'Bearer anon']) assert.equal(bearerClaims(header), null, header)
   assert.equal(clientTokenAllowed('GET', '/auth/v1/oauth/userinfo'), true)
   assert.equal(clientTokenAllowed('POST', '/auth/v1/logout?scope=local'), true)
   assert.equal(clientTokenAllowed('POST', '/authz/v1/authorize'), true)
