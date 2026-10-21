@@ -70,8 +70,10 @@ func TestFinancialObjectStorageMeter(t *testing.T) {
 	}
 
 	for name, mutate := range map[string]func(*financial.BudgetSpec){
-		"app scope": func(p *financial.BudgetSpec) { p.Scope = financial.BudgetScope{Kind: "app", ID: "7b2d7b6e-0c8a-4a7e-9a59-5f6f7e0f9b11"} },
-		"strict":    func(p *financial.BudgetSpec) { p.Mode, p.Action, p.Basis = "strict", "suspend_workloads", "net_usage" },
+		"app scope": func(p *financial.BudgetSpec) {
+			p.Scope = financial.BudgetScope{Kind: "app", ID: "7b2d7b6e-0c8a-4a7e-9a59-5f6f7e0f9b11"}
+		},
+		"strict": func(p *financial.BudgetSpec) { p.Mode, p.Action, p.Basis = "strict", "suspend_workloads", "net_usage" },
 	} {
 		bad := spec
 		mutate(&bad)
