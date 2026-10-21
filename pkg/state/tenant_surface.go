@@ -216,7 +216,7 @@ type TenantHostnameQuotaError struct {
 	Observed  int
 	SurfaceID string
 	// Pending is set when the unverified-hostname cap tripped rather than
-	// the verified one (ADR-20261020090000).
+	// the verified one (ADR-20261020090500).
 	Pending bool
 }
 

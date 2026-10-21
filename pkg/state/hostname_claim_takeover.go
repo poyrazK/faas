@@ -15,7 +15,7 @@ const (
 )
 
 // ClaimTakeoverToken is the TXT value with which accountID proves control of
-// hostname over another account's unverified claim (ADR-20261020090000). It
+// hostname over another account's unverified claim (ADR-20261020090500). It
 // is published at the name's ordinary challenge owner
 // (CustomDomainChallengeName). The value is deterministic, so retries, apid
 // replicas and a record left from an earlier attempt agree, and it is bound

@@ -413,7 +413,7 @@ func TestPgStore_TenantHostname_VerifyIfChallenge(t *testing.T) {
 }
 
 // Unverified hostnames are capped per surface, and another account's
-// unverified hostname yields to a takeover (ADR-20261020090000).
+// unverified hostname yields to a takeover (ADR-20261020090500).
 func TestPgStore_TenantHostname_PendingCapAndTakeover(t *testing.T) {
 	s, ctx := pgStore(t)
 	holderAcct, holderApp := pgTenantSurfaceSeed(t, s, ctx, "takeover-holder")

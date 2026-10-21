@@ -2027,7 +2027,7 @@ const (
 	// SourceArchiveMaxExpandedBytes caps the summed declared size of a source
 	// archive's entries. The compressed upload cap alone admits a highly
 	// compressed archive that apid would inflate, at full CPU, on every pass
-	// over it (ADR-20261020160000).
+	// over it (ADR-20261020160500).
 	SourceArchiveMaxExpandedBytes int64 = 2 << 30
 	// DevSourceMetadataMaxBytes bounds base/target revision and deletion-list
 	// fields around the plan-capped source payload.
@@ -3397,7 +3397,7 @@ type Limits struct {
 	// TenantHostnamesPendingPerSurface caps how many unverified hostnames
 	// one surface may hold. A pending hostname reserves its name globally
 	// and has no verification deadline, so without this cap one surface
-	// could reserve any number of names (ADR-20261020090000). Per-plan:
+	// could reserve any number of names (ADR-20261020090500). Per-plan:
 	// Free 0, Hobby 10, Pro 50, Scale 250, matching the verified cap. Read
 	// it through PendingTenantHostnamesPerSurface.
 	TenantHostnamesPendingPerSurface int

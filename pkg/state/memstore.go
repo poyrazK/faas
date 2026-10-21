@@ -472,6 +472,9 @@ type MemStore struct {
 	scenarioPostgres          map[string]rehearsalpg.Resource
 	scenarioObjects           map[string]rehearsalobj.Resource
 	scenarioActionPolicies    map[string]scenarioActionPolicy
+	scenarioCapturedEvents    []memScenarioCapturedEvent
+	scenarioQueueCaptures     []memScenarioCapturedQueueMessage
+	scenarioPlatformCalls     []memScenarioCapturedPlatformCall
 	scenarioTestChaosPlans    map[string]chaos.Lease
 	scenarioTestChaosMatches  map[string]map[string]int64
 	previewSets               map[string]PRPreviewSet
@@ -6061,7 +6064,7 @@ func (m *MemStore) ListOwnedCronsByNodeID(_ context.Context, nodeID string) ([]C
 	var out []Cron
 	for _, c := range m.crons {
 		app, ok := m.apps[c.AppID]
-		if ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled {
+		if _, rehearsal := m.scenarioActionPolicies[c.AppID]; ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled && !rehearsal {
 			out = append(out, c)
 		}
 	}
@@ -13524,7 +13527,8 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 	defer m.mu.Unlock()
 	var out []Cron
 	for _, c := range m.crons {
-		if c.Enabled && c.SuspendedReason == "" {
+		// Mirrors PgStore: rehearsal-enrolled apps never fire from the clock.
+		if _, rehearsal := m.scenarioActionPolicies[c.AppID]; c.Enabled && c.SuspendedReason == "" && !rehearsal {
 			out = append(out, c)
 		}
 	}
@@ -13781,7 +13785,7 @@ func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error
 	defer m.mu.Unlock()
 	var out []sqlc.Trigger
 	for _, t := range m.triggers {
-		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) {
+		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) && !m.rehearsalBrokerTriggerLocked(t) {
 			out = append(out, t)
 		}
 	}
@@ -24490,6 +24494,9 @@ func (m *MemStore) CountFailedDeploymentsSince(_ context.Context, accountID, app
 		if appID != "" && d.AppID != appID {
 			continue
 		}
+		if m.rehearsalAlertExcludedLocked(appID, d.AppID) {
+			continue
+		}
 		if d.Status != DeployFailed {
 			continue
 		}
@@ -24512,6 +24519,9 @@ func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, app
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if m.rehearsalAlertExcludedLocked(appID, inv.AppID) {
 			continue
 		}
 		// MemStore keeps no request telemetry; mirror PgStore's
@@ -25056,6 +25066,9 @@ func (m *MemStore) CountFailedInvocationsSince(_ context.Context, accountID, app
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if m.rehearsalAlertExcludedLocked(appID, inv.AppID) {
 			continue
 		}
 		if source != "" && inv.Source != source {

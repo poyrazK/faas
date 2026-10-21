@@ -148,6 +148,7 @@ type FrameworkReadyReceiver struct {
 	mgr                                 *fcvm.Manager
 	emitter                             SidecarEventEmitter
 	eventPublisher                      GuestEventPublisher
+	eventCapturer                       GuestEventCapturer
 	qualificationFrameworkReadyRecorder QualificationFrameworkReadyRecorder
 }
 
@@ -155,6 +156,10 @@ type FrameworkReadyReceiver struct {
 // metadata event endpoint. The callback receives the trusted instance id and
 // raw JSON request body; callers derive account identity from the instance.
 type GuestEventPublisher func(context.Context, string, []byte) error
+
+// GuestEventCapturer records a contained rehearsal guest's event into its run
+// (ADR-20261020090000). It receives the instance's installed identity.
+type GuestEventCapturer func(ctx context.Context, instance, appID, accountID, runID string, body []byte) error
 
 // StartFrameworkReadyReceiver registers the event channel with JailerVMM.
 // JailerVMM binds <vsock.sock>_1027 separately for every instance before
@@ -487,6 +492,20 @@ func (r *FrameworkReadyReceiver) dispatchDiskUsage(instance string, wire diskUsa
 }
 
 func (r *FrameworkReadyReceiver) dispatchEventPublish(instance string, payload []byte) {
+	// A contained rehearsal guest's events are captured into its run and never
+	// reach the account's event bus (ADR-20261020090000).
+	if r.mgr != nil {
+		if app, account, run, contained := r.mgr.InstanceRehearsalEventIdentity(instance); contained {
+			if r.eventCapturer == nil {
+				r.log.Warn("rehearsal event capture unavailable", "instance", instance)
+				return
+			}
+			if err := r.eventCapturer(r.ctx, instance, app, account, run, payload); err != nil {
+				r.log.Warn("rehearsal event capture failed", "instance", instance, "err", err)
+			}
+			return
+		}
+	}
 	if r.eventPublisher == nil || r.mgr == nil {
 		r.log.Warn("event publish receiver unavailable", "instance", instance)
 		return

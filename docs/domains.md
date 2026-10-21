@@ -63,7 +63,7 @@ other account's unverified claim moves to your app, and verification
 completes as usual. A verified domain cannot be taken this way. Tenant
 hostnames on a tenant surface work the same, and a surface may hold at most
 as many unverified hostnames as its plan allows verified ones. See
-[the ADR](adr/20261020090000-dns-proof-takes-over-pending-claims.md).
+[the ADR](adr/20261020090500-dns-proof-takes-over-pending-claims.md).
 
 The default `*.gregale.dev` hostname works without a custom domain. Domain
 entitlement, certificate limits, and wildcard behavior are listed in

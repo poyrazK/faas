@@ -368,7 +368,7 @@ func (m *MemStore) TakeOverTenantHostnameClaim(_ context.Context, in CreateTenan
 // tenantHostnameQuotaLocked applies both per-surface caps. The verified cap
 // counts verified hostnames only (see PgStore.CreateTenantHostnameIfUnderQuota
 // for the rationale); the pending cap bounds the unverified rows that reserve
-// names (ADR-20261020090000).
+// names (ADR-20261020090500).
 func (m *MemStore) tenantHostnameQuotaLocked(surfaceID string, limits api.Limits) error {
 	verified, pending := 0, 0
 	seen := map[string]bool{}

@@ -30,7 +30,7 @@ func publishTXT(t *testing.T, records map[string]string) {
 
 // A pending claim by another account blocks a plain create, but the domain's
 // owner takes it over by publishing the takeover token the 409 names; the
-// poller then verifies the new claim as usual (ADR-20261020090000).
+// poller then verifies the new claim as usual (ADR-20261020090500).
 func TestCreateDomain_DNSProofTakesOverAnotherAccountsPendingClaim(t *testing.T) {
 	ctx := context.Background()
 	e := apidserver.Setup(t, api.PlanScale)

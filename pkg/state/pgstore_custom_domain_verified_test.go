@@ -181,7 +181,7 @@ func TestPgStoreWildcardDomainForHostSkipsExpiredClaim(t *testing.T) {
 
 // Another account's live, unverified claim yields to a takeover, but never
 // a verified row or one held by the claimant's own account
-// (ADR-20261020090000).
+// (ADR-20261020090500).
 func TestPgStoreTakeOverCustomDomainClaim(t *testing.T) {
 	s, _, ctx := pgStoreWithPool(t)
 	holder, err := s.CreateAccount(ctx, "takeover-holder@example.com", api.PlanScale)

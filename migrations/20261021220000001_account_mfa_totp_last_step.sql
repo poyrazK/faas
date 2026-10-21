@@ -1,4 +1,4 @@
--- filename: 20261021200000001_account_mfa_totp_last_step.sql
+-- filename: 20261021220000001_account_mfa_totp_last_step.sql
 -- migration-compat: expand
 
 -- +goose Up

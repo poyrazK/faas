@@ -269,7 +269,7 @@ func TestMemStoreTenantHostnameQuota(t *testing.T) {
 // unverified rows and locked the customer out.
 func TestMemStoreTenantHostnameQuotaUnverifiedAllowed(t *testing.T) {
 	m, ctx, acct, app, _ := tenantSurfaceFixture(t)
-	// The pending cap is separate (ADR-20261020090000); set it above the
+	// The pending cap is separate (ADR-20261020090500); set it above the
 	// verified one so only the verified cap is under test.
 	lim := api.Limits{
 		TenantSurfacesPerAccount:         5,

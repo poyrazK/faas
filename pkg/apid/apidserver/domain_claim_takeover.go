@@ -10,7 +10,7 @@ import (
 
 // claimPendingError is the 409 for a name another account holds unverified:
 // it names the TXT record that would let the caller take the claim over
-// (ADR-20261020090000).
+// (ADR-20261020090500).
 type claimPendingError struct {
 	name, record, token string
 }

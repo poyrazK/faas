@@ -3254,7 +3254,7 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	}
 	if errors.Is(err, state.ErrConflict) {
 		// Another account's unverified claim yields to DNS proof
-		// (ADR-20261020090000). The takeover records its activity below,
+		// (ADR-20261020090500). The takeover records its activity below,
 		// outside the create's activity transaction.
 		if d, err = s.takeOverDomainClaim(r.Context(), acct, app, domain, environmentID, perApp, perAccount, err); err == nil {
 			activityOutboxID, activityMutationAtomic = 0, false

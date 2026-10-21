@@ -169,7 +169,7 @@ func (s *server) createSurfaceUnderQuotas(
 // createTenantHostname attaches hostname to surf. A name another account
 // holds unverified moves to surf once surf's account has published its
 // takeover token at _faas-verify.<hostname>; until then the conflict is a
-// *claimPendingError naming that record (ADR-20261020090000).
+// *claimPendingError naming that record (ADR-20261020090500).
 func (s *server) createTenantHostname(ctx context.Context, surf state.TenantSurface, hostname string, limits api.Limits) (state.TenantHostname, error) {
 	in := state.CreateTenantHostnameParams{SurfaceID: surf.ID, Hostname: hostname, ChallengeToken: randomToken(16)}
 	h, err := s.store.CreateTenantHostnameIfUnderQuota(ctx, in, limits)

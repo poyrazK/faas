@@ -76,7 +76,7 @@ func assertShapeKind(t *testing.T, err error, want ShapeErrorKind) {
 
 // The summed declared entry sizes are capped, so a highly compressed archive
 // is refused at its header rather than inflated by every pass over it
-// (ADR-20261020160000).
+// (ADR-20261020160500).
 func TestValidateShapeCapsExpandedSize(t *testing.T) {
 	file := func(name string, size int) (*tar.Header, []byte) {
 		return &tar.Header{Name: name, Mode: 0o644, Size: int64(size), Typeflag: tar.TypeReg}, make([]byte, size)

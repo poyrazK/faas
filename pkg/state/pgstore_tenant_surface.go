@@ -466,7 +466,7 @@ func (s *PgStore) CreateTenantHostnameIfUnderQuota(ctx context.Context, in Creat
 // old row is deleted rather than reassigned, so nothing keyed by its id
 // crosses accounts. A row on a deleted surface is released whatever its
 // state. A verified row, or one on a live surface of the claimant's own
-// account, returns ErrConflict (ADR-20261020090000).
+// account, returns ErrConflict (ADR-20261020090500).
 func (s *PgStore) TakeOverTenantHostnameClaim(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error) {
 	return s.createTenantHostname(ctx, in, limits, true)
 }
@@ -512,7 +512,7 @@ func (s *PgStore) createTenantHostname(ctx context.Context, in CreateTenantHostn
 		}
 	}
 	// Unverified rows reserve their names globally and never expire, so
-	// they get their own cap (ADR-20261020090000).
+	// they get their own cap (ADR-20261020090500).
 	if err := tx.QueryRow(ctx,
 		`select count(*) from tenant_hostnames where surface_id = $1 and verified_at is null`,
 		in.SurfaceID,
@@ -656,7 +656,7 @@ var _ TenantHostnameChallengeVerifier = (*MemStore)(nil)
 
 // TenantHostnameClaimTakeover attaches a hostname over another account's
 // unverified row once the claimant proved control of its DNS
-// (ADR-20261020090000).
+// (ADR-20261020090500).
 type TenantHostnameClaimTakeover interface {
 	TakeOverTenantHostnameClaim(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error)
 }

@@ -4609,7 +4609,7 @@ func ErrTenantHostnameQuota(p Plan, surfaceID string, limit, observed int) *Prob
 }
 
 // ErrTenantHostnamePendingQuota is the tenant_hostname_quota problem for
-// the unverified-hostname cap (ADR-20261020090000).
+// the unverified-hostname cap (ADR-20261020090500).
 func ErrTenantHostnamePendingQuota(p Plan, surfaceID string, limit, observed int) *Problem {
 	return NewProblem(http.StatusForbidden, CodeTenantHostnameQuota,
 		"Tenant hostname limit reached",

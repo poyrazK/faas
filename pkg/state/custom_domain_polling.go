@@ -20,7 +20,7 @@ type CustomDomainChallengeVerifier interface {
 }
 
 // CustomDomainClaimTakeover replaces another account's unverified claim once
-// the claimant proved control of the domain's DNS (ADR-20261020090000).
+// the claimant proved control of the domain's DNS (ADR-20261020090500).
 type CustomDomainClaimTakeover interface {
 	TakeOverCustomDomainClaim(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error)
 }
@@ -78,7 +78,7 @@ func (s *PgStore) CreateCustomDomainInEnvironmentIfUnderQuotaWithActivity(ctx co
 // ClaimTakeoverToken at the domain's challenge name; token is that value and
 // becomes the new row's challenge, so the poller verifies it as usual. A
 // verified row, or an unverified one of appID's own account, still returns
-// ErrConflict (ADR-20261020090000).
+// ErrConflict (ADR-20261020090500).
 func (s *PgStore) TakeOverCustomDomainClaim(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error) {
 	d, _, err := s.createCustomDomainIfUnderQuota(ctx, domain, appID, environmentID, token, appLimit, accountLimit, nil, true)
 	return d, err
