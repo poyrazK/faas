@@ -1274,6 +1274,12 @@ over 64 KiB, make the evidence incomplete. A comparison between servers with
 different event capture versions is inconclusive. See
 [ADR-20261020090000](adr/20261020090000-rehearsal-event-capture.md).
 
+Enrolled apps also never receive the account's events: their event
+subscriptions and workflow event triggers are left out of every fan-out, so
+production traffic during a run cannot reach candidate code or change its
+evidence. Drive event-driven behaviour from the recipe instead. See
+[ADR-20261021210000](adr/20261021210000-rehearsal-event-fanout-exclusion.md).
+
 A repeated publish with the same source and `id` counts once, as in production.
 The same content is a duplicate; different content is refused with
 `409 Event identity conflict`. Contained apps can also publish through the

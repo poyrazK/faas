@@ -7608,9 +7608,11 @@ BEGIN
         EXCEPTION WHEN invalid_text_representation THEN
             RAISE EXCEPTION 'tenant event identity must be UUIDs' USING ERRCODE = '23514';
         END;
-        recipients := coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
+        recipients := coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
             FROM workflow_tenant_event_recipients(NEW.subject, target_app, target_tenant,
-                NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+                NEW.data->>'source', NEW.data->>'type') AS w(recipient)
+            WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
+                WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
     ELSE
         SELECT coalesce(jsonb_agg(jsonb_build_object(
             'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
@@ -7643,10 +7645,13 @@ BEGIN
           ON p.app_id = b.app_id AND p.name = b.policy_name
         WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
           AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
-          AND event_fanout_pattern_matches(s.type, NEW.data->>'type');
+          AND event_fanout_pattern_matches(s.type, NEW.data->>'type')
+          AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x WHERE x.app_id = s.app_id);
 
-        recipients := recipients || coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
-            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+        recipients := recipients || coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
+            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
+            WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
+                WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
     END IF;
 
     INSERT INTO event_fanout_outbox

@@ -55,6 +55,51 @@ func testRehearsalAppLogsStayInsideTheRun(t *testing.T, fx *Fixture) {
 	}
 }
 
+// testRehearsalAppsReceiveNoAccountEvents pins that an account event's fan-out
+// recipient snapshot leaves out a rehearsal-enrolled app's subscription, while
+// an ordinary app's matching subscription is kept (ADR-20261021210000).
+func testRehearsalAppsReceiveNoAccountEvents(t *testing.T, fx *Fixture) {
+	t.Helper()
+	subscriptions, ok := fx.Store.(state.EventSubscriptionStore)
+	work, okWork := fx.Store.(state.PublishedEventWorkStore)
+	if !ok || !okWork {
+		t.Skip("store has no event fan-out")
+	}
+	enrolled := enrollRehearsalApp(t, fx)
+	source := "rehearsal-" + uuid.NewString()[:8]
+	want := map[string]string{}
+	for _, app := range []string{fx.App.ID, enrolled.ID} {
+		sub, _, err := subscriptions.UpsertEventSubscription(fx.Ctx, fx.Account.ID, app, source, "order.created", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want[app] = sub.ID
+	}
+	account := fx.Account.ID
+	if err := fx.Store.AppendEvent(fx.Ctx, "apid", "event.published", &account,
+		[]byte(`{"id":"evt-1","source":"`+source+`","type":"order.created","data":{"order":1}}`)); err != nil {
+		t.Fatal(err)
+	}
+	for range 64 {
+		claimed, err := work.ClaimDuePublishedEvent(fx.Ctx, time.Now().UTC())
+		if err != nil || claimed == nil {
+			t.Fatalf("claim published event: %v %v", claimed, err)
+		}
+		if !strings.Contains(string(claimed.Payload), `"`+source+`"`) {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, recipient := range claimed.RecipientSnapshot {
+			seen[recipient.ID] = true
+		}
+		if !seen[want[fx.App.ID]] || seen[want[enrolled.ID]] {
+			t.Fatalf("recipients: ordinary=%v rehearsal=%v; want true,false", seen[want[fx.App.ID]], seen[want[enrolled.ID]])
+		}
+		return
+	}
+	t.Fatal("the published event was never claimed")
+}
+
 // testRehearsalAppsNeverPollRealBrokers pins that schedd lists no external
 // broker trigger for a rehearsal-enrolled app (it would consume or commit
 // offsets production consumers own), while an ordinary app's broker trigger is

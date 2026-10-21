@@ -111,6 +111,7 @@ func Run(t *testing.T, open Open) {
 		{"rehearsal_app_logs_stay_inside_the_run", testRehearsalAppLogsStayInsideTheRun},
 		{"rehearsal_apps_never_poll_real_brokers", testRehearsalAppsNeverPollRealBrokers},
 		{"rehearsal_crons_never_fire_from_the_clock", testRehearsalCronsNeverFireFromTheClock},
+		{"rehearsal_apps_receive_no_account_events", testRehearsalAppsReceiveNoAccountEvents},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
