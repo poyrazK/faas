@@ -255,6 +255,7 @@ sql:
       - "pkg/state/node_admission_queries.sql"
       - "pkg/state/node_lease_queries.sql"
       - "pkg/state/node_lifecycle_completion_queries.sql"
+      - "pkg/state/operation_approval_form_queries.sql"
       - "pkg/state/operation_children_queries.sql"
       - "pkg/state/operation_concurrency_queries.sql"
       - "pkg/state/operation_schedule_queries.sql"
