@@ -5296,6 +5296,25 @@ func (v *JailerVMM) mkChrootLegacy(instance string) (string, error) {
 // this call so the lookup here is always non-nil. Firecracker writes its
 // own stderr only on configuration errors; that stream remains discarded
 // to avoid mixing error noise into the customer's log tail.
+// consoleLogDir holds each instance's serial console log.
+var consoleLogDir = "/var/log/faas"
+
+func instanceConsolePath(instance string) string {
+	return filepath.Join(consoleLogDir, "vm-"+instance+".console")
+}
+
+// PreserveFailedRestoreConsole keeps a failed restore's serial console, which
+// holds guest-init's resume-hook diagnosis, before the fallback cold boot of
+// the same instance reopens and truncates the console log.
+func (v *JailerVMM) PreserveFailedRestoreConsole(instance string) (string, error) {
+	src := instanceConsolePath(instance)
+	dst := strings.TrimSuffix(src, ".console") + ".restore-failed.console"
+	if err := os.Rename(src, dst); err != nil {
+		return "", fmt.Errorf("vmm: keep failed restore console: %w", err)
+	}
+	return dst, nil
+}
+
 func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...string) error {
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err
@@ -5357,7 +5376,7 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	}
 	isolateLifecycleChild(cmd)
 	ring := v.ringFor(l.Instance)
-	consolePath := filepath.Join("/var/log/faas", "vm-"+l.Instance+".console")
+	consolePath := instanceConsolePath(l.Instance)
 	var consoleFile *os.File
 	if f, openErr := os.OpenFile(consolePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640); openErr == nil {
 		consoleFile = f
