@@ -99,11 +99,13 @@ func isTest(fn *ast.FuncDecl) bool {
 // their complete test sets. Unknown extra tags fail this check instead of hiding.
 // laneTagSuites are extra tag sets that one native lane builds as a whole
 // (FAAS_METAL_TEST_TAGS in run-native-e2e.sh); that lane's phase contract in
-// native-e2e-phases.sh owns the files it selects.
+// native-e2e-phases.sh owns the files it selects. function_background_native
+// is the isolated acceptance-host lane, make test-function-background-native.
 var laneTagSuites = []string{
 	"promotionacceptance",                          // project-environment-promotion-only
 	"contractacceptance",                           // project-migration-contract-only
 	"contractacceptance,managed_postgres_contract", // project-migration-sql-only
+	"function_background_native",                   // make test-function-background-native
 }
 
 func checkCoverage(root string) error {

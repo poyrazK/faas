@@ -13,7 +13,6 @@ import (
 )
 
 type functionMigrationCapacityTestStore interface {
-	Store
 	functionDestinationTestStore
 	MigrationSourceStore
 	MigrationAdmissionStore
