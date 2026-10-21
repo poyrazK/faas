@@ -78,7 +78,9 @@
   It boots its own pool worker rather than waiting on the deployment's prime
   worker: on n2 a pool reconcile ran between Prime publishing the prime
   RUNNING and apid marking the deployment live, saw the prime as a retired
-  generation and stopped it (a race on main, not changed here).
+  generation and stopped it. That race is fixed: the pool reconcile now
+  leaves a worker of a deployment that is still being deployed alone
+  (`TestWorkerPoolLeavesAnInFlightDeploymentsWorker`).
   On n2 (2026-10-21, revision 7eec5ca845) the test's first worker stopped
   at scale-in as above, the second froze, and three thaws took 685, 714
   and 815 ms from the send to the worker's RUNNING row and 792–850 ms to

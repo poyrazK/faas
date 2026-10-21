@@ -185,6 +185,7 @@ var ScrubCIJobEnv = scrubCIJobEnv
 var SeedApp = seedApp
 var SeedDrainInvocation = seedDrainInvocation
 var SeedJobRun = seedJobRun
+var SeedScopedWorker = seedScopedWorker
 var SeedStageSnapshotPolicy = seedStageSnapshotPolicy
 var SeedTwoNodes = seedTwoNodes
 var SeedWorkerScopes = seedWorkerScopes
