@@ -7824,12 +7824,14 @@ func canonicalAppURL(app api.AppResponse) string {
 
 // printDeployColdWakeSentence emits the UX §2.5 cold-wake honesty
 // line after every successful deploy. Routes through osStdout so
-// tests can capture and assert. The two-line shape is verbatim
-// from docs/faas_ux_spec.md:93-101.
+// tests can capture and assert. The three lines are verbatim from
+// docs/faas_ux_spec.md §2.5. They promise no wake time: the platform's
+// restore target excludes the app, Cloudflare, and network distance.
 func printDeployColdWakeSentence() {
 	_, _ = fmt.Fprintln(osStdout,
-		"  Your app scales to zero when idle. The first request after idle takes\n"+
-			"  ~0.3–0.8s to wake; requests after that are instant. This is normal and free.")
+		"  Your app scales to zero when idle. Gregale restores it from a snapshot;\n"+
+			"  requests after that are instant. Public request time also depends on your\n"+
+			"  app, Cloudflare, and the network distance to the serving region.")
 }
 
 // printDeployNoHTTPSentence replaces the cold-wake line for a worker or job,
