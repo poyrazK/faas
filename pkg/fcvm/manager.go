@@ -2889,6 +2889,21 @@ func (m *Manager) InstanceRuntimeSecretIdentity(instance string) (deploymentID, 
 	return "", "", "", fmt.Errorf("fcvm: runtime secret identity %s: not live", instance)
 }
 
+// InstanceProcessStartedAt reports when the instance's current guest process
+// attempt started; a restore that falls back to cold boot starts a new one.
+// Zero when the instance has no attempt on this daemon.
+func (m *Manager) InstanceProcessStartedAt(instance string) time.Time {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.processStartedAt[instance]
+}
+
+// failedRestoreConsoleKeeper is the optional VMM capability that keeps a failed
+// restore's console before the fallback cold boot truncates it.
+type failedRestoreConsoleKeeper interface {
+	PreserveFailedRestoreConsole(instance string) (string, error)
+}
+
 // wakingInstance is the identity a Wake request fixed for an instance that
 // has not been published to live yet. Other waking markers leave it empty.
 type wakingInstance struct {
@@ -5289,6 +5304,11 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			}
 			if killErr := m.vmm.Kill(context.WithoutCancel(ctx), lease); killErr != nil {
 				return WakeColdBoot, fmt.Errorf("wake %s: cannot clean failed restore before cold boot: %w", req.Instance, errors.Join(rErr, killErr))
+			}
+			if keeper, ok := m.vmm.(failedRestoreConsoleKeeper); ok {
+				if kept, keepErr := keeper.PreserveFailedRestoreConsole(lease.Instance); keepErr == nil {
+					m.log.Warn("fcvm: kept failed restore console", "instance", req.Instance, "path", kept)
+				}
 			}
 			lease = m.beginProcessAttempt(lease)
 		}

@@ -59,6 +59,9 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretProcess(instance string, req 
 	p := state.AppSecretRuntimeProcess{AccountID: accountID, AppID: appID, InstanceID: instance, WorkloadName: req.WorkloadName,
 		Generation: req.Generation, PreviousGeneration: req.PreviousGeneration, AttemptedAt: time.Now().UTC()}
 	if req.Kind == "secret_generation_start" {
+		// ADR-508 amendment 1: registrations older than this attempt came
+		// from a replaced guest (restore fallback) and must not fence it out.
+		p.ProcessStartedAt = r.mgr.InstanceProcessStartedAt(instance)
 		err = processStore.BeginAppSecretRuntimeProcess(ctx, p)
 	} else {
 		err = processStore.RetireAppSecretRuntimeProcess(ctx, p)
