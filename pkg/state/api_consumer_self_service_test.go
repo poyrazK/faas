@@ -132,3 +132,17 @@ func TestPgStoreAPIConsumerSelfService(t *testing.T) {
 	accountID, appID := seedConsumerKeyAccountApp(t, ctx, store)
 	checkAPIConsumerSelfService(t, ctx, store, accountID, appID)
 }
+
+// adr: 20261021183000 — the outbox accepts every consumer event, including
+// consumer.usage_threshold, which its event check used to refuse.
+func TestPgAppWebhookOutboxAcceptsConsumerEvents(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	accountID, appID := seedConsumerKeyAccountApp(t, ctx, store)
+	for _, event := range []state.AppWebhookEvent{state.AppWebhookEventConsumerUsageThreshold, state.AppWebhookEventConsumerSignedUp,
+		state.AppWebhookEventConsumerPlanChanged, state.AppWebhookEventConsumerClosed} {
+		if _, err := pool.Exec(ctx, `insert into app_webhook_event_outbox (account_id, app_id, event, source_id, payload, recipient_webhook_ids)
+			values ($1::uuid, $2::uuid, $3, $4::uuid, '{}'::jsonb, array[$5::uuid])`, accountID, appID, string(event), uuid.NewString(), uuid.NewString()); err != nil {
+			t.Errorf("outbox refused %s: %v", event, err)
+		}
+	}
+}
