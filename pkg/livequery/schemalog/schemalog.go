@@ -19,6 +19,15 @@ import (
 // Publication is the publication live queries decode by default.
 const Publication = "gregale_live"
 
+// Slot is the replication slot live queries decode a database with, named
+// for its ID. Slot names are unique per PostgreSQL server, not per database,
+// and databases may share a server (a Neon project's, for one), so each
+// database needs its own. apid and livequeryd must agree on it.
+func Slot(databaseID string) string {
+	slot := "gregale_live_" + strings.ReplaceAll(strings.ToLower(databaseID), "-", "_")
+	return slot[:min(len(slot), 63)]
+}
+
 // SQL creates the schema-change log and its event triggers. It needs the
 // right to create event triggers (a superuser on stock PostgreSQL) and is
 // idempotent.

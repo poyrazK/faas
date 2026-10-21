@@ -3,6 +3,11 @@
 // live secret. Secrets are sealed to livequeryd's age recipient before they
 // are stored, so apid cannot read one back; the customer sees each secret
 // once, in the response that issues it.
+//
+// Where the database's provider issues one, enabling also prepares the
+// database and issues the login livequeryd decodes it with, sealed the same
+// way; livequeryd discovers the databases it serves from those logins.
+// Disabling revokes the login and drops its slot.
 package livequeries
 
 import (
@@ -18,8 +23,10 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/livequery/schemalog"
 	"github.com/onebox-faas/faas/pkg/livequery/seal"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/credentialdelivery"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/livekeys"
@@ -31,15 +38,25 @@ const docsURL = "https://gregale.dev/docs/managed-postgres#live-queries"
 type Databases interface {
 	Get(ctx context.Context, accountID, databaseID string) (managedpostgres.Database, error)
 	LiveHub(managedpostgres.Database) (string, error)
+	// IssueLiveLogin returns ok false when the database's provider issues
+	// no live logins.
+	IssueLiveLogin(ctx context.Context, database managedpostgres.Database, slot string) (managedpostgres.LiveLogin, bool, error)
+	RevokeLiveLogin(ctx context.Context, database managedpostgres.Database, slot string) error
 }
 
-// Keys stores live secrets; *livekeys.Store implements it.
+// Keys stores live secrets and logins; *livekeys.Store implements it.
 type Keys interface {
-	Enable(ctx context.Context, accountID, databaseID string, key livekeys.NewKey, login *livekeys.Login) error
+	Enable(ctx context.Context, accountID, databaseID string, key livekeys.NewKey, issue func(context.Context) (*livekeys.Login, error)) error
 	Rotate(ctx context.Context, accountID, databaseID string, key livekeys.NewKey, overlap time.Duration) error
-	Disable(ctx context.Context, accountID, databaseID string) (bool, error)
+	Disable(ctx context.Context, accountID, databaseID string, revoke func(context.Context, livekeys.Login) error) (bool, error)
 	Keys(ctx context.Context, accountID, databaseID string) ([]livekeys.Key, error)
 }
+
+// loginError is a failure to issue or revoke a live login at the provider.
+type loginError struct{ err error }
+
+func (e *loginError) Error() string { return "live login: " + e.err.Error() }
+func (e *loginError) Unwrap() error { return e.err }
 
 // Service serves /v1/postgres/databases/{id}/live.
 type Service struct {
@@ -76,7 +93,9 @@ func (s *Service) Enable(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !ok {
 		return
 	}
-	err := s.Keys.Enable(r.Context(), acct.ID, db.ID, key, nil)
+	err := s.Keys.Enable(r.Context(), acct.ID, db.ID, key, func(ctx context.Context) (*livekeys.Login, error) {
+		return s.issueLogin(ctx, db)
+	})
 	if errors.Is(err, livekeys.ErrEnabled) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "live_queries_enabled", "Live queries are already enabled",
 			"this database already has a live secret; rotate it to issue a new one").WithFix("gregale postgres live rotate "+db.Name).WithDocs(docsURL))
@@ -128,7 +147,12 @@ func (s *Service) Disable(w http.ResponseWriter, r *http.Request, acct state.Acc
 	if !ok {
 		return
 	}
-	removed, err := s.Keys.Disable(r.Context(), acct.ID, db.ID)
+	removed, err := s.Keys.Disable(r.Context(), acct.ID, db.ID, func(ctx context.Context, login livekeys.Login) error {
+		if err := s.Databases.RevokeLiveLogin(ctx, db, login.Slot); err != nil {
+			return &loginError{err}
+		}
+		return nil
+	})
 	if !s.stored(w, r, err) {
 		return
 	}
@@ -191,10 +215,37 @@ func (s *Service) newKey(w http.ResponseWriter, r *http.Request) (string, liveke
 	return "", livekeys.NewKey{}, false
 }
 
+// issueLogin issues db's live login and seals its connection string for
+// livequeryd, or returns nil when db's provider issues none.
+func (s *Service) issueLogin(ctx context.Context, db managedpostgres.Database) (*livekeys.Login, error) {
+	slot := schemalog.Slot(db.ID)
+	live, ok, err := s.Databases.IssueLiveLogin(ctx, db, slot)
+	if err != nil {
+		return nil, &loginError{err}
+	}
+	if !ok {
+		return nil, nil
+	}
+	// A replication connection, like a migration one, bypasses the pooler.
+	dsn, err := credentialdelivery.ConnectionURL(managedpostgres.CredentialMigration, live.CredentialMaterial)
+	if err != nil {
+		return nil, &loginError{err}
+	}
+	sealed, err := secretbox.SealBytes(s.Recipient, livekeys.LoginSealNamespace, []byte(dsn), 4096)
+	if err != nil {
+		return nil, err
+	}
+	return &livekeys.Login{Sealed: sealed, Recipient: s.Recipient.String(), Identity: live.ProviderIdentityID, Slot: slot, Awake: live.Awake}, nil
+}
+
 func (s *Service) stored(w http.ResponseWriter, r *http.Request, err error) bool {
+	var login *loginError
 	switch {
 	case err == nil:
 		return true
+	case errors.As(err, &login):
+		s.Log.WarnContext(r.Context(), "live login at the provider failed", "err", login.err)
+		s.DatabaseProblem(w, login.err)
 	case errors.Is(err, livekeys.ErrNotFound):
 		s.DatabaseProblem(w, managedpostgres.ErrNotFound)
 	default:

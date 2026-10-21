@@ -38,6 +38,9 @@ type database struct {
 	ReleaseAfter      time.Duration
 	Awake             func(context.Context) (bool, error)
 	AwakeEvery        time.Duration
+	// awakeName names Awake's target for a discovered database
+	// ("neon:<project>/<endpoint>"), so a change restarts it.
+	awakeName string
 }
 
 // hubDeps is what the hubs of one process share.
@@ -104,17 +107,25 @@ func runDatabase(ctx context.Context, db database, pool *pgxpool.Pool, deps hubD
 	return hub.Run(hubCtx)
 }
 
-// runDatabases serves every database of -databases-file from this process.
-// Each runs on its own: one that cannot be opened, or whose hub stops on an
-// error, is retried with backoff while the others keep serving.
+// runDatabases serves every database of -databases-file, and those
+// -discover-backends finds, from this process. Each runs on its own: one
+// that cannot be opened, or whose hub stops on an error, is retried with
+// backoff while the others keep serving.
 func runDatabases(ctx context.Context, log *slog.Logger) error {
 	if err := refusePerDatabaseFlags(flag.CommandLine); err != nil {
 		return err
 	}
 	if *listen == "" || *keysDSNFile == "" || *keysIdentity == "" {
-		return errors.New("livequeryd: -databases-file needs -listen, -keys-dsn-file and -keys-identity")
+		return errors.New("livequeryd: -databases-file and -discover-backends need -listen, -keys-dsn-file and -keys-identity")
 	}
-	dbs, err := loadDatabases(*databasesFile, *checkpointDir)
+	var dbs []database
+	if *databasesFile != "" {
+		var err error
+		if dbs, err = loadDatabases(*databasesFile, *checkpointDir); err != nil {
+			return err
+		}
+	}
+	discovery, err := discoveryConfig()
 	if err != nil {
 		return err
 	}
@@ -130,11 +141,7 @@ func runDatabases(ctx context.Context, log *slog.Logger) error {
 	}
 	defer keys.Close()
 
-	ids := make([]string, len(dbs))
-	for i, db := range dbs {
-		ids[i] = db.ID
-	}
-	routes := newRoutes(ids)
+	routes := newRoutes(nil)
 	var servers []*http.Server
 	defer func() {
 		for _, srv := range servers {
@@ -161,15 +168,17 @@ func runDatabases(ctx context.Context, log *slog.Logger) error {
 	readySignal.Set(true, "")
 	defer wire.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
-	log.Info("livequeryd: serving databases", "count", len(dbs))
+	log.Info("livequeryd: serving databases", "listed", len(dbs), "discover_backends", discovery.backends)
 
-	var wg sync.WaitGroup
+	f := newFleet(ctx, routes, set, keys, log)
 	for _, db := range dbs {
-		deps := hubDeps{keys: keys, pollLag: *metricsListen != "", log: log.With("database", db.ID)}
-		metrics := set.Database(db.ID)
-		wg.Go(func() { supervise(ctx, db, deps, metrics, routes) })
+		f.start(db, true)
 	}
-	wg.Wait()
+	if len(discovery.backends) > 0 {
+		go discover(ctx, f, keys, discovery, log)
+	}
+	<-ctx.Done()
+	f.wait()
 	return nil
 }
 
@@ -296,7 +305,7 @@ func (e databaseEntry) database(checkpointDir string) (database, error) {
 	if err != nil {
 		return database{}, fmt.Errorf("database_url_file: %w", err)
 	}
-	db := database{ID: e.ID, DSN: dsn, Slot: cmp.Or(e.Slot, defaultSlot(e.ID)), Publication: cmp.Or(e.Publication, *publication),
+	db := database{ID: e.ID, DSN: dsn, Slot: cmp.Or(e.Slot, schemalog.Slot(e.ID)), Publication: cmp.Or(e.Publication, *publication),
 		Install: boolOr(e.Install, *install), CreatePublication: boolOr(e.CreatePublication, *createPublication), AwakeEvery: *awakeEvery}
 	if !pgNamePattern.MatchString(db.Slot) || !pgNamePattern.MatchString(db.Publication) {
 		return database{}, errors.New("slot and publication must be 1-63 lower-case letters, digits or _")
@@ -320,14 +329,6 @@ func (e databaseEntry) database(checkpointDir string) (database, error) {
 		return database{}, err
 	}
 	return db, nil
-}
-
-// defaultSlot is a database's slot when its entry names none. Replication
-// slot names are unique per PostgreSQL server, not per database, so
-// databases sharing a server (a Neon project's, for one) need their own.
-func defaultSlot(id string) string {
-	slot := "gregale_live_" + strings.ReplaceAll(strings.ToLower(id), "-", "_")
-	return slot[:min(len(slot), 63)]
 }
 
 // slotTarget names the server and slot db decodes, so two entries that
@@ -407,18 +408,38 @@ func newRoutes(ids []string) *routes {
 	return r
 }
 
+// add serves a database from now on; it answers 503 until its hub runs.
+func (r *routes) add(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.dbs[id] == nil {
+		r.dbs[id] = &route{}
+	}
+}
+
+// remove stops serving a database: its path is not found again.
+func (r *routes) remove(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.dbs, id)
+}
+
 // set makes h the database's hub; nil while it has none.
 func (r *routes) set(id string, h *liveserver.Hub) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.dbs[id].hub = h
+	if rt := r.dbs[id]; rt != nil {
+		rt.hub = h
+	}
 }
 
 // failed counts a failed start or a hub stopped on an error.
 func (r *routes) failed(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.dbs[id].restarts++
+	if rt := r.dbs[id]; rt != nil {
+		rt.restarts++
+	}
 }
 
 // only returns the database when the process serves exactly one.

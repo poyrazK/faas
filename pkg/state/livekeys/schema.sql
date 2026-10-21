@@ -37,5 +37,6 @@ CREATE TABLE managed_postgres_live_logins (
  recipient text NOT NULL,
  provider_identity_id text NOT NULL,
  slot text NOT NULL,
+ awake text NOT NULL DEFAULT '',
  created_at timestamptz NOT NULL DEFAULT now()
 );

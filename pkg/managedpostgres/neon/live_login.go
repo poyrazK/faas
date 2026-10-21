@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -45,17 +46,17 @@ func liveLogin(role credentialRole) credentialRole {
 }
 
 // IssueLiveLogin implements managedpostgres.LiveLoginIssuer.
-func (p *Provider) IssueLiveLogin(ctx context.Context, request managedpostgres.LiveLoginRequest) (managedpostgres.CredentialMaterial, error) {
+func (p *Provider) IssueLiveLogin(ctx context.Context, request managedpostgres.LiveLoginRequest) (managedpostgres.LiveLogin, error) {
 	if request.Publication == "" {
-		return managedpostgres.CredentialMaterial{}, managedpostgres.ErrInvalid
+		return managedpostgres.LiveLogin{}, managedpostgres.ErrInvalid
 	}
 	owner, role, err := p.liveOwner(ctx, request.ProviderResourceID)
 	if err != nil {
-		return managedpostgres.CredentialMaterial{}, err
+		return managedpostgres.LiveLogin{}, err
 	}
 	password, err := p.liveLoginManager().Issue(ctx, owner, role, request.Publication)
 	if err != nil {
-		return managedpostgres.CredentialMaterial{}, credentialSQLError(err)
+		return managedpostgres.LiveLogin{}, credentialSQLError(err)
 	}
 	login := liveLogin(role)
 	// A replication connection needs the compute itself, not the pooler.
@@ -65,8 +66,24 @@ func (p *Provider) IssueLiveLogin(ctx context.Context, request managedpostgres.L
 			direct = append(direct, endpoint)
 		}
 	}
-	return managedpostgres.CredentialMaterial{ProviderIdentityID: login.name, Username: login.name, Password: password,
-		Database: owner.Database, TLSMode: owner.TLSMode, Endpoints: direct}, nil
+	material := managedpostgres.CredentialMaterial{ProviderIdentityID: login.name, Username: login.name, Password: password,
+		Database: owner.Database, TLSMode: owner.TLSMode, Endpoints: direct}
+	ref, _ := parseResourceRef(request.ProviderResourceID)
+	return managedpostgres.LiveLogin{CredentialMaterial: material, Awake: neonAwake(ref.projectID, direct)}, nil
+}
+
+// neonAwake names the compute livequeryd polls to learn a released database
+// runs again. A Neon host's first label is its endpoint ID
+// (ep-cool-darkness-123456.us-east-2.aws.neon.tech); a host that is not a
+// Neon endpoint's leaves the database never released.
+func neonAwake(projectID string, endpoints []managedpostgres.Endpoint) string {
+	for _, endpoint := range endpoints {
+		label, _, _ := strings.Cut(endpoint.Host, ".")
+		if strings.HasPrefix(label, "ep-") && validProviderID.MatchString(label) && validProviderID.MatchString(projectID) {
+			return "neon:" + projectID + "/" + label
+		}
+	}
+	return ""
 }
 
 // RevokeLiveLogin implements managedpostgres.LiveLoginIssuer.

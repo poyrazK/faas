@@ -66,7 +66,7 @@ func main() {
 // host with the parser and the memory it needs. -role all runs both in one
 // process.
 func run(ctx context.Context, log *slog.Logger) error {
-	if *databasesFile != "" {
+	if *databasesFile != "" || *discoverBackends != "" {
 		return runDatabases(ctx, log)
 	}
 	if *checkpointDir != "" {

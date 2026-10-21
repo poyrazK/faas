@@ -46,5 +46,6 @@ type ManagedPostgresLiveLogin struct {
 	Recipient          string
 	ProviderIdentityID string
 	Slot               string
+	Awake              string
 	CreatedAt          pgtype.Timestamptz
 }

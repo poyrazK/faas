@@ -227,7 +227,7 @@ func (q *Queries) LiveDatabaseApps(ctx context.Context, db DBTX, databaseID stri
 }
 
 const liveDatabases = `-- name: LiveDatabases :many
-SELECT d.id::text AS database_id,d.backend_id,l.sealed_login,l.recipient,l.slot
+SELECT d.id::text AS database_id,d.backend_id,l.sealed_login,l.recipient,l.slot,l.awake
  FROM managed_postgres_live_logins l
  JOIN managed_postgres_databases d ON d.id=l.database_id
  WHERE d.backend_id=ANY($1::text[]) AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
@@ -241,6 +241,7 @@ type LiveDatabasesRow struct {
 	SealedLogin []byte
 	Recipient   string
 	Slot        string
+	Awake       string
 }
 
 // The live databases of the given backends that have a login: the databases
@@ -260,6 +261,7 @@ func (q *Queries) LiveDatabases(ctx context.Context, db DBTX, backendIds []strin
 			&i.SealedLogin,
 			&i.Recipient,
 			&i.Slot,
+			&i.Awake,
 		); err != nil {
 			return nil, err
 		}
@@ -383,11 +385,11 @@ func (q *Queries) RetireActiveLiveKey(ctx context.Context, db DBTX, arg RetireAc
 }
 
 const upsertLiveLogin = `-- name: UpsertLiveLogin :exec
-INSERT INTO managed_postgres_live_logins (database_id,account_id,sealed_login,recipient,provider_identity_id,slot)
+INSERT INTO managed_postgres_live_logins (database_id,account_id,sealed_login,recipient,provider_identity_id,slot,awake)
  VALUES ($1::text::uuid,$2::text::uuid,$3::bytea,$4::text,
- $5::text,$6::text)
+ $5::text,$6::text,$7::text)
  ON CONFLICT (database_id) DO UPDATE SET sealed_login=EXCLUDED.sealed_login, recipient=EXCLUDED.recipient,
- provider_identity_id=EXCLUDED.provider_identity_id, slot=EXCLUDED.slot, created_at=now()
+ provider_identity_id=EXCLUDED.provider_identity_id, slot=EXCLUDED.slot, awake=EXCLUDED.awake, created_at=now()
 `
 
 type UpsertLiveLoginParams struct {
@@ -397,6 +399,7 @@ type UpsertLiveLoginParams struct {
 	Recipient          string
 	ProviderIdentityID string
 	Slot               string
+	Awake              string
 }
 
 func (q *Queries) UpsertLiveLogin(ctx context.Context, db DBTX, arg UpsertLiveLoginParams) error {
@@ -407,6 +410,7 @@ func (q *Queries) UpsertLiveLogin(ctx context.Context, db DBTX, arg UpsertLiveLo
 		arg.Recipient,
 		arg.ProviderIdentityID,
 		arg.Slot,
+		arg.Awake,
 	)
 	return err
 }

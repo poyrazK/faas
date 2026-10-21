@@ -20,6 +20,10 @@ import (
 // SealNamespace tags a sealed live secret; livequeryd opens no other blob.
 const SealNamespace = "livequery"
 
+// LoginSealNamespace is the secretbox namespace of a sealed live login's
+// connection string, so it never opens as a key.
+const LoginSealNamespace = "livequery-login"
+
 var (
 	// ErrNotFound means the account has no such live database.
 	ErrNotFound = errors.New("livekeys: database not found")
@@ -65,13 +69,15 @@ type Route struct {
 }
 
 // Login is the login livequeryd decodes a live database with: its
-// connection string sealed to livequeryd, the provider's name for it, and
-// the replication slot it decodes.
+// connection string sealed to livequeryd, the provider's name for it, the
+// replication slot it decodes, and how livequeryd learns that a database it
+// released runs again ("" never releases; "neon:<project>/<endpoint>").
 type Login struct {
 	Sealed    []byte
 	Recipient string
 	Identity  string
 	Slot      string
+	Awake     string
 }
 
 // LiveDatabase is a database livequeryd serves.
@@ -81,6 +87,7 @@ type LiveDatabase struct {
 	Sealed     []byte
 	Recipient  string
 	Slot       string
+	Awake      string
 }
 
 // Store reads and writes managed_postgres_live_keys and
@@ -93,9 +100,12 @@ type Store struct {
 // New returns a store over pool.
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool, q: sqlc.New()} }
 
-// Enable stores a database's first key and, when the database's provider
-// issued one, its login, in one transaction.
-func (s *Store) Enable(ctx context.Context, accountID, databaseID string, key NewKey, login *Login) error {
+// Enable stores a database's first key and the login issue returns, in one
+// transaction. issue runs while the database is locked and only when live
+// queries are off: issuing a login gives it a new password, so the login
+// stored is always the one issued last. A nil issue, or a nil login, stores
+// none.
+func (s *Store) Enable(ctx context.Context, accountID, databaseID string, key NewKey, issue func(context.Context) (*Login, error)) error {
 	return s.locked(ctx, accountID, databaseID, func(tx pgx.Tx) error {
 		active, err := s.q.HasActiveLiveKey(ctx, tx, databaseID)
 		if err != nil {
@@ -109,11 +119,15 @@ func (s *Store) Enable(ctx context.Context, accountID, databaseID string, key Ne
 		if err := s.insert(ctx, tx, accountID, databaseID, key); err != nil {
 			return err
 		}
-		if login == nil {
+		if issue == nil {
 			return nil
 		}
+		login, err := issue(ctx)
+		if err != nil || login == nil {
+			return err
+		}
 		err = s.q.UpsertLiveLogin(ctx, tx, sqlc.UpsertLiveLoginParams{DatabaseID: databaseID, AccountID: accountID,
-			SealedLogin: login.Sealed, Recipient: login.Recipient, ProviderIdentityID: login.Identity, Slot: login.Slot})
+			SealedLogin: login.Sealed, Recipient: login.Recipient, ProviderIdentityID: login.Identity, Slot: login.Slot, Awake: login.Awake})
 		if err != nil {
 			return fmt.Errorf("livekeys: store login: %w", err)
 		}
@@ -143,7 +157,7 @@ func (s *Store) LiveDatabases(ctx context.Context, backendIDs []string) ([]LiveD
 	}
 	out := make([]LiveDatabase, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, LiveDatabase{DatabaseID: r.DatabaseID, BackendID: r.BackendID, Sealed: r.SealedLogin, Recipient: r.Recipient, Slot: r.Slot})
+		out = append(out, LiveDatabase{DatabaseID: r.DatabaseID, BackendID: r.BackendID, Sealed: r.SealedLogin, Recipient: r.Recipient, Slot: r.Slot, Awake: r.Awake})
 	}
 	return out, nil
 }
@@ -176,10 +190,23 @@ func (s *Store) Rotate(ctx context.Context, accountID, databaseID string, key Ne
 }
 
 // Disable removes every key of a database, revoking its outstanding seals,
-// and its login. It reports whether there were any keys.
-func (s *Store) Disable(ctx context.Context, accountID, databaseID string) (bool, error) {
+// and its login. A database with a login has revoke run on it first, while
+// the database is locked; when revoke fails nothing is removed. It reports
+// whether there were any keys.
+func (s *Store) Disable(ctx context.Context, accountID, databaseID string, revoke func(context.Context, Login) error) (bool, error) {
 	var removed bool
 	err := s.locked(ctx, accountID, databaseID, func(tx pgx.Tx) error {
+		if revoke != nil {
+			logins, err := s.q.LiveLoginOf(ctx, tx, sqlc.LiveLoginOfParams{DatabaseID: databaseID, AccountID: accountID})
+			if err != nil {
+				return fmt.Errorf("livekeys: read login: %w", err)
+			}
+			for _, l := range logins {
+				if err := revoke(ctx, Login{Identity: l.ProviderIdentityID, Slot: l.Slot}); err != nil {
+					return err
+				}
+			}
+		}
 		n, err := s.q.DeleteLiveKeys(ctx, tx, sqlc.DeleteLiveKeysParams{DatabaseID: databaseID, AccountID: accountID})
 		if err != nil {
 			return fmt.Errorf("livekeys: delete keys: %w", err)

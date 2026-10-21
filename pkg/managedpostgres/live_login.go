@@ -17,6 +17,14 @@ type LiveLoginRequest struct {
 	Slot string
 }
 
+// LiveLogin is an issued live-query login: its credentials, and how
+// livequeryd learns that the database runs again after releasing it ("" when
+// it cannot tell, so it never releases; "neon:<project>/<endpoint>").
+type LiveLogin struct {
+	CredentialMaterial
+	Awake string
+}
+
 // LiveLoginIssuer is a provider that prepares a database for live queries
 // and issues the login livequeryd decodes it with:
 //   - preparing installs the schema-change log and creates the publication,
@@ -29,24 +37,24 @@ type LiveLoginRequest struct {
 // the login's sessions, drops its slot and the login, and leaves the
 // schema-change log and publication.
 type LiveLoginIssuer interface {
-	IssueLiveLogin(context.Context, LiveLoginRequest) (CredentialMaterial, error)
+	IssueLiveLogin(context.Context, LiveLoginRequest) (LiveLogin, error)
 	RevokeLiveLogin(context.Context, LiveLoginRequest) error
 }
 
 // IssueLiveLogin issues database's live-query login. ok is false when its
 // provider issues none: livequeryd then serves the database only when an
 // operator lists it.
-func (s *Service) IssueLiveLogin(ctx context.Context, database Database, slot string) (CredentialMaterial, bool, error) {
+func (s *Service) IssueLiveLogin(ctx context.Context, database Database, slot string) (LiveLogin, bool, error) {
 	issuer, err := s.liveLoginIssuer(database)
 	if err != nil || issuer == nil {
-		return CredentialMaterial{}, false, err
+		return LiveLogin{}, false, err
 	}
-	material, err := issuer.IssueLiveLogin(ctx, LiveLoginRequest{ProviderResourceID: database.ProviderResourceID,
+	login, err := issuer.IssueLiveLogin(ctx, LiveLoginRequest{ProviderResourceID: database.ProviderResourceID,
 		Publication: schemalog.Publication, Slot: slot})
 	if err != nil {
-		return CredentialMaterial{}, false, err
+		return LiveLogin{}, false, err
 	}
-	return material, true, nil
+	return login, true, nil
 }
 
 // RevokeLiveLogin revokes database's live-query login and drops its slot. A

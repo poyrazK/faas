@@ -142,3 +142,24 @@ func TestSQLLiveLoginRefusesAForeignRole(t *testing.T) {
 		t.Error("a refused issue left the schema-change log behind")
 	}
 }
+
+// adr: 20261016151947 — a live login on a Neon endpoint tells livequeryd
+// which compute to poll after releasing the database; any other host leaves
+// the database never released.
+func TestNeonAwake(t *testing.T) {
+	direct := func(host string) []managedpostgres.Endpoint {
+		return []managedpostgres.Endpoint{{Role: managedpostgres.EndpointDirect, Host: host, Port: 5432}}
+	}
+	for host, want := range map[string]string{
+		"ep-cool-darkness-123456.us-east-2.aws.neon.tech": "neon:proj-1/ep-cool-darkness-123456",
+		"db.example.com": "",
+		"":               "",
+	} {
+		if got := neonAwake("proj-1", direct(host)); got != want {
+			t.Errorf("neonAwake(%q) = %q, want %q", host, got, want)
+		}
+	}
+	if got := neonAwake("bad/project", direct("ep-a.neon.tech")); got != "" {
+		t.Errorf("an invalid project ID produced %q", got)
+	}
+}

@@ -130,14 +130,14 @@ func TestStoreLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	removed, err := store.Disable(ctx, account, dbID)
+	removed, err := store.Disable(ctx, account, dbID, nil)
 	if err != nil || !removed {
 		t.Fatalf("disable = %v, %v", removed, err)
 	}
 	if got := ring(); len(got) != 0 {
 		t.Fatalf("ring after disable = %v", got)
 	}
-	if removed, err := store.Disable(ctx, account, dbID); err != nil || removed {
+	if removed, err := store.Disable(ctx, account, dbID, nil); err != nil || removed {
 		t.Fatalf("second disable = %v, %v", removed, err)
 	}
 }
@@ -263,16 +263,17 @@ func TestStoreLogins(t *testing.T) {
 		}
 		return dbs
 	}
-	login := &livekeys.Login{Sealed: []byte("sealed-login"), Recipient: recipient, Identity: "gregale_live_ab12", Slot: "gregale_live_db"}
+	login := &livekeys.Login{Sealed: []byte("sealed-login"), Recipient: recipient, Identity: "gregale_live_ab12", Slot: "gregale_live_db", Awake: "neon:proj-1/ep-a"}
 	if _, ok, err := store.LoginOf(ctx, account, dbID); err != nil || ok {
 		t.Fatalf("login before enable: %v, %v", ok, err)
 	}
-	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa"), login); err != nil {
+	issue := func(context.Context) (*livekeys.Login, error) { return login, nil }
+	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa"), issue); err != nil {
 		t.Fatal(err)
 	}
 	got := discover("native-a", "neon-b")
 	if len(got) != 1 || got[0].DatabaseID != dbID || got[0].BackendID != "native-a" || string(got[0].Sealed) != "sealed-login" ||
-		got[0].Recipient != recipient || got[0].Slot != "gregale_live_db" {
+		got[0].Recipient != recipient || got[0].Slot != "gregale_live_db" || got[0].Awake != "neon:proj-1/ep-a" {
 		t.Fatalf("discovered %+v", got)
 	}
 	if got := discover("neon-b"); len(got) != 0 {
@@ -300,8 +301,19 @@ func TestStoreLogins(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_databases SET state='ready' WHERE id=$1`, dbID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Disable(ctx, account, dbID); err != nil {
+	refuse := func(context.Context, livekeys.Login) error { return errors.New("provider unavailable") }
+	if _, err := store.Disable(ctx, account, dbID, refuse); err == nil {
+		t.Fatal("disable succeeded although revoking the login failed")
+	}
+	if got := discover("native-a"); len(got) != 1 {
+		t.Fatalf("a failed revoke removed the database: %+v", got)
+	}
+	var revoked []livekeys.Login
+	if _, err := store.Disable(ctx, account, dbID, func(_ context.Context, l livekeys.Login) error { revoked = append(revoked, l); return nil }); err != nil {
 		t.Fatal(err)
+	}
+	if len(revoked) != 1 || revoked[0].Identity != "gregale_live_ab12" || revoked[0].Slot != "gregale_live_db" {
+		t.Fatalf("revoked %+v", revoked)
 	}
 	if got := discover("native-a"); len(got) != 0 {
 		t.Fatalf("a disabled database was discovered: %+v", got)
@@ -311,7 +323,16 @@ func TestStoreLogins(t *testing.T) {
 	}
 	bad := *login
 	bad.Slot = "Bad Slot"
-	if err := store.Enable(ctx, account, dbID, key("cccccccccccccccc"), &bad); err == nil {
+	if err := store.Enable(ctx, account, dbID, key("cccccccccccccccc"), func(context.Context) (*livekeys.Login, error) { return &bad, nil }); err == nil {
 		t.Error("a malformed slot name was stored")
+	}
+	// A login that cannot be issued leaves live queries off.
+	if err := store.Enable(ctx, account, dbID, key("dddddddddddddddd"), func(context.Context) (*livekeys.Login, error) {
+		return nil, errors.New("provider unavailable")
+	}); err == nil {
+		t.Fatal("enable succeeded although issuing the login failed")
+	}
+	if keys, err := store.Keys(ctx, account, dbID); err != nil || len(keys) != 0 {
+		t.Fatalf("a failed issue stored keys %v, %v", keys, err)
 	}
 }

@@ -7362,6 +7362,17 @@ type ManagedPostgresLiveKey struct {
 	RetiresAt    pgtype.Timestamptz
 }
 
+// ADR-20261016151947 replication login per live managed database, sealed to livequeryd; livequeryd discovers its databases here.
+type ManagedPostgresLiveLogin struct {
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	SealedLogin        []byte
+	Recipient          string
+	ProviderIdentityID string
+	Slot               string
+	CreatedAt          pgtype.Timestamptz
+}
+
 type ManagedPostgresResize struct {
 	ID                 pgtype.UUID
 	AccountID          pgtype.UUID
