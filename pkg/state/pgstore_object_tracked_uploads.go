@@ -29,7 +29,7 @@ func commitTrackedUploadSQL(ctx context.Context, tx pgx.Tx, r sqlc.ObjectUploadC
 	}
 	return c, tx.Commit(ctx)
 }
-func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
+func (s *pgCore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
 	if c.EncryptionDefaultRevision != 0 || !validTrackedObjectUpload(c) {
 		return c, false, ErrConflict
 	}
@@ -98,7 +98,7 @@ func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCo
 	out, e := commitTrackedUploadSQL(ctx, tx, r)
 	return out, true, e
 }
-func (s *PgStore) DispatchTrackedObjectUpload(ctx context.Context, account, bucket, id string) (ObjectUploadCompletion, error) {
+func (s *pgCore) DispatchTrackedObjectUpload(ctx context.Context, account, bucket, id string) (ObjectUploadCompletion, error) {
 	r, err := sqlc.New().ObjectTrackedUploadDispatch(ctx, s.pool, sqlc.ObjectTrackedUploadDispatchParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), BucketID: mustPgUUID(bucket), RetrySeconds: int32(api.ObjectUploadRecoveryRetry / time.Second)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ObjectUploadCompletion{}, ErrConflict
@@ -108,7 +108,7 @@ func (s *PgStore) DispatchTrackedObjectUpload(ctx context.Context, account, buck
 	}
 	return objectTrackedUploadFromSQL(r)
 }
-func (s *PgStore) lockTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion) (pgx.Tx, ObjectUploadCompletion, error) {
+func (s *pgCore) lockTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion) (pgx.Tx, ObjectUploadCompletion, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, c, err
@@ -170,16 +170,16 @@ func finishTrackedUploadSQL(ctx context.Context, tx pgx.Tx, old, c ObjectUploadC
 	}
 	return out, settleUploadNodeTx(ctx, tx, out, old.WritePhase == ObjectUploadDispatched)
 }
-func (s *PgStore) FinishTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+func (s *pgCore) FinishTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
 	return s.finishTrackedObjectUpload(ctx, c, false, false)
 }
-func (s *PgStore) FinishTrackedObjectUploadRecovery(ctx context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+func (s *pgCore) FinishTrackedObjectUploadRecovery(ctx context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
 	return s.finishTrackedObjectUpload(ctx, c, true, false)
 }
 func (s *PgStore) FailPreparedObjectUpload(ctx context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
 	return s.finishTrackedObjectUpload(ctx, c, false, true)
 }
-func (s *PgStore) finishTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, recovery, preparedOnly bool) (ObjectUploadCompletion, error) {
+func (s *pgCore) finishTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, recovery, preparedOnly bool) (ObjectUploadCompletion, error) {
 	if !validTrackedUploadFinish(c) || !validTrackedUploadCursor(c) {
 		return c, ErrConflict
 	}
@@ -201,7 +201,7 @@ func (s *PgStore) finishTrackedObjectUpload(ctx context.Context, c ObjectUploadC
 	}
 	return out, tx.Commit(ctx)
 }
-func (s *PgStore) DueTrackedObjectUploads(ctx context.Context, limit int32) ([]ObjectUploadCompletion, error) {
+func (s *pgCore) DueTrackedObjectUploads(ctx context.Context, limit int32) ([]ObjectUploadCompletion, error) {
 	if limit < 1 || limit > api.ObjectUploadRecoveryBatch {
 		return nil, ErrConflict
 	}
@@ -219,7 +219,7 @@ func (s *PgStore) DueTrackedObjectUploads(ctx context.Context, limit int32) ([]O
 	}
 	return out, nil
 }
-func (s *PgStore) ClaimTrackedObjectUploadRecovery(ctx context.Context, account, bucket, id, token string) (ObjectUploadCompletion, error) {
+func (s *pgCore) ClaimTrackedObjectUploadRecovery(ctx context.Context, account, bucket, id, token string) (ObjectUploadCompletion, error) {
 	tx, c, err := s.lockTrackedObjectUpload(ctx, ObjectUploadCompletion{ID: id, AccountID: account, BucketID: bucket})
 	if err != nil {
 		return c, err
@@ -245,7 +245,7 @@ func (s *PgStore) ClaimTrackedObjectUploadRecovery(ctx context.Context, account,
 	}
 	return commitTrackedUploadSQL(ctx, tx, r)
 }
-func (s *PgStore) RetryTrackedObjectUploadRecovery(ctx context.Context, c ObjectUploadCompletion, code string) error {
+func (s *pgCore) RetryTrackedObjectUploadRecovery(ctx context.Context, c ObjectUploadCompletion, code string) error {
 	if !validTrackedUploadRetry(code) || !validTrackedUploadCursor(c) {
 		return ErrConflict
 	}
@@ -264,7 +264,7 @@ func (s *PgStore) RetryTrackedObjectUploadRecovery(ctx context.Context, c Object
 	return tx.Commit(ctx)
 }
 
-func (s *PgStore) GetObjectUploadReceipt(ctx context.Context, account, app, route, subject, id string) (ObjectUploadCompletion, error) {
+func (s *pgCore) GetObjectUploadReceipt(ctx context.Context, account, app, route, subject, id string) (ObjectUploadCompletion, error) {
 	r, err := sqlc.New().ObjectUploadReceiptGet(ctx, s.pool, sqlc.ObjectUploadReceiptGetParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(app), RouteID: mustPgUUID(route), SubjectID: subject})
 	if err != nil {
 		return ObjectUploadCompletion{}, mapErr(err)

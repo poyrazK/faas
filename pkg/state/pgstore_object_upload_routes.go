@@ -17,7 +17,7 @@ func objectUploadRouteFromSQL(row sqlc.ObjectUploadRoute) (ObjectUploadRoute, er
 	return route, err
 }
 
-func (s *PgStore) ListObjectUploadRoutes(ctx context.Context, accountID, appID string) ([]ObjectUploadRoute, error) {
+func (s *pgCore) ListObjectUploadRoutes(ctx context.Context, accountID, appID string) ([]ObjectUploadRoute, error) {
 	rows, err := sqlc.New().ObjectUploadRoutesList(ctx, s.pool, sqlc.ObjectUploadRoutesListParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)})
 	if err != nil {
 		return nil, mapErr(err)
@@ -33,7 +33,7 @@ func (s *PgStore) ListObjectUploadRoutes(ctx context.Context, accountID, appID s
 	return out, nil
 }
 
-func (s *PgStore) GetObjectUploadRoute(ctx context.Context, accountID, appID, name string) (ObjectUploadRoute, error) {
+func (s *pgCore) GetObjectUploadRoute(ctx context.Context, accountID, appID, name string) (ObjectUploadRoute, error) {
 	row, err := sqlc.New().ObjectUploadRouteGet(ctx, s.pool, sqlc.ObjectUploadRouteGetParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Name: name})
 	if err != nil {
 		return ObjectUploadRoute{}, mapErr(err)
@@ -41,7 +41,7 @@ func (s *PgStore) GetObjectUploadRoute(ctx context.Context, accountID, appID, na
 	return objectUploadRouteFromSQL(row)
 }
 
-func (s *PgStore) UpsertObjectUploadRoute(ctx context.Context, route ObjectUploadRoute) (ObjectUploadRoute, error) {
+func (s *pgCore) UpsertObjectUploadRoute(ctx context.Context, route ObjectUploadRoute) (ObjectUploadRoute, error) {
 	if _, err := s.GetObjectBucket(ctx, route.AccountID, route.AppID, route.BucketID); err != nil {
 		return ObjectUploadRoute{}, err
 	}
@@ -59,7 +59,7 @@ func (s *PgStore) UpsertObjectUploadRoute(ctx context.Context, route ObjectUploa
 	return objectUploadRouteFromSQL(row)
 }
 
-func (s *PgStore) DeleteObjectUploadRoute(ctx context.Context, accountID, appID, name string) error {
+func (s *pgCore) DeleteObjectUploadRoute(ctx context.Context, accountID, appID, name string) error {
 	n, err := sqlc.New().ObjectUploadRouteDelete(ctx, s.pool, sqlc.ObjectUploadRouteDeleteParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Name: name})
 	if err != nil {
 		return mapErr(err)
@@ -70,7 +70,7 @@ func (s *PgStore) DeleteObjectUploadRoute(ctx context.Context, accountID, appID,
 	return nil
 }
 
-func (s *PgStore) RecordObjectUploadCompletion(ctx context.Context, completion ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+func (s *pgCore) RecordObjectUploadCompletion(ctx context.Context, completion ObjectUploadCompletion) (ObjectUploadCompletion, error) {
 	if !emptyCopySourceProvenance(completion) || !completion.Encryption.Empty() || !completion.VerifiedEncryption.Empty() {
 		return ObjectUploadCompletion{}, ErrConflict
 	}
@@ -87,7 +87,7 @@ func (s *PgStore) RecordObjectUploadCompletion(ctx context.Context, completion O
 		completion.IdempotencyKey, completion.RequestFingerprint))
 }
 
-func (s *PgStore) CreateObjectUploadIntent(ctx context.Context, intent ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+func (s *pgCore) CreateObjectUploadIntent(ctx context.Context, intent ObjectUploadCompletion) (ObjectUploadCompletion, error) {
 	if !emptyCopySourceProvenance(intent) || !intent.Encryption.Empty() || !intent.VerifiedEncryption.Empty() || intent.IdempotencyKey == "" || intent.RequestFingerprint == "" || intent.Status != "pending" {
 		return ObjectUploadCompletion{}, ErrConflict
 	}
@@ -104,7 +104,7 @@ func (s *PgStore) CreateObjectUploadIntent(ctx context.Context, intent ObjectUpl
 		intent.IdempotencyKey, intent.RequestFingerprint))
 }
 
-func (s *PgStore) GetObjectUploadIntent(ctx context.Context, routeID, subjectID, idempotencyKey string) (ObjectUploadCompletion, error) {
+func (s *pgCore) GetObjectUploadIntent(ctx context.Context, routeID, subjectID, idempotencyKey string) (ObjectUploadCompletion, error) {
 	row, err := sqlc.New().ObjectUploadIntentGet(ctx, s.pool, sqlc.ObjectUploadIntentGetParams{RouteID: mustPgUUID(routeID), SubjectID: subjectID, IdempotencyKey: idempotencyKey})
 	if err != nil {
 		return ObjectUploadCompletion{}, mapErr(err)
@@ -112,7 +112,7 @@ func (s *PgStore) GetObjectUploadIntent(ctx context.Context, routeID, subjectID,
 	return objectTrackedUploadFromSQL(row)
 }
 
-func (s *PgStore) UpdateObjectUploadCompletion(ctx context.Context, completion ObjectUploadCompletion) (ObjectUploadCompletion, error) {
+func (s *pgCore) UpdateObjectUploadCompletion(ctx context.Context, completion ObjectUploadCompletion) (ObjectUploadCompletion, error) {
 	return scanObjectUploadCompletion(s.pool.QueryRow(ctx, `
 		UPDATE object_upload_completions
 		   SET etag=$2, status=$3, error_code=$4, request_id=$5

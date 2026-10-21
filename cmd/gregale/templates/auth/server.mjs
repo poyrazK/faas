@@ -153,6 +153,8 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     }
     const path = upstreamPath(req.url) ?? wellKnownPath(req.url)
     if (path === null || goTrueAdminPath(path)) return problem(res, 404, 'not_found')
+    // GoTrue gets no bearer token whose claims the checks above could not read.
+    if (bearer === false) return problem(res, 401, 'invalid_token')
     const declared = Number(req.headers['content-length'] ?? 0)
     if (!Number.isSafeInteger(declared) || declared > bodyBytes) return problem(res, 413, 'request_too_large')
     if (oauth && req.method === 'POST' && path.split('?')[0] === '/oauth/clients/register') {
@@ -275,7 +277,11 @@ export function start(env = process.env) {
   pool.on('error', () => {})
   const tokenHook = config.oauth || config.orgClaims || config.impersonation
   const accessToken = tokenHook ? payload => accessTokenClaims(pool, payload, { orgClaims: config.orgClaims, impersonation: config.impersonation }) : null
-  const beforeUserCreated = config.signups ? payload => signupRefusal(pool, config.signups, payload) : null
+  // Sign-up restrictions, and organizations' own identity providers, which
+  // vouch only for their verified domains, need the before-user-created hook;
+  // providers stay connected after AUTH_ORG_SSO is turned off, so it runs
+  // whenever SAML does.
+  const beforeUserCreated = config.signups || config.gotrueEnv.GOTRUE_SAML_ENABLED === 'true' ? payload => signupRefusal(pool, config.signups, payload) : null
   const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app, accessToken, beforeUserCreated, templates: () => loadEmailTemplates(pool) })
   hooks.listen(hookAddress.port, hookAddress.host)
   const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret, { accessToken: tokenHook, beforeUserCreated: Boolean(beforeUserCreated) }), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })

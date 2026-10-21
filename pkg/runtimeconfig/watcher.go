@@ -40,11 +40,19 @@ const (
 // same version.
 type ApplyFunc func(ctx context.Context, key string, value json.RawMessage, version int64) error
 
+// Store is what a Watcher reads and records. It is not state.Store, so an
+// edge daemon's watcher does not bring the whole store type into its binary
+// (docs/adr/20261021092138-edge-store-blast-radius.md).
+type Store interface {
+	ListRuntimeConfigs(ctx context.Context, scope state.RuntimeConfigScope, scopeID string) ([]state.RuntimeConfig, error)
+	RecordRuntimeConfigApplyReceipt(ctx context.Context, receipt state.RuntimeConfigApplyReceipt) error
+}
+
 // Watcher consumes global runtime configuration rows for one daemon. Keys not
 // listed in Keys are ignored, which lets each daemon subscribe to the same
 // channel without accidentally applying settings it does not understand.
 type Watcher struct {
-	Store state.Store
+	Store Store
 	Pool  *pgxpool.Pool
 	Keys  map[string]struct{}
 	Apply ApplyFunc
@@ -70,7 +78,7 @@ type Watcher struct {
 // New builds a watcher for the supplied keys. A nil logger is replaced with
 // slog.Default; a nil store/pool is accepted so test and degraded daemon
 // wiring can leave the watcher disabled without a panic.
-func New(store state.Store, pool *pgxpool.Pool, keys []string, apply ApplyFunc, log *slog.Logger) *Watcher {
+func New(store Store, pool *pgxpool.Pool, keys []string, apply ApplyFunc, log *slog.Logger) *Watcher {
 	if log == nil {
 		log = slog.Default()
 	}

@@ -110,6 +110,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 			}
 			retained.complete = true
 			m.mu.Lock()
+			m.markFunctionMigrationRetiredLocked(lease)
 			delete(m.pendingCleanup, lease.Instance)
 			m.mu.Unlock()
 			return nil
@@ -139,6 +140,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 			return fmt.Errorf("cleanup %s: release lease: %w", lease.Instance, err)
 		}
 	}
+	m.markFunctionMigrationRetiredLocked(lease)
 	retained.complete = true
 	delete(m.pendingCleanup, lease.Instance)
 	delete(m.pendingProcessExits, lease.Instance)
@@ -146,6 +148,10 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 	delete(m.processStartedAt, lease.Instance)
 	delete(m.waking, lease.Instance)
 	delete(m.live, lease.Instance)
+	delete(m.functionStarting, lease.Instance)
+	if m.functionActivity != nil {
+		m.functionActivity.Forget(lease.Instance)
+	}
 	delete(m.qualificationInstances, lease.Instance)
 	delete(m.cidToID, GuestVsockCID(lease.Slot))
 	delete(m.exportDirs, lease.Instance)

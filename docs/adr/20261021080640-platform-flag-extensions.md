@@ -33,6 +33,8 @@ Realtimed has no database pool. Rather than give it one, apid decides the realti
 
 **Covered so far:** `operation_schedules`, `operation_children`, `service_map`, `guest_tracing` and `static_egress_ip`. All five keep their environment gate until an operator writes the flag. `guest_tracing` decides by account and plan only, because creating an app has no organization yet. Both operation flags decide by account only, because the schedule firer and the cancellation cascade know nothing else.
 
+**Pending, with the product-area gates:** `FAAS_OPERATION_CONCURRENCY_ACCOUNTS` (ADR-20261018210500). It is enforced inside the state layer's queue admission as well as in apid, so a flag needs a release check injected into the store rather than a handler change.
+
 **Not migrated:**
 
 - enforcement and infrastructure toggles:

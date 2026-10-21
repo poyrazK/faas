@@ -113,6 +113,9 @@ func (m *Manager) quietEligibleLocked(id string, inst *Instance) bool {
 		inst.ExecutionOnly || inst.AppTaskOnly || inst.QualificationOnly || inst.TailCount > 0 {
 		return false
 	}
+	if functionExecutionBusy(inst) || functionMigrationActive(inst) {
+		return false
+	}
 	if _, busy := m.instanceFlights[id]; busy {
 		return false
 	}
@@ -305,6 +308,12 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	}
 	if frozen {
 		return nil
+	}
+	m.mu.Lock()
+	migrating := functionMigrationActive(inst)
+	m.mu.Unlock()
+	if migrating {
+		return ErrInstanceBusy
 	}
 	started := time.Now()
 	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), quietVMMTimeout)

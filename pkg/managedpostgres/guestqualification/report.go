@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = 3
+const Version = 4
 const MaxTTL = 7 * 24 * time.Hour
 const IdentityPrefix = "GREGALE_POSTGRES_GUEST_IDENTITY "
 

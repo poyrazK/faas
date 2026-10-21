@@ -5171,6 +5171,25 @@ var cliCommands = []cliCommand{
 				{Name: "since", Value: "DURATION", Short: "lookback such as 24h, 7d or 30d (default 7d, max 90d)"},
 				{Name: "granularity", Value: "hour|day", Short: "bucket size (hour covers at most 48h)", ClosedSet: []string{"hour", "day"}},
 			}, Examples: []string{"gregale data-api usage shop-data --since 30d"}},
+			{Name: "storage", Short: "File storage governed by RLS on storage_objects", Subcommands: []cliSub{
+				{Name: "sql", Short: "Print the storage_objects migration (table, RLS, guard trigger, example policies)", Flags: []cliFlag{
+					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
+				}, Examples: []string{"gregale data-api storage sql > migrations/0005_storage.sql"}},
+				{Name: "enable", Short: "Bind a bucket read-write and turn storage on", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "bucket", Value: "BUCKET", Req: true, Short: "bucket to store files in (created and bound when needed)"},
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+					{Name: "region", Value: "REGION", Short: "object-storage region for a new bucket"},
+					{Name: "max-object-bytes", Value: "N", Short: "largest upload in bytes (default 25 MiB, at most 100 MiB)"},
+					{Name: "no-restart", Short: "store settings without a fresh restart"},
+				}, Examples: []string{"gregale data-api storage enable shop-data --bucket uploads"}},
+				{Name: "status", Short: "Show whether storage is on and its bound buckets", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+				}},
+				{Name: "disable", Short: "Turn storage off; buckets stay bound and keep their files", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+					{Name: "no-restart", Short: "store settings without a fresh restart"},
+				}},
+			}},
 			{Name: "live", Short: "Live reads: results that stay current over a realtime connection", Subcommands: []cliSub{
 				{Name: "enable", Short: "Enable live queries on the database, usage reporting and a live-only realtime endpoint", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "scope", Value: "SCOPE", Short: "environment scope of the Data API's database binding"},

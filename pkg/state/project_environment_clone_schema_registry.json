@@ -3344,6 +3344,21 @@
     "kind": "operational"
   },
   {
+    "table": "customer_operation_concurrency_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "max_running",
+      "operation",
+      "platform_tenant_id",
+      "scope",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "customer_operation_definitions",
     "columns": [
       "account_id",
@@ -3435,6 +3450,19 @@
       "occurred_at",
       "operation_id",
       "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_operation_queue",
+    "columns": [
+      "account_id",
+      "app_id",
+      "operation",
+      "operation_id",
+      "platform_tenant_id",
+      "queued_at",
+      "scope"
     ],
     "kind": "operational"
   },
@@ -6349,6 +6377,35 @@
       "updated_at"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "function_migration_destinations",
+    "columns": [
+      "grant_data",
+      "instance_id",
+      "lease_token",
+      "node_id",
+      "phase",
+      "receipt",
+      "token",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "function_migration_sources",
+    "columns": [
+      "capture_grant",
+      "capture_result",
+      "capture_token",
+      "instance_id",
+      "lease_token",
+      "phase",
+      "recovery_grant",
+      "source_node_id",
+      "source_wake_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "gateway_concurrency_queue_leases",
@@ -13934,6 +13991,22 @@
       "id",
       "project_id",
       "version"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "project_environment_secrets",
+    "columns": [
+      "account_id",
+      "ciphertext",
+      "created_at",
+      "environment_slug",
+      "key",
+      "kid",
+      "project_id",
+      "secret_version",
+      "updated_at",
+      "value_hash"
     ],
     "kind": "configuration"
   },

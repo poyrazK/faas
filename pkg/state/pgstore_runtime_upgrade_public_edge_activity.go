@@ -43,7 +43,7 @@ func currentPublicEdgeGeneration(ctx context.Context, tx pgx.Tx, member RuntimeU
 // Bind the exact receiving internal process and THIS public startup identity to
 // one pair of current reviews. Locks last only for this bounded database read,
 // never for a long-lived HTTP stream or upgraded connection.
-func (s *PgStore) AuthorizeRuntimeUpgradePublicEdgeIngress(ctx context.Context, member RuntimeUpgradePublicEdgeMember, slot, session string) (RuntimeUpgradePublicIngressBinding, error) {
+func (s *pgCore) AuthorizeRuntimeUpgradePublicEdgeIngress(ctx context.Context, member RuntimeUpgradePublicEdgeMember, slot, session string) (RuntimeUpgradePublicIngressBinding, error) {
 	out := RuntimeUpgradePublicIngressBinding{}
 	if !validPublicEdgeMember(member) || !canonicalRuntimeUpgradeGatewayUUID(slot) || !canonicalRuntimeUpgradeGatewayUUID(session) {
 		return out, ErrInvalidArgument
@@ -78,7 +78,7 @@ func (s *PgStore) AuthorizeRuntimeUpgradePublicEdgeIngress(ctx context.Context, 
 	return out, err
 }
 
-func (s *PgStore) RecordRuntimeUpgradePublicEdgeActivity(ctx context.Context, member RuntimeUpgradePublicEdgeMember, snapshot func(RuntimeUpgradeIngressGeneration) RuntimeUpgradePublicEdgeActivity) error {
+func (s *pgCore) RecordRuntimeUpgradePublicEdgeActivity(ctx context.Context, member RuntimeUpgradePublicEdgeMember, snapshot func(RuntimeUpgradeIngressGeneration) RuntimeUpgradePublicEdgeActivity) error {
 	if !validPublicEdgeMember(member) || snapshot == nil {
 		return ErrInvalidArgument
 	}
