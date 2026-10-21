@@ -3214,6 +3214,13 @@ type Limits struct {
 	// CPU bound; it caps path-scoped tuning (exclusions, thresholds).
 	EdgeRulesWAFPerApp int
 
+	// EdgeRulesChallengePerApp caps how many kind='challenge' rules one
+	// app may hold (ADR-831 amendment 7). Per-plan: Free 0, Hobby 3,
+	// Pro 10, Scale 25. Zero means the kind is unavailable on the plan.
+	// Checking a pass costs one HMAC, so the cap bounds configuration,
+	// not gateway CPU.
+	EdgeRulesChallengePerApp int
+
 	// EgressCircuitBreakersPerApp caps how many declared upstreams one
 	// app may opt into egress breaking for (ADR-201 §3). Per-plan:
 	// Free 0, Hobby 3, Pro 10, Scale 50 — deliberately mirroring
@@ -4228,6 +4235,8 @@ var planLimits = map[Plan]Limits{
 		EgressCircuitBreakersPerApp:   0,
 		// ADR-831 step 1: WAF inspection spends shared gateway CPU.
 		EdgeRulesWAFPerApp: 0,
+		// ADR-831 amendment 7: browser challenge is Hobby and above.
+		EdgeRulesChallengePerApp: 0,
 		// CORS presets (issue #975 item #4 / Mega-Foundation #979-b,
 		// slot 00294). Free=0 mirrors the tenant_surfaces / alert_rules
 		// posture: the abstraction is the upsell, the abuse-floor tier
@@ -4654,6 +4663,8 @@ var planLimits = map[Plan]Limits{
 		EgressCircuitBreakersPerApp:   3,
 		// ADR-831 step 1: WAF inspection is Pro and above.
 		EdgeRulesWAFPerApp: 0,
+		// ADR-831 amendment 7: browser challenge is Hobby and above.
+		EdgeRulesChallengePerApp: 3,
 		// CORS presets (issue #975 #4 / Mega-Foundation #979-b, slot
 		// 00294). Hobby is the entry paid tier — 10 presets per
 		// account, 5 per app. MaxOrigins 25 covers the typical
@@ -5065,6 +5076,8 @@ var planLimits = map[Plan]Limits{
 		EgressCircuitBreakersPerApp:   10,
 		// ADR-831 step 1: WAF inspection is Pro and above.
 		EdgeRulesWAFPerApp: 5,
+		// ADR-831 amendment 7: browser challenge is Hobby and above.
+		EdgeRulesChallengePerApp: 10,
 		// CORS presets (issue #975 #4 / Mega-Foundation #979-b, slot
 		// 00294). Pro is the typical SaaS tier — 50 presets per
 		// account, 15 per app, 100 origins per preset.
@@ -5462,6 +5475,8 @@ var planLimits = map[Plan]Limits{
 		EgressCircuitBreakersPerApp:   50,
 		// ADR-831 step 1: WAF inspection is Pro and above.
 		EdgeRulesWAFPerApp: 20,
+		// ADR-831 amendment 7: browser challenge is Hobby and above.
+		EdgeRulesChallengePerApp: 25,
 		// CORS presets (issue #975 #4 / Mega-Foundation #979-b, slot
 		// 00294). Scale is the large-fleet tier — 250 presets per
 		// account, 50 per app, 500 origins per preset. Numbers
@@ -6298,6 +6313,26 @@ const (
 	// MaxEdgeWAFExcludedRules bounds the CRS rule IDs one rule may
 	// exclude from scoring.
 	MaxEdgeWAFExcludedRules = 50
+
+	// --- ADR-831 amendment 7: kind=challenge bounds -------------------
+
+	// EdgeChallengeDefaultDifficulty is how many leading zero bits the
+	// browser must find in a SHA-256 hash: about 65,000 hashes, tens to a
+	// few hundred milliseconds in a browser. Each extra bit doubles the
+	// work; MaxEdgeChallengeDifficulty (about 4 million hashes) keeps slow
+	// phones within seconds, and MinEdgeChallengeDifficulty keeps the work
+	// above trivial.
+	EdgeChallengeDefaultDifficulty = 16
+	MinEdgeChallengeDifficulty     = 10
+	MaxEdgeChallengeDifficulty     = 22
+	// EdgeChallengeDefaultPassTTLSeconds is how long a solved challenge
+	// lets the client through; Min/Max bound customer tuning.
+	EdgeChallengeDefaultPassTTLSeconds = 3600
+	MinEdgeChallengePassTTLSeconds     = 300
+	MaxEdgeChallengePassTTLSeconds     = 86400
+	// EdgeChallengeTokenTTLSeconds is how long a served challenge may be
+	// solved and submitted.
+	EdgeChallengeTokenTTLSeconds = 300
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
