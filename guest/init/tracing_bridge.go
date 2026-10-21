@@ -195,11 +195,10 @@ func tracingEnvAtPaths(env []string, cfg *api.TracingConfig, nodePath, pythonPat
 		env = setEnvValue(env, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", api.TraceLocalEndpoint+api.TraceLocalLogsPath)
 		env = setEnvValue(env, "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
 		// Python's SDK configurator attaches its logging handler only when
-		// asked; the Node bootstrap adds a log record processor on this flag.
+		// asked; the Node SDK reads OTEL_LOGS_EXPORTER itself.
 		if !hasEnvKey(env, "OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED") {
 			env = setEnvValue(env, "OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED", "true")
 		}
-		env = setEnvValue(env, "FAAS_TRACING_LOGS", "1")
 	}
 	if !hasEnvKey(env, "OTEL_TRACES_SAMPLER") {
 		// The gateway head-samples its own spans; the parent's sampled flag

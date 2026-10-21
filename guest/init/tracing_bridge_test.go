@@ -198,7 +198,6 @@ func TestTracingEnvAtPaths(t *testing.T) {
 			"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":                 "http://127.0.0.1:4318/v1/logs",
 			"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL":                 "http/protobuf",
 			"OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED": "true",
-			"FAAS_TRACING_LOGS":                                "1",
 			"OTEL_TRACES_SAMPLER":                              "always_on",
 			"FAAS_TRACING_ENABLED":                             "1",
 			"NODE_OPTIONS":                                     "--max-old-space-size=256 --require=/n.cjs",
@@ -223,12 +222,14 @@ func TestTracingEnvAtPaths(t *testing.T) {
 		}
 	})
 
-	// adr: 213 — an app that configures its own logs exporter keeps it, and
-	// the bootstraps are not asked to export logs.
+	// adr: 213 — an app that configures its own logs exporter keeps it: no
+	// bridge logs endpoint and no Python logging handler are stamped.
 	for _, key := range []string{"OTEL_LOGS_EXPORTER=none", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://logs.example"} {
 		t.Run("own logs exporter "+key, func(t *testing.T) {
 			got := tracingEnvAtPaths([]string{key}, enabled, "/n.cjs", "/py", none)
-			if hasEnvKey(got, "FAAS_TRACING_LOGS") || envValue(got, "OTEL_LOGS_EXPORTER") == "otlp" && key == "OTEL_LOGS_EXPORTER=none" {
+			name, value, _ := strings.Cut(key, "=")
+			if envValue(got, name) != value || hasEnvKey(got, "OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED") ||
+				envValue(got, "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") == api.TraceLocalEndpoint+api.TraceLocalLogsPath {
 				t.Fatalf("app logs choice overridden: %v", got)
 			}
 			if envValue(got, "OTEL_TRACES_EXPORTER") != "otlp" {

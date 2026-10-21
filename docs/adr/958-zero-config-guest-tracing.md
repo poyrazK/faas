@@ -224,11 +224,16 @@ host-owned identity and tracing gate). guest-init points OTel log export at
 the bridge (`OTEL_LOGS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`,
 http/protobuf) unless the app sets its own logs exporter or endpoint, which
 also opts it out. Python's SDK configurator then attaches its logging handler
-(`OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED`); the Node bootstrap
-registers a log record processor (`FAAS_TRACING_LOGS`), so the pino and
-bunyan instrumentations send records with the active trace context. Plain
-`console.log` and winston (which needs a separate transport package) are not
-forwarded. apid writes the records as ADR-213 runtime log events.
+(`OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED`), which the bootstrap
+moves off the root logger and feeds from `Logger.callHandlers`: a root
+handler would disable logging's last-resort stderr output and the implicit
+`basicConfig()` of `logging.warning()`, dropping an unconfigured app's
+console lines from its runtime logs. NodeSDK builds its log record processor
+from the same `OTEL_LOGS_*` env (the bootstrap passes none of its own), so
+the pino and bunyan instrumentations send records with the active trace
+context. Plain `console.log` and winston (which needs a separate transport
+package) are not forwarded. apid writes the records as ADR-213 runtime log
+events.
 
 ## Consequences
 

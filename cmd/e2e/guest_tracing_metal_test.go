@@ -13,13 +13,20 @@
 // tracing configuration. TestGuestTracingNodePreloadMetal uses a plain Node
 // app with no tracing code at all: guest-init's NODE_OPTIONS preload of the
 // pinned auto-instrumentation must produce its HTTP client span, which the
-// debugger classifies as an app_dependency.
+// debugger classifies as an app_dependency. TestGuestTracingPythonMetal does
+// the same for a plain Flask app through the sitecustomize bootstrap. Both
+// managed-runtime apps log one error line (pino, standard logging), which
+// must reach the evidence as a redacted runtime log line linked by the
+// request's trace (ADR-213 runtime adapter: bridge /v1/logs → vmmd broker →
+// apid IngestGuestLogs → log_events).
 //
 // Build tag: metal. Requires /dev/kvm + root, FAAS_TEST_KERNEL and
 // FAAS_BUILDER_BASE_PATH. On hosts without a matching Go toolchain set
-// FAAS_E2E_HELLO_SERVER_BINARY and FAAS_E2E_TRACING_SERVER_BINARY; the Node
-// scenario needs FAAS_E2E_NODE_TRACING_IMAGE_DIR (a prebuilt node:22-alpine
-// image with /opt/gregale/tracing, see e2etest.PrebuiltImage).
+// FAAS_E2E_HELLO_SERVER_BINARY and FAAS_E2E_TRACING_SERVER_BINARY. The Node
+// and Python scenarios need FAAS_E2E_NODE_TRACING_IMAGE_DIR and
+// FAAS_E2E_PYTHON_TRACING_IMAGE_DIR: runner-base images with
+// /opt/gregale/tracing, built by pkg/e2etest/testdata/tracingfixtures/build.py
+// (see e2etest.PrebuiltImage).
 
 package e2e_test
 
@@ -83,9 +90,48 @@ func TestGuestTracingNodePreloadMetal(t *testing.T) {
 		respPrefix: "preloaded 1",
 		evidenceOK: func(detail string) bool {
 			return strings.Contains(detail, `"dependency_type":"app_dependency"`) &&
-				strings.Contains(detail, `"dependency_kind":"http"`)
+				strings.Contains(detail, `"dependency_kind":"http"`) && hasRedactedErrorLog(detail)
 		},
 	})
+}
+
+// adr: 958 — the Python bootstrap instruments a Flask app with no tracing
+// code. adr: 213 — its logging records reach the request evidence.
+func TestGuestTracingPythonMetal(t *testing.T) {
+	dir := os.Getenv("FAAS_E2E_PYTHON_TRACING_IMAGE_DIR")
+	if dir == "" {
+		t.Skip("FAAS_E2E_PYTHON_TRACING_IMAGE_DIR unset; skipping Python bootstrap acceptance")
+	}
+	runGuestTracingScenario(t, guestTracingScenario{
+		slug: "guest-tracing-python",
+		addImage: func(registry *e2etest.FakeRegistry) string {
+			image, _, err := e2etest.PrebuiltImage("library/guest-tracing-python", dir)
+			if err != nil {
+				t.Fatalf("prebuilt Python image: %v", err)
+			}
+			return registry.AddImage("library/guest-tracing-python", image)
+		},
+		respPrefix: "python 1",
+		evidenceOK: func(detail string) bool {
+			return strings.Contains(detail, `"name":"GET /checkout"`) && hasRedactedErrorLog(detail)
+		},
+	})
+}
+
+// hasRedactedErrorLog reports whether request evidence carries the fixtures'
+// error line as a runtime log line, with the customer email redacted.
+func hasRedactedErrorLog(detail string) bool {
+	var evidence api.DebugRequestEvidenceResponse
+	if json.Unmarshal([]byte(detail), &evidence) != nil || strings.Contains(detail, "buyer@example.com") {
+		return false
+	}
+	for _, line := range evidence.Logs {
+		if line.Source == string(state.LogEventSourceRuntime) && line.Level == "error" &&
+			line.Message == "charge failed for [REDACTED:email]: card declined" {
+			return true
+		}
+	}
+	return false
 }
 
 func runGuestTracingScenario(t *testing.T, sc guestTracingScenario) {

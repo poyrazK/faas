@@ -23,17 +23,11 @@ if (process.env.FAAS_TRACING_ENABLED === '1' && resolvable('@opentelemetry/sdk-n
         '@opentelemetry/instrumentation-net': { enabled: false },
       })],
     };
-    // ADR-213 runtime adapter: with a log record processor registered, the
-    // pino and bunyan instrumentations send each log record, with the active
-    // trace context, through the bridge's /v1/logs endpoint
-    // (OTEL_EXPORTER_OTLP_LOGS_ENDPOINT). guest-init sets FAAS_TRACING_LOGS
-    // only when the app has not configured its own logs exporter.
-    if (process.env.FAAS_TRACING_LOGS === '1' &&
-        resolvable('@opentelemetry/sdk-logs') && resolvable('@opentelemetry/exporter-logs-otlp-proto')) {
-      const { BatchLogRecordProcessor } = require('@opentelemetry/sdk-logs');
-      const { OTLPLogExporter } = require('@opentelemetry/exporter-logs-otlp-proto');
-      config.logRecordProcessors = [new BatchLogRecordProcessor(new OTLPLogExporter())];
-    }
+    // ADR-213 runtime adapter: no logRecordProcessors here, so NodeSDK builds
+    // its logger provider from OTEL_LOGS_EXPORTER, which guest-init points at
+    // the bridge's /v1/logs unless the app configured its own. The pino and
+    // bunyan instrumentations then send each record with the active trace
+    // context.
     const sdk = new NodeSDK(config);
     sdk.start();
     // Flush on a natural exit only. A SIGTERM listener would replace Node's

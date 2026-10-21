@@ -843,7 +843,6 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_TRACE_OBSERVER_TOKEN", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TRACE_RING_CAP", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TRACING_ENABLED", Owners: []string{"guest", "shared"}, Source: EnvSourceGuest, Note: "stamped by guest-init when the local OTLP bridge is the trace exporter; gates the runtime bootstraps (ADR-958)"},
-	{Name: "FAAS_TRACING_LOGS", Owners: []string{"guest", "shared"}, Source: EnvSourceGuest, Note: "stamped by guest-init when the local OTLP bridge is also the logs exporter; the Node bootstrap registers a log record processor (ADR-213 runtime adapter)"},
 	{Name: "FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "0", Note: "admit `delivery: batch` on triggers (ADR-1321); off, apid refuses it with 422"},
 	{Name: "FAAS_TRIGGER_LEDGER_RETENTION_ENABLED", Owners: []string{"schedd"}, Source: EnvSourceDefault, Default: "0", Note: "exact opt-in (`1`) for the trigger_records reaper: terminal rows past their explicit retention or the default ages (7 days, 30 for dead letters)"},
 	{Name: "FAAS_TRUSTED_INGRESS_CIDRS", Owners: []string{"gatewayd-public"}, Source: EnvSourceUnit, Note: "upstream TLS edge CIDRs allowed to provide canonical forwarding context"},

@@ -73,6 +73,8 @@ request's evidence shows its last 20 lines in the dashboard and the API:
 12:04:31.118  error  runtime  charge failed for [REDACTED:email]: card declined
 ```
 
+Python sends the records your logging configuration emits (warnings and
+above unless you set a lower level), and your console output is unchanged.
 Lines are redacted (emails, card numbers, tokens and keys) and cut to 512
 characters; structured log fields are not stored. Plain `console.log` output
 and winston logs are not linked. Log lines without a request (for example at
