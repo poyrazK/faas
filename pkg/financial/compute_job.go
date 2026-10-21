@@ -16,12 +16,18 @@ func ComputeScopeKey(s BudgetScope) string {
 		return "job:" + s.ID
 	case "project":
 		return ComputeProjectKey(s.ID)
+	case "environment":
+		return ComputeEnvironmentKey(s.ID)
 	}
 	return s.ID
 }
 
 // ComputeProjectKey selects a shared project book (ADR-1750, amendment 1).
 func ComputeProjectKey(project string) string { return "project:" + project }
+
+// ComputeEnvironmentKey selects a shared environment book (ADR-1750,
+// amendment 2).
+func ComputeEnvironmentKey(environment string) string { return "environment:" + environment }
 
 func computeWorkloadKey(app, job string) string {
 	if job != "" {
@@ -34,17 +40,23 @@ func (r ComputeRequest) WorkloadKey() string { return computeWorkloadKey(r.AppID
 func (l ComputeLease) WorkloadKey() string   { return computeWorkloadKey(l.AppID, l.JobID) }
 func (b ComputeBook) WorkloadKey() string    { return computeWorkloadKey(b.AppID, b.JobID) }
 
-// ScopeKey is the book's selector: a project key for a project book, else
-// its workload key ("" for the account book).
+// ScopeKey is the book's selector: a project or environment key for a
+// shared book, else its workload key ("" for the account book).
 func (b ComputeBook) ScopeKey() string {
-	if b.ProjectID != "" {
+	switch {
+	case b.ProjectID != "":
 		return ComputeProjectKey(b.ProjectID)
+	case b.EnvironmentID != "":
+		return ComputeEnvironmentKey(b.EnvironmentID)
 	}
 	return b.WorkloadKey()
 }
 
 // ComputeProjectID reverses ComputeProjectKey.
 func ComputeProjectID(key string) (string, bool) { return strings.CutPrefix(key, "project:") }
+
+// ComputeEnvironmentID reverses ComputeEnvironmentKey.
+func ComputeEnvironmentID(key string) (string, bool) { return strings.CutPrefix(key, "environment:") }
 
 // ComputeJobAttemptID binds an opaque scheduler lease token to one partition.
 // It is stable across lost RPC replies, and changes for every retry claim.

@@ -76720,8 +76720,9 @@ components:
         app_id: { type: string, format: uuid }
         job_id: { type: string, format: uuid }
         project_id: { type: string, format: uuid, description: 'The capped project of a strict project budget (ADR-1750, amendment 1): one gross book shared by every app in the project. Jobs are not covered.' }
+        environment_id: { type: string, format: uuid, description: 'The capped environment of a strict environment budget (ADR-1750, amendment 2): one gross book shared by every deployment that runs in the environment. Capacity floors and jobs are not covered.' }
         account_id: { type: string, format: uuid }
-        scope_kind: { type: string, enum: [account, app, job, project] }
+        scope_kind: { type: string, enum: [account, app, job, project, environment] }
         basis: { type: string, enum: [net_usage, gross_usage] }
         allowance_granted_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         allowance_committed_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }

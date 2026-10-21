@@ -15,8 +15,12 @@ export type FinancialComputeBalance = {
    * The capped project of a strict project budget (ADR-1750, amendment 1): one gross book shared by every app in the project. Jobs are not covered.
    */
   project_id?: string;
+  /**
+   * The capped environment of a strict environment budget (ADR-1750, amendment 2): one gross book shared by every deployment that runs in the environment. Capacity floors and jobs are not covered.
+   */
+  environment_id?: string;
   account_id?: string;
-  scope_kind?: 'account' | 'app' | 'job' | 'project';
+  scope_kind?: 'account' | 'app' | 'job' | 'project' | 'environment';
   basis?: 'net_usage' | 'gross_usage';
   allowance_granted_mb_seconds?: number;
   allowance_committed_mb_seconds?: number;

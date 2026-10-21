@@ -72,6 +72,9 @@ func PreviewFinancialBudget(ctx context.Context, store state.Store, account stri
 				if financial.StrictProjectCompute(spec) {
 					out.Guarantee = "strict_project_gross_compute_funded_windows;shared_project_book;project_apps_only;conservative_commitments;other_meters_excluded"
 				}
+				if financial.StrictEnvironmentCompute(spec) {
+					out.Guarantee = "strict_environment_gross_compute_funded_windows;shared_environment_book;environment_deployments_only;capacity_floors_excluded;conservative_commitments;other_meters_excluded"
+				}
 				if financial.StrictAccountEgress(spec) {
 					ready, ok := store.(state.FinancialEgressReadinessStore)
 					out.EnforcementReady = false

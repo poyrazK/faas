@@ -93,12 +93,12 @@ func (t *memFinancialComputeTxn) putLease(l financial.ComputeLease) error {
 }
 func (t *memFinancialComputeTxn) active(app string) ([]financial.ComputeLease, error) {
 	out := []financial.ComputeLease{}
-	project, isProject := financial.ComputeProjectID(app)
+	scope, isShared := computeSharedScopeOf(app)
 	for _, l := range t.m.financialComputeLeases {
 		if l.AccountID != t.account || l.SettledAt != nil {
 			continue
 		}
-		if isProject && t.projectLeaseInScope(l, project) || !isProject && (app == "" || l.WorkloadKey() == app) {
+		if isShared && t.scopeLeaseInScope(l, scope) || !isShared && (app == "" || l.WorkloadKey() == app) {
 			out = append(out, l)
 		}
 	}
@@ -111,6 +111,15 @@ func (t *memFinancialComputeTxn) policies(app string) ([]FinancialBudget, error)
 	out := []FinancialBudget{}
 	for _, p := range t.m.financialBudgets {
 		if p.AccountID == t.account && computePolicyMatches(p, app) && p.DeletedAt == nil {
+			out = append(out, cloneFinancialBudget(p))
+		}
+	}
+	return out, nil
+}
+func (t *memFinancialComputeTxn) allPolicies() ([]FinancialBudget, error) {
+	out := []FinancialBudget{}
+	for _, p := range t.m.financialBudgets {
+		if p.AccountID == t.account && p.DeletedAt == nil {
 			out = append(out, cloneFinancialBudget(p))
 		}
 	}
@@ -196,7 +205,7 @@ func (m *MemStore) AcquireFinancialCompute(ctx context.Context, r financial.Comp
 				return ErrNotFound
 			}
 		}
-		project, policies, err := computeWorkloadStrictPolicies(t, r.WorkloadKey())
+		scopes, policies, err := computeAttemptPolicies(t, r.WorkloadKey(), r.InstanceID, r.DeploymentID)
 		if err != nil {
 			return err
 		}
@@ -204,11 +213,14 @@ func (m *MemStore) AcquireFinancialCompute(ctx context.Context, r financial.Comp
 			if err := t.ensureAccount(policies); err != nil {
 				return err
 			}
-			if err := t.ensureProject(project, policies); err != nil {
+			if err := t.ensureScopes(scopes, policies); err != nil {
 				return err
 			}
 			if _, err = t.book(r.WorkloadKey(), financial.ComputeMonth(t.now)); errors.Is(err, ErrNotFound) {
 				err = t.initialize(r.WorkloadKey(), false)
+				if err == nil {
+					err = computeMarkEnvironmentOnly(t, r.WorkloadKey(), financial.ComputeMonth(t.now), policies)
+				}
 			}
 			if err != nil {
 				return err
@@ -346,6 +358,12 @@ func (m *MemStore) FinancialComputeBillingSeconds(ctx context.Context, account, 
 		}
 	}
 	covered := m.computeMonthCoveredLocked(account, app, start)
+	if !covered {
+		var err error
+		if covered, err = computeEnvironmentCovered(newMemComputeTxn(m, account), app, instance, start); err != nil {
+			return 0, err
+		}
+	}
 	price := m.financialPriceAtLocked(account, "compute", start, "")
 	return computeBillingSeconds(rows, start, seconds, price.Price, covered), nil
 }
@@ -356,9 +374,10 @@ func (m *MemStore) FinancialComputeAppManaged(ctx context.Context, account, app 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	project, _ := newMemComputeTxn(m, account).workloadProject(app)
+	scopes, _ := newMemComputeTxn(m, account).workloadScopes(app, "", "")
 	for _, b := range m.financialComputeBooks {
-		if b.AccountID == account && (b.ScopeKey() == app || b.ScopeKey() == "" || project != "" && b.ProjectID == project) {
+		environment := m.projectEnvironments[b.EnvironmentID]
+		if b.AccountID == account && (b.ScopeKey() == app || b.ScopeKey() == "" || scopes.Project != "" && (b.ProjectID == scopes.Project || b.EnvironmentID != "" && environment.ProjectID == scopes.Project)) {
 			return true, nil
 		}
 	}
@@ -376,15 +395,15 @@ func (m *MemStore) computeMonthCoveredLocked(account, app string, at time.Time) 
 	if _, ok := m.financialComputeBooks[computeBookKey(account, "", financial.ComputeMonth(at))]; ok {
 		return true
 	}
-	if _, ok := m.financialComputeBooks[computeBookKey(account, app, financial.ComputeMonth(at))]; ok {
+	if b, ok := m.financialComputeBooks[computeBookKey(account, app, financial.ComputeMonth(at))]; ok && !b.EnvironmentOnly {
 		return true
 	}
 	t := newMemComputeTxn(m, account)
-	project, _ := t.workloadProject(app)
-	if _, ok := m.financialComputeBooks[computeBookKey(account, financial.ComputeProjectKey(project), financial.ComputeMonth(at))]; project != "" && ok {
+	scopes, _ := t.workloadScopes(app, "", "")
+	if _, ok := m.financialComputeBooks[computeBookKey(account, financial.ComputeProjectKey(scopes.Project), financial.ComputeMonth(at))]; scopes.Project != "" && ok {
 		return true
 	}
-	_, policies, _ := computeWorkloadStrictPolicies(t, app)
+	policies, _ := computeFloorPolicies(t, app)
 	for _, p := range policies {
 		if p.UpdatedAt.Before(financial.ComputeMonth(at).AddDate(0, 1, 0)) {
 			return true
@@ -401,8 +420,8 @@ func (t *memFinancialComputeTxn) ready(app string, quiet bool) bool {
 	if job, ok := computeJobKey(app); ok {
 		return t.jobReady(job)
 	}
-	if project, ok := financial.ComputeProjectID(app); ok {
-		return t.projectReady(project, quiet)
+	if scope, ok := computeSharedScopeOf(app); ok {
+		return t.scopeReady(scope, quiet)
 	}
 	if app == "" {
 		return t.accountReady()
@@ -454,8 +473,8 @@ func (t *memFinancialComputeTxn) initialize(app string, quiet bool) error {
 	if job, ok := computeJobKey(app); ok {
 		return t.initializeJob(job)
 	}
-	if project, ok := financial.ComputeProjectID(app); ok {
-		return t.initializeProject(project, quiet)
+	if scope, ok := computeSharedScopeOf(app); ok {
+		return t.initializeScope(scope, quiet)
 	}
 	if app == "" {
 		return t.initializeAccount()

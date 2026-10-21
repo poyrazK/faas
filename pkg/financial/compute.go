@@ -35,8 +35,19 @@ func StrictProjectCompute(p BudgetSpec) bool {
 	return p.Mode == "strict" && p.Scope.Kind == "project" && p.Basis == "gross_usage" && p.Action == "suspend_workloads" && len(p.Meters) == 1 && p.Meters[0] == "compute" && p.DrainSeconds == 0 && len(p.NotifyMillicents) == 0
 }
 
+// StrictEnvironmentCompute caps gross compute for every deployment that runs
+// in one project environment (ADR-1750, amendment 2).
+func StrictEnvironmentCompute(p BudgetSpec) bool {
+	return p.Mode == "strict" && p.Scope.Kind == "environment" && p.Basis == "gross_usage" && p.Action == "suspend_workloads" && len(p.Meters) == 1 && p.Meters[0] == "compute" && p.DrainSeconds == 0 && len(p.NotifyMillicents) == 0
+}
+
+// StrictSharedCompute is a strict cap whose book several apps fund.
+func StrictSharedCompute(p BudgetSpec) bool {
+	return StrictProjectCompute(p) || StrictEnvironmentCompute(p)
+}
+
 func StrictCompute(p BudgetSpec) bool {
-	return StrictAppCompute(p) || StrictAccountCompute(p) || StrictJobCompute(p) || StrictProjectCompute(p)
+	return StrictAppCompute(p) || StrictAccountCompute(p) || StrictJobCompute(p) || StrictSharedCompute(p)
 }
 
 // ComputeBalance is a conservative admission ledger, not an invoice. Committed
@@ -47,6 +58,7 @@ type ComputeBalance struct {
 	AppID               string         `json:"app_id,omitempty"`
 	JobID               string         `json:"job_id,omitempty"`
 	ProjectID           string         `json:"project_id,omitempty"`
+	EnvironmentID       string         `json:"environment_id,omitempty"`
 	AccountID           string         `json:"account_id"`
 	ScopeKind           string         `json:"scope_kind"`
 	Basis               string         `json:"basis"`
@@ -69,13 +81,17 @@ type ComputeBook struct {
 	AccountID string     `json:"account_id"`
 	AppID     string     `json:"app_id"`
 	JobID     string     `json:"job_id,omitempty"`
-	// ProjectID names a shared project book (ADR-1750, amendment 1); its app
-	// and job IDs are empty, like the account book's.
-	ProjectID   string    `json:"project_id,omitempty"`
-	PeriodStart time.Time `json:"period_start"`
-	PeriodEnd   time.Time `json:"period_end"`
-	Committed   int64     `json:"committed"`
-	Reserved    int64     `json:"reserved"`
+	// ProjectID or EnvironmentID names a shared book (ADR-1750, amendments 1
+	// and 2); its app and job IDs are empty, like the account book's.
+	ProjectID     string    `json:"project_id,omitempty"`
+	EnvironmentID string    `json:"environment_id,omitempty"`
+	PeriodStart   time.Time `json:"period_start"`
+	PeriodEnd     time.Time `json:"period_end"`
+	Committed     int64     `json:"committed"`
+	Reserved      int64     `json:"reserved"`
+	// EnvironmentOnly marks an app book that only environment caps have
+	// funded this month. It waives no capacity floor (ADR-1750, amendment 2).
+	EnvironmentOnly bool `json:"environment_only,omitempty"`
 	// Quantity fields apply only to the shared account book, where every
 	// resource ID is empty.
 	QuantityCommitted int64 `json:"quantity_committed"`
@@ -108,9 +124,12 @@ type ComputeLease struct {
 	Incarnation         string `json:"incarnation"`
 	Strict              bool   `json:"strict"`
 	AccountFunded       bool   `json:"account_funded"`
-	// ProjectID is the project book this attempt also funds, fixed at
-	// acquire so settlement is unaffected if the app later moves projects.
+	// ProjectID and EnvironmentID are the shared books this attempt also
+	// funds, fixed at acquire so settlement is unaffected if the app later
+	// moves. DeploymentID is the deployment the attempt runs.
 	ProjectID         string     `json:"project_id,omitempty"`
+	EnvironmentID     string     `json:"environment_id,omitempty"`
+	DeploymentID      string     `json:"deployment_id,omitempty"`
 	QuantityCommitted int64      `json:"quantity_committed"`
 	QuantityReserved  int64      `json:"quantity_reserved"`
 	Denied            bool       `json:"denied"`
@@ -140,6 +159,9 @@ type ComputeRequest struct {
 	Revision                                          int64
 	JobID, JobRunID                                   string
 	JobTaskIndex                                      int
+	// DeploymentID selects the environment an app attempt runs in; the
+	// ledger prefers the instance's recorded deployment.
+	DeploymentID string
 }
 
 // BindComputeRequest derives one stable financial identity from the scheduler's

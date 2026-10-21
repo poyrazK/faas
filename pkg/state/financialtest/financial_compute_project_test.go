@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/financial"
-	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -50,33 +48,9 @@ func strictProjectSuite(t *testing.T, store projectComputeTestStore) {
 		return created
 	}
 	first, second, outside := app("project-first", project.ID), app("project-second", project.ID), app("outside", "")
-	nodes, err := store.ListComputeNodes(ctx, false)
-	if err != nil || len(nodes) == 0 {
-		t.Fatalf("nodes: %v %v", nodes, err)
-	}
-	owner := runtimeadmission.Identity{NodeID: nodes[0].ID, Incarnation: uuid.NewString(), ProtocolVersion: 1}
-	if err := store.RegisterComputeNodeRuntimeIdentity(ctx, owner); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.RegisterFinancialComputeOwner(ctx, owner.NodeID, owner.Incarnation); err != nil {
-		t.Fatal(err)
-	}
-	for at := project.CreatedAt.Truncate(time.Minute); at.Before(time.Now().UTC().Truncate(time.Minute)); at = at.Add(time.Minute) {
-		if err := store.RecordFinancialSamplingWindow(ctx, at, true, false); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// The largest funding one attempt can take, whatever second it starts in.
-	start := time.Now().UTC().Truncate(time.Second)
-	charge := int64(0)
-	for offset := range 60 {
-		at := start.Truncate(time.Minute).Add(time.Duration(offset) * time.Second)
-		candidate, err := financial.ComputeCharge(264, at, at.Add(api.FinancialComputeLeaseDuration+api.FinancialComputeTeardownReserve), api.OverageMillicentsPerGBHour, api.SecondsPerGBHour)
-		if err != nil {
-			t.Fatal(err)
-		}
-		charge = max(charge, candidate)
-	}
+	owner := strictScopeOwner(t, store)
+	strictScopeSampling(t, store, project.CreatedAt)
+	charge := strictScopeCharge(t)
 	spec := financialBudgetSpec()
 	spec.Scope = financial.BudgetScope{Kind: "project", ID: project.ID}
 	spec.Mode, spec.Action, spec.Basis, spec.ResumeRule = "strict", "suspend_workloads", "gross_usage", "manual"
@@ -128,7 +102,7 @@ func strictProjectSuite(t *testing.T, store projectComputeTestStore) {
 	}
 
 	// Settlement moves the project book with the app's: nothing stays reserved.
-	settled, err := store.SettleFinancialCompute(ctx, financial.ComputeRequest{LeaseID: l.ID, Fence: l.Fence, RequestID: uuid.NewString(), AccountID: l.AccountID, AppID: l.AppID, InstanceID: l.InstanceID, NodeID: l.NodeID, Incarnation: l.Incarnation, BillableMB: l.BillableMB, Revision: l.Revision})
+	settled, err := store.SettleFinancialCompute(ctx, computeMutation(l))
 	if err != nil || settled.SettledAt == nil || settled.Reserved != 0 {
 		t.Fatalf("settle: %+v %v", settled, err)
 	}
@@ -172,21 +146,18 @@ func strictProjectSuite(t *testing.T, store projectComputeTestStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mutation := func(l financial.ComputeLease) financial.ComputeRequest {
-		return financial.ComputeRequest{LeaseID: l.ID, Fence: l.Fence, RequestID: uuid.NewString(), AccountID: l.AccountID, AppID: l.AppID, InstanceID: l.InstanceID, NodeID: l.NodeID, Incarnation: l.Incarnation, BillableMB: l.BillableMB, Revision: l.Revision}
-	}
-	renewed, err := store.RenewFinancialCompute(ctx, mutation(l1))
+	renewed, err := store.RenewFinancialCompute(ctx, computeMutation(l1))
 	if err != nil || renewed.ProjectID != shared.ID {
 		t.Fatalf("renew: %+v %v", renewed, err)
 	}
 	if b, err := store.FinancialComputeBalance(ctx, sp, time.Now()); err != nil || b.ReservedMillicents+b.CommittedMillicents != renewed.Reserved+renewed.Committed+l2.Reserved+l2.Committed || b.UnconfirmedLeases != 2 || b.Held {
 		t.Fatalf("shared project balance after renewal: %+v (attempts %d+%d, %d+%d) %v", b, renewed.Committed, renewed.Reserved, l2.Committed, l2.Reserved, err)
 	}
-	s1, err := store.SettleFinancialCompute(ctx, mutation(renewed))
+	s1, err := store.SettleFinancialCompute(ctx, computeMutation(renewed))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, err := store.SettleFinancialCompute(ctx, mutation(l2))
+	s2, err := store.SettleFinancialCompute(ctx, computeMutation(l2))
 	if err != nil {
 		t.Fatal(err)
 	}

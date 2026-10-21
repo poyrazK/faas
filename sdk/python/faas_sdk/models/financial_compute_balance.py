@@ -51,6 +51,9 @@ class FinancialComputeBalance:
     project_id: UUID | Unset = UNSET
     """The capped project of a strict project budget (ADR-1750, amendment 1): one gross book shared by every app in
     the project. Jobs are not covered."""
+    environment_id: UUID | Unset = UNSET
+    """The capped environment of a strict environment budget (ADR-1750, amendment 2): one gross book shared by
+    every deployment that runs in the environment. Capacity floors and jobs are not covered."""
     account_id: UUID | Unset = UNSET
     scope_kind: FinancialComputeBalanceScopeKind | Unset = UNSET
     basis: FinancialComputeBalanceBasis | Unset = UNSET
@@ -95,6 +98,10 @@ class FinancialComputeBalance:
         if not isinstance(self.project_id, Unset):
             project_id = str(self.project_id)
 
+        environment_id: str | Unset = UNSET
+        if not isinstance(self.environment_id, Unset):
+            environment_id = str(self.environment_id)
+
         account_id: str | Unset = UNSET
         if not isinstance(self.account_id, Unset):
             account_id = str(self.account_id)
@@ -138,6 +145,8 @@ class FinancialComputeBalance:
             field_dict["job_id"] = job_id
         if project_id is not UNSET:
             field_dict["project_id"] = project_id
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
         if account_id is not UNSET:
             field_dict["account_id"] = account_id
         if scope_kind is not UNSET:
@@ -206,6 +215,13 @@ class FinancialComputeBalance:
         else:
             project_id = UUID(_project_id)
 
+        _environment_id = d.pop("environment_id", UNSET)
+        environment_id: UUID | Unset
+        if isinstance(_environment_id, Unset):
+            environment_id = UNSET
+        else:
+            environment_id = UUID(_environment_id)
+
         _account_id = d.pop("account_id", UNSET)
         account_id: UUID | Unset
         if isinstance(_account_id, Unset):
@@ -249,6 +265,7 @@ class FinancialComputeBalance:
             app_id=app_id,
             job_id=job_id,
             project_id=project_id,
+            environment_id=environment_id,
             account_id=account_id,
             scope_kind=scope_kind,
             basis=basis,

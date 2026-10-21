@@ -5315,11 +5315,13 @@ type FinancialComputeOwner struct {
 	AccountComputeIncarnation pgtype.UUID
 	JobComputeIncarnation     pgtype.UUID
 	EgressBudgetIncarnation   pgtype.UUID
+	ScopeComputeIncarnation   pgtype.UUID
 }
 
-type FinancialComputeProjectBook struct {
+type FinancialComputeScopeBook struct {
 	AccountID   pgtype.UUID
-	ProjectID   pgtype.UUID
+	ScopeKind   string
+	ScopeID     pgtype.UUID
 	PeriodStart pgtype.Timestamptz
 	PeriodEnd   pgtype.Timestamptz
 	Payload     []byte
