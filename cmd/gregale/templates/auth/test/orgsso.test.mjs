@@ -18,7 +18,7 @@ test('the TXT record proves control of the domain', async () => {
 // fakes record the SQL the route runs (the functions enforce permissions)
 // and answer GoTrue's admin API.
 function fakes({ linkFails = false, orgDomains = false } = {}) {
-  const calls = [], domains = new Map(), links = new Map(), deleted = []
+  const calls = [], domains = new Map(), links = new Map(), deleted = [], selfService = new Set()
   const rows = async (sql, args) => {
     calls.push(sql.match(/gregale_auth\.(\w+)|INSERT INTO gregale_auth\.(\w+)/).slice(1).find(Boolean))
     if (sql.includes('add_org_domain')) { const row = { domain: args[1].toLowerCase(), token: args[2], verified_at: null, join_mode: 'off', join_role: 'member' }; domains.set(row.domain, row); return [row] }
@@ -39,6 +39,9 @@ function fakes({ linkFails = false, orgDomains = false } = {}) {
       return []
     }
     if (sql.includes('link_sso_organization')) { if (linkFails) throw new Error('link failed'); links.set(args[0], args[2]); return [] }
+    // A provider the organization creates is linked and marked self-service at once.
+    if (sql.includes('link_org_sso_provider')) { if (linkFails) throw new Error('link failed'); links.set(args[1], args[2]); selfService.add(args[1]); return [] }
+    if (sql.includes('claim_org_sso_provider')) { if (!links.has(args[1])) throw Object.assign(new Error('not_found'), { status: 404 }); selfService.add(args[1]); return [] }
     if (sql.includes('org_sso_providers')) return [...links].map(([provider_id, role]) => ({ provider_id, role }))
     if (sql.includes('scim_tokens')) return []
     throw new Error('unexpected SQL ' + sql)
@@ -51,11 +54,11 @@ function fakes({ linkFails = false, orgDomains = false } = {}) {
   const goTrueError = () => new Error('gotrue')
   const lookup = async () => [[txtValue([...domains.values()][0]?.token)]]
   const call = (method, path, body) => orgSSORoute({ rows, admin, goTrueError, external: 'https://shop-auth.gregale.app', lookup, orgDomains }, org, method, path.split('/').filter(Boolean), body)
-  return { call, calls, domains, links, deleted }
+  return { call, calls, domains, links, deleted, selfService }
 }
 
 test('owners verify a domain and connect an identity provider for it', async () => {
-  const { call, domains, links } = fakes()
+  const { call, domains, links, selfService, calls } = fakes()
   const [status, added] = await call('POST', '/domains', { domain: 'Acme.com' })
   assert.equal(status, 201)
   assert.deepEqual(added.record, { type: 'TXT', name: '_gregale-auth.acme.com', value: `gregale-auth-verification=${domains.get('acme.com').token}` })
@@ -67,10 +70,16 @@ test('owners verify a domain and connect an identity provider for it', async () 
   assert.equal(created, 201)
   assert.deepEqual(provider, { id: providerID, entity_id: 'https://idp.acme.com', metadata_url: null, domains: ['acme.com'], role: 'admin' })
   assert.equal(links.get(providerID), 'admin')
+  // An organization's own provider is never trusted as the operator's.
+  assert.equal(selfService.has(providerID), true)
+  assert.equal(calls.includes('link_sso_organization'), false)
   assert.deepEqual((await call('GET', '/sso'))[1].providers.map(p => p.role), ['admin'])
   const [, scim] = await call('POST', `/sso/${providerID}/scim-token`)
   assert.match(scim.token, /^gscim_/)
   assert.equal((await call('PATCH', `/sso/${providerID}`, { role: 'member' }))[1].role, 'member')
+  assert.equal(calls.includes('claim_org_sso_provider'), false, 'a role change alone claims nothing')
+  await call('PATCH', `/sso/${providerID}`, { metadata_url: 'https://idp2.acme.com/metadata' })
+  assert.equal(calls.includes('claim_org_sso_provider'), true, 'new metadata marks it self-service')
   assert.deepEqual(await call('DELETE', `/sso/${providerID}`), [204, null])
   await assert.rejects(call('PATCH', '/sso/not-a-uuid', {}), { status: 404 })
 })

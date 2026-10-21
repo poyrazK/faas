@@ -11071,15 +11071,20 @@ gregale routes awake my-api --since 24h --json
 
 ### routes insights
 
-List findings about routes that keep the app awake or are safe to cache, evaluated every six hours
+List findings about routes that keep the app awake or are safe to cache, with a fix for each, evaluated every six hours
 
-`gregale routes insights <slug>`
+`gregale routes insights [--fix <INSIGHT_ID>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--fix <INSIGHT_ID>` | apply the fix the insight lists now |  |
 
 Examples:
 
 ```sh
 gregale routes insights my-api
 gregale routes insights my-api --json
+gregale routes insights my-api --fix 6c1e0b9a-3f7d-4a51-9c2e-8d4b5f0a1e27
 ```
 
 ### routes priority
@@ -15231,6 +15236,67 @@ Examples:
 ```sh
 gregale data-api usage shop-data --since 30d
 ```
+
+### data-api storage
+
+File storage governed by RLS on storage_objects
+
+#### data-api storage sql
+
+Print the storage_objects migration (table, RLS, guard trigger, example policies)
+
+`gregale data-api storage sql [--schema <SCHEMA>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schema <SCHEMA>` | the Data API&#39;s first exposed schema (default api) |  |
+
+Examples:
+
+```sh
+gregale data-api storage sql > migrations/0005_storage.sql
+```
+
+#### data-api storage enable
+
+Bind a bucket read-write and turn storage on
+
+`gregale data-api storage enable --bucket <BUCKET> [--scope <SCOPE>] [--region <REGION>] [--max-object-bytes <N>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--bucket <BUCKET>` | bucket to store files in (created and bound when needed) | required |
+| `--scope <SCOPE>` | environment scope |  |
+| `--region <REGION>` | object-storage region for a new bucket |  |
+| `--max-object-bytes <N>` | largest upload in bytes (default 25 MiB, at most 100 MiB) |  |
+| `--no-restart` | store settings without a fresh restart |  |
+
+Examples:
+
+```sh
+gregale data-api storage enable shop-data --bucket uploads
+```
+
+#### data-api storage status
+
+Show whether storage is on and its bound buckets
+
+`gregale data-api storage status [--scope <SCOPE>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+
+#### data-api storage disable
+
+Turn storage off; buckets stay bound and keep their files
+
+`gregale data-api storage disable [--scope <SCOPE>] [--no-restart] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scope <SCOPE>` | environment scope |  |
+| `--no-restart` | store settings without a fresh restart |  |
 
 ### data-api live
 

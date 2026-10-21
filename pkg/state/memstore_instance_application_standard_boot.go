@@ -53,6 +53,7 @@ func (m *MemStore) lockNativeBootInputsLocked(id, expectedState string) (Instanc
 		return Instance{}, InstanceApplicationStandardAdmission{}, ErrConflict
 	}
 	capture, ok := m.instanceApplicationStandardAdmissions[id]
+	capture = m.effectiveNativeCaptureLocked(ins, capture)
 	if !ok || capture.NodeID != ins.NodeID || !capture.Managed {
 		return Instance{}, InstanceApplicationStandardAdmission{}, ErrApplicationStandardRuntimeStale
 	}
@@ -226,6 +227,14 @@ func (m *MemStore) checkStandardNativeRuntimeTransitionLocked(old, next Instance
 
 func (m *MemStore) guardNativeRuntimeReceiptLocked(ins Instance, capture InstanceApplicationStandardAdmission) error {
 	if !capture.Managed {
+		return nil
+	}
+	if r := m.functionDestinationReceiptLocked(ins); r != nil {
+		capture = m.effectiveNativeCaptureLocked(ins, capture)
+		if r.Binding.Incarnation != m.computeNodeRuntimeIncarnations[ins.NodeID] || r.Binding.CapturedInputHash != capture.NativeInputHash ||
+			r.Binding.ProtocolVersion > m.computeNodeRuntimeProtocols[ins.NodeID] || r.Netns != ins.Netns || r.HostIP != ins.HostIP || int(r.LeaseUID) != ins.GuestUID || ins.State == string(StateWarm) {
+			return ErrApplicationStandardRuntimeStale
+		}
 		return nil
 	}
 	if ins.State == string(StateWaking) || ins.State == string(StateColdBooting) {

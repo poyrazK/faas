@@ -97,7 +97,7 @@ export function markDatabaseTimings(res, timings) {
 export function requestID(res) { return res[trace]?.id }
 
 export function runtimeFailure(event) {
-  const allowed = ['data_api_configuration_invalid', 'data_api_postgrest_start_failed', 'data_api_public_read_unsafe', 'data_api_public_rpc_unsafe']
+  const allowed = ['data_api_configuration_invalid', 'data_api_postgrest_start_failed', 'data_api_public_read_unsafe', 'data_api_public_rpc_unsafe', 'data_api_storage_unsafe']
   try { writeLog({ time: new Date().toISOString(), level: 'error', event: allowed.includes(event) ? event : 'data_api_runtime_failed' }) } catch {}
 }
 

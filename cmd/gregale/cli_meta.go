@@ -3919,7 +3919,7 @@ var cliCommands = []cliCommand{
 		}}, {Name: "awake", Positionals: []string{"<slug>"}, Short: "Show which routes keep a scale-to-zero app awake, what each costs in awake time, and how to let it park", Examples: []string{"gregale routes awake my-api", "gregale routes awake my-api --since 24h --json"}, Flags: []cliFlag{
 			{Name: "since", Value: "DURATION", Short: "window to analyze (default 7d; clamped to telemetry retention)"},
 			{Name: "until", Value: "RFC3339", Short: "end of the window (default now)"},
-		}}, {Name: "insights", Positionals: []string{"<slug>"}, Short: "List findings about routes that keep the app awake or are safe to cache, evaluated every six hours", Examples: []string{"gregale routes insights my-api", "gregale routes insights my-api --json"}, Flags: []cliFlag{}}, {Name: "priority", Positionals: []string{"<slug>"}, Short: "Show or set which routes are served first, and turned away last, when every instance is busy", Examples: []string{"gregale routes priority my-api", "gregale routes priority my-api --critical \"POST /checkout\" --bulk \"/exports/*\"", "gregale routes priority my-api --reset"}, Flags: []cliFlag{
+		}}, {Name: "insights", Positionals: []string{"<slug>"}, Short: "List findings about routes that keep the app awake or are safe to cache, with a fix for each, evaluated every six hours", Examples: []string{"gregale routes insights my-api", "gregale routes insights my-api --json", "gregale routes insights my-api --fix 6c1e0b9a-3f7d-4a51-9c2e-8d4b5f0a1e27"}, Flags: []cliFlag{{Name: "fix", Value: "INSIGHT_ID", Short: "apply the fix the insight lists now"}}}, {Name: "priority", Positionals: []string{"<slug>"}, Short: "Show or set which routes are served first, and turned away last, when every instance is busy", Examples: []string{"gregale routes priority my-api", "gregale routes priority my-api --critical \"POST /checkout\" --bulk \"/exports/*\"", "gregale routes priority my-api --reset"}, Flags: []cliFlag{
 			{Name: "critical", Value: "[METHOD] PATH", Short: "route served first when the app is saturated (repeatable)"},
 			{Name: "bulk", Value: "[METHOD] PATH", Short: "route served last and turned away first (repeatable)"},
 			{Name: "clear", Short: "save no priorities, not even the route-health default"},
@@ -5233,6 +5233,25 @@ var cliCommands = []cliCommand{
 				{Name: "since", Value: "DURATION", Short: "lookback such as 24h, 7d or 30d (default 7d, max 90d)"},
 				{Name: "granularity", Value: "hour|day", Short: "bucket size (hour covers at most 48h)", ClosedSet: []string{"hour", "day"}},
 			}, Examples: []string{"gregale data-api usage shop-data --since 30d"}},
+			{Name: "storage", Short: "File storage governed by RLS on storage_objects", Subcommands: []cliSub{
+				{Name: "sql", Short: "Print the storage_objects migration (table, RLS, guard trigger, example policies)", Flags: []cliFlag{
+					{Name: "schema", Value: "SCHEMA", Short: "the Data API's first exposed schema (default api)"},
+				}, Examples: []string{"gregale data-api storage sql > migrations/0005_storage.sql"}},
+				{Name: "enable", Short: "Bind a bucket read-write and turn storage on", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "bucket", Value: "BUCKET", Req: true, Short: "bucket to store files in (created and bound when needed)"},
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+					{Name: "region", Value: "REGION", Short: "object-storage region for a new bucket"},
+					{Name: "max-object-bytes", Value: "N", Short: "largest upload in bytes (default 25 MiB, at most 100 MiB)"},
+					{Name: "no-restart", Short: "store settings without a fresh restart"},
+				}, Examples: []string{"gregale data-api storage enable shop-data --bucket uploads"}},
+				{Name: "status", Short: "Show whether storage is on and its bound buckets", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+				}},
+				{Name: "disable", Short: "Turn storage off; buckets stay bound and keep their files", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+					{Name: "no-restart", Short: "store settings without a fresh restart"},
+				}},
+			}},
 			{Name: "live", Short: "Live reads: results that stay current over a realtime connection", Subcommands: []cliSub{
 				{Name: "enable", Short: "Enable live queries on the database, usage reporting and a live-only realtime endpoint", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "scope", Value: "SCOPE", Short: "environment scope of the Data API's database binding"},

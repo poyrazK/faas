@@ -1,0 +1,64 @@
+[
+  {
+    "build": "default",
+    "exit_code": 0,
+    "command": [
+      "go",
+      "test",
+      "-json",
+      "-p",
+      "1",
+      "-race",
+      "./pkg/sched",
+      "-run",
+      "^TestFunctionMigrationClientRequiresExplicitSourceProtocol$",
+      "-count=1",
+      "-timeout=2m"
+    ],
+    "terminal": [
+      {
+        "Action": "pass",
+        "Package": "github.com/onebox-faas/faas/pkg/sched",
+        "Test": "TestFunctionMigrationClientRequiresExplicitSourceProtocol",
+        "Elapsed": 0.03
+      },
+      {
+        "Action": "pass",
+        "Package": "github.com/onebox-faas/faas/pkg/sched",
+        "Elapsed": 1.152
+      }
+    ]
+  },
+  {
+    "build": "qualified",
+    "exit_code": 0,
+    "command": [
+      "go",
+      "test",
+      "-json",
+      "-p",
+      "1",
+      "-race",
+      "-tags",
+      "metal,function_background_native",
+      "./pkg/sched",
+      "-run",
+      "^TestFunctionMigrationClientRequiresExplicitSourceProtocol$",
+      "-count=1",
+      "-timeout=2m"
+    ],
+    "terminal": [
+      {
+        "Action": "pass",
+        "Package": "github.com/onebox-faas/faas/pkg/sched",
+        "Test": "TestFunctionMigrationClientRequiresExplicitSourceProtocol",
+        "Elapsed": 0.02
+      },
+      {
+        "Action": "pass",
+        "Package": "github.com/onebox-faas/faas/pkg/sched",
+        "Elapsed": 1.117
+      }
+    ]
+  }
+]

@@ -65,6 +65,9 @@ type Message struct {
 	// Release is set for release approval events (ADR-20261020085706),
 	// which render from it instead of the alert fields.
 	Release *ReleaseNotice
+	// Notes are optional lines explaining what fired, such as the route
+	// insights behind route_insights_detected (ADR-20261020161310).
+	Notes []string
 }
 
 // Target is a channel's decrypted destination.

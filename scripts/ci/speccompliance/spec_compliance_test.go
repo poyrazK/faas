@@ -108,8 +108,11 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"DELETE /v1/apps/{slug}/operation-concurrency/{id}":              true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
+	"GET /v1/apps/{slug}/operation-concurrency":                      true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 	"GET /v1/apps/{slug}/operation-schedules":                        true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"GET /v1/apps/{slug}/operations/{id}/children":                   true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
+	"GET /v1/platform-tenant-self/customer-operation-queue":          true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 	"GET /v1/platform-tenant-self/customer-operation-schedules":      true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"GET /v1/platform-tenant-self/customer-operation-schedules/{id}": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"GET /v1/platform-tenant-self/customer-operations/{id}/children": true, // ADR-20261018183000 child Operations; gated by FAAS_OPERATION_CHILDREN_ACCOUNTS until prod-tested
@@ -505,6 +508,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/jobs/{name}/policy":                            true, // HTML form, scheduled-work policy editor (ADR-385)
 	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":           true, // HTML form, failed job partition replay (ADR-385)
 	"POST /dashboard/apps/{slug}/rollback":                          true, // HTML form, app rollback (issue #248)
+	"POST /dashboard/apps/{slug}/routes/insights/{id}/fix":          true, // HTML form, route insight fix (ADR-20261020161310); same core as the /v1 fix
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":            true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
@@ -572,7 +576,8 @@ var routeExclude = map[string]bool{
 	// typed wrapper. Mirror the exclusion in
 	// cmd/sdk-coverage/main.go::routeExclude; the two lists must
 	// move together.
-	"POST /v1/otel/v1/traces": true,
+	"POST /v1/otel/v1/traces":                   true,
+	"PUT /v1/apps/{slug}/operation-concurrency": true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 
 	// ADR-1293: session-bound HTML progress and CSRF result-check fragments.
 	"GET /dashboard/apps/{slug}/automations/live-verifications/{run_id}":     true, // ADR-1293 session-authenticated HTML progress fragment

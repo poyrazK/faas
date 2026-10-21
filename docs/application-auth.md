@@ -47,6 +47,11 @@ Verify the tokens wherever they are used:
 Sign-out and bans end refresh immediately. A token already issued stays valid
 for edge-only checks until it expires, at most 600 seconds later.
 
+A new password needs the current one (`updateUser({ password, currentPassword })`),
+except in a password reset or for a user who has no password yet, so a stolen
+access token cannot take over an account. Without it GoTrue answers
+`current_password_required` or `current_password_invalid`.
+
 ### In your backend
 
 The Go, Python and Node SDKs check a token's ES256 signature against the Auth app's
@@ -539,7 +544,7 @@ redirect URL origins.
 | `GET /authz/v1/orgs` | The caller's organizations, roles and whether each requires a second factor |
 | `PATCH /authz/v1/orgs/{org}` `{mfa_required}` | Require a second factor, or stop (needs `mfa:manage` and an `aal2` session) |
 | `GET /authz/v1/orgs/{org}/members` | Members (needs `org:read`); with `members:manage`, whether each has a second factor |
-| `PATCH /authz/v1/orgs/{org}/members/{user}` `{role}` | Change a role (needs `members:manage`; owners only for `owner`) |
+| `PATCH /authz/v1/orgs/{org}/members/{user}` `{role}` | Change a role (needs `members:manage` and every permission of both roles; owners only for `owner`) |
 | `DELETE /authz/v1/orgs/{org}/members/{user}` | Remove a member, or leave |
 | `POST /authz/v1/orgs/{org}/invitations` `{email, role, expires_in?}` | Invite; returns the token once |
 | `GET`/`DELETE /authz/v1/orgs/{org}/invitations[/{id}]` | List or revoke pending invitations |
@@ -549,9 +554,18 @@ redirect URL origins.
 | `POST /authz/v1/authorize` `{action, resource}` | `{"allowed": true or false}` |
 | `GET /authz/v1/orgs/{org}/audit-log` | The organization's audit log (needs `audit:read`) |
 
-No organization can lose its last owner. Invitations last seven days by default
-(300 seconds to 14 days); a user can create up to 100 organizations, and an
-organization can hold 500 pending invitations.
+No organization can lose its last owner. A member gives, changes or removes
+only roles whose every permission it holds, so `members:manage` never lets
+anyone raise themselves or others above their own permissions; the same holds
+for the roles of service accounts, domain joining and identity providers. To
+let admins hand out a custom role, give `admin` its permissions in the file
+(`"admin": ["members:manage", "org:read", "doc:write"]`).
+
+Invitations last seven days by default (300 seconds to 14 days); a user can
+create up to 100 organizations, and an organization can hold 500 pending
+invitations, one per address. Because invitations email any address, a member
+can send at most 50 an hour and an address receives at most 10 a day; beyond
+that the API answers 429 `invitation_rate_limited`.
 
 ### The active organization in tokens
 
@@ -757,7 +771,10 @@ changes; providers already connected keep working.
 An SSO user is a separate account from a password or OAuth account with the
 same address. Because an identity provider vouches only for its own domains,
 an SSO user can accept an organization invitation only for an address in one
-of its provider's domains.
+of its provider's domains. A provider an organization connects (or changes)
+itself may sign in only people with addresses at its verified domains, and
+your sign-up rules (invitation only, waitlist) apply to them; providers you
+register with `gregale auth sso` are trusted for any address and exempt.
 
 ### Join by email domain
 

@@ -24,7 +24,7 @@ func lockObjectMutationBucket(ctx context.Context, tx pgx.Tx, b ObjectBucket) (O
 	return live, nil
 }
 
-func (s *PgStore) BeginObjectBucketMutation(ctx context.Context, b ObjectBucket, kind string) (ObjectBucketMutation, error) {
+func (s *pgCore) BeginObjectBucketMutation(ctx context.Context, b ObjectBucket, kind string) (ObjectBucketMutation, error) {
 	if !validObjectMutationBucket(b) || !validObjectMutationKind(kind) {
 		return ObjectBucketMutation{}, ErrInvalidArgument
 	}
@@ -54,7 +54,7 @@ func (s *PgStore) BeginObjectBucketMutation(ctx context.Context, b ObjectBucket,
 	return out, mapErr(tx.Commit(ctx))
 }
 
-func (s *PgStore) FinishObjectBucketMutation(ctx context.Context, receipt ObjectBucketMutation) error {
+func (s *pgCore) FinishObjectBucketMutation(ctx context.Context, receipt ObjectBucketMutation) error {
 	b := receipt.Bucket
 	if !validObjectMutationBucket(b) || !validObjectMutationToken(receipt.ID) || receipt.Kind != ObjectBucketMutationRequest {
 		return ErrInvalidArgument
