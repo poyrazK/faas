@@ -145,7 +145,11 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 		}
 		e.completeWorkerRecovery(ctx, attempt, resultErr)
 	}()
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	// The loop below acts only on live worker rows, and the targets trigger
+	// reconciles every project worker app each second: read live rows, not
+	// the app's whole history (about 8 history reads a second on
+	// production-us after rc.285).
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return err
 	}
@@ -741,7 +745,7 @@ func (e *Engine) mcpTasksObserverReady(ctx context.Context, worker state.App) (b
 	for _, deployment := range liveDeployments {
 		live[deployment.ID] = struct{}{}
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, observer.ID)
+	instances, err := e.liveInstancesForApp(ctx, observer.ID)
 	if err != nil {
 		return false, err
 	}
