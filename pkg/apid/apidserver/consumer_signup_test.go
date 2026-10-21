@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -81,11 +80,10 @@ func TestConsumerSignup(t *testing.T) {
 	}
 
 	var plan api.APIConsumerPlanResponse
-	decode(t, e.Do(t, http.MethodPost, "/v1/apps/weather/consumer-plans", api.CreateAPIConsumerPlanRequest{Name: "Pro", MaxUnitsPerMonth: 100000}, nil),
+	decode(t, e.Do(t, http.MethodPost, "/v1/apps/weather/consumer-plans", api.CreateAPIConsumerPlanRequest{Name: "pro", MaxUnitsPerMonth: 100000}, nil),
 		http.StatusCreated, &plan)
-	monthStart := time.Date(time.Now().UTC().Year(), time.Now().UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
 	decode(t, e.Do(t, http.MethodPost, "/v1/apps/weather/rate-cards", api.CreateAPIConsumerRateCardRequest{Currency: "USD",
-		PriceMillicentsPerUnit: 50, PlanID: plan.ID, EffectiveFrom: &monthStart}, nil), http.StatusCreated, nil)
+		PriceMillicentsPerUnit: 50, PlanID: plan.ID}, nil), http.StatusCreated, nil)
 	settings := api.PutConsumerSignupRequest{DisplayName: "Weather API", PlanIDs: []string{plan.ID}, TrialDays: 7,
 		ReturnURL: "https://weather.example/welcome", TermsURL: "https://weather.example/terms"}
 	if res := e.Do(t, http.MethodPut, "/v1/apps/weather/consumer-signup", settings, nil); res.Code != http.StatusConflict {
@@ -108,7 +106,7 @@ func TestConsumerSignup(t *testing.T) {
 	var form api.ConsumerSignupFormResponse
 	decode(t, e.Do(t, http.MethodGet, "/v1/consumer-signup/weather", nil, public), http.StatusOK, &form)
 	if form.DisplayName != "Weather API" || form.Livemode || form.TrialDays != 7 || len(form.Plans) != 1 || form.Plans[0].ID != plan.ID ||
-		form.Plans[0].Name != "Pro" || len(form.Plans[0].Prices) != 1 || form.Plans[0].Prices[0].PriceMillicentsPerUnit != 50 {
+		form.Plans[0].Name != "pro" || len(form.Plans[0].Prices) != 1 || form.Plans[0].Prices[0].PriceMillicentsPerUnit != 50 {
 		t.Fatalf("form = %+v", form)
 	}
 	page := e.Do(t, http.MethodGet, "/v1/consumer-signup/weather/page", nil, public)

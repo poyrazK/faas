@@ -635,6 +635,55 @@ curl -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consumer-billi
 - **Limits.** Each key may make 60 requests a minute. A usage request covers
   at most 31 days.
 
+## Let customers sign up themselves
+
+Turn on sign-up, and customers can start using your API without you
+creating anything by hand. They pick a plan, save a card with Stripe and get
+a consumer key with the scopes you choose:
+
+```bash
+gregale account billing-connection connect stripe < stripe-key.txt   # if not connected yet
+gregale consumers signup-set my-api --display-name "Weather API" --plans pro,team --trial-days 14
+gregale consumers signup my-api     # shows the page URL to link to
+gregale consumers signups my-api    # recent sign-ups
+```
+
+- **The page.** Link customers to the page URL,
+  `https://<gregale domain>/v1/consumer-signup/my-api/page`. It shows the
+  plans with their current prices. Gregale hosts the page and runs the
+  Checkout in your Stripe account.
+- **What a customer gets.**
+  - A consumer named after them, whose `external_ref` is their new Stripe
+    customer. Exports use that customer by default.
+  - The chosen plan and your trial.
+  - A key with the scopes from `--key-scopes` (default `write,billing`), so
+    they can call your API and [read their own billing](#let-customers-see-their-own-billing).
+- **Nothing is charged at sign-up.** Stripe saves the card and Gregale makes
+  it the customer's default. Invoices exported with collection `charge`
+  charge that card; with `send`, Stripe emails the invoice.
+- **Stripe only.** Paddle and Lago cannot save a card without charging, so
+  they cannot take sign-ups. A restricted Stripe key needs write access to
+  Customers and Checkout Sessions, and read access to SetupIntents.
+- **Your own page.** Build your own page on the same API instead:
+  1. `GET /v1/consumer-signup/my-api` returns the form.
+  2. `POST /v1/consumer-signup/my-api` with `email`, `name` and `plan_id`
+     returns a `checkout_url` and a `claim_token`.
+  3. After the Checkout, `POST .../signups/{id}/complete` with the claim
+     token returns the key.
+
+  Completing again within 24 hours issues a new key and revokes the
+  previous one.
+- **Limits.**
+  - Each address can start 10 sign-ups an hour.
+  - An app takes `--daily-limit` sign-ups a UTC day (default 100, at most
+    1,000).
+  - Sign-ups not completed within 24 hours expire, and Gregale deletes them
+    a week later.
+  - Failed sign-ups show in your audit log as `api_consumer.signup_failed`
+    with the reason, such as a rejected Stripe key.
+- **Turning it off.** `gregale consumers signup-delete my-api` closes the
+  page. `signup-set --disabled` closes it but keeps the settings.
+
 ## Customers across several apps
 
 To bill one customer across several apps, link their consumers to a

@@ -140,15 +140,27 @@ func (s *Service) offeredPlans(ctx context.Context, app state.App, set state.API
 	return out, nil
 }
 
-// currentPrices returns, per unit, the plan's card in force at now.
+// currentPrices returns, per unit, the plan's card in force at now, or
+// the first one to come when none is in force yet: a new plan's cards
+// start no earlier than the next minute.
 func currentPrices(cards []state.APIConsumerRateCard, planID string, now time.Time) []api.ConsumerSignupPrice {
-	current := map[string]state.APIConsumerRateCard{}
+	current, next := map[string]state.APIConsumerRateCard{}, map[string]state.APIConsumerRateCard{}
 	for _, card := range cards {
-		if card.PlanID != planID || card.EffectiveFrom.After(now) {
-			continue
+		switch {
+		case card.PlanID != planID:
+		case card.EffectiveFrom.After(now):
+			if prior, ok := next[card.Unit]; !ok || card.EffectiveFrom.Before(prior.EffectiveFrom) {
+				next[card.Unit] = card
+			}
+		default:
+			if prior, ok := current[card.Unit]; !ok || card.EffectiveFrom.After(prior.EffectiveFrom) {
+				current[card.Unit] = card
+			}
 		}
-		if prior, ok := current[card.Unit]; !ok || card.EffectiveFrom.After(prior.EffectiveFrom) {
-			current[card.Unit] = card
+	}
+	for unit, card := range next {
+		if _, ok := current[unit]; !ok {
+			current[unit] = card
 		}
 	}
 	out := make([]api.ConsumerSignupPrice, 0, len(current))

@@ -39,6 +39,17 @@ func TestAPIMonetizationReleasedPerAccount(t *testing.T) {
 	if res := e.Do(t, http.MethodPost, "/v1/apps/shop/webhooks", hook, nil); res.Code == http.StatusCreated {
 		t.Fatalf("monetization event offered outside the flag: %s", res.Body)
 	}
+	// The public sign-up routes resolve the account from the app
+	// (ADR-20261021143000).
+	signupForm := httptest.NewRecorder()
+	(*e.H()).ServeHTTP(signupForm, httptest.NewRequest(http.MethodGet, "/v1/consumer-signup/shop", nil))
+	if signupForm.Code != http.StatusNotFound || !strings.Contains(signupForm.Body.String(), "no such API route") {
+		t.Fatalf("sign-up form of an account outside the flag: %d %s", signupForm.Code, signupForm.Body)
+	}
+	if res := e.Do(t, http.MethodGet, "/v1/apps/shop/consumer-signup", nil, nil); res.Code != http.StatusNotFound ||
+		!strings.Contains(res.Body.String(), "no such API route") {
+		t.Fatalf("sign-up settings outside the flag: %d %s", res.Code, res.Body)
+	}
 
 	(*e.S()).SeedPlatformFlag(platformflags.APIMonetization, platformflags.FromAccountList(true, false, []string{(*e.Acct()).ID}))
 	if res := e.Do(t, http.MethodGet, "/v1/apps/shop/rate-cards", nil, nil); res.Code != http.StatusOK {

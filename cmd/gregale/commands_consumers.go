@@ -56,9 +56,13 @@ var consumerVerbPositionals = map[string][]string{
 	"billing-policy-set":    {"slug"},
 	"billing-policy-delete": {"slug"},
 	"overdue-holds":         {"slug"},
+	"signup":                {"slug"},
+	"signup-set":            {"slug"},
+	"signup-delete":         {"slug"},
+	"signups":               {"slug"},
 }
 
-const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|signup|signup-set|signup-delete|signups> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
@@ -83,6 +87,10 @@ type consumerFlags struct {
 	plan                                 string
 	maxPerMinute, maxPerMonth            int64
 	alertAt                              string
+	displayName, plans, keyScopes        string
+	termsURL, returnURL                  string
+	dailyLimit                           int
+	disabled                             bool
 }
 
 var consumerVerbFlags = map[string][]string{
@@ -102,6 +110,7 @@ var consumerVerbFlags = map[string][]string{
 	"statement-export":   {"customer", "provider"},
 	"credit-grant":       {"currency", "amount-millicents", "expires", "note"},
 	"spend-cap-set":      {"currency", "monthly-cap-millicents"},
+	"signup-set":         {"display-name", "plans", "key-scopes", "terms-url", "return-url", "trial-days", "daily-limit", "disabled"},
 }
 
 // cmdConsumers manages an app's API consumers and their monetization:
@@ -172,6 +181,13 @@ func registerConsumerMonetizationFlags(fs *flag.FlagSet, f *consumerFlags) {
 	fs.Int64Var(&f.maxPerMinute, "max-requests-per-minute", -1, "plan limit: requests per consumer per minute; 0 is unlimited")
 	fs.Int64Var(&f.maxPerMonth, "max-units-per-month", -1, "plan limit: weighted units per consumer per UTC month; 0 is unlimited")
 	fs.StringVar(&f.alertAt, "alert-at", "", "comma-separated percentages of the monthly limit that fire consumer.usage_threshold webhooks; none clears")
+	fs.StringVar(&f.displayName, "display-name", "", "name the sign-up page shows (signup-set)")
+	fs.StringVar(&f.plans, "plans", "", "comma-separated plan names customers choose from; default offers the app default plan (signup-set)")
+	fs.StringVar(&f.keyScopes, "key-scopes", "", "comma-separated scopes of the key a customer gets (signup-set; default write,billing)")
+	fs.StringVar(&f.termsURL, "terms-url", "", "https URL customers accept before signing up (signup-set)")
+	fs.StringVar(&f.returnURL, "return-url", "", "https URL the page links to after showing the key (signup-set)")
+	fs.IntVar(&f.dailyLimit, "daily-limit", 0, "sign-ups per UTC day; default 100, at most 1000 (signup-set)")
+	fs.BoolVar(&f.disabled, "disabled", false, "keep the settings but stop taking sign-ups (signup-set)")
 }
 
 func consumerVerbUsage(verb string, positionals []string) string {
@@ -215,6 +231,9 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 		return req, err
 	}
 	if req, handled, err := buildConsumerControlRequest(verb, f); handled {
+		return req, err
+	}
+	if req, handled, err := buildConsumerSignupRequest(verb, f); handled {
 		return req, err
 	}
 	switch verb {
@@ -448,6 +467,9 @@ func callConsumers(ctx context.Context, client *Client, verb string, args []stri
 	if out, handled, err := callConsumerControls(ctx, client, verb, args, request); handled {
 		return out, err
 	}
+	if out, handled, err := callConsumerSignup(ctx, client, verb, args, f, request); handled {
+		return out, err
+	}
 	switch verb {
 	case "list":
 		return client.ListAPIConsumers(ctx, slug)
@@ -587,7 +609,7 @@ func consumerKeyStatus(k api.ConsumerKeyResponse) string {
 }
 
 func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
-	if printConsumerPlanResult(tw, out) || printConsumerCreditResult(tw, out) {
+	if printConsumerPlanResult(tw, out) || printConsumerCreditResult(tw, out) || printConsumerSignupResult(tw, out) {
 		return tw.Flush()
 	}
 	switch v := out.(type) {

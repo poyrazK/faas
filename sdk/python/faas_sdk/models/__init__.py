@@ -719,6 +719,8 @@ from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
 from .commit_source_response_destination import CommitSourceResponseDestination
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
+from .complete_consumer_signup_request import CompleteConsumerSignupRequest
+from .complete_consumer_signup_response import CompleteConsumerSignupResponse
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
@@ -766,6 +768,14 @@ from .consumer_billing_usage_response import ConsumerBillingUsageResponse
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
+from .consumer_signup_form_response import ConsumerSignupFormResponse
+from .consumer_signup_list_response import ConsumerSignupListResponse
+from .consumer_signup_plan import ConsumerSignupPlan
+from .consumer_signup_price import ConsumerSignupPrice
+from .consumer_signup_response import ConsumerSignupResponse
+from .consumer_signup_response_status import ConsumerSignupResponseStatus
+from .consumer_signup_settings_response import ConsumerSignupSettingsResponse
+from .consumer_signup_settings_response_provider import ConsumerSignupSettingsResponseProvider
 from .control_application_standard_operation_request import ControlApplicationStandardOperationRequest
 from .control_data_pipeline_request import ControlDataPipelineRequest
 from .control_data_pipeline_request_action import ControlDataPipelineRequestAction
@@ -827,6 +837,8 @@ from .create_commit_source_request_contract_version import CreateCommitSourceReq
 from .create_commit_source_request_destination import CreateCommitSourceRequestDestination
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
+from .create_consumer_signup_request import CreateConsumerSignupRequest
+from .create_consumer_signup_response import CreateConsumerSignupResponse
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
@@ -4581,6 +4593,9 @@ from .put_billing_connection_request import PutBillingConnectionRequest
 from .put_billing_connection_request_collection import PutBillingConnectionRequestCollection
 from .put_billing_run_schedule_request import PutBillingRunScheduleRequest
 from .put_commit_source_connection_body import PutCommitSourceConnectionBody
+from .put_consumer_signup_request import PutConsumerSignupRequest
+from .put_consumer_signup_request_key_scopes_item import PutConsumerSignupRequestKeyScopesItem
+from .put_consumer_signup_request_provider import PutConsumerSignupRequestProvider
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_issue_saved_view_request import PutIssueSavedViewRequest
@@ -6684,6 +6699,8 @@ __all__ = (
     "CommitSourceResponseContractVersion",
     "CommitSourceResponseDestination",
     "ComparePlatformTenantSelfWorkflowReadinessBody",
+    "CompleteConsumerSignupRequest",
+    "CompleteConsumerSignupResponse",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
@@ -6729,6 +6746,14 @@ __all__ = (
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
+    "ConsumerSignupFormResponse",
+    "ConsumerSignupListResponse",
+    "ConsumerSignupPlan",
+    "ConsumerSignupPrice",
+    "ConsumerSignupResponse",
+    "ConsumerSignupResponseStatus",
+    "ConsumerSignupSettingsResponse",
+    "ConsumerSignupSettingsResponseProvider",
     "ControlApplicationStandardOperationRequest",
     "ControlDataPipelineRequest",
     "ControlDataPipelineRequestAction",
@@ -6790,6 +6815,8 @@ __all__ = (
     "CreateCommitSourceRequestDestination",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
+    "CreateConsumerSignupRequest",
+    "CreateConsumerSignupResponse",
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
@@ -10256,6 +10283,9 @@ __all__ = (
     "PutBillingConnectionRequestCollection",
     "PutBillingRunScheduleRequest",
     "PutCommitSourceConnectionBody",
+    "PutConsumerSignupRequest",
+    "PutConsumerSignupRequestKeyScopesItem",
+    "PutConsumerSignupRequestProvider",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutIssueSavedViewRequest",

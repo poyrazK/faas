@@ -25,21 +25,29 @@ import type { APIConsumerUsageStatementListResponse } from '../models/APIConsume
 import type { APIConsumerUsageStatementResponse } from '../models/APIConsumerUsageStatementResponse.js';
 import type { AssignAPIConsumerPlanRequest } from '../models/AssignAPIConsumerPlanRequest.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
+import type { CompleteConsumerSignupRequest } from '../models/CompleteConsumerSignupRequest.js';
+import type { CompleteConsumerSignupResponse } from '../models/CompleteConsumerSignupResponse.js';
 import type { ConsumerBillingStatementsResponse } from '../models/ConsumerBillingStatementsResponse.js';
 import type { ConsumerBillingSummaryResponse } from '../models/ConsumerBillingSummaryResponse.js';
 import type { ConsumerBillingUsageResponse } from '../models/ConsumerBillingUsageResponse.js';
 import type { ConsumerKeyListResponse } from '../models/ConsumerKeyListResponse.js';
 import type { ConsumerKeyResponse } from '../models/ConsumerKeyResponse.js';
+import type { ConsumerSignupFormResponse } from '../models/ConsumerSignupFormResponse.js';
+import type { ConsumerSignupListResponse } from '../models/ConsumerSignupListResponse.js';
+import type { ConsumerSignupSettingsResponse } from '../models/ConsumerSignupSettingsResponse.js';
 import type { CreateAPIConsumerCreditRequest } from '../models/CreateAPIConsumerCreditRequest.js';
 import type { CreateAPIConsumerPlanRequest } from '../models/CreateAPIConsumerPlanRequest.js';
 import type { CreateAPIConsumerRateCardRequest } from '../models/CreateAPIConsumerRateCardRequest.js';
 import type { CreateAPIConsumerRequest } from '../models/CreateAPIConsumerRequest.js';
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
 import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyRequest.js';
+import type { CreateConsumerSignupRequest } from '../models/CreateConsumerSignupRequest.js';
+import type { CreateConsumerSignupResponse } from '../models/CreateConsumerSignupResponse.js';
 import type { CreateStatementInvoiceRequest } from '../models/CreateStatementInvoiceRequest.js';
 import type { PutAPIConsumerBillingPolicyRequest } from '../models/PutAPIConsumerBillingPolicyRequest.js';
 import type { PutAPIConsumerSpendCapRequest } from '../models/PutAPIConsumerSpendCapRequest.js';
 import type { PutAPIConsumerTrialRequest } from '../models/PutAPIConsumerTrialRequest.js';
+import type { PutConsumerSignupRequest } from '../models/PutConsumerSignupRequest.js';
 import type { StatementInvoiceExportResponse } from '../models/StatementInvoiceExportResponse.js';
 import type { UpdateAPIConsumerPlanLimitsRequest } from '../models/UpdateAPIConsumerPlanLimitsRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -140,6 +148,114 @@ export class ConsumersService {
         401: `code: unauthorized`,
         403: `A consumer key without the billing scope cannot list statements.`,
         429: `Statement reads for this key are rate limited.`,
+      },
+    });
+  }
+  /**
+   * Read an app's public sign-up form (ADR-20261021143000).
+   * For an app's prospective customers; needs no credential.
+   * @returns ConsumerSignupFormResponse The app's display name, offered plans and their current prices.
+   * @throws ApiError
+   */
+  public static getConsumerSignupForm({
+    slug,
+  }: {
+    /**
+     * The app customers sign up for.
+     */
+    slug: string,
+  }): CancelablePromise<ConsumerSignupFormResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-signup/{slug}',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        404: `code: not_found`,
+        429: `Too many requests from this address (\`consumer_signup_rate_limited\`).`,
+      },
+    });
+  }
+  /**
+   * Start a sign-up and get a Stripe Checkout URL to save a card.
+   * Needs no credential. Creates a Stripe customer in the app owner's
+   * Stripe account and a setup-mode Checkout Session; nothing is charged.
+   * The claim token is returned only here and completes the sign-up
+   * within 24 hours.
+   *
+   * @returns CreateConsumerSignupResponse The sign-up, its Checkout URL and claim token.
+   * @throws ApiError
+   */
+  public static createConsumerSignup({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * The app customers sign up for.
+     */
+    slug: string,
+    requestBody: CreateConsumerSignupRequest,
+  }): CancelablePromise<CreateConsumerSignupResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/consumer-signup/{slug}',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        404: `code: not_found`,
+        422: `An invalid email or name, or a plan that is not offered.`,
+        429: `Too many sign-ups from this address (\`consumer_signup_rate_limited\`) or for the app today (\`consumer_signup_daily_limit\`).`,
+        502: `Stripe could not be reached (\`billing_provider_unavailable\`).`,
+        503: `The app's billing setup cannot take sign-ups (\`consumer_signup_unavailable\`).`,
+      },
+    });
+  }
+  /**
+   * Complete a sign-up once the card is saved and get a consumer key.
+   * Needs no credential: the claim token proves the sign-up. Each call
+   * returns a new key and revokes the one the sign-up issued before.
+   *
+   * @returns CompleteConsumerSignupResponse The customer's consumer and its new key, shown only here.
+   * @throws ApiError
+   */
+  public static completeConsumerSignup({
+    slug,
+    signup,
+    requestBody,
+  }: {
+    /**
+     * The app the sign-up is for.
+     */
+    slug: string,
+    /**
+     * The sign-up to complete.
+     */
+    signup: string,
+    requestBody: CompleteConsumerSignupRequest,
+  }): CancelablePromise<CompleteConsumerSignupResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/consumer-signup/{slug}/signups/{signup}/complete',
+      path: {
+        'slug': slug,
+        'signup': signup,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        403: `The app owner revoked this customer.`,
+        404: `code: not_found`,
+        409: `The card is not saved yet (\`consumer_signup_checkout_incomplete\`).`,
+        410: `The sign-up is more than 24 hours old (\`consumer_signup_expired\`).`,
+        429: `Too many completions from this address (\`consumer_signup_rate_limited\`).`,
+        502: `Stripe could not be reached to confirm the card (\`billing_provider_unavailable\`).`,
+        503: `The app's billing setup cannot complete sign-ups (\`consumer_signup_unavailable\`).`,
       },
     });
   }
@@ -1452,6 +1568,120 @@ export class ConsumersService {
     return __request(OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/consumer-billing-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read the app's self-service sign-up settings (ADR-20261021143000).
+   * @returns ConsumerSignupSettingsResponse The app's sign-up settings and hosted page URL.
+   * @throws ApiError
+   */
+  public static getConsumerSignup({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ConsumerSignupSettingsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumer-signup',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Let the app's customers sign up themselves and save a card with Stripe Checkout.
+   * Customers sign up on the hosted page (page_url) or through the public
+   * sign-up API: they pick one of plan_ids (none offers the default
+   * plan), save a card in the account's own Stripe account, and get a
+   * consumer key with key_scopes. Needs the account's Stripe billing
+   * connection. A restricted Stripe key needs write access to Customers
+   * and Checkout Sessions and read access to SetupIntents.
+   *
+   * @returns ConsumerSignupSettingsResponse The stored settings.
+   * @throws ApiError
+   */
+  public static putConsumerSignup({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PutConsumerSignupRequest,
+  }): CancelablePromise<ConsumerSignupSettingsResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/consumer-signup',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `Stripe is not connected.`,
+        422: `A provider other than Stripe, an unknown plan, an invalid scope or URL, or a value out of range.`,
+      },
+    });
+  }
+  /**
+   * Turn sign-up off; pending sign-ups can no longer complete.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteConsumerSignup({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/consumer-signup',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List the app's latest 100 sign-ups, newest first.
+   * @returns ConsumerSignupListResponse The app's sign-ups.
+   * @throws ApiError
+   */
+  public static listConsumerSignups({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ConsumerSignupListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumer-signups',
       path: {
         'slug': slug,
       },

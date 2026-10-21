@@ -375,6 +375,8 @@ export type { CommitPublicationHistoryResponse } from './models/CommitPublicatio
 export type { CommitReceiptResponse } from './models/CommitReceiptResponse.js';
 export type { CommitRouting } from './models/CommitRouting.js';
 export type { CommitSourceResponse } from './models/CommitSourceResponse.js';
+export type { CompleteConsumerSignupRequest } from './models/CompleteConsumerSignupRequest.js';
+export type { CompleteConsumerSignupResponse } from './models/CompleteConsumerSignupResponse.js';
 export type { CompleteObjectMultipartUploadRequest } from './models/CompleteObjectMultipartUploadRequest.js';
 export type { CompleteWorkflowCallbackResponse } from './models/CompleteWorkflowCallbackResponse.js';
 export type { ComposeHealthcheck } from './models/ComposeHealthcheck.js';
@@ -405,6 +407,12 @@ export type { ConsumerBillingSummaryResponse } from './models/ConsumerBillingSum
 export type { ConsumerBillingUsageResponse } from './models/ConsumerBillingUsageResponse.js';
 export type { ConsumerKeyListResponse } from './models/ConsumerKeyListResponse.js';
 export type { ConsumerKeyResponse } from './models/ConsumerKeyResponse.js';
+export type { ConsumerSignupFormResponse } from './models/ConsumerSignupFormResponse.js';
+export type { ConsumerSignupListResponse } from './models/ConsumerSignupListResponse.js';
+export type { ConsumerSignupPlan } from './models/ConsumerSignupPlan.js';
+export type { ConsumerSignupPrice } from './models/ConsumerSignupPrice.js';
+export type { ConsumerSignupResponse } from './models/ConsumerSignupResponse.js';
+export type { ConsumerSignupSettingsResponse } from './models/ConsumerSignupSettingsResponse.js';
 export type { ControlApplicationStandardOperationRequest } from './models/ControlApplicationStandardOperationRequest.js';
 export type { ControlDataPipelineRequest } from './models/ControlDataPipelineRequest.js';
 export type { ControlEventExecutionLineageCaseBackfillRequest } from './models/ControlEventExecutionLineageCaseBackfillRequest.js';
@@ -431,6 +439,8 @@ export type { CreateBillingRunRequest } from './models/CreateBillingRunRequest.j
 export type { CreateBindingVerificationRunRequest } from './models/CreateBindingVerificationRunRequest.js';
 export type { CreateCommitSourceRequest } from './models/CreateCommitSourceRequest.js';
 export type { CreateConsumerKeyRequest } from './models/CreateConsumerKeyRequest.js';
+export type { CreateConsumerSignupRequest } from './models/CreateConsumerSignupRequest.js';
+export type { CreateConsumerSignupResponse } from './models/CreateConsumerSignupResponse.js';
 export type { CreateCorsPresetRequest } from './models/CreateCorsPresetRequest.js';
 export type { CreateCronRequest } from './models/CreateCronRequest.js';
 export type { CreateCustomDomainRequest } from './models/CreateCustomDomainRequest.js';
@@ -2349,6 +2359,7 @@ export type { PutAppSecretReferenceRequest } from './models/PutAppSecretReferenc
 export type { PutAppSecretRequest } from './models/PutAppSecretRequest.js';
 export type { PutBillingConnectionRequest } from './models/PutBillingConnectionRequest.js';
 export type { PutBillingRunScheduleRequest } from './models/PutBillingRunScheduleRequest.js';
+export type { PutConsumerSignupRequest } from './models/PutConsumerSignupRequest.js';
 export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js';
 export type { PutIssueSavedViewRequest } from './models/PutIssueSavedViewRequest.js';
 export type { PutIssueTeamRequest } from './models/PutIssueTeamRequest.js';

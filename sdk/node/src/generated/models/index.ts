@@ -370,6 +370,8 @@ export type { CommitPublicationHistoryResponse } from './CommitPublicationHistor
 export type { CommitReceiptResponse } from './CommitReceiptResponse.js';
 export type { CommitRouting } from './CommitRouting.js';
 export type { CommitSourceResponse } from './CommitSourceResponse.js';
+export type { CompleteConsumerSignupRequest } from './CompleteConsumerSignupRequest.js';
+export type { CompleteConsumerSignupResponse } from './CompleteConsumerSignupResponse.js';
 export type { CompleteObjectMultipartUploadRequest } from './CompleteObjectMultipartUploadRequest.js';
 export type { CompleteWorkflowCallbackResponse } from './CompleteWorkflowCallbackResponse.js';
 export type { ComposeHealthcheck } from './ComposeHealthcheck.js';
@@ -400,6 +402,12 @@ export type { ConsumerBillingSummaryResponse } from './ConsumerBillingSummaryRes
 export type { ConsumerBillingUsageResponse } from './ConsumerBillingUsageResponse.js';
 export type { ConsumerKeyListResponse } from './ConsumerKeyListResponse.js';
 export type { ConsumerKeyResponse } from './ConsumerKeyResponse.js';
+export type { ConsumerSignupFormResponse } from './ConsumerSignupFormResponse.js';
+export type { ConsumerSignupListResponse } from './ConsumerSignupListResponse.js';
+export type { ConsumerSignupPlan } from './ConsumerSignupPlan.js';
+export type { ConsumerSignupPrice } from './ConsumerSignupPrice.js';
+export type { ConsumerSignupResponse } from './ConsumerSignupResponse.js';
+export type { ConsumerSignupSettingsResponse } from './ConsumerSignupSettingsResponse.js';
 export type { ControlApplicationStandardOperationRequest } from './ControlApplicationStandardOperationRequest.js';
 export type { ControlDataPipelineRequest } from './ControlDataPipelineRequest.js';
 export type { ControlEventExecutionLineageCaseBackfillRequest } from './ControlEventExecutionLineageCaseBackfillRequest.js';
@@ -426,6 +434,8 @@ export type { CreateBillingRunRequest } from './CreateBillingRunRequest.js';
 export type { CreateBindingVerificationRunRequest } from './CreateBindingVerificationRunRequest.js';
 export type { CreateCommitSourceRequest } from './CreateCommitSourceRequest.js';
 export type { CreateConsumerKeyRequest } from './CreateConsumerKeyRequest.js';
+export type { CreateConsumerSignupRequest } from './CreateConsumerSignupRequest.js';
+export type { CreateConsumerSignupResponse } from './CreateConsumerSignupResponse.js';
 export type { CreateCorsPresetRequest } from './CreateCorsPresetRequest.js';
 export type { CreateCronRequest } from './CreateCronRequest.js';
 export type { CreateCustomDomainRequest } from './CreateCustomDomainRequest.js';
@@ -2343,6 +2353,7 @@ export type { PutAppSecretReferenceRequest } from './PutAppSecretReferenceReques
 export type { PutAppSecretRequest } from './PutAppSecretRequest.js';
 export type { PutBillingConnectionRequest } from './PutBillingConnectionRequest.js';
 export type { PutBillingRunScheduleRequest } from './PutBillingRunScheduleRequest.js';
+export type { PutConsumerSignupRequest } from './PutConsumerSignupRequest.js';
 export type { PutDataUpstreamRequest } from './PutDataUpstreamRequest.js';
 export type { PutIssueSavedViewRequest } from './PutIssueSavedViewRequest.js';
 export type { PutIssueTeamRequest } from './PutIssueTeamRequest.js';
