@@ -208,11 +208,18 @@ VALUES (sqlc.arg(account_id)::uuid,sqlc.arg(consumer_limit)::integer,sqlc.arg(ap
 ON CONFLICT (account_id) DO UPDATE SET consumer_limit=excluded.consumer_limit,app_limit=excluded.app_limit,account_limit=excluded.account_limit;
 
 -- name: EventDeliveryCounts :one
+-- Count from the account's live invocations, not from its slots: a slot lives
+-- as long as its invocation is retained, so replays can inherit it (ADR-614),
+-- and an account's slots grow with its delivery history while its live
+-- deliveries stay within the delivery limits. Every slot's invocation belongs
+-- to an app of the slot's account (admission locks that app).
 SELECT count(*)::bigint AS account_count,
  count(*) FILTER (WHERE s.app_id=sqlc.arg(app_id)::uuid)::bigint AS app_count,
  count(*) FILTER (WHERE s.app_id=sqlc.arg(app_id)::uuid AND s.subscription_id=sqlc.arg(subscription_id)::text)::bigint AS consumer_count
-FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
-WHERE s.account_id=sqlc.arg(account_id)::uuid AND i.state IN ('pending','dispatching')
+FROM apps a
+JOIN invocations i ON i.app_id=a.id AND i.state IN ('pending','dispatching')
+JOIN event_delivery_slots s ON s.invocation_id=i.id AND s.account_id=a.account_id
+WHERE a.account_id=sqlc.arg(account_id)::uuid
  AND NOT (sqlc.arg(replace_pending)::boolean AND i.state='pending' AND i.app_id=sqlc.arg(app_id)::uuid
    AND coalesce(i.work_policy_name,'')=sqlc.arg(policy_name)::text AND i.work_key_digest=sqlc.arg(key_digest)::bytea);
 

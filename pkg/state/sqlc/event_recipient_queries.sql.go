@@ -15,8 +15,10 @@ const eventDeliveryCounts = `-- name: EventDeliveryCounts :one
 SELECT count(*)::bigint AS account_count,
  count(*) FILTER (WHERE s.app_id=$1::uuid)::bigint AS app_count,
  count(*) FILTER (WHERE s.app_id=$1::uuid AND s.subscription_id=$2::text)::bigint AS consumer_count
-FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
-WHERE s.account_id=$3::uuid AND i.state IN ('pending','dispatching')
+FROM apps a
+JOIN invocations i ON i.app_id=a.id AND i.state IN ('pending','dispatching')
+JOIN event_delivery_slots s ON s.invocation_id=i.id AND s.account_id=a.account_id
+WHERE a.account_id=$3::uuid
  AND NOT ($4::boolean AND i.state='pending' AND i.app_id=$1::uuid
    AND coalesce(i.work_policy_name,'')=$5::text AND i.work_key_digest=$6::bytea)
 `
@@ -36,6 +38,11 @@ type EventDeliveryCountsRow struct {
 	ConsumerCount int64
 }
 
+// Count from the account's live invocations, not from its slots: a slot lives
+// as long as its invocation is retained, so replays can inherit it (ADR-614),
+// and an account's slots grow with its delivery history while its live
+// deliveries stay within the delivery limits. Every slot's invocation belongs
+// to an app of the slot's account (admission locks that app).
 func (q *Queries) EventDeliveryCounts(ctx context.Context, db DBTX, arg EventDeliveryCountsParams) (EventDeliveryCountsRow, error) {
 	row := db.QueryRow(ctx, eventDeliveryCounts,
 		arg.AppID,

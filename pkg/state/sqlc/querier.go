@@ -1021,6 +1021,11 @@ type Querier interface {
 	EventConsumerPressureTarget(ctx context.Context, db DBTX, arg EventConsumerPressureTargetParams) (pgtype.UUID, error)
 	EventConsumerPressureWaits(ctx context.Context, db DBTX, arg EventConsumerPressureWaitsParams) (EventConsumerPressureWaitsRow, error)
 	EventConsumerProcessingHealth(ctx context.Context, db DBTX, arg EventConsumerProcessingHealthParams) (EventConsumerProcessingHealthRow, error)
+	// Count from the account's live invocations, not from its slots: a slot lives
+	// as long as its invocation is retained, so replays can inherit it (ADR-614),
+	// and an account's slots grow with its delivery history while its live
+	// deliveries stay within the delivery limits. Every slot's invocation belongs
+	// to an app of the slot's account (admission locks that app).
 	EventDeliveryCounts(ctx context.Context, db DBTX, arg EventDeliveryCountsParams) (EventDeliveryCountsRow, error)
 	EventDeliveryInsertSlot(ctx context.Context, db DBTX, arg EventDeliveryInsertSlotParams) error
 	EventDeliveryLockCapacity(ctx context.Context, db DBTX, arg EventDeliveryLockCapacityParams) error

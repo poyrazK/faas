@@ -15523,8 +15523,10 @@ BEGIN
  SELECT count(*), count(*) FILTER (WHERE s.app_id=slot.app_id),
    count(*) FILTER (WHERE s.app_id=slot.app_id AND s.subscription_id=slot.subscription_id)
  INTO account_count, app_count, consumer_count
- FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
- WHERE s.account_id=slot.account_id AND i.state IN ('pending','dispatching') AND i.id<>NEW.id;
+ FROM apps a
+ JOIN invocations i ON i.app_id=a.id AND i.state IN ('pending','dispatching') AND i.id<>NEW.id
+ JOIN event_delivery_slots s ON s.invocation_id=i.id AND s.account_id=a.account_id
+ WHERE a.account_id=slot.account_id;
  SELECT CASE WHEN c.max_pending_deliveries>0 THEN least(c.max_pending_deliveries,caps.consumer_limit) ELSE caps.consumer_limit END INTO consumer_limit
  FROM event_subscription_delivery_controls c WHERE c.account_id=slot.account_id AND c.app_id=slot.app_id AND c.subscription_id::text=slot.subscription_id;
  consumer_limit := coalesce(consumer_limit,caps.consumer_limit);
