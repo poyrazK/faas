@@ -1,8 +1,9 @@
-package main
+package main_test
 
 // adr: 20261018083536 — `gregale logs search|facets` send the filters and render the ledger.
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -29,6 +31,15 @@ func logSearchServer(t *testing.T, payload any) (*string, *url.Values) {
 	return &gotPath, &gotQuery
 }
 
+func captureLogSearchStdout(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var stdout bytes.Buffer
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	return &stdout
+}
+
 func TestCmdLogsSearch_SendsFiltersAndRendersEvents(t *testing.T) {
 	at := time.Date(2026, 10, 18, 11, 0, 0, 0, time.UTC)
 	gotPath, gotQuery := logSearchServer(t, api.LogEventsResponse{
@@ -38,8 +49,8 @@ func TestCmdLogsSearch_SendsFiltersAndRendersEvents(t *testing.T) {
 			{Timestamp: "2026-10-18T10:58:00Z", Source: api.LogSourceRuntime, Level: "error", Message: "db timeout"},
 		},
 	})
-	stdout := captureMetricsStdout(t)
-	if code := cmdLogs([]string{"search", "shop", "--q", "timeout", "--status", "5xx", "--level", "error,warn", "--since", "6h", "--limit", "50"}); code != 0 {
+	stdout := captureLogSearchStdout(t)
+	if code := main.CmdLogs([]string{"search", "shop", "--q", "timeout", "--status", "5xx", "--level", "error,warn", "--since", "6h", "--limit", "50"}); code != 0 {
 		t.Fatalf("logs search = %d", code)
 	}
 	if *gotPath != "/v1/apps/shop/log-events" {
@@ -66,8 +77,8 @@ func TestCmdLogsFacets_RendersCounts(t *testing.T) {
 		StatusClasses: []api.LogFacetCount{{Value: "2xx", Count: 8}, {Value: "5xx", Count: 2}},
 		Routes:        []api.LogFacetCount{{Value: "/checkout", Count: 7}}, RoutesTruncated: true,
 	})
-	stdout := captureMetricsStdout(t)
-	if code := cmdLogs([]string{"facets", "shop", "--since", "24h", "--source", "http"}); code != 0 {
+	stdout := captureLogSearchStdout(t)
+	if code := main.CmdLogs([]string{"facets", "shop", "--since", "24h", "--source", "http"}); code != 0 {
 		t.Fatalf("logs facets = %d", code)
 	}
 	if *gotPath != "/v1/apps/shop/log-events/facets" || gotQuery.Get("source") != "http" || gotQuery.Get("limit") != "" {
