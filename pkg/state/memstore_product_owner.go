@@ -96,7 +96,7 @@ func (m *MemStore) ApplyProductCustomerChange(_ context.Context, account, app st
 	if d.changes == nil {
 		d.changes = map[string]productMemoryChange{}
 	}
-	d.customers[app+"/"+p.After.TenantID] = p.After
+	m.assignProductCustomerLocked(account, app, p.After)
 	d.changes[req.ID] = productMemoryChange{account: account, app: app, fingerprint: fingerprint, receipt: r}
 	return cloneProductBilling(r), nil
 }

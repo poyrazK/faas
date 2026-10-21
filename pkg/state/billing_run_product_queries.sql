@@ -12,6 +12,22 @@ JOIN platform_tenants p ON p.account_id=r.account_id AND p.id=r.tenant_id
 WHERE r.account_id=sqlc.arg(account_id) AND r.period=sqlc.arg(period)
 ON CONFLICT DO NOTHING;
 
+-- Each customer who held a plan with a monthly fee in the run's month, with
+-- or without runs (ADR-20261021154511): the assignment in force when the
+-- month starts, or one made during it.
+-- name: BillingRunDiscoverProductFeeItems :exec
+INSERT INTO billing_run_product_items(run_id,app_id,tenant_id,external_ref,next_attempt_at,updated_at)
+SELECT DISTINCT sqlc.arg(run_id)::uuid,a.app_id,a.tenant_id,p.external_ref,sqlc.arg(now)::timestamptz,sqlc.arg(now)::timestamptz
+FROM product_control_plan_history a
+JOIN product_control_heads h ON h.account_id=a.account_id AND h.app_id=a.app_id
+JOIN product_control_revisions v ON v.app_id=a.app_id AND v.revision=a.revision
+JOIN platform_tenants p ON p.account_id=a.account_id AND p.id=a.tenant_id
+WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.effective_at < sqlc.arg(month_end)::timestamptz
+  AND COALESCE((v.spec->'plans'->a.plan->>'monthly_fee_millicents')::bigint, 0) > 0
+  AND NOT EXISTS (SELECT 1 FROM product_control_plan_history l
+    WHERE l.app_id=a.app_id AND l.tenant_id=a.tenant_id AND l.effective_at > a.effective_at AND l.effective_at <= sqlc.arg(month_start)::timestamptz)
+ON CONFLICT DO NOTHING;
+
 -- name: BillingRunMarkProductDiscovered :exec
 UPDATE billing_runs SET product_discovered_at=sqlc.arg(now)::timestamptz WHERE id=sqlc.arg(id);
 
