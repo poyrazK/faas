@@ -8,10 +8,20 @@ SET LOCAL lock_timeout = '5s';
 -- time step of the last code it accepted for a session and refuses any code
 -- at or before it, so a code seen in transit cannot be replayed within its
 -- validity window. NULL means no code has been accepted yet.
--- NOT VALID: every existing row is NULL, and new writes are still checked.
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS mfa_totp_last_step bigint;
-ALTER TABLE accounts ADD CONSTRAINT accounts_mfa_totp_last_step_chk
-    CHECK (mfa_totp_last_step IS NULL OR mfa_totp_last_step >= 0) NOT VALID;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+-- NOT VALID: every existing row is NULL, and new writes are still checked.
+-- Guarded so a replay after a partial apply does not fail on the constraint.
+DO $totp_last_step$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'accounts'::regclass AND conname = 'accounts_mfa_totp_last_step_chk') THEN
+    ALTER TABLE accounts ADD CONSTRAINT accounts_mfa_totp_last_step_chk
+      CHECK (mfa_totp_last_step IS NULL OR mfa_totp_last_step >= 0) NOT VALID;
+  END IF;
+END
+$totp_last_step$;
 -- +goose StatementEnd
 
 -- +goose Down
