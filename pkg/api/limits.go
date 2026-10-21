@@ -1508,6 +1508,28 @@ const (
 	OutboundAITraceCallsMax                   = 500
 	MaxOutboundAITraceCalls             int64 = 1_000_000
 	MaxOutboundAITraceRepeatedToolCalls int64 = 1_000
+	// Quality signals (ADR 20261021171712): the answer text and the tool
+	// arguments the invalid_json check reads, the longest feedback label,
+	// the online evaluations one integration runs per UTC day and the
+	// longest rubric, and the drift check: how often it runs, the baseline
+	// days, the calls (or rated calls) a day and its baseline need, the
+	// percentage points a rate must rise by, and the evaluations each side
+	// needs for a score drop of at least the given tenths of a point.
+	// Quality alerts are kept for OutboundAIQualityAlertRetentionDays.
+	OutboundAIQualityTextMaxBytes            = 64 << 10
+	OutboundAIQualityToolArgumentsMaxBytes   = 16 << 10
+	OutboundAIFeedbackLabelMaxBytes          = 32
+	OutboundAIOnlineEvaluationsPerDay        = 1_000
+	OutboundAIOnlineEvaluationRubricMaxBytes = 1_000
+	OutboundAIQualityDriftCheckMinutes       = 10
+	OutboundAIQualityDriftBaselineDays       = 7
+	OutboundAIQualityDriftMinCalls           = 100
+	OutboundAIQualityDriftMinBaselineCalls   = 500
+	OutboundAIQualityDriftPoints             = 5
+	OutboundAIQualityDriftMinEvaluations     = 20
+	OutboundAIQualityDriftScoreDropTenths    = 5
+	OutboundAIQualityAlertRetentionDays      = 31
+	OutboundAIQualityAlertsPageMax           = 100
 	// Automatic prompt caching (ADR-1437): the estimated prompt or prefix
 	// tokens below which no breakpoint is added, and the cache lifetime a
 	// repeated prefix must recur within.
