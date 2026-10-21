@@ -5651,21 +5651,23 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	}
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
 	if err := m.ensureBaseGeneration(ctx, baseKey, scanKey); err != nil {
+		m.imageScanMetrics.ObserveBaseScanRefusal(baseKey, "generation_unavailable")
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"runtime base generation unavailable",
 			fmt.Sprintf("runtime base %q could not adopt its configured generation: %v", baseKey, err))
 	}
 	scan, readErr := m.readBaseScan(ctx, scanKey)
-	gateErr := m.baseScanVerdict(baseKey, scanKey, scan, readErr)
+	reason, gateErr := m.baseScanVerdict(baseKey, scanKey, scan, readErr)
 	// The sidecar is read through this node's cache. Another node may since
 	// have published a complete scan for the same base (H10-103 left a
 	// refusal cached on fsn-3 after fsn-2 rewrote it), so a refusal is
 	// re-checked once against the canonical copy before the boot fails.
 	if gateErr != nil && m.refreshCachedScan(ctx, scanKey) {
 		scan, readErr = m.readBaseScan(ctx, scanKey)
-		gateErr = m.baseScanVerdict(baseKey, scanKey, scan, readErr)
+		reason, gateErr = m.baseScanVerdict(baseKey, scanKey, scan, readErr)
 	}
 	if gateErr != nil {
+		m.imageScanMetrics.ObserveBaseScanRefusal(baseKey, reason)
 		return gateErr
 	}
 	// Forward per-severity finding counts to the vmmd Prometheus
@@ -5679,19 +5681,20 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 }
 
 // baseScanVerdict applies the boot gate to one read of a base's scan sidecar.
-func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar, readErr error) error {
+// A refusal also returns its wire.BaseScanRefusalReasons reason.
+func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar, readErr error) (string, error) {
 	if readErr != nil {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return "sidecar_missing", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar missing",
 			fmt.Sprintf("scan sidecar missing for base %q at %q; refusing to boot un-scanned ext4 (issue #299)", baseKey, scanKey))
 	}
 	if expected := m.baseGenerations[baseKey]; expected != "" && !scanNamesConfiguredBase(scan.Image, expected) {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return "generation_mismatch", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar generation mismatch",
 			fmt.Sprintf("scan sidecar at %q names %q, want configured runtime base %q; refusing to boot (issue #299)", scanKey, scan.Image, expected))
 	}
 	if _, ok := scan.Findings["CRITICAL"]; !ok {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return "incomplete", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar incomplete",
 			fmt.Sprintf("scan sidecar at %q has no CRITICAL total; refusing to boot (issue #299)", scanKey))
 	}
@@ -5704,16 +5707,18 @@ func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar,
 	}
 	n, ok := gateFindings["CRITICAL"]
 	if !ok {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return "incomplete", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar incomplete",
 			fmt.Sprintf("scan sidecar at %q has no fix-available CRITICAL total; refusing to boot (issue #299)", scanKey))
 	}
 	if n > 0 {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		// The deploy and wake errors carry this detail to the customer, who
+		// cannot rebuild a Gregale runtime base: say whose problem it is.
+		return "critical", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"Fixable CRITICAL vulnerability in base ext4",
-			fmt.Sprintf("base %q has %d fix-available CRITICAL Grype findings; refusing to boot (issue #299)", baseKey, n))
+			fmt.Sprintf("Gregale's base image %q has %d fix-available CRITICAL vulnerabilities, so Gregale will not start instances on it until a patched base is published; this is a platform problem, not your code", baseKey, n))
 	}
-	return nil
+	return "", nil
 }
 
 // refreshCachedScan replaces this node's cached copy of scanKey with the

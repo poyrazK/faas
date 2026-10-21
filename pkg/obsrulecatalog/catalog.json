@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "c6f516f59aec4283212b1aca65c74bc859960c11c2cea9d611ad608899afbb14",
+      "revision": "4ca6bb393b7c6edbe22054f6f8aa0a7d327257fb6e9f6ca4b3f591068215446b",
       "files": [
         "faas.rules.yml"
       ],
@@ -917,6 +917,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "0afadd50370eed5865b51cec08ec3df1ca2c79ca2fc52b05ab6b03df968ca593"
+          }
+        },
+        {
+          "id": "2abee2c6fa44ea8d64bf331e4067a8b736c1c52c94e1c6e179a9553612d931e8",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBaseScanRefusingBoots",
+          "definition": {
+            "expression_hash": "00646d86c3d2926030e968300c0e7b00de6f6a73567dbfcf74b7be7457b5e7d8",
+            "labels_hash": "fe5e649389a6ea385686b19a4df3c52f947301a0cb28c9e4e981ceefb7461732",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6e72ea8eebaa96c768bf4ef894d27b93276033178cc525b89d58e4657ac4a611"
           }
         },
         {
@@ -2126,6 +2139,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "d0346dd421c7459262dd2f2aaaabfa324be4a77aab0df3abbcb8875f60d1eb8c"
+          }
+        },
+        {
+          "id": "6a689119eddcc7284e7089df5f0ab7a802c17b3f1da4e713d133418928ac852c",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_operations",
+          "rule_name": "FaasCustomerOperationQueueNotDraining",
+          "definition": {
+            "expression_hash": "81f9619ef7722c220f4207cb4f27b69a232e8c3acbe497791d3ca51758152e14",
+            "labels_hash": "e1d32b044e303333deaea641066c086101d2c33fce90034b1ccea09f75af16db",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ffeb75def12da378ba28dfbf10e233163c868e8a2b764952ec6ae1c114c3a390"
           }
         },
         {
@@ -4495,6 +4521,19 @@
           }
         },
         {
+          "id": "efcd98021e07009e8bf62d2921ebc6849f8d9f0e65afe054a1697aef77ac8eda",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_operations",
+          "rule_name": "FaasCustomerOperationFanInStuck",
+          "definition": {
+            "expression_hash": "a22a29ac7c65b160cccd3b57d71494d169e2abaaa0b4da7e0a8fe0bfcafc74ff",
+            "labels_hash": "e1d32b044e303333deaea641066c086101d2c33fce90034b1ccea09f75af16db",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "60c79ea303644f8db510b8048d378d64d312263a25be8d4a76f3304fdbb569e6"
+          }
+        },
+        {
           "id": "efff3f2d99d5a3e9e7734cff000dd168917714d2736e3c7b1577fe20fc9c8a58",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -4797,7 +4836,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "3c53c585ee0c636b5b5d0ca32e05b6ec24fdb9cbc445b0fee89466bd5476d329",
+      "revision": "11968de20632b332c262e5d6dab2e5a16656c863b2c859460b3be62e945efbba",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -5792,6 +5831,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "0afadd50370eed5865b51cec08ec3df1ca2c79ca2fc52b05ab6b03df968ca593"
+          }
+        },
+        {
+          "id": "2abee2c6fa44ea8d64bf331e4067a8b736c1c52c94e1c6e179a9553612d931e8",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBaseScanRefusingBoots",
+          "definition": {
+            "expression_hash": "00646d86c3d2926030e968300c0e7b00de6f6a73567dbfcf74b7be7457b5e7d8",
+            "labels_hash": "fe5e649389a6ea385686b19a4df3c52f947301a0cb28c9e4e981ceefb7461732",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6e72ea8eebaa96c768bf4ef894d27b93276033178cc525b89d58e4657ac4a611"
           }
         },
         {
@@ -7027,6 +7079,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "d0346dd421c7459262dd2f2aaaabfa324be4a77aab0df3abbcb8875f60d1eb8c"
+          }
+        },
+        {
+          "id": "6a689119eddcc7284e7089df5f0ab7a802c17b3f1da4e713d133418928ac852c",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_operations",
+          "rule_name": "FaasCustomerOperationQueueNotDraining",
+          "definition": {
+            "expression_hash": "81f9619ef7722c220f4207cb4f27b69a232e8c3acbe497791d3ca51758152e14",
+            "labels_hash": "e1d32b044e303333deaea641066c086101d2c33fce90034b1ccea09f75af16db",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ffeb75def12da378ba28dfbf10e233163c868e8a2b764952ec6ae1c114c3a390"
           }
         },
         {
@@ -9523,6 +9588,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "fa4631f69708bc16cfd1bbfc287f6704f818662938fb28f52fe6efc2345ca453"
+          }
+        },
+        {
+          "id": "efcd98021e07009e8bf62d2921ebc6849f8d9f0e65afe054a1697aef77ac8eda",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_operations",
+          "rule_name": "FaasCustomerOperationFanInStuck",
+          "definition": {
+            "expression_hash": "a22a29ac7c65b160cccd3b57d71494d169e2abaaa0b4da7e0a8fe0bfcafc74ff",
+            "labels_hash": "e1d32b044e303333deaea641066c086101d2c33fce90034b1ccea09f75af16db",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "60c79ea303644f8db510b8048d378d64d312263a25be8d4a76f3304fdbb569e6"
           }
         },
         {
