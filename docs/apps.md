@@ -95,7 +95,7 @@ Review an app configuration change before applying it:
 gregale app my-api scale --plan --ram 512 --min 1
 gregale app my-api scale --plan --ram 512 --out scale-change.json
 gregale app my-api scale --apply scale-change.json --confirm
-gregale app my-api scale --plan --environment staging --profile medium
+gregale app my-api scale --plan --environment staging --size medium
 ```
 
 The preview reads current app settings and the account plan, then shows the
