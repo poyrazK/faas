@@ -8379,7 +8379,11 @@ Alias for get
 
 Cancel a delayed task
 
-`gregale delayed-task cancel <id>`
+`gregale delayed-task cancel [--app <SLUG>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | require the task to belong to this app |  |
 
 
 ## deployments

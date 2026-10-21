@@ -2452,7 +2452,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "get", Short: "Show one delayed task", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "app", Short: "require the task to belong to this app", Value: "SLUG"}}},
 			{Name: "info", Short: "Alias for get", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "app", Short: "require the task to belong to this app", Value: "SLUG"}}},
-			{Name: "cancel", Short: "Cancel a delayed task", Positionals: []string{"<id>"}},
+			{Name: "cancel", Short: "Cancel a delayed task", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "app", Short: "require the task to belong to this app", Value: "SLUG"}}},
 		},
 	},
 	{
