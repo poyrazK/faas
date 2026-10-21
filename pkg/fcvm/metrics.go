@@ -46,6 +46,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hostsize"
+	"github.com/onebox-faas/faas/pkg/resumetimingproto"
 )
 
 // metricLabelUnknown is the canonical "label collapsed because the source
@@ -237,6 +238,19 @@ type WakePhaseMetrics struct {
 	// against ~0 on the metal harness, and could not attribute them.
 	restorePhases *prometheus.HistogramVec
 	preBootFiles  *prometheus.CounterVec
+	// resumeGuestStages splits resume_hook by the guest's own timing frame
+	// (ADR-022 amendment). Production-us measured resume_hook ~190 ms for
+	// Node and Python apps against ~58 ms for Go, with the host able to see
+	// only connect (~10 ms) and "waiting for the ack".
+	resumeGuestStages *prometheus.HistogramVec
+}
+
+// resumeGuestStageNames is the closed stage label set of
+// vmmd_resume_guest_stage_duration_seconds, in hook order. total is the
+// guest's whole share; outside_guest is the host's ack wait minus total.
+var resumeGuestStageNames = []string{
+	"read", "entropy", "hwrng", "clock", "uuid_marker", "userspace_reseed",
+	"profiles", "after_restore", "total", "outside_guest",
 }
 
 // restorePhaseNames is the closed phase label set of
@@ -305,9 +319,37 @@ func NewWakePhaseMetrics() *WakePhaseMetrics {
 	for _, outcome := range []string{"skipped", "written"} {
 		m.preBootFiles.WithLabelValues(outcome)
 	}
-	reg.MustRegister(m.phases, m.materializeSeconds, m.materializeBytes, m.restorePhases, m.preBootFiles)
+	m.resumeGuestStages = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "vmmd_resume_guest_stage_duration_seconds",
+		Help:    "Guest-reported resume-hook stages, operator-only. Stage ∈ {read, entropy, hwrng, clock, uuid_marker, userspace_reseed, profiles, after_restore} in hook order, total (the guest's whole share) and outside_guest (the host's ack wait minus total: vsock transport and the time before guest-init's handler ran). Only guests whose guest-init sends the timing frame are observed.",
+		Buckets: []float64{0.0005, 0.001, 0.0025, 0.005, 0.01, 0.02, 0.035, 0.05, 0.075, 0.1, 0.15, 0.25, 0.5, 1.0, 2.0},
+	}, []string{"stage"})
+	for _, stage := range resumeGuestStageNames {
+		m.resumeGuestStages.WithLabelValues(stage)
+	}
+	reg.MustRegister(m.phases, m.materializeSeconds, m.materializeBytes, m.restorePhases, m.preBootFiles, m.resumeGuestStages)
 	return m
 }
+
+// ObserveResumeGuestStages records one resume hook's guest-side stages.
+// ackWait is the host's wait for the ack. Safe on a nil receiver.
+func (m *WakePhaseMetrics) ObserveResumeGuestStages(t resumetimingproto.Timings, ackWait time.Duration) {
+	if m == nil {
+		return
+	}
+	values := map[string]time.Duration{
+		"read": usDuration(t.ReadUs), "entropy": usDuration(t.EntropyUs), "hwrng": usDuration(t.HWRNGUs),
+		"clock": usDuration(t.ClockUs), "uuid_marker": usDuration(t.UUIDMarkerUs),
+		"userspace_reseed": usDuration(t.UserspaceReseedUs), "profiles": usDuration(t.ProfilesUs),
+		"after_restore": usDuration(t.AfterRestoreUs), "total": usDuration(t.TotalUs),
+		"outside_guest": resumeGuestOutside(t, ackWait),
+	}
+	for _, stage := range resumeGuestStageNames {
+		m.resumeGuestStages.WithLabelValues(stage).Observe(values[stage].Seconds())
+	}
+}
+
+func usDuration(us int64) time.Duration { return time.Duration(max(us, 0)) * time.Microsecond }
 
 // ObserveRestorePhases records one restore's sub-phases. Safe on a nil
 // receiver.
