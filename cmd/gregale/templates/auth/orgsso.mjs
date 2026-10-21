@@ -113,7 +113,8 @@ export async function orgSSORoute({ rows, admin, goTrueError, external, lookup, 
     await rows('SELECT gregale_auth.check_org_sso($1, NULL, $2, $3)', [org, input.domains, role])
     const provider = await goTrue('POST', '/admin/sso/providers', input)
     try {
-      await rows('SELECT gregale_auth.link_sso_organization($1, $2, $3)', [provider.id, org, role])
+      // Linked and marked self-service in one step (sql/0023).
+      await rows('SELECT gregale_auth.link_org_sso_provider($1, $2, $3)', [org, provider.id, role])
     } catch (err) {
       // Nothing may be left half-made: remove the provider GoTrue created.
       await admin('DELETE', `/admin/sso/providers/${provider.id}`).catch(() => {})
@@ -127,6 +128,9 @@ export async function orgSSORoute({ rows, admin, goTrueError, external, lookup, 
     const input = providerInput(body ?? {}, false)
     const role = body?.role ?? null
     await rows('SELECT gregale_auth.check_org_sso($1, $2, $3, $4)', [org, id, input.domains ?? null, role])
+    // A provider whose metadata or domains the organization sets is its own,
+    // even one the operator registered: marked before GoTrue changes it.
+    if (Object.keys(input).length) await rows('SELECT gregale_auth.claim_org_sso_provider($1, $2)', [org, id])
     const provider = Object.keys(input).length ? await goTrue('PUT', `/admin/sso/providers/${id}`, input) : await goTrue('GET', `/admin/sso/providers/${id}`)
     if (role) await rows('SELECT gregale_auth.link_sso_organization($1, $2, $3)', [id, org, role])
     const [link] = (await rows('SELECT provider_id, role FROM gregale_auth.org_sso_providers($1)', [org])).filter(row => row.provider_id === id)

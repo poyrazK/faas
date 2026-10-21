@@ -12002,6 +12002,15 @@ const (
 	// The user-token audience a runtime reports, so live reads verify
 	// tokens as the Data API does.
 	DataAPIAudienceMaxBytes = 256
+	// File storage (ADR-20261021101510), mirrored in the runtime's limits:
+	// the default and largest object an owner may allow, the transfers one
+	// instance streams at once, how long one transfer may take, and how long
+	// a signed download link works.
+	DataAPIStorageObjectDefaultBytes = 25 << 20
+	DataAPIStorageObjectMaxBytes     = 100 << 20
+	DataAPIStorageTransfers          = 4
+	DataAPIStorageTransferTimeout    = 120 * time.Second
+	DataAPIStorageSignedURLTTL       = 60 * time.Second
 	// Anonymous and server-key live reads renew this often, so a revoked key
 	// or a narrowed allowlist reaches open subscriptions within it.
 	LiveQueryKeySessionMax = time.Hour
@@ -12151,6 +12160,11 @@ const (
 	// what one end user can create in the customer's database.
 	AuthMaxOrganizationsPerUser     = 100
 	AuthMaxPendingInvitationsPerOrg = 500
+	// AuthInvitationsPerInviterPerHour and AuthInvitationsPerAddressPerDay
+	// bound the invitation emails any signed-in member can make the app send,
+	// through the customer's own email provider.
+	AuthInvitationsPerInviterPerHour = 50
+	AuthInvitationsPerAddressPerDay  = 10
 	// AuthEmailTimeoutMs bounds one provider request; AuthHookBodyBytes
 	// bounds GoTrue's send-email hook payload; AuthEmailAPIKeyMaxBytes
 	// bounds the sealed provider key.
