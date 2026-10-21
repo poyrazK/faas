@@ -100,3 +100,13 @@ and leakcheck remain mandatory. Compilation does not qualify a host or make
 strict budgets production-ready. All peer helper binaries must come from the
 same rebuilt immutable bundle; mixing old namespace-only bridge binaries with
 the new owner is unsupported.
+
+**Host nftables (2026-10-21).** Ubuntu 24.04 ships nftables 1.0.9, which
+rejects the guard's variable XOR, so every native boot was refused on the
+fleet and the test node. The `nftables` role now builds the pinned upstream
+release (nftables 1.1.3 with libnftnl 1.2.9, checksummed) into
+`/opt/faas/nftables-<version>`, proves the exact guard loads into the host
+kernel in a throwaway namespace, and diverts `/usr/sbin/nft` to it
+(`nftables_upstream_enabled`, defaulting to `faas_public_forwarding`). The
+native acceptance host enables it. Enabling `faas_public_forwarding` without it
+fails the role before any ruleset is rendered.

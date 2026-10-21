@@ -35,6 +35,18 @@
     update_cache: true
     cache_valid_time: 3600
 
+# ADR-1749: the public forward guard needs nftables 1.1.3+, which Ubuntu 24.04
+# does not ship. Rendering it for the distro nft would refuse every native boot.
+- name: nftables — public forwarding requires the pinned upstream nft
+  ansible.builtin.assert:
+    that:
+      - not (faas_public_forwarding | bool) or (nftables_upstream_enabled | bool)
+    fail_msg: "faas_public_forwarding needs nftables_upstream_enabled (nftables {{ nftables_upstream_version }}+)"
+
+- name: nftables — install the pinned upstream nftables
+  ansible.builtin.include_tasks: upstream.yml
+  when: nftables_upstream_enabled | bool
+
 - name: nftables — inspect any pre-existing nftables.conf
   ansible.builtin.stat:
     path: /etc/nftables.conf
