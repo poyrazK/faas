@@ -143,6 +143,11 @@ type JailerVMM struct {
 	// the probe within the readyTimeout deadline.
 	hcClient *http.Client
 	recs     map[string]*instanceRecord // instance -> per-process bookkeeping (M6 builder VMs)
+	// consoleOpens are console files Restore and boot start creating before
+	// startJailer takes them (console_file.go). consoleLogDir overrides
+	// /var/log/faas in tests.
+	consoleOpens  map[string]*consoleFileOpen
+	consoleLogDir string
 	// rings is the per-instance log ring buffer (issue #254 / Move 4).
 	// Created in Boot/Restore before startJailer so cmd.Stdout can be wired
 	// to the ring's writer; closed in Kill/DestroyWithExport so the byte
@@ -1174,6 +1179,8 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return err
 	}
 	v.cancelStartupCPUBoostTail(l.Instance)
+	discardConsole := v.preopenConsoleFile(l.Instance)
+	defer discardConsole()
 	bootStartedAt := time.Now()
 	root, err := v.mkChrootForOwner(ctx, stagingOwner, l.Instance)
 	if err != nil {
@@ -1953,6 +1960,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return err
 	}
 	v.cancelStartupCPUBoostTail(l.Instance)
+	discardConsole := v.preopenConsoleFile(l.Instance)
+	defer discardConsole()
 	// Start the breakdown before any chroot or storage work. The manager's
 	// RestoreMs already covers this full method; keeping the detailed log on
 	// the same boundary makes its total_ms comparable to that field and keeps
@@ -5357,11 +5366,8 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	}
 	isolateLifecycleChild(cmd)
 	ring := v.ringFor(l.Instance)
-	consolePath := filepath.Join("/var/log/faas", "vm-"+l.Instance+".console")
-	var consoleFile *os.File
-	if f, openErr := os.OpenFile(consolePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640); openErr == nil {
-		consoleFile = f
-	}
+	consolePath := v.consoleLogPath(l.Instance)
+	consoleFile := v.takeConsoleFile(l.Instance)
 	stdout := io.Discard
 	var consoleWriter *customerConsoleWriter
 	if ring != nil {
