@@ -394,7 +394,7 @@ func TestReleaseApprovalRejectionAndTimeoutAreRecorded(t *testing.T) {
 		started time.Duration
 		event   string
 	}{
-		{name: "rejected", started: -time.Hour, event: state.ReleaseApprovalEventRejected},
+		{name: "rejected", started: -10 * time.Minute, event: state.ReleaseApprovalEventRejected},
 		{name: "expired", started: -2 * time.Hour, event: state.ReleaseApprovalEventExpired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
