@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Product Control free trials](20261021195901-product-control-free-trials.md)
 - [Product Control plan fees, included starts and overage](20261021154511-product-control-plan-fees-and-overage.md)
 - [Data API file storage](20261021101510-data-api-file-storage.md)
 - [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)

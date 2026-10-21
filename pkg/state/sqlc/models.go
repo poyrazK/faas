@@ -10593,6 +10593,8 @@ type ProductControlCustomer struct {
 	Plan               string
 	Suspended          bool
 	AuthOrganizationID pgtype.UUID
+	TrialStartsAt      pgtype.Timestamptz
+	TrialEndsAt        pgtype.Timestamptz
 }
 
 type ProductControlCustomerChange struct {

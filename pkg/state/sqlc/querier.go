@@ -4239,7 +4239,11 @@ type Querier interface {
 	ProductBillingStatement(ctx context.Context, db DBTX, arg ProductBillingStatementParams) (ProductControlBillingDocument, error)
 	ProductBillingWaive(ctx context.Context, db DBTX, arg ProductBillingWaiveParams) error
 	ProductControlCountStarts(ctx context.Context, db DBTX, arg ProductControlCountStartsParams) (int64, error)
+	// A feature's starts admitted during the customer's trial, which count toward
+	// no included starts (ADR-20261021195901).
+	ProductControlCountTrialStarts(ctx context.Context, db DBTX, arg ProductControlCountTrialStartsParams) (int64, error)
 	ProductControlCustomerByAuthOrganization(ctx context.Context, db DBTX, arg ProductControlCustomerByAuthOrganizationParams) (ProductControlCustomerByAuthOrganizationRow, error)
+	ProductControlCustomerForUpdate(ctx context.Context, db DBTX, arg ProductControlCustomerForUpdateParams) (ProductControlCustomerForUpdateRow, error)
 	ProductControlGetCustomer(ctx context.Context, db DBTX, arg ProductControlGetCustomerParams) (ProductControlGetCustomerRow, error)
 	ProductControlGetHead(ctx context.Context, db DBTX, arg ProductControlGetHeadParams) (ProductControlGetHeadRow, error)
 	ProductControlGetReceipt(ctx context.Context, db DBTX, arg ProductControlGetReceiptParams) (ProductControlGetReceiptRow, error)
@@ -4248,17 +4252,23 @@ type Querier interface {
 	ProductControlListCustomers(ctx context.Context, db DBTX, arg ProductControlListCustomersParams) ([]ProductControlListCustomersRow, error)
 	ProductControlLiveDefinition(ctx context.Context, db DBTX, arg ProductControlLiveDefinitionParams) (string, error)
 	ProductControlManagedApp(ctx context.Context, db DBTX, arg ProductControlManagedAppParams) (bool, error)
-	// The plans a customer held in a month: the one in force when it starts and
-	// those assigned during it, each with when it was first held and whether it
-	// includes their first assignment ever (ADR-20261021154511).
+	// The assignments a customer held during a month, each from since until the
+	// next one (null while still held), and whether it was their first ever
+	// (ADR-20261021154511, ADR-20261021195901).
 	ProductControlMonthPlans(ctx context.Context, db DBTX, arg ProductControlMonthPlansParams) ([]ProductControlMonthPlansRow, error)
 	ProductControlOwnedApp(ctx context.Context, db DBTX, arg ProductControlOwnedAppParams) (pgtype.UUID, error)
 	ProductControlPutRevision(ctx context.Context, db DBTX, arg ProductControlPutRevisionParams) error
 	// A change of revision or plan is appended to the plan history in the same
-	// statement, so every writer records it (ADR-20261021154511).
+	// statement, so every writer records it (ADR-20261021154511). A customer
+	// without a trial starts one when assigned a plan offering it, and keeps
+	// any trial they had (ADR-20261021195901).
 	ProductControlSetCustomer(ctx context.Context, db DBTX, arg ProductControlSetCustomerParams) error
 	ProductControlSetHead(ctx context.Context, db DBTX, arg ProductControlSetHeadParams) error
+	// Moves a running trial's end (ADR-20261021195901); the caller checked it
+	// under the row lock.
+	ProductControlSetTrialEnd(ctx context.Context, db DBTX, arg ProductControlSetTrialEndParams) error
 	ProductControlSettleReceipt(ctx context.Context, db DBTX, arg ProductControlSettleReceiptParams) error
+	ProductControlTrialStartsByFeature(ctx context.Context, db DBTX, arg ProductControlTrialStartsByFeatureParams) ([]ProductControlTrialStartsByFeatureRow, error)
 	ProductControlUsage(ctx context.Context, db DBTX, arg ProductControlUsageParams) ([]ProductControlUsageRow, error)
 	// One statement observes all sources with one PostgreSQL snapshot. No customer
 	// Operations or Auth journals are read; no signed reviews, inputs or result payloads are returned.
