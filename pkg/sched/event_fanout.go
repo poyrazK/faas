@@ -23,6 +23,12 @@ const eventFanoutRecoveryBatch = 100
 const eventFanoutSubscriptionBatch = 256
 const eventFanoutRecipientMaxAttempts = api.EventRoutingRetryDefaultAttempts
 
+// eventRecipientClaimBatch bounds one claim scan. Each claim in a batch holds
+// its lease until the sweep routes it, and a stopping sweep releases the rest
+// within eventRecipientReleaseTimeout.
+const eventRecipientClaimBatch = 20
+const eventRecipientReleaseTimeout = 5 * time.Second
+
 // eventFanoutSafetyTick re-runs the fanout sweep when no event_published
 // wake arrives; a wake that lands while a sweep runs is coalesced away.
 const eventFanoutSafetyTick = 5 * time.Second
@@ -581,14 +587,19 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 	if !ok {
 		return
 	}
-	for i := 0; i < eventFanoutRecoveryBatch; i++ {
-		now := time.Now().UTC()
-		if l.now != nil {
-			now = l.now().UTC()
-		}
-		work, err := store.ClaimDuePublishedEventRecipient(ctx, now, l.workflowsDispatched)
-		if errors.Is(err, state.ErrNotFound) {
-			return
+	batches, batched := l.engine.store.(state.PublishedEventRecipientBatchClaimStore)
+	for routed := 0; routed < eventFanoutRecoveryBatch; {
+		var works []*state.PublishedEventRecipientWork
+		var err error
+		if batched {
+			works, err = batches.ClaimDuePublishedEventRecipients(ctx, l.eventFanoutNow(), min(eventRecipientClaimBatch, eventFanoutRecoveryBatch-routed), l.workflowsDispatched)
+		} else {
+			var work *state.PublishedEventRecipientWork
+			if work, err = store.ClaimDuePublishedEventRecipient(ctx, l.eventFanoutNow(), l.workflowsDispatched); err == nil {
+				works = append(works, work)
+			} else if errors.Is(err, state.ErrNotFound) {
+				err = nil
+			}
 		}
 		if err != nil {
 			if l.log != nil {
@@ -596,93 +607,127 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 			}
 			return
 		}
-		if state.EventSchemaVersionMismatch(work.Recipient, work.Payload) {
-			filtered := state.EventSchemaVersionFilteredProgress(work.PreviousProgress, max(0, work.TotalAttempts-1), now)
-			if err := store.FinishPublishedEventRecipient(ctx, work, filtered, now); err != nil && l.log != nil {
-				l.log.Error("sched: filter event schema version", "err", err)
+		if len(works) == 0 {
+			return
+		}
+		for i, work := range works {
+			if ctx.Err() != nil {
+				l.releaseEventRecipientClaims(ctx, batches, works[i:])
+				return
 			}
-			continue
+			l.routeEventRecipient(ctx, store, work, l.eventFanoutNow())
 		}
-		if state.EventDeliveryExpired(work.Recipient, work.AcceptedAt, work.PreviousProgress, now) {
-			expired := state.EventDeliveryExpiredProgress(work.PreviousProgress, max(0, work.TotalAttempts-1), now)
-			if err := store.FinishPublishedEventRecipient(ctx, work, expired, now); err != nil && l.log != nil {
-				l.log.Error("sched: expire event delivery", "err", err)
+		routed += len(works)
+	}
+}
+
+func (l *Loop) eventFanoutNow() time.Time {
+	if l.now != nil {
+		return l.now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+// releaseEventRecipientClaims hands back a batch's unprocessed claims when the
+// sweep stops early, so a restart does not leave them waiting out their lease.
+func (l *Loop) releaseEventRecipientClaims(ctx context.Context, store state.PublishedEventRecipientBatchClaimStore, works []*state.PublishedEventRecipientWork) {
+	if store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), eventRecipientReleaseTimeout)
+	defer cancel()
+	for _, work := range works {
+		if err := store.ReleasePublishedEventRecipientClaim(ctx, work); err != nil && l.log != nil {
+			l.log.Warn("sched: release event recipient claim failed", "outbox_id", work.OutboxID,
+				"subscription_id", work.Recipient.ID, "err", err)
+		}
+	}
+}
+
+func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEventRecipientWorkStore, work *state.PublishedEventRecipientWork, now time.Time) {
+	if state.EventSchemaVersionMismatch(work.Recipient, work.Payload) {
+		filtered := state.EventSchemaVersionFilteredProgress(work.PreviousProgress, max(0, work.TotalAttempts-1), now)
+		if err := store.FinishPublishedEventRecipient(ctx, work, filtered, now); err != nil && l.log != nil {
+			l.log.Error("sched: filter event schema version", "err", err)
+		}
+		return
+	}
+	if state.EventDeliveryExpired(work.Recipient, work.AcceptedAt, work.PreviousProgress, now) {
+		expired := state.EventDeliveryExpiredProgress(work.PreviousProgress, max(0, work.TotalAttempts-1), now)
+		if err := store.FinishPublishedEventRecipient(ctx, work, expired, now); err != nil && l.log != nil {
+			l.log.Error("sched: expire event delivery", "err", err)
+		}
+		return
+	}
+	if breaker, ok := l.engine.store.(state.EventCircuitBreakerStore); ok {
+		reason, next, err := breaker.AcquireEventCircuitPermit(ctx, work, now)
+		if err != nil {
+			reason, next = "circuit_probe_wait", now.Add(time.Second)
+			if l.log != nil {
+				l.log.Error("sched: acquire event circuit permit failed", "err", err)
 			}
-			continue
 		}
-		if breaker, ok := l.engine.store.(state.EventCircuitBreakerStore); ok {
-			reason, next, err := breaker.AcquireEventCircuitPermit(ctx, work, now)
-			if err != nil {
-				reason, next = "circuit_probe_wait", now.Add(time.Second)
-				if l.log != nil {
-					l.log.Error("sched: acquire event circuit permit failed", "err", err)
-				}
+		if reason != "" {
+			wait := state.EventCircuitWaitProgress(work.PreviousProgress, work.TotalAttempts, reason, next)
+			if err := store.FinishPublishedEventRecipient(ctx, work, wait, next); err != nil && l.log != nil {
+				l.log.Error("sched: defer event circuit delivery", "err", err)
 			}
-			if reason != "" {
-				wait := state.EventCircuitWaitProgress(work.PreviousProgress, work.TotalAttempts, reason, next)
-				if err := store.FinishPublishedEventRecipient(ctx, work, wait, next); err != nil && l.log != nil {
-					l.log.Error("sched: defer event circuit delivery", "err", err)
-				}
-				continue
-			}
+			return
 		}
-		startedAt := time.Now()
-		var envelope events.Envelope
-		routeErr := json.Unmarshal(work.Payload, &envelope)
-		if routeErr == nil {
-			routeErr = envelope.Validate()
-		}
-		var eventPayload []byte
-		if routeErr == nil {
-			eventPayload, routeErr = json.Marshal(envelope)
-		}
-		matched := false
-		if routeErr == nil {
-			if len(work.Recipient.Workflow) != 0 {
-				admission, ok := l.engine.store.(state.EventWorkflowRecipientAdmissionStore)
-				if !ok {
-					routeErr = &eventFanoutRouteError{code: state.EventFanoutFailureCodeInternal, retryable: true,
-						err: errors.New("workflow recipient admission store is unavailable")}
-				} else {
-					result, err := admission.AdmitEventWorkflowRecipient(ctx, state.PublishedEventRoutingClaim{
-						OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
-						ClaimToken: work.ClaimToken, Generation: work.Generation,
-					})
-					if err == nil {
-						continue
-					}
-					matched, routeErr = result.Matched, err
-				}
-			} else if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && work.Recipient.ObjectNotification == nil {
-				result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
+	}
+	startedAt := time.Now()
+	var envelope events.Envelope
+	routeErr := json.Unmarshal(work.Payload, &envelope)
+	if routeErr == nil {
+		routeErr = envelope.Validate()
+	}
+	var eventPayload []byte
+	if routeErr == nil {
+		eventPayload, routeErr = json.Marshal(envelope)
+	}
+	matched := false
+	if routeErr == nil {
+		if len(work.Recipient.Workflow) != 0 {
+			admission, ok := l.engine.store.(state.EventWorkflowRecipientAdmissionStore)
+			if !ok {
+				routeErr = &eventFanoutRouteError{code: state.EventFanoutFailureCodeInternal, retryable: true,
+					err: errors.New("workflow recipient admission store is unavailable")}
+			} else {
+				result, err := admission.AdmitEventWorkflowRecipient(ctx, state.PublishedEventRoutingClaim{
 					OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
-					ClaimToken: work.ClaimToken, Generation: work.Generation, BackfillJobID: work.BackfillJobID,
+					ClaimToken: work.ClaimToken, Generation: work.Generation,
 				})
 				if err == nil {
-					continue
+					return
 				}
 				matched, routeErr = result.Matched, err
-			} else {
-				matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true, work.OutboxID)
 			}
+		} else if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && work.Recipient.ObjectNotification == nil {
+			result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
+				OutboxID: work.OutboxID, SubscriptionID: work.Recipient.ID,
+				ClaimToken: work.ClaimToken, Generation: work.Generation, BackfillJobID: work.BackfillJobID,
+			})
+			if err == nil {
+				return
+			}
+			matched, routeErr = result.Matched, err
+		} else {
+			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true, work.OutboxID)
 		}
-		finishedAt := time.Now().UTC()
-		if l.now != nil {
-			finishedAt = l.now().UTC()
-		}
-		progress, next := eventRoutingRetryOutcome(work.Recipient, work.PreviousProgress, work.TotalAttempts, work.Attempts-work.GenerationCapacityDeferrals, work.CapacityDeferrals, work.Generation, matched, routeErr, finishedAt, time.Since(startedAt), eventRoutingRetrySeed(work.OutboxID, work.Recipient.ID, work.Generation, work.Attempts-work.GenerationCapacityDeferrals))
-		if len(progress.LastError) > 1024 {
-			progress.LastError = progress.LastError[:1024]
-		}
+	}
+	finishedAt := l.eventFanoutNow()
+	progress, next := eventRoutingRetryOutcome(work.Recipient, work.PreviousProgress, work.TotalAttempts, work.Attempts-work.GenerationCapacityDeferrals, work.CapacityDeferrals, work.Generation, matched, routeErr, finishedAt, time.Since(startedAt), eventRoutingRetrySeed(work.OutboxID, work.Recipient.ID, work.Generation, work.Attempts-work.GenerationCapacityDeferrals))
+	if len(progress.LastError) > 1024 {
+		progress.LastError = progress.LastError[:1024]
+	}
 
-		if err := store.FinishPublishedEventRecipient(ctx, work, progress, next); err != nil && l.log != nil {
-			l.log.Error("sched: finish event recipient failed", "outbox_id", work.OutboxID,
-				"subscription_id", work.Recipient.ID, "err", err)
-		} else if progress.State == state.PublishedEventRecipientFailed && l.log != nil {
-			l.log.Error("sched: event recipient routing failed", "outbox_id", work.OutboxID,
-				"subscription_id", work.Recipient.ID, "failure_code", progress.FailureCode,
-				"retryable", progress.Retryable, "err", progress.LastError)
-		}
+	if err := store.FinishPublishedEventRecipient(ctx, work, progress, next); err != nil && l.log != nil {
+		l.log.Error("sched: finish event recipient failed", "outbox_id", work.OutboxID,
+			"subscription_id", work.Recipient.ID, "err", err)
+	} else if progress.State == state.PublishedEventRecipientFailed && l.log != nil {
+		l.log.Error("sched: event recipient routing failed", "outbox_id", work.OutboxID,
+			"subscription_id", work.Recipient.ID, "failure_code", progress.FailureCode,
+			"retryable", progress.Retryable, "err", progress.LastError)
 	}
 }
 

@@ -38,6 +38,7 @@ type contractTestStore interface {
 	state.EventReceiptStore
 	state.EventReplayPreviewStore
 	state.EventStorageUsageStore
+	state.EventSubscriptionControlStore
 	state.EventSubscriptionStore
 	state.EventWorkBindingStore
 	state.FeatureFlagStore
@@ -127,6 +128,8 @@ type contractTestStore interface {
 	state.ProjectReleaseSetReader
 	state.ProjectReleaseSetStore
 	state.PublishedEventRecipientAdmissionStore
+	state.PublishedEventRecipientAdoptionClaimStore
+	state.PublishedEventRecipientBatchClaimStore
 	state.PublishedEventRecipientProgressStore
 	state.PublishedEventRecipientWorkStore
 	state.PublishedEventRetentionStore

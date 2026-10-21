@@ -632,6 +632,166 @@ func (q *Queries) EventRecipientClaim(ctx context.Context, db DBTX, arg EventRec
 	return i, err
 }
 
+const eventRecipientClaimBatch = `-- name: EventRecipientClaimBatch :many
+WITH eligible AS MATERIALIZED (
+    SELECT r.outbox_id, r.subscription_id, o.account_id, r.available_at,
+        event_recipient_schema_version_mismatch(r.recipient,o.payload) AS schema_mismatch,
+        coalesce(fa.last_claimed_at,'epoch'::timestamptz) AS account_served,
+        coalesce(fc.last_claimed_at,'epoch'::timestamptz) AS consumer_served,
+        (EXISTS (SELECT 1 FROM event_subscription_delivery_controls c
+            WHERE c.app_id=r.app_id AND c.account_id=o.account_id AND c.subscription_id::text=r.subscription_id)
+         OR EXISTS (SELECT 1 FROM event_subscription_circuit_breakers b
+            WHERE b.app_id=r.app_id AND b.account_id=o.account_id AND b.subscription_id::text=r.subscription_id)) AS controlled
+    FROM event_fanout_recipients r
+    JOIN event_fanout_outbox o ON o.id=r.outbox_id
+    LEFT JOIN event_routing_fairness fa ON fa.account_id=o.account_id AND fa.subscription_id=''
+    LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r.subscription_id
+    WHERE ((r.state = 'pending' AND (r.available_at <= $1::timestamptz OR r.delivery_deadline_at <= $1::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload)))
+       OR (r.state = 'processing' AND r.lease_until <= $1::timestamptz))
+      AND ($2::boolean OR NOT r.recipient ? 'workflow')
+      AND (r.backfill_job_id IS NULL OR EXISTS (
+          SELECT 1 FROM event_replay_jobs j JOIN event_replay_job_items i ON i.job_id=j.id
+          WHERE j.id=r.backfill_job_id AND j.state='running' AND i.outbox_id=r.outbox_id
+            AND i.state IN ('pending','processing')))
+      AND (r.delivery_deadline_at <= $1::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload) OR event_subscription_delivery_waiting_reason(o.account_id,r.app_id,r.subscription_id,$1::timestamptz)='')
+      AND (r.delivery_deadline_at <= $1::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload) OR NOT event_recipient_order_blocked(r.outbox_id, r.subscription_id, r.recipient, true))
+), consumer_rounds AS (
+    SELECT e.outbox_id, e.subscription_id, e.account_id, e.available_at, e.schema_mismatch, e.account_served, e.consumer_served, e.controlled, row_number() OVER consumer_order AS consumer_round,
+        first_value(e.available_at) OVER consumer_order AS consumer_first_available_at,
+        first_value(e.outbox_id) OVER consumer_order AS consumer_first_outbox_id
+    FROM eligible e
+    WINDOW consumer_order AS (PARTITION BY e.account_id, e.subscription_id ORDER BY e.available_at, e.outbox_id)
+), account_rounds AS (
+    SELECT c.outbox_id, c.subscription_id, c.account_id, c.available_at, c.schema_mismatch, c.account_served, c.consumer_served, c.controlled, c.consumer_round, c.consumer_first_available_at, c.consumer_first_outbox_id, row_number() OVER (PARTITION BY c.account_id ORDER BY c.consumer_round, c.consumer_served,
+        c.consumer_first_available_at, c.consumer_first_outbox_id, c.subscription_id) AS account_round
+    FROM consumer_rounds c
+    WHERE c.consumer_round = 1 OR NOT c.controlled
+), account_firsts AS (
+    -- Later rounds visit accounts in the order their first claims took.
+    SELECT a.outbox_id, a.subscription_id, a.account_id, a.available_at, a.schema_mismatch, a.account_served, a.consumer_served, a.controlled, a.consumer_round, a.consumer_first_available_at, a.consumer_first_outbox_id, a.account_round, first_value(a.consumer_served) OVER account_order AS first_consumer_served,
+        first_value(a.available_at) OVER account_order AS first_available_at,
+        first_value(a.outbox_id) OVER account_order AS first_outbox_id,
+        first_value(a.subscription_id) OVER account_order AS first_subscription_id
+    FROM account_rounds a
+    WINDOW account_order AS (PARTITION BY a.account_id ORDER BY a.account_round)
+), ordered AS (
+    SELECT f.outbox_id, f.subscription_id, f.schema_mismatch,
+        row_number() OVER (ORDER BY f.account_round, f.account_served, f.first_consumer_served,
+            f.first_available_at, f.first_outbox_id, f.first_subscription_id) AS position
+    FROM account_firsts f
+), candidate AS (
+    -- Repeating the due test here re-checks a row another worker claimed
+    -- after this statement's snapshot, before SKIP LOCKED could skip it.
+    SELECT r.outbox_id, r.subscription_id, k.position
+    FROM event_fanout_recipients r
+    JOIN ordered k ON k.outbox_id=r.outbox_id AND k.subscription_id=r.subscription_id
+    WHERE (r.state = 'pending' AND (r.available_at <= $1::timestamptz OR r.delivery_deadline_at <= $1::timestamptz OR k.schema_mismatch))
+       OR (r.state = 'processing' AND r.lease_until <= $1::timestamptz)
+    ORDER BY k.position
+    FOR UPDATE OF r SKIP LOCKED LIMIT $3::integer
+), claimed AS (
+    UPDATE event_fanout_recipients r
+    SET state = 'processing', claim_token = gen_random_uuid(),
+        lease_until = $1::timestamptz + interval '5 minutes',
+        attempts = r.attempts + 1, total_attempts = r.total_attempts + 1
+    FROM candidate c
+    WHERE r.outbox_id = c.outbox_id AND r.subscription_id = c.subscription_id
+    RETURNING r.outbox_id, r.subscription_id, r.app_id, r.recipient, r.state, r.generation, r.attempts, r.total_attempts, r.available_at, r.claim_token, r.lease_until, r.capacity_deferrals, r.generation_capacity_deferrals, r.backfill_job_id, r.receipt_position, r.delivery_deadline_at, c.position
+), replay_item AS (
+    UPDATE event_replay_job_items i SET state='processing', attempts=c.total_attempts, updated_at=clock_timestamp()
+    FROM claimed c WHERE c.backfill_job_id=i.job_id AND c.outbox_id=i.outbox_id
+      AND i.state IN ('pending','processing')
+    RETURNING i.job_id
+), stamp AS MATERIALIZED (
+    SELECT clock_timestamp() AS at
+), served AS (
+    -- Each account and consumer is stamped at its last claim in the batch, as
+    -- back-to-back claims would leave it.
+    SELECT o.account_id, ''::text AS subscription_id, max(c.position) AS position
+    FROM claimed c JOIN event_fanout_outbox o ON o.id=c.outbox_id
+    GROUP BY o.account_id
+    UNION ALL
+    SELECT o.account_id, c.subscription_id, max(c.position)
+    FROM claimed c JOIN event_fanout_outbox o ON o.id=c.outbox_id
+    GROUP BY o.account_id, c.subscription_id
+), fairness AS (
+    -- Rows are written in key order, the lock order every claim uses.
+    INSERT INTO event_routing_fairness
+    SELECT s.account_id, s.subscription_id, t.at + s.position * interval '1 microsecond' FROM served s CROSS JOIN stamp t
+    ORDER BY s.account_id, s.subscription_id
+    ON CONFLICT (account_id,subscription_id) DO UPDATE SET last_claimed_at=excluded.last_claimed_at
+    RETURNING account_id
+)
+SELECT c.outbox_id, c.recipient, c.claim_token, c.generation, c.attempts,
+       c.capacity_deferrals,c.generation_capacity_deferrals,
+       c.total_attempts, c.available_at, c.lease_until, o.payload, o.created_at AS accepted_at, c.backfill_job_id, (o.recipient_progress->c.subscription_id)::jsonb AS previous_progress
+FROM claimed c JOIN event_fanout_outbox o ON o.id = c.outbox_id
+ORDER BY c.position
+`
+
+type EventRecipientClaimBatchParams struct {
+	NowAt            pgtype.Timestamptz
+	IncludeWorkflows bool
+	BatchLimit       int32
+}
+
+type EventRecipientClaimBatchRow struct {
+	OutboxID                    int64
+	Recipient                   []byte
+	ClaimToken                  pgtype.UUID
+	Generation                  int64
+	Attempts                    int32
+	CapacityDeferrals           int32
+	GenerationCapacityDeferrals int32
+	TotalAttempts               int32
+	AvailableAt                 pgtype.Timestamptz
+	LeaseUntil                  pgtype.Timestamptz
+	Payload                     []byte
+	AcceptedAt                  pgtype.Timestamptz
+	BackfillJobID               pgtype.UUID
+	PreviousProgress            []byte
+}
+
+// One scan claims what back-to-back EventRecipientClaim calls would claim, in
+// the same order: each round takes one recipient from every eligible account
+// in service order and rotates the account's consumers. A consumer with
+// delivery controls contributes one recipient per batch, so its admission
+// gate sees current counters before its next claim.
+func (q *Queries) EventRecipientClaimBatch(ctx context.Context, db DBTX, arg EventRecipientClaimBatchParams) ([]EventRecipientClaimBatchRow, error) {
+	rows, err := db.Query(ctx, eventRecipientClaimBatch, arg.NowAt, arg.IncludeWorkflows, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventRecipientClaimBatchRow{}
+	for rows.Next() {
+		var i EventRecipientClaimBatchRow
+		if err := rows.Scan(
+			&i.OutboxID,
+			&i.Recipient,
+			&i.ClaimToken,
+			&i.Generation,
+			&i.Attempts,
+			&i.CapacityDeferrals,
+			&i.GenerationCapacityDeferrals,
+			&i.TotalAttempts,
+			&i.AvailableAt,
+			&i.LeaseUntil,
+			&i.Payload,
+			&i.AcceptedAt,
+			&i.BackfillJobID,
+			&i.PreviousProgress,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eventRecipientFinish = `-- name: EventRecipientFinish :execrows
 UPDATE event_fanout_recipients
 SET attempts=attempts-CASE WHEN $1::boolean THEN 1 ELSE 0 END,
@@ -787,6 +947,36 @@ func (q *Queries) EventRecipientLockReceipt(ctx context.Context, db DBTX, id int
 	var id_2 int64
 	err := row.Scan(&id_2)
 	return id_2, err
+}
+
+const eventRecipientReleaseClaim = `-- name: EventRecipientReleaseClaim :execrows
+UPDATE event_fanout_recipients
+SET state = 'pending', claim_token = NULL, lease_until = NULL,
+    attempts = attempts - 1, total_attempts = total_attempts - 1
+WHERE outbox_id = $1::bigint AND subscription_id = $2::text
+  AND state = 'processing' AND claim_token = $3::uuid
+  AND generation = $4::bigint
+`
+
+type EventRecipientReleaseClaimParams struct {
+	OutboxID       int64
+	SubscriptionID string
+	ClaimToken     pgtype.UUID
+	Generation     int64
+}
+
+// Returns an unprocessed batch claim as if it had not been made.
+func (q *Queries) EventRecipientReleaseClaim(ctx context.Context, db DBTX, arg EventRecipientReleaseClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, eventRecipientReleaseClaim,
+		arg.OutboxID,
+		arg.SubscriptionID,
+		arg.ClaimToken,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const eventRecipientReplay = `-- name: EventRecipientReplay :execrows
