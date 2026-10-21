@@ -1701,8 +1701,13 @@ select id, app_id, deployment_id, state, coalesce(netns, ''), coalesce(guest_uid
 from instances where id = $1;
 
 -- name: PublishOwnedInstanceRuntime :one
+-- A thawed frozen VM or a promoted warm one resumes for a wake: that is its
+-- latest activity, not the request it paused after, which the reaper would
+-- otherwise measure idleness from until the activity batch reports the
+-- request that woke it (ADR-1151).
 UPDATE instances SET netns=sqlc.arg(netns)::text, host_ip=sqlc.arg(host_ip)::inet,
-    guest_uid=sqlc.arg(guest_uid)::integer, started_at=clock_timestamp(), state=sqlc.arg(target_state)::text
+    guest_uid=sqlc.arg(guest_uid)::integer, started_at=clock_timestamp(), state=sqlc.arg(target_state)::text,
+    last_request_at=CASE WHEN sqlc.arg(expected_state)::text IN ('warm','frozen') THEN clock_timestamp() ELSE last_request_at END
 WHERE id=sqlc.arg(instance_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
     AND deployment_id=sqlc.arg(deployment_id)::uuid AND node_id=sqlc.arg(node_id)::uuid
     AND wake_id=sqlc.arg(wake_id)::uuid AND state=sqlc.arg(expected_state)::text
@@ -1758,6 +1763,7 @@ WHERE a.id=sqlc.arg(app_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid;
 -- config proof must still be the ticket's, and an enrollment exception,
 -- which expires with time and moves no generation, must not have expired.
 -- The transition event and instance_changed notification commit with it.
+-- The thaw is the instance's latest activity, as in PublishOwnedInstanceRuntime.
 -- No row means a guard refused and nothing changed.
 WITH generation_lock AS (
     SELECT g.app_id FROM app_runtime_generations g
@@ -1768,7 +1774,7 @@ WITH generation_lock AS (
         SELECT 1 FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id
             AND (s.exception_expires_at IS NULL OR now()<s.exception_expires_at)))
 ), thawed AS (
-    UPDATE instances SET started_at=clock_timestamp(), state='running'
+    UPDATE instances SET started_at=clock_timestamp(), last_request_at=clock_timestamp(), state='running'
     WHERE id=sqlc.arg(instance_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
         AND deployment_id=sqlc.arg(deployment_id)::uuid AND node_id=sqlc.arg(node_id)::uuid
         AND wake_id=sqlc.arg(wake_id)::uuid AND state='frozen'

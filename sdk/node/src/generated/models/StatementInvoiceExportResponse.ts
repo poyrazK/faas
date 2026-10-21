@@ -32,7 +32,7 @@ export type StatementInvoiceExportResponse = {
   automatic_tax?: boolean;
   created_at: string;
   completed_at?: string;
-  source_kind?: 'app_consumer' | 'platform_tenant';
+  source_kind?: 'app_consumer' | 'platform_tenant' | 'product_control';
   /**
    * The provider invoice's status as last read by Gregale (ADR-1504, ADR-1507); deleted means the provider no longer has it. Absent until the first sync.
    */

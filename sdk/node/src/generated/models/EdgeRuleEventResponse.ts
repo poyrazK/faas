@@ -18,9 +18,9 @@ export type EdgeRuleEventResponse = {
   rule_name?: string;
   rule_kind?: string;
   /**
-   * matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests were answered with 403).
+   * matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests were answered with 403). challenged, rejected, solved and failed are kind=challenge outcomes: the challenge page served to a browser, a request that is not a browser navigation answered with 403, a solution that earned a pass, and a solution answered with 403. An enforced challenge rule records these instead of matched.
    */
-  outcome: 'matched' | 'logged' | 'detected' | 'warned' | 'blocked';
+  outcome: 'matched' | 'logged' | 'detected' | 'warned' | 'blocked' | 'challenged' | 'rejected' | 'solved' | 'failed';
   occurred_at: string;
   request_id?: string;
   method?: string;

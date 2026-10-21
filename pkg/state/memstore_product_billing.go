@@ -14,6 +14,24 @@ type productMemoryDocument struct {
 	document     api.ProductBillingDocument
 }
 
+// SeedProductBillingDocumentForTest stores a finalized document, which a
+// MemStore cannot otherwise create for a closed month.
+func (m *MemStore) SeedProductBillingDocumentForTest(accountID, appID string, doc api.ProductBillingDocument) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.productLocked().documents[doc.ID] = productMemoryDocument{account: accountID, app: appID, document: doc}
+}
+
+// SeedProductOperationForTest stores an operation's Product Control receipt
+// and, when the operation is terminal, its outcome, which a MemStore cannot
+// otherwise backdate into a closed month.
+func (m *MemStore) SeedProductOperationForTest(op Operation) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.insertProductOperationLocked(op)
+	m.settleProductOperationLocked(op)
+}
+
 func (m *MemStore) productBillingScopeLocked(scope ProductBillingScope) (api.ProductCatalog, error) {
 	if err := validateProductBillingScope(scope); err != nil {
 		return api.ProductCatalog{}, err
@@ -162,6 +180,22 @@ func (m *MemStore) ListProductBillingDocuments(_ context.Context, scope ProductB
 		out.NextCursor = out.Documents[len(out.Documents)-1].ID
 	}
 	return cloneProductBilling(out), nil
+}
+
+func (m *MemStore) GetProductBillingDocument(_ context.Context, scope ProductBillingScope, id string) (api.ProductBillingDocument, error) {
+	if !validProductUUID(id) {
+		return api.ProductBillingDocument{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.productBillingScopeLocked(scope); err != nil {
+		return api.ProductBillingDocument{}, err
+	}
+	row, ok := m.productLocked().documents[id]
+	if !ok || !productMemoryDocumentInScope(row, scope) {
+		return api.ProductBillingDocument{}, ErrNotFound
+	}
+	return cloneProductBilling(row.document), nil
 }
 
 func (m *MemStore) FinalizeProductBilling(_ context.Context, scope ProductBillingScope, expected string) (api.ProductBillingDocument, error) {

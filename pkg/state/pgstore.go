@@ -4830,6 +4830,10 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	// Most app-owned tables use ON DELETE CASCADE (alerts, mirrors,
 	// webhooks, edge rules, tenant surfaces, and their deliveries).
 	// The parent delete therefore removes those rows atomically as well.
+	// Product Control receipts, waivers, statements, credit notes, invoice
+	// handoffs and catalog revisions are deliberately retained
+	// (ADR-20261020090607): they have no FK to apps, and account deletion
+	// removes them.
 	tag, err := tx.Exec(ctx,
 		`delete from apps where id = $1 and status = 'deleted' and delete_grace_until <= now() and purge_claimed_at is not null`, id)
 	if err != nil {

@@ -217,6 +217,7 @@ type PreviewSourceImpact = previewSourceImpact
 type PreviewUnmatchedSource = previewUnmatchedSource
 type ProductAccessReviewFile = productAccessReviewFile
 type ProductCommand = productCommand
+type ProductOverdueView = productOverdueView
 type ProductPilotFixture = productPilotFixture
 type ProductPlanPolicyReviewFile = productPlanPolicyReviewFile
 type ProductTeamPolicyReviewFile = productTeamPolicyReviewFile

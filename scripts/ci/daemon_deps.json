@@ -13,6 +13,20 @@
       "package": "golang.org/x/net/trace",
       "binaries": "DAEMONS",
       "reason": "gRPC links it unless the grpcnotrace tag is set (Makefile DAEMON_TAGS); its html/template pages reach reflect.Value.MethodByName, which makes the linker keep every exported method of every type converted to an interface, so every store query change rewrites the daemon (docs/adr/20261020160744-daemon-blast-radius.md)."
+    },
+    {
+      "package": "html/template",
+      "binaries": "DAEMONS",
+      "except": ["apid"],
+      "allow_importers": ["net/rpc"],
+      "reason": "Executing a template reaches text/template's reflect.Value.MethodByName, which makes the linker keep every exported method of every type converted to an interface: gatewayd-internal linked all 4,169 *state.PgStore methods through pkg/gateway's challenge page, so every store change rebuilt the edge lane. Write the page with html.EscapeString (pkg/gateway/edge_rules_challenge_page.go; finding 7 of docs/adr/20261020160744-daemon-blast-radius.md). net/rpc imports it for a debug page no daemon serves; apid renders its dashboard with it and links the whole store regardless."
+    },
+    {
+      "package": "text/template",
+      "binaries": "DAEMONS",
+      "except": ["apid"],
+      "allow_importers": ["html/template", "github.com/pressly/goose/v3"],
+      "reason": "Executing a template reaches reflect.Value.MethodByName (see the html/template rule). goose only parses its migration-file template at init and never executes it in a daemon; html/template is covered by its own rule."
     }
   ]
 }

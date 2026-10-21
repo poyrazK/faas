@@ -174,6 +174,13 @@ func buildV6BaseExt4(dst, repoRoot string) error {
 // buildV6BaseExt4Port is buildV6BaseExt4 with the fixture app listening on
 // port instead of 8080 — a deployment with a custom guest port.
 func buildV6BaseExt4Port(dst, repoRoot string, port int) error {
+	return buildV6BaseExt4With(dst, repoRoot, port, "faas-v6")
+}
+
+// buildV6BaseExt4With is buildV6BaseExt4Port with the filesystem label and
+// extra mkfs.ext4 arguments chosen: a pmem base (ADR-908) needs
+// PmemBaseLabel and 4 KiB blocks.
+func buildV6BaseExt4With(dst, repoRoot string, port int, label string, mkfsArgs ...string) error {
 	bb, err := exec.LookPath("busybox")
 	if err != nil {
 		return fmt.Errorf("busybox not on PATH and no fixture URL reachable: %w", err)
@@ -292,7 +299,7 @@ esac
 	} else if err := f.Close(); err != nil {
 		return fmt.Errorf("close ext4 file: %w", err)
 	}
-	mkfs := exec.Command("mkfs.ext4", "-O", "^has_journal", "-d", work, "-L", "faas-v6", "-F", dst)
+	mkfs := exec.Command("mkfs.ext4", append(append([]string{"-O", "^has_journal", "-d", work, "-L", label}, mkfsArgs...), "-F", dst)...)
 	mkfs.Stderr = os.Stderr
 	if err := mkfs.Run(); err != nil {
 		return fmt.Errorf("mkfs.ext4 base: %w", err)

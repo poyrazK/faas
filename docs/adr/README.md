@@ -1,6 +1,8 @@
 # Architecture Decision Records
 
 - [Data API file storage](20261021101510-data-api-file-storage.md)
+- [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)
+- [Product Control customers keep their billing details in the owner's Paddle](20261020120000-product-control-customer-billing-details.md)
 - [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
 - [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
@@ -205,6 +207,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1725 | [Product Control customer workspace activity](1725-product-control-workspace-activity.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
 | 1726 | [Product Control customer run details](1726-product-control-customer-run-details.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
 | 1727 | [Product Control customer work history](1727-product-control-customer-work-history.md) | accepted for internal implementation | Internal Product Control; [service contract](../ops/product-control.md), default-off `FAAS_PRODUCT_CONTROL_ENABLED`, limits in `pkg/api/limits.go` |
+| 20261018212918 | [Product Control payment collection through owner billing connections](20261018212918-product-control-payment-collection.md) | accepted for internal implementation; not implemented | Product Control statements export to the owner's own Stripe/Paddle/Lago, with payment status, opt-in overdue holds and month-close billing runs; Paddle embedded billing deferred |
 | 1583 | [Default-off same-repository PR execution automation](1583-internal-ci-pull-request-automation.md) | implemented behind default-off CI gates; native qualification pending | Explicit PR target filters, fresh source verification, per-PR slots and existing cleanup fences |
 | 1582 | [Bounded internal CI JUnit diagnostics](1582-internal-ci-junit-reports.md) | implemented behind default-off CI gates; native qualification pending | Verified attempt-bound reports, bounded failure detail and aggregate-only GitHub Checks |
 | 1581 | [Internal CI branch serialization and verified-head supersession](1581-internal-ci-branch-concurrency.md) | implemented behind default-off CI gates; native qualification pending | One automatic branch slot, verified-head opt-in supersession, durable cancellation and cleanup fencing |

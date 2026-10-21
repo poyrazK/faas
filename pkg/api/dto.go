@@ -10493,11 +10493,13 @@ type EdgeRuleStatsResponse struct {
 	Rules  []EdgeRuleHitStatsResponse `json:"rules"`
 }
 
-// EdgeRuleEventResponse (ADR-964) is one sampled rule match or kind=waf
-// detection. RuleName and RuleKind are empty once the rule has been deleted.
-// Detections (outcome detected, warned or blocked; ADR-831 amendment 5) also
-// carry the CRS rule IDs that scored, their attack categories and the
-// anomaly score.
+// EdgeRuleEventResponse (ADR-964) is one sampled rule match, kind=waf
+// detection or kind=challenge outcome. RuleName and RuleKind are empty once
+// the rule has been deleted. Detections (outcome detected, warned or
+// blocked; ADR-831 amendment 5) also carry the CRS rule IDs that scored,
+// their attack categories and the anomaly score. Challenge outcomes
+// (challenged, rejected, solved or failed; amendment 7 follow-up) carry the
+// request fields only.
 type EdgeRuleEventResponse struct {
 	ID         string    `json:"id"`
 	RuleID     string    `json:"rule_id"`

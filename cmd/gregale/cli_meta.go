@@ -604,7 +604,7 @@ var cliCommands = []cliCommand{
 			{Name: "billing-run", Short: "Bill an ended month for every API customer: draft, check, finalize and optionally export each statement", Subcommands: []cliSub{
 				{Name: "start", Short: "Start a run for one ended UTC month", Flags: []cliFlag{
 					{Name: "month", Short: "UTC calendar month to bill (default: last month)", Value: "YYYY-MM"},
-					{Name: "sources", Short: "comma-separated app_consumers,platform_tenants (default: both)", Value: "LIST"},
+					{Name: "sources", Short: "comma-separated app_consumers,platform_tenants,product_customers (default: app_consumers,platform_tenants)", Value: "LIST"},
 					{Name: "no-finalize", Short: "only draft statements", Bool: true},
 					{Name: "export", Short: "none, stripe, paddle or lago (default none)", Value: "TARGET"},
 					{Name: "no-hold-on-gaps", Short: "finalize consumers even when request telemetry shows unbilled requests", Bool: true},
@@ -616,7 +616,7 @@ var cliCommands = []cliCommand{
 				}},
 				{Name: "schedule", Short: "Show the monthly billing run schedule"},
 				{Name: "schedule-set", Short: "Start a run automatically after each month ends", Flags: []cliFlag{
-					{Name: "sources", Short: "comma-separated app_consumers,platform_tenants for scheduled runs (default: both)", Value: "LIST"},
+					{Name: "sources", Short: "comma-separated app_consumers,platform_tenants,product_customers for scheduled runs (default: app_consumers,platform_tenants)", Value: "LIST"},
 					{Name: "no-finalize", Short: "scheduled runs only draft statements", Bool: true},
 					{Name: "export", Short: "none, stripe, paddle or lago for scheduled runs (default none)", Value: "TARGET"},
 					{Name: "no-hold-on-gaps", Short: "scheduled runs finalize consumers with completeness gaps", Bool: true},
@@ -3779,7 +3779,7 @@ var cliCommands = []cliCommand{
 			}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "rule", Short: "only this rule id", Value: "ID"},
-				{Name: "outcome", Short: "outcome filter; detected, warned and blocked are kind=waf detections", Value: "OUTCOME", ClosedSet: []string{"matched", "logged", "detected", "warned", "blocked"}},
+				{Name: "outcome", Short: "outcome filter; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes", Value: "OUTCOME", ClosedSet: []string{"matched", "logged", "detected", "warned", "blocked", "challenged", "rejected", "solved", "failed"}},
 				{Name: "since", Short: "how far back, e.g. 1h, 24h, 7d (clamped to the plan window)", Value: "DURATION"},
 				{Name: "limit", Short: "events per page (1..200)", Value: "N"},
 				{Name: "cursor", Short: "continue from a previous page's next cursor", Value: "CURSOR"},
