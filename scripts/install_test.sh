@@ -166,6 +166,12 @@ run expect-ok "explicit --version" --version "$TAG" --dir "$DEST"
 "$DEST/gregale" version >/dev/null || fail "installed binary does not run"
 grep -Fq "installed $DEST/gregale" <<<"$RUN_OUT" ||
 	fail "installer should report where it installed: $RUN_OUT"
+# One next step, the guided start that README and the quickstart lead with.
+# It signs in when needed, so a separate login step is not recommended.
+grep -Fq "next: gregale start" <<<"$RUN_OUT" ||
+	fail "installer should recommend gregale start as the next step: $RUN_OUT"
+[ "$(grep -c "^next: " <<<"$RUN_OUT")" -eq 1 ] ||
+	fail "installer should recommend exactly one next step: $RUN_OUT"
 
 # A bare semver without the leading v must resolve to the same release;
 # people copy version numbers out of `gregale version` output.

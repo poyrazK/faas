@@ -8,7 +8,19 @@ import "encoding/json"
 const (
 	OperationChildKeyMaxBytes  = 64
 	OperationChildBodyMaxBytes = OperationSubmissionMaxBytes + 1024
+	// OperationChildrenSettledEvent is the event the platform signals to a
+	// parent waiting on it once every child it started has settled. For
+	// accounts with child Operations it is reserved for the platform.
+	OperationChildrenSettledEvent = "operation.children.settled"
 )
+
+// OperationChildrenSettled is the payload of the children-settled signal.
+type OperationChildrenSettled struct {
+	Total     int64 `json:"total"`
+	Succeeded int64 `json:"succeeded"`
+	Failed    int64 `json:"failed"`
+	Cancelled int64 `json:"cancelled"`
+}
 
 // OperationChildRequest starts one child. Operation names a definition of
 // the parent's deployment.

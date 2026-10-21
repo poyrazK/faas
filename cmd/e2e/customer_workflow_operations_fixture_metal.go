@@ -387,6 +387,13 @@ func customerWorkflowWaitChains() []api.WorkflowSpec {
 			{Name: "payment", WaitForEvent: "payment.succeeded", Timeout: 30 * time.Minute, DependsOn: []string{"review"}},
 			{Name: "finish", Path: "/finish", DependsOn: []string{"payment"}, Timeout: 2 * time.Minute},
 		}},
+		// fan-chain (ADR-20261018183000): fan starts children, gather waits
+		// for the platform's children-settled signal.
+		{Name: "fan-chain", Steps: []api.WorkflowStepSpec{
+			{Name: "fan", Path: "/fan", Timeout: 2 * time.Minute},
+			{Name: "gather", WaitForEvent: api.OperationChildrenSettledEvent, Timeout: 30 * time.Minute, DependsOn: []string{"fan"}},
+			{Name: "finish", Path: "/finish", DependsOn: []string{"gather"}, Timeout: 2 * time.Minute},
+		}},
 		{Name: "timeout-chain", Steps: []api.WorkflowStepSpec{
 			{Name: "collect", Path: "/collect", Timeout: 2 * time.Minute},
 			{Name: "payment", WaitForEvent: "payment.succeeded", Timeout: 15 * time.Second, DependsOn: []string{"collect"}},
