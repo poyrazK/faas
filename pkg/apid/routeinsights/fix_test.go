@@ -327,7 +327,10 @@ func TestFixerApplies(t *testing.T) {
 			}
 			var purged []string
 			fixer := &routeinsights.Fixer{Store: store, Rules: &fakeRules{}, Now: func() time.Time { return fixNow },
-				Purge: func(_ context.Context, _ state.App, glob string) error { purged = append(purged, glob); return purgeErr }}
+				Purge: func(_ context.Context, _ state.App, glob string) error {
+					purged = append(purged, glob)
+					return purgeErr
+				}}
 			listed, _ := routeinsights.List(context.Background(), store, acct.ID, app.ID, fixNow)
 			out, prob := fixer.Apply(context.Background(), acct, app, listed[0].ID, listed[0].Fix.ID)
 			want := api.RouteInsightPurgeRequested
