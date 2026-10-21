@@ -646,34 +646,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
 		}
 	} else if publicStorageRegistry != nil {
-		requestMetrics, _ := any(pgStore).(state.ObjectStorageProviderUsageStore)
-		accounting, _ := any(pgStore).(state.ObjectStorageAccountingStore)
-		publicHandler, publicErr := objectstorage.NewPublicReadHandler(objectstorage.PublicReadConfig{
-			Store: pgStore, Registry: publicStorageRegistry, RequestMetrics: requestMetrics,
-			Accounting: accounting, Enabled: s3Flag.Load, AppsDomain: os.Getenv("FAAS_APPS_DOMAIN"),
-			Next: controlPlaneHandler, Log: log,
-		})
-		if publicErr != nil {
-			return fmt.Errorf("gatewayd-public: public object storage handler: %w", publicErr)
+		rootHandler, err = publicObjectStorageRoot(pgStore, publicStorageRegistry, s3Flag.Load,
+			os.Getenv("FAAS_APPS_DOMAIN"), controlPlaneHandler, log)
+		if err != nil {
+			return err
 		}
-		rootHandler = publicHandler
-		if routes, routeStoreOK := any(pgStore).(state.ObjectUploadRouteStore); routeStoreOK {
-			if buckets, bucketStoreOK := any(pgStore).(state.ObjectBucketStore); bucketStoreOK {
-				if authenticator, authOK := any(pgStore).(objectstorage.UploadAuthenticator); authOK {
-					upload, uploadErr := objectstorage.NewUploadHandler(objectstorage.UploadConfig{
-						Store: pgStore, Routes: routes, Buckets: buckets, Authenticator: authenticator,
-						Registry: publicStorageRegistry, Accounting: accounting, RequestMetrics: requestMetrics, Enabled: s3Flag.Load,
-						AppsDomain: os.Getenv("FAAS_APPS_DOMAIN"), Next: publicHandler, Log: log,
-					})
-					if uploadErr != nil {
-						return fmt.Errorf("gatewayd-public: object upload handler: %w", uploadErr)
-					}
-					rootHandler = upload
-					log.Info("gatewayd-public: policy-controlled object uploads enabled")
-				}
-			}
-		}
-		log.Info("gatewayd-public: public object storage reads enabled")
 	}
 	tenantRoot = rootHandler
 	traceMux.Handle("/", rootHandler)
