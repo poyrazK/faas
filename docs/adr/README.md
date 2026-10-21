@@ -1,6 +1,8 @@
 # Architecture Decision Records
 
 - [Product Control plan fees, included starts and overage](20261021154511-product-control-plan-fees-and-overage.md)
+- [Data API file storage](20261021101510-data-api-file-storage.md)
+- [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)
 - [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)
 - [Product Control customers keep their billing details in the owner's Paddle](20261020120000-product-control-customer-billing-details.md)
 - [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
@@ -1791,5 +1793,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1136: Project environment configuration reaches every service as environment variables](1136-project-environment-config-as-environment-variables.md)
 - [ADR-1137: Declared dependencies seed opt-in wake-ahead](1137-declared-dependencies-seed-wake-ahead.md) — an opted-in app wakes its declared dependencies until 20 wakes of evidence decide (amends ADR-977)
 - [ADR-1138: Service calls join the caller's trace when it serves one request](1138-service-calls-join-the-callers-trace.md) — a call without traceparent from an instance serving exactly one request continues that request's trace, marked trace_inferred
+- [ADR-1139: Project environment secrets reach every service of the environment](1139-project-environment-secrets.md) — sealed secrets set once per project environment, below each app's own values, covered by rekey and key retirement (amends ADR-1136)
 
 - [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)

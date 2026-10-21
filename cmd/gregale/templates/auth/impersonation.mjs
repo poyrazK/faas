@@ -20,7 +20,8 @@ export function impersonated(claims) {
 // passkeys; link identities; approve third-party apps; end their other
 // sessions or delete their account. It may sign itself out.
 export function impersonationBlocked(method, url) {
-  const path = url.split('?')[0]
+  // GoTrue's router serves /user/ as /user, so trailing slashes go first.
+  const path = url.split('?')[0].replace(/\/+$/, '')
   if (method === 'POST' && path === '/auth/v1/logout') return url !== '/auth/v1/logout?scope=local'
   if (method === 'PUT' && path === '/auth/v1/user') return true
   if (/^\/auth\/v1\/(factors|passkeys|user\/identities|reauthenticate)(\/|$)/.test(path)) return true

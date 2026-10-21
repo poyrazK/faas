@@ -209,6 +209,19 @@ test('organization, member and invitation calls use encoded paths', async () => 
   assert.deepEqual(await auth.invitations.accept('tok'), { org_id: 'o1', role: 'member' })
 })
 
+test('a new password carries the current one', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'PUT /auth/v1/user': call => [200, { id: 'u1', email: 'a@example.test', seen: call.body }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  await auth.updateUser({ password: 'new secret', currentPassword: 'pw' })
+  assert.deepEqual(api.calls.at(-1).body, { password: 'new secret', current_password: 'pw' })
+  await auth.updateUser({ data: { plan: 'pro' } })
+  assert.deepEqual(api.calls.at(-1).body, { data: { plan: 'pro' } })
+})
+
 test('service account calls manage an organization\'s machine principals', async () => {
   const secret = { client_id: 'sa1', client_secret: 'gasa_x', secret: { id: 'k1', hint: 'abcd', expires_at: null } }
   const api = server({

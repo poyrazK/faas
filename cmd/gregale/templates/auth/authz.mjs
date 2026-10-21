@@ -16,13 +16,13 @@ import { organizationRoute as serviceAccountsRoute } from './serviceaccounts.mjs
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const codes = new Map([
-  ['28000', 401], ['42501', 403], ['P0002', 404], ['23505', 409], ['23514', 409], ['23503', 409], ['54000', 409], ['22023', 400], ['22P02', 400],
+  ['28000', 401], ['42501', 403], ['P0002', 404], ['23505', 409], ['23514', 409], ['23503', 409], ['54000', 409], ['53400', 429], ['22023', 400], ['22P02', 400],
 ])
 // Messages raised by gregale_auth functions; anything else is never echoed.
 const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit', 'anonymous_user',
   'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner',
   'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit', 'team_limit', 'current_session', 'mfa_required',
-  'invalid_join_mode', 'service_account_limit', 'secret_limit', 'invalid_service_account', 'invalid_expires_in_days'])
+  'invalid_join_mode', 'already_invited', 'invitation_rate_limited', 'service_account_limit', 'secret_limit', 'invalid_service_account', 'invalid_expires_in_days'])
 
 export class HTTPError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code }
@@ -363,7 +363,7 @@ export function createAuthzHandler({ pool, authenticate, origins = [], invitatio
         const [status, payload] = await resolveEmailRecipient(pool, req.method, path, req.headers.authorization)
         res.writeHead(status, headers); return res.end(JSON.stringify(payload))
       }
-      const token = req.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/)?.[1]
+      const token = req.headers.authorization?.match(/^bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i)?.[1]
       if (!token) throw new HTTPError(401, 'not_authenticated')
       const body = await readJSON(req, limits.authzBodyBytes)
       const claims = await authenticate(token)

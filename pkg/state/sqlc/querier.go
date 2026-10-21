@@ -453,6 +453,7 @@ type Querier interface {
 	CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitSourceIdentityParams) (CommitSourceIdentityRow, error)
 	CommitTenantAppScope(ctx context.Context, db DBTX, arg CommitTenantAppScopeParams) (string, error)
 	CompareAndSwapAppSecretEnvelope(ctx context.Context, db DBTX, arg CompareAndSwapAppSecretEnvelopeParams) (int64, error)
+	CompareAndSwapProjectSecretEnvelope(ctx context.Context, db DBTX, arg CompareAndSwapProjectSecretEnvelopeParams) (int64, error)
 	CompareAndSwapPromotionSecretCapture(ctx context.Context, db DBTX, arg CompareAndSwapPromotionSecretCaptureParams) (int64, error)
 	CompareAndSwapReleaseSecretBundle(ctx context.Context, db DBTX, arg CompareAndSwapReleaseSecretBundleParams) (int64, error)
 	CompareAndSwapReleaseSecretCapture(ctx context.Context, db DBTX, arg CompareAndSwapReleaseSecretCaptureParams) (int64, error)
@@ -543,6 +544,8 @@ type Querier interface {
 	// Hits the partial index upload_sessions_account_open_idx.
 	CountOpenUploadSessionsByAccountApp(ctx context.Context, db DBTX, arg CountOpenUploadSessionsByAccountAppParams) (int64, error)
 	CountOperationChildren(ctx context.Context, db DBTX, parentOperationID pgtype.UUID) (int64, error)
+	CountOperationConcurrencyPolicies(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	CountOperationsInFlight(ctx context.Context, db DBTX, arg CountOperationsInFlightParams) (int64, error)
 	CountOwnedActiveOperationJobTasksForPurge(ctx context.Context, db DBTX, arg CountOwnedActiveOperationJobTasksForPurgeParams) (int64, error)
 	CountPendingCustomerOperations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountProductionPendingInvocations(ctx context.Context, db DBTX, arg CountProductionPendingInvocationsParams) (int64, error)
@@ -555,9 +558,12 @@ type Querier interface {
 	CountProjectEnvironmentClonePostgresContents(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresContentsRow, error)
 	CountProjectEnvironmentClonePostgresCopyReaders(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountProjectEnvironmentClonePostgresVerificationReadBudgets(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresVerificationReadBudgetsRow, error)
+	// The environment's key count and whether the written key is already one of them.
+	CountProjectEnvironmentSecrets(ctx context.Context, db DBTX, arg CountProjectEnvironmentSecretsParams) (CountProjectEnvironmentSecretsRow, error)
 	CountProjectMigrations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountProjectWorkerHealthPending(ctx context.Context, db DBTX, arg CountProjectWorkerHealthPendingParams) (CountProjectWorkerHealthPendingRow, error)
 	CountProtectedAutomationLiveSuites(ctx context.Context, db DBTX, arg CountProtectedAutomationLiveSuitesParams) (int64, error)
+	CountQueuedOperations(ctx context.Context, db DBTX, arg CountQueuedOperationsParams) (int64, error)
 	CountReadinessSubscriptions(ctx context.Context, db DBTX, arg CountReadinessSubscriptionsParams) (int64, error)
 	CountTriggersByAccount(ctx context.Context, db DBTX, subject pgtype.UUID) (int64, error)
 	CountTriggersByApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
@@ -803,12 +809,15 @@ type Querier interface {
 	// natural expiry path; Delete is the "kill this CI job's
 	// credential now" lever.
 	DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgtype.UUID) error
+	DeleteOperationConcurrencyPolicy(ctx context.Context, db DBTX, arg DeleteOperationConcurrencyPolicyParams) (int64, error)
 	DeleteOperationWebhookBinding(ctx context.Context, db DBTX, arg DeleteOperationWebhookBindingParams) (int64, error)
 	DeleteOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg DeleteOutboundBindingProbePolicyParams) (int64, error)
 	DeleteProductionDeadLetterEvent(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventParams) (int64, error)
 	DeleteProductionDeadLetterEvents(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventsParams) (int64, error)
 	DeleteProfileInvestigation(ctx context.Context, db DBTX, arg DeleteProfileInvestigationParams) (int64, error)
+	DeleteProjectEnvironmentSecret(ctx context.Context, db DBTX, arg DeleteProjectEnvironmentSecretParams) (int64, error)
 	DeleteQueueLeaseReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) error
+	DeleteQueuedOperation(ctx context.Context, db DBTX, operationID pgtype.UUID) error
 	DeleteReadinessSubscription(ctx context.Context, db DBTX, arg DeleteReadinessSubscriptionParams) (int64, error)
 	DeleteRoutePriorities(ctx context.Context, db DBTX, arg DeleteRoutePrioritiesParams) error
 	DeleteSyntheticCheck(ctx context.Context, db DBTX, arg DeleteSyntheticCheckParams) (int64, error)
@@ -854,6 +863,8 @@ type Querier interface {
 	DrainEnvironmentWorkloadRetirementDeployments(ctx context.Context, db DBTX, arg DrainEnvironmentWorkloadRetirementDeploymentsParams) (int64, error)
 	DueManagedPostgresCutoverSourceFences(ctx context.Context, db DBTX, arg DueManagedPostgresCutoverSourceFencesParams) ([]ManagedPostgresCutover, error)
 	DueManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, arg DueManagedPostgresLifecycleDatabasesParams) ([]ManagedPostgresDatabase, error)
+	// The customer's override wins over the default.
+	EffectiveOperationConcurrencyLimit(ctx context.Context, db DBTX, arg EffectiveOperationConcurrencyLimitParams) (int32, error)
 	EffectiveWorkflowDefinitions(ctx context.Context, db DBTX, arg EffectiveWorkflowDefinitionsParams) ([]byte, error)
 	EnableReleaseSecretRekey(ctx context.Context, db DBTX) error
 	EnqueueAppHealthNotification(ctx context.Context, db DBTX, arg EnqueueAppHealthNotificationParams) error
@@ -1679,6 +1690,8 @@ type Querier interface {
 	GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTrustPolicyParams) (GetOIDCTrustPolicyRow, error)
 	// ADR-20261018183000 Child Operations.
 	GetOperationChildByKey(ctx context.Context, db DBTX, arg GetOperationChildByKeyParams) (pgtype.UUID, error)
+	// ADR-20261018210500 Per-customer Operation concurrency.
+	GetOperationConcurrencyPolicyByKey(ctx context.Context, db DBTX, arg GetOperationConcurrencyPolicyByKeyParams) (CustomerOperationConcurrencyPolicy, error)
 	GetOperationSchedule(ctx context.Context, db DBTX, arg GetOperationScheduleParams) (CustomerOperationSchedule, error)
 	// ADR-1193 webhook-submitted customer Operations.
 	GetOperationWebhookBinding(ctx context.Context, db DBTX, endpointID pgtype.UUID) (CustomerOperationWebhookBinding, error)
@@ -2100,6 +2113,7 @@ type Querier interface {
 	// Returns the full row (with created_at server-stamped).
 	InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg InsertOIDCExchangedTokenParams) (InsertOIDCExchangedTokenRow, error)
 	InsertOperationChild(ctx context.Context, db DBTX, arg InsertOperationChildParams) error
+	InsertOperationConcurrencyPolicy(ctx context.Context, db DBTX, arg InsertOperationConcurrencyPolicyParams) (CustomerOperationConcurrencyPolicy, error)
 	// ADR-20261018161833 Operation schedules.
 	InsertOperationSchedule(ctx context.Context, db DBTX, arg InsertOperationScheduleParams) (CustomerOperationSchedule, error)
 	InsertOperationWebhookReceipt(ctx context.Context, db DBTX, arg InsertOperationWebhookReceiptParams) (int64, error)
@@ -2159,6 +2173,7 @@ type Querier interface {
 	InsertPromotionMigrationTask(ctx context.Context, db DBTX, arg InsertPromotionMigrationTaskParams) error
 	InsertPromotionRecovery(ctx context.Context, db DBTX, arg InsertPromotionRecoveryParams) error
 	InsertQueueCanary(ctx context.Context, db DBTX, arg InsertQueueCanaryParams) error
+	InsertQueuedOperation(ctx context.Context, db DBTX, arg InsertQueuedOperationParams) error
 	InsertReadinessNotification(ctx context.Context, db DBTX, arg InsertReadinessNotificationParams) error
 	InsertReadinessSubscription(ctx context.Context, db DBTX, arg InsertReadinessSubscriptionParams) (int64, error)
 	// ---------------------------------------------------------------------------
@@ -2750,6 +2765,7 @@ type Querier interface {
 	// leading (received_at) reference, breaking pagination.
 	ListAppErrorRequests(ctx context.Context, db DBTX, arg ListAppErrorRequestsParams) ([]ListAppErrorRequestsRow, error)
 	ListAppHealthHistory(ctx context.Context, db DBTX, arg ListAppHealthHistoryParams) ([][]byte, error)
+	ListAppOperationQueueCounts(ctx context.Context, db DBTX, arg ListAppOperationQueueCountsParams) ([]ListAppOperationQueueCountsRow, error)
 	ListAppPendingRestarts(ctx context.Context, db DBTX, arg ListAppPendingRestartsParams) ([]ListAppPendingRestartsRow, error)
 	ListAppPendingRollbacks(ctx context.Context, db DBTX, arg ListAppPendingRollbacksParams) ([][]byte, error)
 	ListAppReleaseGates(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppReleaseGate, error)
@@ -2839,6 +2855,7 @@ type Querier interface {
 	ListCustomerOperationWorkflowStepDeclarations(ctx context.Context, db DBTX, arg ListCustomerOperationWorkflowStepDeclarationsParams) ([]ListCustomerOperationWorkflowStepDeclarationsRow, error)
 	// The parent workflow run is locked before these snapshot and transition queries.
 	ListCustomerOperationWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowStep, error)
+	ListCustomerQueuedOperations(ctx context.Context, db DBTX, arg ListCustomerQueuedOperationsParams) ([]ListCustomerQueuedOperationsRow, error)
 	ListDataRepairRehearsals(ctx context.Context, db DBTX, arg ListDataRepairRehearsalsParams) ([][]byte, error)
 	// schedd's wake-side read path (PR-B/C). Returns the
 	// N most recent probe samples for one (host, region)
@@ -3042,6 +3059,8 @@ type Querier interface {
 	// Per-account dashboard list (PR-C). Empty slice on miss.
 	ListOIDCTrustPoliciesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListOIDCTrustPoliciesForAccountRow, error)
 	ListOperationChildren(ctx context.Context, db DBTX, arg ListOperationChildrenParams) ([]ListOperationChildrenRow, error)
+	ListOperationConcurrencyPolicies(ctx context.Context, db DBTX, arg ListOperationConcurrencyPoliciesParams) ([]CustomerOperationConcurrencyPolicy, error)
+	ListOperationQueueGroups(ctx context.Context, db DBTX, rowLimit int32) ([]ListOperationQueueGroupsRow, error)
 	ListOperationSchedules(ctx context.Context, db DBTX, arg ListOperationSchedulesParams) ([]CustomerOperationSchedule, error)
 	ListOperatorIntentAttemptsByTrace(ctx context.Context, db DBTX, arg ListOperatorIntentAttemptsByTraceParams) ([]OperatorIntent, error)
 	ListOrgInvitationsForOrg(ctx context.Context, db DBTX, orgID pgtype.UUID) ([]ListOrgInvitationsForOrgRow, error)
@@ -3085,11 +3104,14 @@ type Querier interface {
 	ListProfilePeriodicMonitors(ctx context.Context, db DBTX, arg ListProfilePeriodicMonitorsParams) ([][]byte, error)
 	ListProjectBindingVerificationRunSummaries(ctx context.Context, db DBTX, arg ListProjectBindingVerificationRunSummariesParams) ([]ListProjectBindingVerificationRunSummariesRow, error)
 	ListProjectCanaryWorkerTargets(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
+	// Metadata only: listings never carry ciphertext.
+	ListProjectEnvironmentSecrets(ctx context.Context, db DBTX, arg ListProjectEnvironmentSecretsParams) ([]ListProjectEnvironmentSecretsRow, error)
 	ListProjectMigrations(ctx context.Context, db DBTX, arg ListProjectMigrationsParams) ([]ListProjectMigrationsRow, error)
 	ListProjectReleaseAdditions(ctx context.Context, db DBTX, projectID string) ([]ListProjectReleaseAdditionsRow, error)
 	// Retired and expired graphs remain visible for diagnosis. UUID breaks ties.
 	ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg ListProjectReleaseSetsBeforeParams) ([][]byte, error)
 	ListQueueBindingHistoryForApp(ctx context.Context, db DBTX, arg ListQueueBindingHistoryForAppParams) ([]QueueBinding, error)
+	ListQueuedOperationsForGroup(ctx context.Context, db DBTX, arg ListQueuedOperationsForGroupParams) ([]ListQueuedOperationsForGroupRow, error)
 	ListReadinessFollowUps(ctx context.Context, db DBTX, arg ListReadinessFollowUpsParams) ([][]byte, error)
 	ListReadinessNotifications(ctx context.Context, db DBTX, arg ListReadinessNotificationsParams) ([][]byte, error)
 	ListReadinessSubscriptions(ctx context.Context, db DBTX, arg ListReadinessSubscriptionsParams) ([][]byte, error)
@@ -3485,6 +3507,9 @@ type Querier interface {
 	LockProjectEnvironmentCloneTargetSidecarLayers(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]string, error)
 	LockProjectEnvironmentCloneTargetSidecarSignals(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]string, error)
 	LockProjectEnvironmentCloneWorkloadOperation(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneWorkloadOperationParams) (LockProjectEnvironmentCloneWorkloadOperationRow, error)
+	// ADR-1139: secrets shared by every service of a project environment.
+	// Serializes writers of one environment's secret set so the count limit holds.
+	LockProjectEnvironmentForSecrets(ctx context.Context, db DBTX, arg LockProjectEnvironmentForSecretsParams) (pgtype.UUID, error)
 	LockProjectEnvironmentQueuePreparationApp(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationAppParams) (pgtype.UUID, error)
 	LockProjectEnvironmentQueuePreparationEnvironment(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationEnvironmentParams) (pgtype.UUID, error)
 	LockProjectEnvironmentQueuePreparationSpec(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationSpecParams) (LockProjectEnvironmentQueuePreparationSpecRow, error)
@@ -4308,6 +4333,7 @@ type Querier interface {
 	// Counts include reference intent in the shared environment-key quota.
 	ProjectEnvironmentCloneQuota(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneQuotaParams) ([]ProjectEnvironmentCloneQuotaRow, error)
 	ProjectEnvironmentCloneSecretTargetExists(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneSecretTargetExistsParams) (bool, error)
+	ProjectEnvironmentIDForSecrets(ctx context.Context, db DBTX, arg ProjectEnvironmentIDForSecretsParams) (pgtype.UUID, error)
 	ProjectMigrationAdmissionAllowed(ctx context.Context, db DBTX, arg ProjectMigrationAdmissionAllowedParams) (pgtype.Bool, error)
 	ProjectProductionScalingState(ctx context.Context, db DBTX, arg ProjectProductionScalingStateParams) error
 	ProjectReleaseStageByID(ctx context.Context, db DBTX, arg ProjectReleaseStageByIDParams) (ProjectReleaseStage, error)
@@ -5101,6 +5127,8 @@ type Querier interface {
 	ReleaseProductionNamedQueueClaims(ctx context.Context, db DBTX, arg ReleaseProductionNamedQueueClaimsParams) error
 	ReleaseProjectEnvironmentCloneWorkerLease(ctx context.Context, db DBTX, arg ReleaseProjectEnvironmentCloneWorkerLeaseParams) (int64, error)
 	ReleasePromotionHealth(ctx context.Context, db DBTX, arg ReleasePromotionHealthParams) error
+	ReleaseQueuedInvocation(ctx context.Context, db DBTX, arg ReleaseQueuedInvocationParams) error
+	ReleaseQueuedWorkflowRun(ctx context.Context, db DBTX, arg ReleaseQueuedWorkflowRunParams) error
 	// ADR-1448: release tasks of other deployments in a rollback target's scope
 	// that started after the target last served (serving_ended_at), or after it
 	// was created if it never served. Any started task counts: a failed migration
@@ -5792,6 +5820,7 @@ type Querier interface {
 	UpdateEventExecutionLineageCaseRetry(ctx context.Context, db DBTX, arg UpdateEventExecutionLineageCaseRetryParams) (EventExecutionLineageCase, error)
 	UpdateInstanceState(ctx context.Context, db DBTX, arg UpdateInstanceStateParams) error
 	UpdateInstanceStateIf(ctx context.Context, db DBTX, arg UpdateInstanceStateIfParams) (int64, error)
+	UpdateOperationConcurrencyPolicy(ctx context.Context, db DBTX, arg UpdateOperationConcurrencyPolicyParams) (CustomerOperationConcurrencyPolicy, error)
 	UpdateOrgPlan(ctx context.Context, db DBTX, arg UpdateOrgPlanParams) error
 	UpdateOrgStatus(ctx context.Context, db DBTX, arg UpdateOrgStatusParams) error
 	UpdatePromotionControl(ctx context.Context, db DBTX, arg UpdatePromotionControlParams) (int64, error)
@@ -5879,6 +5908,7 @@ type Querier interface {
 	// updated_at, audit_login) and preserves created_at. Returns the
 	// full row as stored.
 	UpsertOIDCTrustPolicy(ctx context.Context, db DBTX, arg UpsertOIDCTrustPolicyParams) (UpsertOIDCTrustPolicyRow, error)
+	UpsertProjectEnvironmentSecret(ctx context.Context, db DBTX, arg UpsertProjectEnvironmentSecretParams) (UpsertProjectEnvironmentSecretRow, error)
 	UpsertQueueLeaseReceipt(ctx context.Context, db DBTX, arg UpsertQueueLeaseReceiptParams) error
 	// Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 	// route) — the cron upserts on this triple so the table grows at most

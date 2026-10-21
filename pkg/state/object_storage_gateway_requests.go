@@ -48,7 +48,7 @@ func (m *MemStore) ReserveObjectStorageGatewayRequest(ctx context.Context, bucke
 	return nil
 }
 
-func (s *PgStore) ReserveObjectStorageGatewayRequest(ctx context.Context, bucket string, at time.Time, p api.ObjectStoragePolicy) error {
+func (s *pgCore) ReserveObjectStorageGatewayRequest(ctx context.Context, bucket string, at time.Time, p api.ObjectStoragePolicy) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err

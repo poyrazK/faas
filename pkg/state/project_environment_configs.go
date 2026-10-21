@@ -163,6 +163,13 @@ func (m *MemStore) projectConfigRuntimeChangeLocked(projectID, environment strin
 	if !projectConfigRuntimeEnvChanged(before, after) {
 		return
 	}
+	m.projectRuntimeChangeLocked(projectID, environment, at)
+}
+
+// projectRuntimeChangeLocked stamps every member app in the scopes that read
+// the environment and marks its older snapshots there stale. Project secrets
+// (ADR-1139) use it for every value change.
+func (m *MemStore) projectRuntimeChangeLocked(projectID, environment string, at time.Time) {
 	for id, app := range m.apps {
 		if app.ProjectID != projectID || app.Status == "deleted" {
 			continue

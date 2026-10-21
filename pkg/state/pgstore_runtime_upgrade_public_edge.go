@@ -119,7 +119,7 @@ func publicEdgeRosterFromRow(r sqlc.RuntimeUpgradePublicEdgeRoster) RuntimeUpgra
 	return out
 }
 
-func (s *PgStore) RecordRuntimeUpgradePublicEdgeGuard(ctx context.Context, member RuntimeUpgradePublicEdgeMember) error {
+func (s *pgCore) RecordRuntimeUpgradePublicEdgeGuard(ctx context.Context, member RuntimeUpgradePublicEdgeMember) error {
 	if !validPublicEdgeMember(member) {
 		return ErrInvalidArgument
 	}
