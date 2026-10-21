@@ -374,7 +374,9 @@
 - name: postgres — create pg_stat_statements in the maintenance database
   community.postgresql.postgresql_ext:
     name: pg_stat_statements
-    db: postgres
+    # community.postgresql 5.0.0 (requirements.yml) takes login_db; the
+    # removed `db` alias failed rc.284's control-plane convergence.
+    login_db: postgres
     state: present
   become: true
   become_user: postgres
