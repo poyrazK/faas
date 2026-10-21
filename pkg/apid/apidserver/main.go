@@ -2485,6 +2485,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}()
 	}
+	// ADR-20261018083536 slice B: vmmd's runtime warn/error lines share the
+	// SpansWriter listeners it already dials for guest traces. The receiver
+	// accepts only while log search is on.
+	var runtimeLogs *receivers.RuntimeLogEventsReceiver
+	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
+		runtimeLogs = receivers.NewRuntimeLogEventsReceiver(srv.store, deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1", srv.ops.Registry(), log)
+	}
 	// H5-34: one gate across both telemetry listeners bounds their share of
 	// apid's database pool.
 	ingest := receivers.NewIngestGate(api.TelemetryIngestDBConcurrency)
@@ -2511,7 +2518,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: app errors TLS: %w", tlsErr)
 		}
 		appErrRotator.Set(appErrTLS)
-		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log, true, ingest, guestSpans, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		appErrSrv, appErrLis, err = runAppErrorsServer(ctx, appErrTarget, appErrTLS, srv.store, srv.ops, sharedLimiter, log, true, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: app errors server: %w", err)
@@ -2597,7 +2604,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("apid: consumer usage TLS: %w", tlsErr)
 		}
 		var listenErr error
-		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, log, false, ingest, guestSpans, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
+		appErrSrv, appErrLis, listenErr = runAppErrorsServer(ctx, target, usageTLS, srv.store, srv.ops, sharedLimiter, log, false, ingest, guestSpans, runtimeLogs, srv.realtime.RegisterRealtimePush, srv.realtime.Owner)
 		if listenErr != nil {
 			return fmt.Errorf("apid: consumer usage server: %w", listenErr)
 		}
@@ -2617,7 +2624,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if isUnixSocketPath(swTarget) {
 			var swLis net.Listener
 			var listenErr error
-			spansWriterSrv, swLis, listenErr = runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, sharedLimiter, guestSpans)
+			spansWriterSrv, swLis, listenErr = runSpansWriterServer(ctx, swTarget, srv.store, srv.ops, log, sharedLimiter, guestSpans, runtimeLogs)
 			if listenErr != nil {
 				_ = l.Close()
 				return fmt.Errorf("apid: otel spans writer server: %w", listenErr)
@@ -3143,7 +3150,7 @@ func isUnixSocketPath(target string) bool {
 // Returns the server (caller calls Serve) and the listener. Errors
 // here are non-fatal: the caller logs and continues without the
 // app_errors gRPC server (the apid HTTP listener still serves).
-func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
+func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, store state.Store, ops *wire.OpsMetrics, limiter *peraccount.Limiter, log *slog.Logger, appErrorsEnabled bool, ingest receivers.IngestGate, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver, registerPush receivers.PushRegistrar, fleetRouter ...any) (*grpc.Server, net.Listener, error) {
 	if !isUnixSocketPath(target) && tlsCfg == nil {
 		return nil, nil, fmt.Errorf("app errors: target %q is non-unix but app_errors_tls_* is empty (mTLS is required)", target)
 	}
@@ -3185,6 +3192,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// single-box path and is registered by runSpansWriterServer.
 	if !isUnixSocketPath(target) && os.Getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
 		receivers.RegisterSpansWriterReceiver(srv, store, ops, limiter, true, guestSpans)
+		receivers.RegisterRuntimeLogEventsReceiver(srv, runtimeLogs)
 	}
 	return srv, lis, nil
 }
@@ -3228,13 +3236,14 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 // without the spans_writer gRPC server (the apid HTTP listener
 // still serves; the gateway's OTel flush loop drops the entry
 // at the next tick).
-func runSpansWriterServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, guestSpans *receivers.GuestSpansIngester) (*grpc.Server, net.Listener, error) {
+func runSpansWriterServer(ctx context.Context, target string, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, limiter *peraccount.Limiter, guestSpans *receivers.GuestSpansIngester, runtimeLogs *receivers.RuntimeLogEventsReceiver) (*grpc.Server, net.Listener, error) {
 	lis, err := wire.ListenOrRecreateByName(target, "faas-apid")
 	if err != nil {
 		return nil, nil, fmt.Errorf("otel spans writer listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
 	receivers.RegisterSpansWriterReceiver(srv, store, ops, limiter, true, guestSpans)
+	receivers.RegisterRuntimeLogEventsReceiver(srv, runtimeLogs)
 	return srv, lis, nil
 }
 

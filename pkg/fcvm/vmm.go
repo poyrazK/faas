@@ -745,22 +745,66 @@ func (v *JailerVMM) WithSlowSubscriberCallback(cb func()) *JailerVMM {
 	return v
 }
 
-// WithLogCommitCallback observes newly received app log lines. App identity
-// comes from the scheduler's correlation envelope captured before guest startup.
+// WithLogCommitCallback adds an observer of newly received app log lines;
+// observers run in the order they were added, so independent consumers (MCP
+// protocol metrics, ADR-746 line counts) never displace each other. App
+// identity comes from the scheduler's correlation envelope captured before
+// guest startup.
 func (v *JailerVMM) WithLogCommitCallback(cb func(appID string, line logbuf.Line)) *JailerVMM {
+	if cb == nil {
+		return v
+	}
 	v.mu.Lock()
+	if prev := v.committedLine; prev != nil {
+		next := cb
+		cb = func(appID string, line logbuf.Line) {
+			prev(appID, line)
+			next(appID, line)
+		}
+	}
 	v.committedLine = cb
 	v.mu.Unlock()
 	return v
 }
 
-// WithInstanceLogObserver installs bounded, non-blocking lifecycle and log callbacks.
-// Identities come from host context. Stop must be idempotent.
+// WithInstanceLogObserver adds bounded, non-blocking lifecycle and log
+// callbacks; observers run in the order they were added. Identities come from
+// host context. Stop must be idempotent.
 func (v *JailerVMM) WithInstanceLogObserver(cb func(string, string, string) (func(logbuf.Line), func())) *JailerVMM {
+	if cb == nil {
+		return v
+	}
 	v.mu.Lock()
+	if prev := v.instanceLogObserver; prev != nil {
+		cb = chainInstanceLogObservers(prev, cb)
+	}
 	v.instanceLogObserver = cb
 	v.mu.Unlock()
 	return v
+}
+
+func chainInstanceLogObservers(first, second func(string, string, string) (func(logbuf.Line), func())) func(string, string, string) (func(logbuf.Line), func()) {
+	return func(appID, deploymentID, instance string) (func(logbuf.Line), func()) {
+		observeFirst, stopFirst := first(appID, deploymentID, instance)
+		observeSecond, stopSecond := second(appID, deploymentID, instance)
+		observe := func(line logbuf.Line) {
+			if observeFirst != nil {
+				observeFirst(line)
+			}
+			if observeSecond != nil {
+				observeSecond(line)
+			}
+		}
+		stop := func() {
+			if stopFirst != nil {
+				stopFirst()
+			}
+			if stopSecond != nil {
+				stopSecond()
+			}
+		}
+		return observe, stop
+	}
 }
 
 // WithInstancePauseObserver reports successful host pause/resume transitions.

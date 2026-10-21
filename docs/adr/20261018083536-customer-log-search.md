@@ -52,6 +52,30 @@ a new internal gRPC `LogEvents` service; apid inserts `source=runtime`. Each
 app gets a per-minute line budget; over budget, vmmd drops lines and emits one
 system event per minute with the dropped count.
 
+- vmmd observes each instance ring through the fcvm instance log observer,
+  which carries the host-owned app, deployment and instance identity. The
+  observer runs under the ring mutex, so it only classifies, charges the
+  budget and enqueues without blocking (queue 2048); one goroutine sends
+  batches of up to 100 every second. Unavailable or Unimplemented from apid
+  pauses forwarding for a minute: a disabled or older apid costs one call a
+  minute, not one per batch. `vmmd_runtime_log_events_total{outcome}` counts
+  every line's fate. Gate: `FAAS_RUNTIME_LOG_EVENTS_ENABLED=1` on vmmd.
+- `LogEvents` registers on the listeners that already carry `SpansWriter`
+  (the single-box Unix socket and the split-box mTLS listener), and vmmd dials
+  the guest-trace target. The slice adds no socket, certificate or unit.
+- apid derives the account from the app (vmmd never names it), caps each
+  account at 600 lines a minute across nodes, redacts with the ADR-096
+  redactor (pattern names go in `fields.redactions`), and inserts. It accepts
+  only while `FAAS_LOG_SEARCH_ENABLED=1`. A database failure fails the batch
+  with Unavailable; `source_event_id` (`<instance>:<ring seq>`, or
+  `budget:<app>:<minute>` for drop summaries) makes any replay converge.
+- Budgets: 120 lines per app per minute per node, 4 KiB per line, in
+  `pkg/api/limits.go`.
+- `JailerVMM.WithLogCommitCallback` and `WithInstanceLogObserver` now add an
+  observer instead of replacing the previous one. vmmd installed two commit
+  callbacks, so the ADR-746 counter had silently displaced the MCP protocol
+  metrics; both now observe every line.
+
 **C. Build and deploy.** Deployment log lines and deploy state changes project
 into the ledger as `build` and `deploy` events from the component that already
 writes them, through apid.

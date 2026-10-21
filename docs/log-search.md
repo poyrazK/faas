@@ -2,8 +2,8 @@
 
 `gregale logs` is the fastest way to watch what an app is doing now. Log
 search answers the other question: what happened, where, and how often.
-It searches the app's log ledger (HTTP requests today; runtime warnings and
-errors, builds and deploys as they are added) across your plan's log
+It searches the app's log ledger (HTTP requests and runtime warnings and
+errors today; builds and deploys as they are added) across your plan's log
 retention, filters by text, level, route, status, release, request and
 trace, and counts the matches.
 
@@ -34,6 +34,28 @@ Filters combine: every event shown matches all of them.
 | `--deployment ID` | events from one deployment |
 | `--request ID`, `--trace ID` | one request or one distributed trace |
 | `--since`, `--until` | the window: `15m`, `6h`, `3d` or RFC 3339; default the last hour |
+
+## Runtime lines
+
+Your app's output lines that are warnings or errors are indexed as `runtime`
+events, with the same level detection as `gregale logs --level`: a structured
+`"level"` field, or a marker such as `[error]` or `level=warn`. Info and
+unmarked lines are not indexed; `gregale logs` still shows them.
+
+```sh
+gregale logs search my-api --source runtime --level error --q "payment declined"
+```
+
+Indexing is bounded so a noisy app cannot flood its own search:
+
+- Each app indexes up to 120 warning and error lines per minute on each node
+  that runs it. Past that, the minute gets one `system` line saying how many
+  lines were not indexed.
+- Each account indexes up to 600 runtime lines per minute in total.
+- A line is indexed up to its first 4 KiB.
+- Email addresses, card numbers and credential headers (authorization,
+  cookies, API keys) are redacted before a line is stored; the event's
+  fields name what was redacted.
 
 ## Count
 

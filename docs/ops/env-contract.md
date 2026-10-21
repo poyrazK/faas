@@ -472,7 +472,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_LOG_ARCHIVE_SPOOL_ROOT` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_DRAIN_SPOOL_ROOT` | gatewayd-internal | `default` |  |  | `` | optional gateway log-drain spool override; defaults to /var/lib/faas/log-drains |
 | `FAAS_LOG_LEVEL` | shared | `default` |  |  | `` | info; re-read on SIGHUP |
-| `FAAS_LOG_SEARCH_ENABLED` | apid | `default` |  | 0 | `` | ADR-20261018083536 operator gate for GET /v1/apps/{slug}/log-events and /log-events/facets; explicit 1 enables the internal preview |
+| `FAAS_LOG_SEARCH_ENABLED` | apid | `default` |  | 0 | `` | ADR-20261018083536 operator gate for GET /v1/apps/{slug}/log-events and /log-events/facets and for vmmd's runtime log projection; explicit 1 enables the internal preview |
 | `FAAS_MAIL_FROM` | apid, shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MAIL_POSTMARK_TOKEN` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MAIL_RESEND_API_KEY` | apid, shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
@@ -680,6 +680,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROUTE_PROBE_URL` | apid | `dropin` |  |  | `url` | public origin for ADR-847 synthetic route probes; unset disables probes |
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |  | `` |  |
+| `FAAS_RUNTIME_LOG_EVENTS_ENABLED` | vmmd | `default` |  | 0 | `` | ADR-20261018083536 slice B: explicit 1 forwards guest warn/error lines, within a per-app minute budget, to apid's log ledger over the guest-trace apid target; apid accepts them only while FAAS_LOG_SEARCH_ENABLED=1 |
 | `FAAS_RUNTIME_UPGRADE_DRAIN_CONFIRMATION` | gatewayd-internal | `default` |  |  | `` | default-off private forwarding drain receipt; requires reviewed runtime routing confirmation (ADR-697) |
 | `FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID` | gatewayd-internal | `default` |  |  | `` | reviewed private gateway slot identity; required only when runtime routing confirmation is enabled (ADR-695) |
 | `FAAS_RUNTIME_UPGRADE_INGRESS_CONFIRMATION` | gatewayd-internal, gatewayd-public | `default` |  |  | `` | default-off private ingress identity proof; requires reviewed routing and drain confirmations (ADR-698) |

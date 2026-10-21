@@ -13116,6 +13116,22 @@ const (
 	LogSearchStatementTimeout = 5 * time.Second
 )
 
+// Runtime log projection into the ledger (ADR-20261018083536 slice B). vmmd
+// forwards warn and error lines within a per-app, per-node minute budget and
+// reports the overflow as one system line per app and minute; apid caps each
+// account across nodes. The queue and batch bound vmmd's memory and each RPC
+// (BatchMax × MessageMaxBytes stays far below gRPC's 4 MiB message limit).
+const (
+	RuntimeLogEventsPerAppMinute     = 120
+	RuntimeLogEventsPerAccountMinute = 600
+	RuntimeLogEventsQueueMax         = 2048
+	RuntimeLogEventsBatchMax         = 100
+	RuntimeLogEventMessageMaxBytes   = 4096
+	RuntimeLogEventsFlushInterval    = time.Second
+	RuntimeLogEventsForwardTimeout   = 5 * time.Second
+	RuntimeLogEventsUnavailablePause = time.Minute
+)
+
 // Anomaly alert bounds (ADR-744). A baseline rule compares a request metric
 // with the median of its value at the same time of day over the previous
 // AnomalyBaselineDays days.
