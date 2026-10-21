@@ -117,6 +117,11 @@ var routeExclude = map[string]bool{
 	"GET /v1/apps/{slug}/entities/session-connect":                           true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
 	"GET /v1/apps/{slug}/product/billing/documents":                          true,
 	"GET /v1/apps/{slug}/product/billing/documents/{document}/handoff":       true,
+	"GET /v1/apps/{slug}/product/billing/documents/{document}/invoice":       true,
+	"GET /v1/apps/{slug}/product/billing/overdue-policy":                     true,
+	"PUT /v1/apps/{slug}/product/billing/overdue-policy":                     true,
+	"DELETE /v1/apps/{slug}/product/billing/overdue-policy":                  true,
+	"GET /v1/apps/{slug}/product/billing/overdue-holds":                      true,
 	"GET /v1/apps/{slug}/product/billing/receipts":                           true,
 	"POST /v1/apps/{slug}/product/onboarding/workspaces":                     true,
 	"POST /v1/apps/{slug}/product/onboarding/preview":                        true,
@@ -167,6 +172,8 @@ var routeExclude = map[string]bool{
 	"POST /v1/apps/{slug}/product/plan-policy/preview":                       true,
 	"PUT /v1/apps/{slug}/product/plan-policy":                                true,
 	"GET /v1/product-control/customer/{slug}/plans":                          true,
+	"GET /v1/product-control/customer/{slug}/billing-details":                true,
+	"PUT /v1/product-control/customer/{slug}/billing-details":                true,
 	"POST /v1/product-control/customer/{slug}/plans/preview":                 true,
 	"POST /v1/product-control/customer/{slug}/plans/confirm":                 true,
 	"GET /v1/product-control/customer/{slug}/plans/changes":                  true,
@@ -180,6 +187,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/product-control/customer/{slug}/billing":                        true,
 	"POST /v1/apps/{slug}/product/billing/credits":                           true,
 	"POST /v1/apps/{slug}/product/billing/documents/{document}/handoff":      true,
+	"POST /v1/apps/{slug}/product/billing/documents/{document}/invoice":      true,
 	"POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive":        true,
 	"POST /v1/apps/{slug}/product/billing/statements/finalize":               true,
 	// ADR-1701: internal Product Control pilot; mirror spec compliance exclusions.
@@ -826,6 +834,9 @@ var methodRouteMap = map[string]string{
 
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview": "PreviewEnvironmentGitRevision",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/plan":              "PreviewEnvironmentGitPlan",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/promotion-plan":    "PreviewEnvironmentGitPromotion",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/rollback-plan":     "PreviewEnvironmentGitRollback",
+	"GET /v1/projects/{slug}/environments/{environment}/gitops/releases":           "ListEnvironmentGitReleases",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve": "ApproveEnvironmentGitRevision",
 	"GET /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview":   "PreviewEnvironmentGitOpsAdoption",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/adopt":             "AdoptEnvironmentGitOps",
@@ -1019,6 +1030,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/routes/advice":                                                "GetRouteAdvice",
 	"GET /v1/apps/{slug}/routes/awake":                                                 "GetRouteAwake",
 	"GET /v1/apps/{slug}/routes/insights":                                              "GetRouteInsights",
+	"POST /v1/apps/{slug}/routes/insights/{id}/fix":                                    "FixRouteInsight",
 	"GET /v1/apps/{slug}/service-wake-ahead":                                           "GetServiceWakeAhead",
 	"PUT /v1/apps/{slug}/service-wake-ahead":                                           "SetServiceWakeAhead",
 	"GET /v1/apps/{slug}/route-priorities":                                             "GetRoutePriorities",
@@ -2200,6 +2212,23 @@ var methodRouteMap = map[string]string{
 	"POST /v1/projects/apply-plan":      "ApplyCachedProjectPlan",
 	"POST /v1/projects":                 "ApplyProjectPlan",
 	"GET /v1/projects/{slug}/environments/{environment}/promotion-preview": "GetProjectEnvironmentPromotionPreview",
+
+	// Deployment intent and promotion helpers use action names rather than
+	// names derived from hyphenated route segments.
+	"GET /v1/apps/{slug}/deployment-cron-staging":                                                  "GetDeploymentCronStagingSnapshot",
+	"GET /v1/apps/{slug}/deployment-staging":                                                       "GetDeploymentStagingSnapshot",
+	"GET /v1/apps/{slug}/deployment-submissions/{attempt_id}":                                      "GetDeploymentSubmission",
+	"GET /v1/project-submissions/{attempt_id}":                                                     "GetProjectSubmission",
+	"POST /v1/apps/{slug}/deployment-cron-staging":                                                 "ApplyDeploymentCronStaging",
+	"POST /v1/apps/{slug}/deployment-staging":                                                      "ApplyDeploymentStaging",
+	"POST /v1/project-submissions/{attempt_id}/{action}":                                           "ControlProjectRelease",
+	"POST /v1/projects/safe-deploy":                                                                "ApplyProjectPlan",
+	"POST /v1/projects/{slug}/deployment-readiness":                                                "CheckProjectDeployment",
+	"POST /v1/projects/{slug}/environments/{environment}/promotion-preview":                        "PreviewProjectEnvironmentPromotionSecrets",
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/abort":             "ControlProjectEnvironmentPromotion",
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover":           "ControlProjectEnvironmentPromotion",
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration": "RecoverProjectEnvironmentPromotionMigration",
+	"POST /v1/projects/{slug}/release-secrets":                                                     "StageProjectReleaseSecrets",
 
 	// ADR-124 follow-up #3 — persistent --exclude history. The
 	// auto-derivation would produce "DeleteProjectsSlugExclusionsSlug2"

@@ -40,6 +40,15 @@ func TestEnvironmentGitOpsActivationEvidenceRequiresWholeGraphAndSeparateProofs(
 			}
 		}
 		assertEvidence(0, 0, 0)
+		current, err := basic.(state.EnvironmentGitOpsCurrentWorkloadEvidenceStore).CurrentEnvironmentGitOpsWorkloadEvidence(t.Context(), lease.Source.AccountID, lease.Source.ID)
+		if err != nil || current == nil || len(current.Workloads) != 2 || current.CommitSHA != lease.Revision.CommitSHA {
+			t.Fatalf("status omitted workload-scoped facts: %+v %v", current, err)
+		}
+		for _, workload := range current.Workloads {
+			if workload.Preparation != "complete" || workload.Qualification != "pending" || workload.Activation != "pending" || workload.Serving != "unknown" {
+				t.Fatalf("prepared artifact overstated workload readiness: %+v", workload)
+			}
+		}
 		activationStore := basic.(state.EnvironmentGitOpsGraphActivationStore)
 		if _, activated, err := activationStore.ActivateEnvironmentGitOpsWorkloadGraph(t.Context(), lease, plan); err != nil || activated {
 			t.Fatalf("unqualified graph was activated: activated=%t err=%v", activated, err)

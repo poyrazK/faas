@@ -18,13 +18,13 @@ func environmentGitOpsScheduledJobMatches(graph EnvironmentWorkloadGraph, member
 	intent EnvironmentWorkloadIntent, job Job, status string) bool {
 	if member.ExecutionMode != api.ExecutionModeJob || !member.ScheduleConfigured || !member.JobSmokeConfigured ||
 		!canonicalStateUUID(member.JobID) || member.JobID != intent.JobID || member.AppID != intent.AppID ||
-		intent.EnvironmentID != graph.EnvironmentID || intent.Source == nil || intent.Source.Kind != "image" ||
+		intent.EnvironmentID != graph.EnvironmentID || intent.Source == nil ||
 		intent.Schedule == nil || job.ID != member.JobID || job.AccountID != intent.AccountID || job.Status != status ||
 		job.Name != environmentGitOpsJobName(graph.EnvironmentID, member.AppID) || job.Kind != "recurring" ||
-		job.ImageRef != intent.Source.Image || job.CronSchedule != intent.Schedule.Cron || job.CronTimezone != intent.Schedule.Timezone ||
+		job.CronSchedule != intent.Schedule.Cron || job.CronTimezone != intent.Schedule.Timezone ||
 		!reflect.DeepEqual(job.SchedulePolicy, intent.Schedule.SchedulePolicy) ||
 		!reflect.DeepEqual(job.FailureRules, intent.Schedule.FailureRules) || job.MaxParallelism != 1 || job.RetryMax != 0 ||
-		job.RAMMB <= 0 || job.TaskTimeoutS <= 0 || job.ScheduleRevision <= 0 || len(job.Command) != 0 {
+		job.RAMMB <= 0 || job.TaskTimeoutS <= 0 || job.ScheduleRevision <= 0 {
 		return false
 	}
 	if member.ServiceBindingsConfigured != (len(intent.ServiceBindings) != 0) || len(member.ServiceBindings) != len(intent.ServiceBindings) ||
@@ -35,9 +35,7 @@ func environmentGitOpsScheduledJobMatches(graph EnvironmentWorkloadGraph, member
 		!maps.Equal(intent.Variables, member.Variables) {
 		return false
 	}
-	wantDigest, ok := immutableEnvironmentJobImageDigest(intent.Source.Image)
-	if !ok || job.ImageMaterializationStatus != "ready" || strings.TrimSpace(job.ImageStorageKey) == "" ||
-		job.ImageResolvedDigest != wantDigest {
+	if !EnvironmentGitOpsJobSourceMatches(intent, job) || job.ImageMaterializationStatus != "ready" || strings.TrimSpace(job.ImageStorageKey) == "" {
 		return false
 	}
 	return true
@@ -131,6 +129,13 @@ func (m *MemStore) environmentGitOpsScheduledJobsReadyLocked(memory *environment
 		job, jobExists := m.jobs[member.JobID]
 		if !exists || !jobExists || !environmentGitOpsScheduledJobMatches(graph, member, intent, job, status) {
 			return false
+		}
+		if intent.Source.Kind != "image" {
+			id, ok := EnvironmentGitOpsJobSourceDeployment(job)
+			deployment, exists := m.deployments[id]
+			if !ok || !exists || !environmentGraphSourceJobArtifactMatches(graph, member, intent, job, deployment) {
+				return false
+			}
 		}
 	}
 	return true

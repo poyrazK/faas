@@ -122,10 +122,11 @@ func serviceRequestTelemetryRow(r *http.Request, o ServiceRequestObservation) (R
 		o.ReceivedAt.IsZero() || o.Status < 100 || o.Status > 599 || (o.Target.DeploymentID != "" && deploymentErr != nil) {
 		return RequestTelemetryRow{}, false
 	}
+	traceID := traceIDForTelemetry(r.Context())
 	return RequestTelemetryRow{
 		AccountID: accountID, AppID: appID, DeploymentID: deploymentID,
 		Route: otherRouteLabel, Method: r.Method, Status: o.Status, LatencyMS: o.LatencyMS,
-		ColdBoot: o.ColdBoot, TraceID: traceIDForTelemetry(r.Context()), ReceivedAt: o.ReceivedAt, WakeID: o.WakeID,
+		ColdBoot: o.ColdBoot, TraceID: traceID, TraceInferred: traceID != "" && traceInferredOf(r), ReceivedAt: o.ReceivedAt, WakeID: o.WakeID,
 		GuestDurationMS: o.Guest.DurationMS, GuestRuntime: o.Guest.Runtime, GuestOutcome: o.Guest.Outcome, GuestErrorClass: o.Guest.ErrorClass,
 		InstanceID: o.Target.InstanceID, NodeID: o.Target.NodeID, Region: o.Target.Region,
 		CommitSHA: o.Target.CommitSHA, DeploymentTag: o.Target.DeploymentTag,

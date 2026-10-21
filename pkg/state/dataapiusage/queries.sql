@@ -50,3 +50,15 @@ DELETE FROM data_api_usage_hourly WHERE ctid IN (
  SELECT h.ctid FROM data_api_usage_hourly h
   WHERE h.app_id=sqlc.arg(app_id)::text::uuid AND h.hour<sqlc.arg(before)::timestamptz
   LIMIT sqlc.arg(row_limit)::integer);
+
+-- name: UpsertAccessConfig :exec
+INSERT INTO data_api_access_configs (app_id,config,reported_at)
+ VALUES (sqlc.arg(app_id)::text::uuid,sqlc.arg(config)::jsonb,now())
+ ON CONFLICT (app_id) DO UPDATE SET config=EXCLUDED.config, reported_at=EXCLUDED.reported_at;
+
+-- name: GetAccessConfig :one
+SELECT config,reported_at FROM data_api_access_configs WHERE app_id=sqlc.arg(app_id)::text::uuid;
+
+-- name: DeleteAccessConfig :execrows
+DELETE FROM data_api_access_configs c USING apps a
+ WHERE c.app_id=sqlc.arg(app_id)::text::uuid AND a.id=c.app_id AND a.account_id=sqlc.arg(account_id)::text::uuid;

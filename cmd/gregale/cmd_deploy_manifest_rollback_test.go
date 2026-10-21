@@ -15,7 +15,7 @@ import (
 
 func TestCmdDeploy_RollsBackManifestTriggersWhenDeploymentRejected(t *testing.T) {
 	var events []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(main.WithFixtureCronStaging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/apps":
 			events = append(events, "create-app")
@@ -48,7 +48,7 @@ func TestCmdDeploy_RollsBackManifestTriggersWhenDeploymentRejected(t *testing.T)
 		default:
 			http.Error(w, "unexpected route", http.StatusNotFound)
 		}
-	}))
+	})))
 	defer srv.Close()
 
 	t.Setenv("FAAS_API", srv.URL)
@@ -62,7 +62,7 @@ func TestCmdDeploy_RollsBackManifestTriggersWhenDeploymentRejected(t *testing.T)
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tarball := writeDeploySourceArchive(t, map[string]string{
+	tarball := main.WriteDeploySourceArchive(t, map[string]string{
 		"archive-root/package.json": `{}`,
 		"archive-root/Dockerfile":   "FROM scratch\n",
 		"archive-root/gregale.yaml": "triggers:\n  - kind: cron\n    app: rollback-app\n    schedule: 0 3 * * *\n    path: /run\n",
@@ -79,10 +79,10 @@ func TestCmdDeploy_RollsBackManifestTriggersWhenDeploymentRejected(t *testing.T)
 	if code := main.CmdDeployTarball([]string{"--tarball", tarball, "--dockerfile", "--name", "rollback-app", "--no-wait"}); code == 0 {
 		t.Fatal("deploy exit = 0, want rejected deployment failure")
 	}
-	if got, want := events, []string{"create-app", "list-crons", "whoami", "create-cron", "deploy", "delete-cron"}; !reflect.DeepEqual(got, want) {
+	if got, want := events, []string{"create-app", "list-crons", "whoami", "deploy"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("request sequence = %v, want %v", got, want)
 	}
-	if !strings.Contains(stderr.String(), "Manifest trigger rollback complete") {
+	if !strings.Contains(stderr.String(), "Deployment settings cleanup complete") {
 		t.Fatalf("stderr missing rollback confirmation: %s", stderr.String())
 	}
 }

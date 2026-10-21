@@ -21,9 +21,36 @@ SELECT spec FROM product_control_revisions WHERE account_id=$1 AND app_id=$2 AND
 SELECT EXISTS(SELECT 1 FROM product_control_heads WHERE account_id=$1 AND app_id=$2)::boolean;
 
 -- name: ProductControlSetCustomer :exec
-INSERT INTO product_control_customers(account_id,app_id,tenant_id,revision,plan,suspended,auth_organization_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(app_id,tenant_id) DO UPDATE
-SET revision=EXCLUDED.revision,plan=EXCLUDED.plan,suspended=EXCLUDED.suspended,auth_organization_id=EXCLUDED.auth_organization_id;
+-- A change of revision or plan is appended to the plan history in the same
+-- statement, so every writer records it (ADR-20261021154511).
+WITH prior AS (
+  SELECT c.revision, c.plan FROM product_control_customers c
+  WHERE c.app_id=sqlc.arg(app_id)::uuid AND c.tenant_id=sqlc.arg(tenant_id)::uuid
+), assigned AS (
+  INSERT INTO product_control_customers(account_id,app_id,tenant_id,revision,plan,suspended,auth_organization_id)
+  VALUES (sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(tenant_id)::uuid,sqlc.arg(revision)::text,sqlc.arg(plan)::text,
+    sqlc.arg(suspended)::boolean,sqlc.narg(auth_organization_id)::uuid)
+  ON CONFLICT(app_id,tenant_id) DO UPDATE
+  SET revision=EXCLUDED.revision,plan=EXCLUDED.plan,suspended=EXCLUDED.suspended,auth_organization_id=EXCLUDED.auth_organization_id
+)
+INSERT INTO product_control_plan_history(account_id,app_id,tenant_id,revision,plan,first_assignment)
+SELECT sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(tenant_id)::uuid,sqlc.arg(revision)::text,sqlc.arg(plan)::text,NOT EXISTS(SELECT 1 FROM prior)
+WHERE NOT EXISTS(SELECT 1 FROM prior p WHERE p.revision=sqlc.arg(revision)::text AND p.plan=sqlc.arg(plan)::text);
+
+-- name: ProductControlMonthPlans :many
+-- The plans a customer held in a month: the one in force when it starts and
+-- those assigned during it, each with when it was first held and whether it
+-- includes their first assignment ever (ADR-20261021154511).
+SELECT h.revision, h.plan, bool_or(h.first_assignment)::boolean AS first_assignment, min(h.effective_at)::timestamptz AS since
+FROM product_control_plan_history h
+WHERE h.account_id=sqlc.arg(account_id)::uuid AND h.app_id=sqlc.arg(app_id)::uuid AND h.tenant_id=sqlc.arg(tenant_id)::uuid
+  AND h.effective_at < sqlc.arg(month_end)::timestamptz
+  AND h.effective_at >= COALESCE((SELECT max(s.effective_at) FROM product_control_plan_history s
+      WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid AND s.tenant_id=sqlc.arg(tenant_id)::uuid
+        AND s.effective_at <= sqlc.arg(month_start)::timestamptz), '-infinity'::timestamptz)
+GROUP BY h.revision, h.plan
+ORDER BY since, h.revision, h.plan
+LIMIT sqlc.arg(page_limit)::int;
 
 -- name: ProductControlGetCustomer :one
 SELECT revision,plan,suspended,auth_organization_id FROM product_control_customers WHERE account_id=$1 AND app_id=$2 AND tenant_id=$3;

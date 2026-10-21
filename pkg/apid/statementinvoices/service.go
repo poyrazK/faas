@@ -464,10 +464,16 @@ func statementInvoiceItems(inv billing.StatementInvoice) []statementInvoiceItem 
 	items := make([]statementInvoiceItem, 0, len(inv.Lines)+1)
 	for _, line := range inv.Lines {
 		noun := unitNoun(line.Unit)
+		if line.Label != "" {
+			noun = line.Label
+		}
 		description := fmt.Sprintf("%d %s at %s %s each", line.Units, noun, formatMillicentsDecimal(line.PriceMillicentsPerUnit), inv.Currency)
 		switch {
 		case line.Credit:
 			description = "Prepaid credit applied"
+		case line.Fee == state.StatementFeeBase && line.Label != "":
+			// A Product Control plan fee names its plan (ADR-20261021154511).
+			description = line.Label
 		case line.Fee == state.StatementFeeBase:
 			description = "Monthly base fee"
 		case line.Fee == state.StatementFeeMinimum && line.AmountMillicents < 0:

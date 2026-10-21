@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "package": "github.com/onebox-faas/faas/cmd/e2e",
   "root": "TestManagedPostgresNativeMetal",
   "workloads": ["probe", "node22", "python312"],
@@ -13,6 +13,7 @@
     "starter_release_and_initial_restore",
     "starter_manual_task_without_migration_secret",
     "starter_pooled_disconnect_recovery",
+    "starter_frozen_pool_recovery",
     "starter_failed_hook_cold_boot",
     "starter_running_rotation_and_retirement",
     "starter_parked_rotation_scheduler_recovery",

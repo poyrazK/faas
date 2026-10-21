@@ -217,6 +217,7 @@ type PreviewSourceImpact = previewSourceImpact
 type PreviewUnmatchedSource = previewUnmatchedSource
 type ProductAccessReviewFile = productAccessReviewFile
 type ProductCommand = productCommand
+type ProductOverdueView = productOverdueView
 type ProductPilotFixture = productPilotFixture
 type ProductPlanPolicyReviewFile = productPlanPolicyReviewFile
 type ProductTeamPolicyReviewFile = productTeamPolicyReviewFile
@@ -257,6 +258,7 @@ type ServiceBindingProbeBatchItem = serviceBindingProbeBatchItem
 type ServiceBindingProbeBatchReport = serviceBindingProbeBatchReport
 type Shape = shape
 type SourceRefAppPolicy = sourceRefAppPolicy
+type StartPendingSubmission = startPendingSubmission
 type StartRunner = startRunner
 type TestActionEvidence = testActionEvidence
 type TestActionSpec = testActionSpec
@@ -782,6 +784,8 @@ var CmdDataAPIDev = cmdDataAPIDev
 var CmdDataAPIExplain = cmdDataAPIExplain
 var CmdDataAPIFixture = cmdDataAPIFixture
 var CmdDataAPIInstall = cmdDataAPIInstall
+var CmdDataAPILive = cmdDataAPILive
+var CmdDataAPIStorage = cmdDataAPIStorage
 var CmdDataAPIMigration = cmdDataAPIMigration
 var CmdDataAPIOnboard = cmdDataAPIOnboard
 var CmdDataAPIRefresh = cmdDataAPIRefresh
@@ -1141,6 +1145,8 @@ var DataAPIOnboardingQuote = dataAPIOnboardingQuote
 var DataAPIOnboardingSteps = dataAPIOnboardingSteps
 var DataAPIOrigin = dataAPIOrigin
 var DataAPIReadinessURL = dataAPIReadinessURL
+var DataAPIStorageName = dataAPIStorageName
+var DataAPIStorageSQL = dataAPIStorageSQL
 var DataRepairCheckPolicyFile = dataRepairCheckPolicyFile
 var DataRepairRetentionScope = dataRepairRetentionScope
 var DeadlineTestReceipt = deadlineTestReceipt
@@ -1208,6 +1214,7 @@ var EgressAllowlistChangeNeedsRestart = egressAllowlistChangeNeedsRestart
 var EmitInspectWatchEvent = emitInspectWatchEvent
 var EmptyPilotTextSHA256 = emptyPilotTextSHA256
 var EncodeCustomerOperationReceipt = encodeCustomerOperationReceipt
+var EnableDataAPILive = enableDataAPILive
 var EncodeCustomerOperationRecoveryReceipt = encodeCustomerOperationRecoveryReceipt
 var EndpointRecoveryReport = endpointRecoveryReport
 var EndpointRecoverySpec = endpointRecoverySpec
@@ -1555,6 +1562,7 @@ var ReadDataAPIConnectionBudget = readDataAPIConnectionBudget
 var ReadDataAPIConsumers = readDataAPIConsumers
 var ReadDataAPIDiagnostics = readDataAPIDiagnostics
 var ReadDataAPIGuideRequests = readDataAPIGuideRequests
+var ReadDataAPILive = readDataAPILive
 var ReadDataAPIReleaseConfig = readDataAPIReleaseConfig
 var ReadDevEnvFile = readDevEnvFile
 var ReadDevServiceOverrideFile = readDevServiceOverrideFile
@@ -1825,7 +1833,7 @@ var SortedKeys = sortedKeys
 var SplitArgsForFlags = splitArgsForFlags
 var SplitCSV = splitCSV
 var SplitJobLogFollow = splitJobLogFollow
-var StageManifestProfiling = stageManifestProfiling
+var StartContextSessionPath = startContextSessionPath
 var StartMCPNativeRelease = startMCPNativeRelease
 var StartRequiredConfiguration = startRequiredConfiguration
 var StartSessionPath = startSessionPath
@@ -1982,8 +1990,10 @@ var WithBindingProgress = withBindingProgress
 var WithBindingVerificationBudget = withBindingVerificationBudget
 var WithBindingVerificationSlot = withBindingVerificationSlot
 var WithCwd = withCwd
+var WithFixtureCronStaging = withFixtureCronStaging
 var WithGetErr = withGetErr
 var WithRecorder = withRecorder
+var WithResetJSONOutput = withResetJSONOutput
 var WithTTYForTest = withTTYForTest
 var WithoutConfirmationFlags = withoutConfirmationFlags
 var WorkerReplicaBounds = workerReplicaBounds
@@ -2000,6 +2010,7 @@ var WriteDataAPIDiagnostics = writeDataAPIDiagnostics
 var WriteDataAPIPool = writeDataAPIPool
 var WriteDataAPITimings = writeDataAPITimings
 var WriteDataAPITypes = writeDataAPITypes
+var WriteDeploySourceArchive = writeDeploySourceArchive
 var WriteFile = writeFile
 var WriteGitOpsPlanMarkdown = writeGitOpsPlanMarkdown
 var WriteJSON = writeJSON
@@ -2178,10 +2189,6 @@ func (r *loadedAutomationScenario) Scenario() *automationScenario           { re
 
 // Members of manifestCronTransaction
 func (r *manifestCronTransaction) Steps() *[]manifestCronRollbackStep { return &r.steps }
-
-// Members of manifestProfilingTransaction
-func (r *manifestProfilingTransaction) Committed() *bool                  { return &r.committed }
-func (r *manifestProfilingTransaction) Rollback(p0 context.Context) error { return r.rollback(p0) }
 
 // Members of mcpReleaseAuthorization
 func (r *mcpReleaseAuthorization) InsufficientToken() *string { return &r.insufficientToken }

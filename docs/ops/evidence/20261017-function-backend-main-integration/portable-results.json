@@ -1,0 +1,1810 @@
+{
+  "main_base": "5f10b1f27616c7543680df4c31b79018312911e1",
+  "production_ready": false,
+  "native_acceptance": false,
+  "runs": {
+    "ordinary_core_initial": {
+      "sha256": "a3d10424b434bc0e09ad238395b161ae4349657478a259242770358c7a01eeca",
+      "packages": {
+        "github.com/onebox-faas/faas/pkg/state": {
+          "passed_tests": 144,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/sched": {
+          "passed_tests": 49,
+          "skipped_tests": [
+            "TestFunctionExecutionWarmRecoveryResealsParkAdmission"
+          ],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/vmmdgrpc": {
+          "passed_tests": 20,
+          "skipped_tests": [
+            "TestFunctionMigrationRefusedRecoveryRetirement"
+          ],
+          "failed_tests": [
+            "TestMigrationSourcePreparePersistsAuthorityAndKeysBeforeCapture",
+            "package"
+          ]
+        },
+        "github.com/onebox-faas/faas/pkg/fcvm": {
+          "passed_tests": 36,
+          "skipped_tests": [
+            "TestFunctionMigrationAdmittedRecoveryACKAndCanceledRPC/node22",
+            "TestFunctionMigrationAdmittedRecoveryACKAndCanceledRPC/node24",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/wake",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/lease",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/parent",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/incarnation",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/FC_version",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/different_capture",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/expiry",
+            "TestFunctionMigrationAdmittedRefusesStaleCaptureBeforeEffects/purpose",
+            "TestFunctionMigrationAdmittedRecoveryFailureRetiresWithoutReplay/probe",
+            "TestFunctionMigrationAdmittedRecoveryFailureRetiresWithoutReplay/permission_expiry",
+            "TestFunctionMigrationAdmittedRecoveryFailureRetiresWithoutReplay/post-ACK_drift",
+            "TestFunctionMigrationAdmittedLostRegistrationACKHasNoEffects",
+            "TestFunctionMigrationAdmittedRejectedCaptureRetiresWithoutRecovery",
+            "TestFunctionDestinationHostReadyCommitAndDuplicate",
+            "TestFunctionDestinationHostFailuresNeverFallbackOrReplay/load",
+            "TestFunctionDestinationHostFailuresNeverFallbackOrReplay/probe-or-ACK",
+            "TestFunctionDestinationHostFailuresNeverFallbackOrReplay/post-restore-policy",
+            "TestFunctionDestinationHostFailuresNeverFallbackOrReplay/cleanup",
+            "TestFunctionDestinationHostCancellationJoinsRestore",
+            "TestFunctionDestinationHostCancelBeforeAdoptionFencesLateRPC",
+            "TestFunctionMigrationSourceRecoveryAdmission/node22",
+            "TestFunctionMigrationSourceRecoveryAdmission/node24",
+            "TestFunctionMigrationSourceUncertainRecovery/lost-ack",
+            "TestFunctionMigrationSourceUncertainRecovery/probe",
+            "TestFunctionMigrationSourceUncertainRecovery/deadline",
+            "TestFunctionMigrationSourceUncertainRecovery/resume",
+            "TestFunctionMigrationSourceUncertainRecovery/checkpoint",
+            "TestFunctionMigrationSourceUncertainRecovery/cleanup",
+            "TestFunctionMigrationSourceDestroyAndStaleBinding",
+            "TestFunctionMigrationSourceCancelledCheckpointRetires",
+            "TestFunctionMigrationSourceRegistrationLostAckDoesNotReplay",
+            "TestFunctionResourceWarmRecoveryAdmission",
+            "TestFunctionResourceWarmUncertainRecoveryRetires",
+            "TestFunctionResourceWarmMeasuredAuthority",
+            "TestFunctionResourceWarmRecoveryJoinedByDestroy"
+          ],
+          "failed_tests": []
+        }
+      }
+    },
+    "qualified_core_initial": {
+      "sha256": "5ec8b9b912f33e424e78b93ca42f7748c371376b57c92f31bddf5aa44d8ff4a9",
+      "packages": {
+        "github.com/onebox-faas/faas/pkg/fcvm": {
+          "passed_tests": 85,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/sched": {
+          "passed_tests": 29,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/vmmdgrpc": {
+          "passed_tests": 26,
+          "skipped_tests": [],
+          "failed_tests": [
+            "TestFunctionMigrationHandlersPreparationAndDestinationGate",
+            "package"
+          ]
+        },
+        "github.com/onebox-faas/faas/pkg/runtimeadmission": {
+          "passed_tests": 46,
+          "skipped_tests": [],
+          "failed_tests": []
+        }
+      }
+    },
+    "runner_profiles_initial": {
+      "sha256": "c3c84d1b8ff4f270b3d3ff750d332938ba134897b958fd13142d94d2884d5e19",
+      "packages": {
+        "github.com/onebox-faas/faas/guest/runners/go124": {
+          "passed_tests": 8,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/runners/internal": {
+          "passed_tests": 102,
+          "skipped_tests": [],
+          "failed_tests": [
+            "TestFunctionResourcesRegistrationGateAndCapacity/qualified=false",
+            "TestFunctionResourcesRegistrationGateAndCapacity/qualified=true",
+            "TestFunctionResourcesRegistrationGateAndCapacity",
+            "TestFunctionResourcesCustomHookOrdering/readable=false",
+            "TestFunctionResourcesCustomHookOrdering/readable=true",
+            "TestFunctionResourcesCustomHookOrdering",
+            "TestFunctionResourcesDrainEveryInterpreterBeforeAcknowledgement/close-fails=false",
+            "TestFunctionResourcesDrainEveryInterpreterBeforeAcknowledgement/close-fails=true",
+            "TestFunctionResourcesDrainEveryInterpreterBeforeAcknowledgement",
+            "TestFunctionResourcesRecoveryWaitsForEveryProbe/probe-fails=false",
+            "TestFunctionResourcesRecoveryWaitsForEveryProbe/probe-fails=true",
+            "TestFunctionResourcesRecoveryWaitsForEveryProbe",
+            "package"
+          ]
+        },
+        "github.com/onebox-faas/faas/guest/runners/internal/runnerparity": {
+          "passed_tests": 18,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/runners/internal/workerpool": {
+          "passed_tests": 28,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/runners/node22": {
+          "passed_tests": 5,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/runners/node24": {
+          "passed_tests": 5,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/runners/python312": {
+          "passed_tests": 5,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/runners/python313": {
+          "passed_tests": 5,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/rootfs": {
+          "passed_tests": 298,
+          "skipped_tests": [
+            "TestAppMkfsRealGoLayer",
+            "TestBuildRealMkfs",
+            "TestPreserveOwnership_IntegerInRange",
+            "TestApplyLayer_OwnershipAppliedEndToEnd",
+            "TestApplyLayer_OutOfRangeClampEndToEnd",
+            "TestApplyEntryPreservesOwnershipOnSymlink",
+            "TestPreserveOwnership_DirIntegerInRange",
+            "TestPatchBaseGuestInitReplacesPID1",
+            "TestPatchBaseGuestInitIsDeterministic",
+            "TestPatchBaseGuestInitRefusesUnexpectedImages"
+          ],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/e2etest/functionmigration": {
+          "passed_tests": 72,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/e2etest/functionsql": {
+          "passed_tests": 9,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/e2etest/postgresstarter": {
+          "passed_tests": 23,
+          "skipped_tests": [
+            "TestPythonStarterSystemTrust"
+          ],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/functionlifetime": {
+          "passed_tests": 4,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/guest/init": {
+          "passed_tests": 672,
+          "skipped_tests": [
+            "TestShipReportRetriesBoundedByConstant",
+            "TestWorkloadSecretReloadPublishesAndReportsItsOwnIdentity",
+            "TestMainWorkloadPreparesProjectionBeforeReload",
+            "TestExecHealthcheckUsesDistinctGroup",
+            "TestAppTaskCommandUsesDistinctGroup",
+            "TestRuntimeSecretReloadWorkerRecovery",
+            "TestRuntimeSecretReloadSlowFetchDoesNotShortenBackoff",
+            "TestSidecarRuntimePreservesReloadAcrossProcessRestarts",
+            "TestPreparedSidecarReloaderUsesImageOwner",
+            "TestSidecarRuntimePreparationHonorsOptInAndFailsClosed",
+            "TestEmitWorkloadOOM_SetsSORCVTIMEO"
+          ],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/cmd/gregale/templates": {
+          "passed_tests": 22,
+          "skipped_tests": [
+            "TestPostgresStarterSQLRecovery",
+            "TestPythonPostgresStarterLifecycle",
+            "TestPythonPostgresStarterSQLRecovery",
+            "TestPythonStorageStarterAcceptance",
+            "TestObjectStorageNodeMaterializeForQualification"
+          ],
+          "failed_tests": []
+        }
+      }
+    },
+    "runner_core_final": {
+      "sha256": "fa531b2b727bfafc164b309450205411fba890bd2e4e9097f01af385418164b8",
+      "packages": {
+        "github.com/onebox-faas/faas/guest/runners/internal": {
+          "passed_tests": 114,
+          "skipped_tests": [],
+          "failed_tests": []
+        }
+      }
+    }
+  },
+  "correction_reruns": {
+    "generic_source_rpc": {
+      "passed": true,
+      "log_sha256": "6d8950053e81ab974cff921984f1d0546b6257cc514efe87ca47dcab27440fcf"
+    },
+    "qualified_function_and_generic_rpc": {
+      "passed": true,
+      "log_sha256": "e222f91e6839f25ca3f4ab27cc5193c7126810dcd5a404d4e2cd0fe7260d1518"
+    },
+    "sdk_package": {
+      "passed": true,
+      "log_sha256": "94a7a6f95f7b743fbbca3dcaa15485e1d5bf4c24343a5704ac666995769dc05f"
+    },
+    "sdk_pool_units": {
+      "passed": true,
+      "log_sha256": "b516e27a93a460bf6e560607b20e10d17786ce1cfaa42ddbdf506894c119a071"
+    },
+    "node_starter": {
+      "passed": true,
+      "log_sha256": "641e743921a0cc92bdfcaa9000ed8b0d5e4e8fb7cd96c64de85153f66339c3d7"
+    },
+    "secret_reload_starter": {
+      "passed": true,
+      "log_sha256": "6f3017a0c95e23ff91056e8631ebf90ec18a1f135f6f00c4272d0adbfd5334fd"
+    },
+    "migration_roundtrip": {
+      "passed": true,
+      "log_sha256": "d868cf3041a4180645c24054c0b9fb14855d7c277143348fac70fb3f81537ef8"
+    },
+    "schema_apply": {
+      "passed": true,
+      "log_sha256": "ebb0d9646c4ed4c70cc6cdd223a3466ca0ae2a0bcee7e44d2e07f425d98a731a"
+    },
+    "sqlc": {
+      "passed": true,
+      "log_sha256": "1175d7bbb92d8df7bf5aba98f1372028e88e4395ff62071b1297e5d5502e7855"
+    },
+    "migration_expand_contract": {
+      "passed": true,
+      "log_sha256": "8c844d6c4c9ee534449e1c21986b6c0fc41223e15f7f278c7a24ea28a9aaf20a"
+    },
+    "docs_and_source_policy": {
+      "passed": true,
+      "log_sha256": "16175c681a9b3640e614e2338bea2a4f2f6e88bb74bddce982274d0b2e76eece"
+    }
+  },
+  "all_39_normal_qualification_guards_executed_with_tags": true,
+  "post_ready_checks": {
+    "feature_head": "51d97f9e9b26fec22d0b675736cdb1fb06bff877",
+    "qualification_tagged_scoped_lint": {
+      "passed": true,
+      "issues": 0,
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47"
+    },
+    "native_e2e_compile": {
+      "passed": true,
+      "binary_sha256": "ff5a96b0486c92864ef60220ba66ff62d1100147b8e6ba83fa47ffe4df3a36f7",
+      "native_execution_qualified": false
+    },
+    "data_api_audit_teardown": {
+      "initial_ci_run": 39064772402,
+      "initial_ci_job": 117490007645,
+      "initial_ci_error_code": "57P01",
+      "controlled_checkout_pause_ms": 150,
+      "controlled_initial_log_sha256": "e46d3c448dc61af514997597f5aa04c386513d2677fffddbe4f4107cdcfef4cf",
+      "controlled_correction_passes": 3,
+      "controlled_correction_log_sha256": [
+        "b2ebb565aca0cabe4f2e17c2dff196231e556c632985b66a78a6d918bc49a021",
+        "193287462ea4c63977c7b08221a86e0d87e1683bc1d975f135a6245ac0b01f96",
+        "5f11e0ffbee127184f250d265e1b2ff0b4b1acb4e200fffec76b6c0116371f33"
+      ],
+      "unmodified_runtime": {
+        "node22": {
+          "passed_tests": 2,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "log_sha256": "c57df62b38f50d6c3211d84e507ea454498d2eadf8646c036360a26c612c87a4"
+        },
+        "node24": {
+          "passed_tests": 2,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "log_sha256": "83463ad8588394c8a04c9950abbd7271b40b606d315742f878aa1d307cc679e8"
+        }
+      }
+    }
+  },
+  "latest_main_integration": {
+    "main_base": "c23392d9a7969d9d4beb639d888edf241b650c26",
+    "feature_head": "76a4ec629dc80320fa543fe6da3fdf876612debf",
+    "function_adr_range": [
+      1658,
+      1665
+    ],
+    "schema_lines": 77227,
+    "adr_uniqueness_passed": true,
+    "checks": {
+      "fresh_schema": {
+        "passed": true,
+        "log_sha256": "b689907a331a6a216f497f6d2492dac651fc3df556c84da611ff0a89f88d4434"
+      },
+      "sqlc": {
+        "passed": true,
+        "log_sha256": "1175d7bbb92d8df7bf5aba98f1372028e88e4395ff62071b1297e5d5502e7855"
+      },
+      "protobuf": {
+        "passed": true,
+        "log_sha256": "3527862273bad2495db3831df4453a6765075b8aba5be0fc445bcd8d271df2c1"
+      },
+      "documentation": {
+        "passed": true,
+        "log_sha256": "f05db317778ade9671d252606f86b6093a2cac186ed40900f6b379e329e44459"
+      },
+      "node_sdk_build": {
+        "passed": true,
+        "log_sha256": "01569a110227e471b5b46e1c495f2fc92cf3f1cd4f021b4a8f09186d17e1288c"
+      },
+      "function_migration_roundtrip": {
+        "passed": true,
+        "log_sha256": "f4395373131a87a04a6e8f0ea12f3887fab52537428811a3c3828204935a3593"
+      }
+    },
+    "race": {
+      "log_sha256": "7930c58e1e6fc14341d8eb3df6d9fae78c509ea8451e546e7f0a55b7018d45e7",
+      "packages": {
+        "github.com/onebox-faas/faas/pkg/state": {
+          "passed_tests": 104,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/sched": {
+          "passed_tests": 72,
+          "skipped_tests": [],
+          "failed_tests": []
+        }
+      }
+    }
+  },
+  "explicit_starter_sql_gate": {
+    "initial_ci_head": "8d931418baf5d44fd79b9e3d7501fc43d33a8276",
+    "initial_ci_run": 39070668836,
+    "initial_ci_job": 117507421858,
+    "enable_flag": "GREGALE_POSTGRES_STARTER_TEST=1",
+    "fixture_sha256": "cca436d6f5baed72c35aad219aa813821188133b2735af3761f9910f5318aa48",
+    "native_execution_qualified": false,
+    "runs": {
+      "node24": {
+        "passed_tests": 15,
+        "sql_scenarios": 14,
+        "skipped_tests": [],
+        "failed_tests": [],
+        "log_sha256": "09ce3be0da3c26757d70dc06f72d38be42f2990055ff692a39df519d9f7047bc"
+      },
+      "node22": {
+        "passed_tests": 15,
+        "sql_scenarios": 14,
+        "skipped_tests": [],
+        "failed_tests": [],
+        "log_sha256": "35cca5e67feccbb0f432d845f2a458ea0cc4b1c5808cab02466fc7d1ad8558ea"
+      }
+    }
+  },
+  "rehearsal_main_integration": {
+    "main_base": "49ecac58dad13a8d0ee27f0e8af5206d4d7408dc",
+    "code_commit": "f4ee8ef514b7396475cb5e7760271c011c92279e",
+    "schema_lines": 78875,
+    "function_migration_versions": [
+      20261018003150915,
+      20261018003150916,
+      20261018003150917
+    ],
+    "checks": {
+      "fresh_schema": {
+        "passed": true,
+        "log_sha256": "27ca32b940d6f6ec238d214dd84a30c507ca996ac98c12b31105eadc32484c9d"
+      },
+      "sqlc": {
+        "passed": true,
+        "log_sha256": "1175d7bbb92d8df7bf5aba98f1372028e88e4395ff62071b1297e5d5502e7855"
+      },
+      "protobuf": {
+        "passed": true,
+        "log_sha256": "3527862273bad2495db3831df4453a6765075b8aba5be0fc445bcd8d271df2c1"
+      },
+      "documentation_and_adr": {
+        "passed": true,
+        "log_sha256": "53fe1472e2416bcfb1a397095c3a3471e8eccd7af14323c78b8526f562756210"
+      },
+      "node_sdk_build": {
+        "passed": true,
+        "log_sha256": "01569a110227e471b5b46e1c495f2fc92cf3f1cd4f021b4a8f09186d17e1288c"
+      },
+      "activity_race": {
+        "passed": true,
+        "log_sha256": "cd4f93a531a009e5ba0b39afc55bbdb0d8a20eb562ff4be8b106bf93fb774281"
+      },
+      "function_migration_roundtrip": {
+        "passed": true,
+        "log_sha256": "12498623c474698e1aa23528a8ecbb339082b2e59b461d7830585b4c8b9a6b7c"
+      }
+    },
+    "qualified_core_local_pending_at_record_creation": true,
+    "native_compile_pending_at_record_creation": true,
+    "native_execution_qualified": false,
+    "production_ready": false
+  },
+  "completed_rehearsal_validation": {
+    "code_commit": "f4ee8ef514b7396475cb5e7760271c011c92279e",
+    "published_head_at_validation": "bb2dec11b01c8494515a6bcf75b0fac8cbeb281a",
+    "race": {
+      "packages": {
+        "github.com/onebox-faas/faas/pkg/fcvm/activity": {
+          "passed_tests": 2,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/state": {
+          "passed_tests": 109,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/fcvm": {
+          "passed_tests": 190,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/sched": {
+          "passed_tests": 93,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/vmmdgrpc": {
+          "passed_tests": 41,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/runtimeadmission": {
+          "passed_tests": 46,
+          "skipped_tests": [],
+          "failed_tests": []
+        }
+      },
+      "log_sha256": "3649f6948ba791e709d7d362fdeb39038456e32323f0a146be1db7a3b7e4b591"
+    },
+    "native_compile": {
+      "passed": true,
+      "binary_sha256": "59a0c6b6764b6dd7d0d77225ef3f51db9269f5b877948f6fcf42e33bdcd072ef",
+      "native_execution_qualified": false
+    }
+  },
+  "management_sdk_contract_correction": {
+    "initial_ci_run": 39078571528,
+    "initial_ci_job": 117530700818,
+    "public_credential_access": [
+      "read_write",
+      "read_only",
+      "migration",
+      "data_api"
+    ],
+    "published_spec_changed": false,
+    "feature_flags_changed": false,
+    "node_generator": "0.31.0",
+    "python_generator": "0.29.0",
+    "node_build_passed": true,
+    "python_compile_passed": true,
+    "generation_logs": {
+      "node": "15392908ce19418594df4eb24e884f3b432fb178ab7750f356dd0a388e4bb95e",
+      "python": "7e688397f920a4fa5a6fa76de15aa7c88612e9ee2d961ee5eaff0de6be3a9c2a"
+    }
+  },
+  "product_control_main_integration": {
+    "main_base": "f63c75848c99002fe379db8f3f1c17e1777fab63",
+    "feature_head_before_merge": "428b8bd3f54138ceb07fd930174ab10976c11963",
+    "recorded_at": "2026-10-18T01:03:08.248253+00:00",
+    "background_completion_adr": "20261018005023",
+    "other_function_adrs": [
+      1659,
+      1660,
+      1661,
+      1662,
+      1663,
+      1664,
+      1665
+    ],
+    "published_response_check_adr_preserved": 1658,
+    "schema_lines": 80013,
+    "checks": {
+      "fresh_schema": {
+        "passed": true,
+        "log_sha256": "d9eea1e73afa49832064d016c65ae625c8515c0ef0f8cdc6b5c2b6722ba2d524"
+      },
+      "sqlc_generation": {
+        "passed": true,
+        "log_sha256": "e446c92dbb3d88045bec51f0ad24386ed1b0f40d60039508b551b2ea3e041a2e"
+      },
+      "sqlc_drift": {
+        "passed": true,
+        "log_sha256": "1175d7bbb92d8df7bf5aba98f1372028e88e4395ff62071b1297e5d5502e7855"
+      },
+      "documentation_and_adr": {
+        "passed": true,
+        "log_sha256": "66cb343846e5c31a3035d022df3fdaf500fefeedfb683504b58b4d21b132c022"
+      },
+      "node_sdk_regeneration": {
+        "passed": true,
+        "log_sha256": "058886e4dc1aadf89e063ee1e749339c6e93e2fd1f3a62e05736e1cb7de5eefe"
+      },
+      "python_sdk_regeneration": {
+        "passed": true,
+        "log_sha256": "b4d214a8d2a7181fb097785dbcf62048e6048cbe3054634da51239a1e81b1333"
+      },
+      "node_sdk_build": {
+        "passed": true,
+        "log_sha256": "01569a110227e471b5b46e1c495f2fc92cf3f1cd4f021b4a8f09186d17e1288c"
+      },
+      "function_migration_replay_down_up": {
+        "passed": true,
+        "log_sha256": "2228318b3952a6e0bcb0d025d0816a32a245e9777a82f79e215c53621b277f76"
+      }
+    },
+    "race": {
+      "qualification_tags": [
+        "metal",
+        "function_background_native"
+      ],
+      "simulated_host_only": true,
+      "log_sha256": "b903713961512f32bd7fd567b6d04632d40effa1ef8f545fab14a653c14a4258",
+      "packages": {
+        "github.com/onebox-faas/faas/pkg/state": {
+          "passed_tests": 298,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/sched": {
+          "passed_tests": 48,
+          "skipped_tests": [],
+          "failed_tests": []
+        }
+      }
+    },
+    "sdk_regeneration_unstaged_diff_empty": true,
+    "python_compilation_passed": true,
+    "native_acceptance": false,
+    "production_activation": false
+  },
+  "hosted_sql_gate_corrections": {
+    "feature_head_before_fix": "8096ff29af0cd7181b4f8f32851f1b6591cdc1d6",
+    "recorded_at": "2026-10-18T01:16:28.877909+00:00",
+    "workflow_migrated_template_opt_in": true,
+    "private_database_per_test": true,
+    "test_timeout_unchanged": "3m",
+    "race_binary_compile_memlimit": "5GiB",
+    "race_runtime_limits": {
+      "GOMEMLIMIT": "2GiB",
+      "GOGC": "10",
+      "GOMAXPROCS": "2"
+    },
+    "state_race": {
+      "passed_tests": 76,
+      "skipped_tests": [],
+      "failed_tests": [],
+      "log_sha256": "34cf43fc9882d81339c54027b65cbb669e7735cb1d647d5ebfb380690e2137cb"
+    },
+    "managed_postgres_cutover": {
+      "passed_tests": 1,
+      "skipped_tests": [],
+      "failed_tests": [],
+      "elapsed_seconds": 8.43,
+      "log_sha256": "337f3a30eb39a5e4081f6abbf48e68675da4da456ff599e3512407185ebd0163"
+    },
+    "operational_tables": [
+      "function_migration_destinations",
+      "function_migration_sources"
+    ],
+    "unknown_schema_still_fails_before_reservation": true,
+    "actionlint_passed": true,
+    "schema_changed": false,
+    "native_acceptance": false,
+    "production_activation": false
+  },
+  "lint_and_compilation_phase_corrections": {
+    "recorded_at": "2026-10-18T02:48:38.366890+00:00",
+    "source_base": "758198bc429b1a568abd0b7f009f8cc9c4b7194a",
+    "go_patch_sha256": "8769903fceebfb82e4eadc1427b0ff7ec18f87d613c6b2ca0e4169f9deaf6bbc",
+    "removed_unused_private_tracker_forwarder": true,
+    "full_package_lint": {
+      "ordinary_issues": 0,
+      "qualified_issues": 0,
+      "qualified_nonfatal_cache_persistence_warnings": 10136,
+      "warnings_note": "All analysis completed; default home fact cache was read-only. Future local invocations use a writable workspace cache."
+    },
+    "rpc_race": {
+      "ordinary": {
+        "passed_tests": 59,
+        "skipped_tests": [
+          "TestFunctionMigrationRefusedRecoveryRetirement"
+        ],
+        "failed_tests": [],
+        "log_sha256": "82d6e60e3abd8f852b6712b806499740cdba58e5de794ed9e37b969b1dc8d049"
+      },
+      "qualified": {
+        "passed_tests": 65,
+        "skipped_tests": [],
+        "failed_tests": [],
+        "log_sha256": "7622279760740ad4d0435bb5d34b359e10c1833dba585fa0e71d0172796916bd"
+      }
+    },
+    "ordinary_guard_skip_executed_in_qualified": true,
+    "shared_ci_previous_head": {
+      "job": 117552264429,
+      "all_test_steps_passed": true,
+      "native_compile_cancelled_at_job_budget": true,
+      "job_timeout_minutes": 45,
+      "imaged_test_seconds": 0.042,
+      "imaged_cold_nonrace_compile_approx_minutes": 11
+    },
+    "compile_phase": {
+      "compile_only": true,
+      "GOMEMLIMIT": "5GiB",
+      "GOGC": "50",
+      "GOMAXPROCS": "2",
+      "multi_package_output_directory_verified": true,
+      "verified_packages": [
+        "pkg/functionlifetime",
+        "pkg/fcvm/activity",
+        "pkg/imaged"
+      ],
+      "test_bodies_executed_in_probe": false,
+      "job_timeout_unchanged_minutes": 45,
+      "runtime_limits_unchanged": {
+        "GOMEMLIMIT": "2GiB",
+        "GOGC": "10",
+        "GOMAXPROCS": "2"
+      },
+      "test_selections_and_deadlines_unchanged": true,
+      "image_lifecycle_now_race_instrumented": true
+    },
+    "imaged_race": {
+      "passed_tests": 2,
+      "skipped_tests": [],
+      "failed_tests": [],
+      "runtime_GOMEMLIMIT": "2GiB",
+      "runtime_GOGC": "10",
+      "timeout": "3m",
+      "log_sha256": "83446d95088204958929dd04fdf117cc3ba7914ad2437907a494496f948cdcdd"
+    },
+    "native_compile": {
+      "compile_return_code": 0,
+      "elapsed_seconds": 56.717,
+      "maximum_child_rss_kib": 2310784,
+      "GOMEMLIMIT": "5GiB",
+      "GOGC": "50",
+      "compile_only": true,
+      "native_execution": false,
+      "source_base": "758198bc429b1a568abd0b7f009f8cc9c4b7194a",
+      "go_patch_sha256": "8769903fceebfb82e4eadc1427b0ff7ec18f87d613c6b2ca0e4169f9deaf6bbc",
+      "binary_sha256": "36393c32b0ff0f9b5d58043fe07d9ea86f7702657f1e57d55915875f3fe847d0",
+      "existing_dependency_cache": true,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "native_acceptance": false,
+    "production_activation": false
+  },
+  "data_api_event_main_integration": {
+    "main_base": "ee0cc7135dac4149b1c905cf36e628088ab279f9",
+    "feature_head_before_merge": "149de7497676ea5016aca0da07f516fe4f360830",
+    "recorded_at": "2026-10-18T03:30:23.646687+00:00",
+    "function_adr_renames": {
+      "1659": {
+        "new_id": "20261018030610",
+        "old_path": "docs/adr/1659-function-vm-execution-lifetime.md",
+        "new_path": "docs/adr/20261018030610-function-vm-execution-lifetime.md"
+      },
+      "1660": {
+        "new_id": "20261018030611",
+        "old_path": "docs/adr/1660-function-postgres-resource-lifecycle.md",
+        "new_path": "docs/adr/20261018030611-function-postgres-resource-lifecycle.md"
+      },
+      "1661": {
+        "new_id": "20261018030612",
+        "old_path": "docs/adr/1661-function-warm-snapshot-resource-recovery.md",
+        "new_path": "docs/adr/20261018030612-function-warm-snapshot-resource-recovery.md"
+      },
+      "1662": {
+        "new_id": "20261018030613",
+        "old_path": "docs/adr/1662-function-migration-source-rollback.md",
+        "new_path": "docs/adr/20261018030613-function-migration-source-rollback.md"
+      },
+      "1663": {
+        "new_id": "20261018030614",
+        "old_path": "docs/adr/1663-function-migration-admission.md",
+        "new_path": "docs/adr/20261018030614-function-migration-admission.md"
+      },
+      "1664": {
+        "new_id": "20261018030615",
+        "old_path": "docs/adr/1664-function-migration-destination.md",
+        "new_path": "docs/adr/20261018030615-function-migration-destination.md"
+      },
+      "1665": {
+        "new_id": "20261018030616",
+        "old_path": "docs/adr/1665-function-migration-scheduler-restart.md",
+        "new_path": "docs/adr/20261018030616-function-migration-scheduler-restart.md"
+      }
+    },
+    "background_adr_preserved": "20261018005023",
+    "published_data_api_adrs_1660_1678_unchanged": true,
+    "schema_lines": 80157,
+    "checks": {
+      "schema": {
+        "passed": true,
+        "log_sha256": "d64e3733ffb5785965af44fa65e15c19187914cee453ffd3ffca27cac8495d05"
+      },
+      "migration-roundtrip": {
+        "passed": true,
+        "log_sha256": "7d065b3baaacce88dea1ee2ecdc95507b354bb5c1c40fc9793ba1286bd0f05d5"
+      },
+      "sqlc-generate": {
+        "passed": true,
+        "log_sha256": "e446c92dbb3d88045bec51f0ad24386ed1b0f40d60039508b551b2ea3e041a2e"
+      },
+      "sqlc-check": {
+        "passed": true,
+        "log_sha256": "1175d7bbb92d8df7bf5aba98f1372028e88e4395ff62071b1297e5d5502e7855"
+      },
+      "docs": {
+        "passed": true,
+        "log_sha256": "6c191b22b6f3571146902e0a2a34edbde5d6c67631fa4ebf0d793a578a4ac5e9"
+      },
+      "node-regen": {
+        "passed": true,
+        "log_sha256": "b6913cb29f1e44c3ee02c032c1bf9406b952db06dd6ee315662929812ae922ca"
+      },
+      "python-regen": {
+        "passed": true,
+        "log_sha256": "7e688397f920a4fa5a6fa76de15aa7c88612e9ee2d961ee5eaff0de6be3a9c2a"
+      },
+      "helper-drift": {
+        "passed": true,
+        "log_sha256": "0caa3cb06df3a0e27b06e05a6d7b8f350c58c317dff0cc571ac3b8afd9b502c0"
+      },
+      "sdk-build": {
+        "passed": true,
+        "log_sha256": "01569a110227e471b5b46e1c495f2fc92cf3f1cd4f021b4a8f09186d17e1288c"
+      }
+    },
+    "qualified_race_contracts": {
+      "state": {
+        "passed_tests": 76,
+        "skipped_tests": [],
+        "failed_tests": [],
+        "log_sha256": "b1f95439aa6a372c9bced200cf64f9d81d295165c9e3c21aa37ba045c4c86951"
+      },
+      "managedpostgres": {
+        "passed_tests": 44,
+        "skipped_tests": [],
+        "failed_tests": [],
+        "log_sha256": "b22aeab47c5266abf7664c4dadb94291b286ebd7511ddfcbb2d36c66086cecca"
+      },
+      "api": {
+        "passed_tests": 6,
+        "skipped_tests": [],
+        "failed_tests": [],
+        "log_sha256": "98fb2c4b217844ea9ebc2ed8805806b617e180abfaa920f069a936313635e98d"
+      }
+    },
+    "compile_GOMEMLIMIT": "5GiB",
+    "runtime_limits": {
+      "GOMEMLIMIT": "2GiB",
+      "GOGC": "10",
+      "GOMAXPROCS": "2",
+      "timeout": "3m"
+    },
+    "local_state_test_DWARF_disabled_for_disk_fit": true,
+    "sdk_access_enum_matches_current_main_five_modes": true,
+    "published_OpenAPI_unchanged": true,
+    "native_acceptance": false,
+    "production_activation": false,
+    "local_capacity_note": "First compile exhausted managed workspace before test execution. Removed only inactive generated Go archive caches and reran all contracts successfully."
+  },
+  "mcp_main_integration": {
+    "source_parents": [
+      "ef08649b068014911061c58f1d24f51611b810cb",
+      "637ef59e883a26efdc8de554b039e15e99a8fcd8"
+    ],
+    "fresh_schema_reported_lines": 81257,
+    "migration_source_digest": "7f18fe66d7c131196978d45c020071d147512a6d46fecfdb2dd8b26268bd38ef",
+    "function_migrations": {
+      "new_migrations": 3,
+      "replay_schema_equal": true,
+      "down_up_schema_equal": true,
+      "schema_sha256": "90da80add76f625294a2ceacbc9a00d3a1dec50d2ec1630745f0293702cd68bd"
+    },
+    "published_mcp_adrs_unchanged": 30,
+    "openapi_copies_unchanged_from_published_main": true,
+    "sqlc_generation_and_drift": "pass",
+    "node_and_python_sdk_generation": "pass; generated trees match published main",
+    "node_build_python_compile_runtime_helper_drift": "pass",
+    "adr_uniqueness": {
+      "adrs": 1767,
+      "distinct_ids": 1563,
+      "baseline_duplicate_ids": 164
+    },
+    "docs_links_and_four_local_fixtures": "pass",
+    "prior_head_hosted_function_gate": {
+      "head": "ef08649b068014911061c58f1d24f51611b810cb",
+      "run_id": 39094030717,
+      "job_id": 117576589186,
+      "conclusion": "success",
+      "started_at": "2026-10-18T03:59:54Z",
+      "completed_at": "2026-10-18T04:23:48Z",
+      "guarded_native_suite": "compiled only; no native test execution"
+    },
+    "combined_head_hosted_ci": "required before merge; no success claimed here",
+    "native_acceptance": false,
+    "production_activation": false
+  },
+  "mcp_clone_inventory_correction": {
+    "reproduced_source": "89685bc744022eefbb82e151c3a76f32b1bf8079",
+    "failure": "migrated clone inventory rejected 17 unregistered MCP readiness tables and 6 alert columns",
+    "initial_state_run": {
+      "passed_tests": 71,
+      "failed_tests": [
+        "TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReservation"
+      ],
+      "skipped_tests": []
+    },
+    "fix": {
+      "new_tables": 17,
+      "new_columns": 6,
+      "configuration_tables_with_isolation_blockers": 7,
+      "operational_source_tables": 10,
+      "existing_alert_table_kinds_preserved": true
+    },
+    "static_validation": {
+      "registry_valid": true,
+      "changed_table_column_sets_equal_canonical_schema": 19
+    },
+    "regression_contract": "existing type-boundary and live full-schema tests now cover MCP policies and all seven configuration blockers; unknown/missing schema still fails before reservation",
+    "corrected_source_validation": {
+      "source": "2884470d07efc858a90d05ec5f0a4b4767d39ce3",
+      "passed_tests": 202,
+      "failed_tests": [],
+      "skipped_tests": [],
+      "packages": {
+        "state": {
+          "passed_tests": 76,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "seconds": 57.882,
+          "selection": "^(TestFunction(Migration|Destination|Resource|Execution)|TestPgStoreFunctionMigrationSource|TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries|TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReservation)"
+        },
+        "managedpostgres": {
+          "passed_tests": 44,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "seconds": 19.483,
+          "selection": "^Test(ConnectionBudget|ConnectionCapacity|DecodeConnectionAllocationBoundsAndDocuments|PostgresCutoverSourceFenceExclusionAndNeverDispatchedCancellation)"
+        },
+        "api": {
+          "passed_tests": 6,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "seconds": 1.138,
+          "selection": "^TestConnectionBudgetClient"
+        },
+        "fcvm": {
+          "passed_tests": 75,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "seconds": 12.22,
+          "selection": "^(TestFunction(Migration|Destination|Resource|Execution)|TestSnapshotGrant|TestSnapshotAcknowledgment|TestMCP)"
+        },
+        "logbuf": {
+          "passed_tests": 1,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "seconds": 1.038,
+          "selection": "^TestCommitObservationNotReplayedOrEvictedTwice$"
+        }
+      },
+      "compile_seconds": 553.407,
+      "runtime": {
+        "GOMEMLIMIT": "2GiB",
+        "GOGC": "10",
+        "GOMAXPROCS": "2",
+        "per_package_timeout": "3m"
+      },
+      "native_execution": false
+    },
+    "native_acceptance": false,
+    "production_activation": false
+  },
+  "light_shard_compilation_budget_correction": {
+    "source": "2884470d07efc858a90d05ec5f0a4b4767d39ce3",
+    "run_id": 39098539460,
+    "job_id": 117589937272,
+    "conclusion": "cancelled",
+    "started_at": "2026-10-18T05:02:26Z",
+    "completed_at": "2026-10-18T05:22:42Z",
+    "configured_pr_job_minutes": 20,
+    "binding_preparation_seconds": 311,
+    "main_race_preparation_seconds": 389,
+    "full_race_run_seconds_before_cancellation": 447,
+    "full_race_test_timeout_minutes": 10,
+    "reported_completed_assertion_failures": [],
+    "correction": "binding compile-only -c phase and serial main race preparation use 5GiB/GOGC50; actual tests keep 2GiB/GOGC10 and existing selections/concurrency/deadlines; twenty-minute job budget unchanged",
+    "actionlint": "pass",
+    "package_selector_tests": 15,
+    "full_shard_and_hosted_ci": "pending; cancelled source is not counted as green",
+    "native_acceptance": false,
+    "production_activation": false
+  },
+  "scheduler_sql_fixture_isolation": {
+    "source": {
+      "source_base": "bea394b506b0f37deb7c0e855184ee76cfee29ef",
+      "fixture_patch_sha256": "0f248c77015620c954a661678a4b175d023284488597dfc031db4e3e979aab89",
+      "tests": {
+        "github.com/onebox-faas/faas/cmd/schedd": {
+          "passed": 129,
+          "skipped": [
+            "TestLoadSchedInternalSvcKey_SealedPath"
+          ],
+          "failed": [],
+          "conclusion": "pass",
+          "elapsed_seconds": 37.012
+        },
+        "github.com/onebox-faas/faas/pkg/sched": {
+          "passed": 3149,
+          "skipped": [
+            "TestFunctionExecutionWarmRecoveryResealsParkAdmission",
+            "TestReconcileExpiredMigrations_ConflictOnPeerRollback"
+          ],
+          "failed": [],
+          "conclusion": "pass",
+          "elapsed_seconds": 303.448
+        }
+      },
+      "runtime": "2GiB/GOGC10/GOMAXPROCS2/p4/10m",
+      "native_execution": false
+    },
+    "reproduced_failures": [
+      "cmd/schedd.TestRun_EnvMigrateLiveLeaseSeconds_BadValue",
+      "pkg/sched.TestRunOperatorIntentCompletenessTick_FixesColumnRef"
+    ],
+    "reproduced_cause": "shared-schema migration 20261017181315007 CREATE INDEX CONCURRENTLY lock timeout while other tests held snapshots",
+    "correction": "use existing OpenMigrated helper for private database isolation under the existing CI opt-in; retain db.MigrateUp for non-template fallback, all assertions and explicit FAAS_SKIP_PG_TESTS behavior",
+    "total_passed_tests": 3278,
+    "failed_tests": [],
+    "non_template_operator_metric_case": {
+      "result": "pass",
+      "elapsed_seconds": 18.137,
+      "fresh_schema_migration": true
+    },
+    "local_compiler_phase_validation": {
+      "source": "bea394b506b0f37deb7c0e855184ee76cfee29ef",
+      "binding_four_binaries_compile_only_seconds": 141.971,
+      "binding_tests_seconds": 13.197,
+      "binding_manifest_tests_seconds": 7.326,
+      "main_ten_package_preparation_seconds": 364.191
+    },
+    "full_local_ordinary_shard": "not accepted as a complete pass; managed tmpfs/process-umask and TEST-NET probe results differ from hosted runner; hosted full affected selection unchanged and required on final head",
+    "native_acceptance": false,
+    "production_activation": false
+  },
+  "observability_live_instance_main_integration": {
+    "source_base": "2c352fc8c8575eb375490ebd6db0b5873c94c7f0",
+    "integrated_main": "2a4c0d1fca2b7b01bb7bda206b822a135ce45d1e",
+    "tested_source_tree": "6cd0bd0a6f9dde98041065fab72787c3596bb70e",
+    "interrupted_pre_restart_run_counted": false,
+    "canonical_schema_sha256": "aee715e366ad7226d34165b1c22fc939a863fe418549c2e75387e178c954c9c7",
+    "migration_source_digest": "e20c0fd4bc038473c31571eb2a1d6b2a13aa781b9b7ffe866b33cacd3c601326",
+    "sqlc_generation_blocks": 16,
+    "function_query_sources": 3,
+    "clone_registry": {
+      "published_main_policies_preserved": 901,
+      "operational_function_journals": 2,
+      "total": 903,
+      "duplicates": 0
+    },
+    "ordinary_scheduler_race": {
+      "counts": {
+        "pass": 3278,
+        "skip": 3
+      },
+      "skipped_tests": [
+        "TestLoadSchedInternalSvcKey_SealedPath",
+        "TestFunctionExecutionWarmRecoveryResealsParkAdmission",
+        "TestReconcileExpiredMigrations_ConflictOnPeerRollback"
+      ],
+      "package_results": [
+        {
+          "Package": "github.com/onebox-faas/faas/cmd/schedd",
+          "Action": "pass",
+          "Elapsed": 47.163
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/sched",
+          "Action": "pass",
+          "Elapsed": 343.68
+        }
+      ],
+      "committed_source_cleanup_cases": [],
+      "log_sha256": "35d80514142abdfc2534a2e98674d7cfa9dab5a2dd9401dd3ccf606b4f380296"
+    },
+    "qualified_state_race": {
+      "counts": {
+        "pass": 79
+      },
+      "skipped_tests": [],
+      "package_results": [
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/state",
+          "Action": "pass",
+          "Elapsed": 69.973
+        }
+      ],
+      "committed_source_cleanup_cases": [
+        "TestFunctionMigrationSharedCapacityPg/committed_source_cleanup",
+        "TestFunctionMigrationSharedCapacityMem/committed_source_cleanup"
+      ],
+      "log_sha256": "47c4d3f11a884812f261be0552fb969ee0a0af071cf7e8abfdc62e4074c48ea1"
+    },
+    "qualified_scheduler_race": {
+      "counts": {
+        "pass": 28
+      },
+      "skipped_tests": [],
+      "package_results": [
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/sched",
+          "Action": "pass",
+          "Elapsed": 1.438
+        }
+      ],
+      "committed_source_cleanup_cases": [],
+      "log_sha256": "a89dbb14e52813b947391c2170cad50d01cc372341cc0d54b530028bc5fab6fc"
+    },
+    "qualified_live_schema_race": {
+      "counts": {
+        "pass": 5
+      },
+      "skipped_tests": [],
+      "package_results": [
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/state",
+          "Action": "pass",
+          "Elapsed": 21.731
+        }
+      ],
+      "committed_source_cleanup_cases": [],
+      "log_sha256": "b89e5cd1e12e371f87e5a885f1b768377159cd11e8373df626f7a31b0f210ce7"
+    },
+    "qualified_passed": 112,
+    "qualified_skipped": 0,
+    "qualified_failed": 0,
+    "compiler": {
+      "memory_target": "5GiB",
+      "gogc": 50,
+      "package_parallelism": 1
+    },
+    "runtime": {
+      "memory_target": "2GiB",
+      "gogc": 10,
+      "gomaxprocs": 2,
+      "ordinary_deadline": "10m",
+      "qualified_deadline": "3m"
+    },
+    "fixture": {
+      "postgres_major": 16,
+      "tls": true,
+      "max_locks_per_transaction": 512,
+      "shared_memory": "1GiB"
+    },
+    "sqlc_check": "pass",
+    "sdk_regeneration": "clean against merged generated trees",
+    "sdk_node_build": "pass",
+    "sdk_python_compile": "pass",
+    "canonical_helper_drift": "pass",
+    "adr_uniqueness": "pass",
+    "documentation_links": "pass",
+    "documentation_http_fixtures_passed": 4,
+    "function_migration_expand_contract": "pass against integrated main",
+    "hosted_current_head_ci": "required after publication",
+    "native_physical_acceptance": false,
+    "production_activation": false
+  },
+  "durable_listener_main_integration": {
+    "integrated_main": "744a82c005887d75c01b9c0210560fade3ca45a7",
+    "tested_source_tree_before_citation_correction": "31d473f5aea3c73403b32b2f7be8658006f5e786",
+    "compiler_target": "5GiB/GOGC50/serial",
+    "runtime": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "race": {
+      "phase": "race",
+      "exitCode": 0,
+      "seconds": 166.062,
+      "counts": {
+        "github.com/onebox-faas/faas/cmd/schedd": {
+          "pass": 130,
+          "skip": 1
+        },
+        "github.com/onebox-faas/faas/pkg/wire": {
+          "pass": 500,
+          "skip": 2
+        },
+        "github.com/onebox-faas/faas/pkg/scheddgrpc": {
+          "pass": 182
+        }
+      },
+      "skippedTests": [
+        "TestLoadSchedInternalSvcKey_SealedPath",
+        "TestActivationHelperProcess",
+        "TestListenOrRecreateByName_Happy"
+      ],
+      "failedTests": [],
+      "packageResults": [
+        {
+          "Package": "github.com/onebox-faas/faas/cmd/schedd",
+          "Action": "pass",
+          "Elapsed": 32.998
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/wire",
+          "Action": "pass",
+          "Elapsed": 115.781
+        },
+        {
+          "Package": "github.com/onebox-faas/faas/pkg/scheddgrpc",
+          "Action": "pass",
+          "Elapsed": 4.5280000000000005
+        }
+      ]
+    },
+    "log_sha256": "c74d010be90b1a07f5f9502fb1e5eea18d293bece72e464fba1d56b3a876b7a8",
+    "adr_correction": {
+      "id": "20261018074719",
+      "old_path": "docs/adr/1580-zero-downtime-daemon-restarts.md",
+      "new_path": "docs/adr/20261018074719-zero-downtime-daemon-restarts.md",
+      "upstream_source": "87bf08561783f60b2850b2f217986b7f99df0961",
+      "scoped_citation_files": 41,
+      "legacy_ci_decision_preserved": true,
+      "ratchet_baseline_unchanged": true
+    },
+    "adr_uniqueness": "pass with unchanged164-entry baseline",
+    "generated_units": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "listener_template_fixtures_passed": 7,
+    "http_documentation_fixtures_passed": 4,
+    "production_activation": false,
+    "native_physical_acceptance": false
+  },
+  "selective_repair_main_integration": {
+    "integrated_main": "fb63fcc029d8865cb662a08b18bcbae8696a2369",
+    "tested_source_tree": "9fc4217c110f34408060cc3b00a1ec0af17cdf44",
+    "migration_source_digest": "750a73093169a71c79989608458307641d7f2b69d68e66b7caa2df53b19e2ed7",
+    "schema_sha256": "a3973917d3fc082676fc2508b01a31c8457ed849187b78a4c58bea552af73c33",
+    "cold_start_preserves": [
+      "functionDestination",
+      "wakeID",
+      "DataRepairOnly"
+    ],
+    "sqlc_blocks": 16,
+    "published_main_query_sources_preserved": true,
+    "function_query_sources_preserved": 3,
+    "protobufs": "regenerated and normalized",
+    "qualified_phases": [
+      {
+        "name": "fcvm-compile",
+        "exitCode": 0,
+        "seconds": 193.011
+      },
+      {
+        "name": "fcvm-race",
+        "exitCode": 0,
+        "seconds": 19.437,
+        "counts": {
+          "pass": 80
+        },
+        "skippedTests": [],
+        "failedTests": []
+      },
+      {
+        "name": "sched-compile",
+        "exitCode": 0,
+        "seconds": 162.338
+      },
+      {
+        "name": "sched-race",
+        "exitCode": 0,
+        "seconds": 12.492,
+        "counts": {
+          "pass": 34
+        },
+        "skippedTests": [],
+        "failedTests": []
+      }
+    ],
+    "qualified_passed": 114,
+    "qualified_skipped": 0,
+    "qualified_failed": 0,
+    "log_sha256": {
+      "fcvm": "5d4146704fc6d25e711fd83bb57cbedc81291bcacb79f8cd4364c56b437946fc",
+      "sched": "a33473307efe3c23a7131d9fa6574cedd04fd5ee0ecfeda876c2039d7574caf6"
+    },
+    "compiler": "5GiB/GOGC50/serial",
+    "runtime": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "sqlc_drift": "pass",
+    "node_sdk_generation": "matches main",
+    "python_sdk_generation": "API/models match main",
+    "node_build": "pass",
+    "python_compile": "pass",
+    "canonical_helper_drift": "pass",
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "adr_uniqueness": "1788 decisions, 1584 distinct IDs, unchanged164-entry baseline",
+    "function_migration_expand_contract": "pass",
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
+  },
+  "generation_handoff_release_main_integration": {
+    "integrated_main": "60e81018c0a60f2040dfd6d708d7a5f0d1d97f79",
+    "tested_source_tree": "2cba47278ca70c098b385f0f205395ebc4bb1a22",
+    "function_contract_reference": "e13d5b7a9666391a8b7ab73a256804b36b95e890",
+    "function_host_scheduler_and_schema_proto_sdk_unchanged": true,
+    "phases": [
+      {
+        "name": "wire-compile",
+        "exitCode": 0,
+        "seconds": 4.771
+      },
+      {
+        "name": "wire-race",
+        "exitCode": 0,
+        "seconds": 70.921,
+        "counts": {
+          "skip": 2,
+          "pass": 7
+        },
+        "skippedTests": [
+          "TestHandoffProbeHelperProcess",
+          "TestHandoffHelperProcess"
+        ],
+        "failedTests": []
+      },
+      {
+        "name": "genslot-compile",
+        "exitCode": 0,
+        "seconds": 0.474
+      },
+      {
+        "name": "genslot-race",
+        "exitCode": 0,
+        "seconds": 1.559,
+        "counts": {
+          "pass": 4
+        },
+        "skippedTests": [],
+        "failedTests": []
+      },
+      {
+        "name": "units-compile",
+        "exitCode": 0,
+        "seconds": 44.281
+      },
+      {
+        "name": "units-race",
+        "exitCode": 0,
+        "seconds": 21.033,
+        "counts": {
+          "pass": 148,
+          "skip": 7
+        },
+        "skippedTests": [
+          "TestAnsiblePostgresModuleArgumentsExist",
+          "TestComputeEdgeFirewallStandardJinja",
+          "TestPgHbaAdmitsTheStandbyOnlyWhenDeclared",
+          "TestStandbyReplicationFirewallStandardJinja",
+          "TestPublicEdgeFrontsGatewaydPublicBehindCloudflare",
+          "TestUDPFirewallStringOptInStandardJinja",
+          "TestPublicEdgeFirewallCustomDomainsStandardJinja"
+        ],
+        "failedTests": []
+      }
+    ],
+    "renderer_followup": {
+      "counts": {
+        "pass": 23,
+        "skip": 1
+      },
+      "skips": [
+        "TestPublicEdgeFrontsGatewaydPublicBehindCloudflare"
+      ],
+      "log_sha256": "5f8913011bf2682a16e40537c0b6b6432b85c2dacd6b3914b300b59288095eb2"
+    },
+    "initial_handoff_refusal": {
+      "cause": "real cgroup memory pressure from completed build outputs and file cache",
+      "used_bytes_before": 13099790336,
+      "limit_bytes": 17179869184,
+      "used_bytes_after_cleanup": 4163010560,
+      "production_guard_unchanged": true,
+      "repeated_unchanged_test_passed": true
+    },
+    "release_fixtures": {
+      "edge_rollout_passed": 8,
+      "unit_deploy": "pass with stubbed SSH/SCP/SLO",
+      "release_verifier": "pass",
+      "real_deployment": false
+    },
+    "source_citations": {
+      "adr": "20261018074719",
+      "new_handoff_citation_files": 47,
+      "older_ci_adr_1580_preserved": true,
+      "duplicate_baseline_unchanged": true
+    },
+    "generated_units": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "native_physical_acceptance": false,
+    "production_activation": false
+  },
+  "mail_schema_main_integration": {
+    "integrated_main": "53116be8b3417a7124b46fcc2849e567066cb853",
+    "checked_tree_before_evidence": "aaa7fe9e6fa78bec19fc480945bfa4fb0f38cfcf",
+    "reference_function_source": "93e20dda43c0115dab97bea40ca7fa52d12d526c",
+    "function_host_scheduler_queries_proto_openapi_sdk_unchanged": true,
+    "published_mail_migrations_preserved": 34,
+    "migration_source_digest": "5043510cb3989f8ae58d42d2f5086ef2e188554e6d0928fd8955b883729f1a70",
+    "schema_sha256": "8239e4ac5de809f81fbe12276ff268f4f327c40e7f0d9110173783e81b64f47a",
+    "sqlc_blocks": 18,
+    "published_query_sources_preserved": true,
+    "function_query_sources_preserved": 3,
+    "sqlc_drift": "pass",
+    "clone_registry": {
+      "published_main_records_preserved": 945,
+      "operational_function_journals": 2,
+      "duplicates": 0
+    },
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "adr_correction": {
+      "decisions": [
+        {
+          "old_id": "20261015",
+          "new_id": "20261018085140",
+          "stem": "internal-mail-service"
+        },
+        {
+          "old_id": "20261016",
+          "new_id": "20261018085141",
+          "stem": "mail-producer-outbox"
+        }
+      ],
+      "changed_citation_files": [
+        "docs/adr/20261016-mail-producer-outbox.md",
+        "docs/adr/20261016192204-mail-outbox-reconciliation.md",
+        "docs/adr/20261016195608-mail-verification-outbox.md",
+        "docs/ops/env-contract.md",
+        "pkg/api/limits.go",
+        "pkg/daemonunitspec/envcontract.go"
+      ],
+      "older_static_hosting_and_repair_preserved": true,
+      "duplicate_baseline_unchanged": true
+    },
+    "adr_uniqueness": "1806 decisions,1602 distinct,unchanged164-entry baseline",
+    "function_migration_expand_contract": "pass",
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
+  },
+  "worker_recovery_main_integration": {
+    "integrated_main": "2243dce395256150b5d4841206057d896d2dd418",
+    "tested_source_tree": "9090f5bfc1cced6337c32642336f06c4eed08aa0",
+    "unpublished_function_migration_mapping": [
+      {
+        "old": "20261018003150915",
+        "new": "20261018095849457",
+        "name": "function_migration_sources"
+      },
+      {
+        "old": "20261018003150916",
+        "new": "20261018095850003",
+        "name": "function_migration_admission"
+      },
+      {
+        "old": "20261018003150917",
+        "new": "20261018095850501",
+        "name": "function_migration_destination"
+      }
+    ],
+    "allocator": "repository go run ./cmd/migration-new -after published main prerequisite",
+    "published_migration_bytes_preserved": true,
+    "historical_evidence_versions_retained": true,
+    "worker_main_schema_upgrade_and_function_down_up": "pass; canonical schema byte-identical",
+    "upgrade_start_version": "20261018013954350",
+    "migration_source_digest": "58bcf3107ece49813545201ec9c2f7e465350b33f47d8d4193bfecb645e9a0ee",
+    "schema_sha256": "b5a03e0b85235a93c9893c241df260e166ea11ff13530051b21a6396b364a214",
+    "sqlc_blocks": 18,
+    "sqlc_generation_and_drift": "pass",
+    "clone_registry": {
+      "published_main_records_preserved": 946,
+      "operational_function_journals": 2,
+      "duplicates": 0
+    },
+    "qualified_scheduler_function_worker_phases": [
+      {
+        "phase": "compile",
+        "exitCode": 0,
+        "seconds": 316.123
+      },
+      {
+        "phase": "race",
+        "exitCode": 0,
+        "seconds": 30.154,
+        "counts": {
+          "pass": 54
+        },
+        "skippedTests": [],
+        "failedTests": []
+      }
+    ],
+    "log_sha256": "2991a4c88453f466c7ad42119bc53952fae425f3f7841294236f053da5bca224",
+    "runtime": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "node_sdk_regeneration_build_helpers": "pass",
+    "python_sdk_regeneration_compile": "pass",
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "adr_uniqueness": "1811 decisions1607distinct164unchangedbaseline",
+    "function_migration_expand_contract": "pass",
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
+  },
+  "migration_release_compatibility": {
+    "integrated_main": "6e2e9441958137100584776cbc95ff5542e06df6",
+    "hosted_failure_head": "73220ee13d44099adfb73e430417244dc8efbb7a",
+    "hosted_failure_job": 117648546009,
+    "migration_classes": {
+      "20261018095849457_function_migration_sources.sql": "expand",
+      "20261018095850003_function_migration_admission.sql": "expand",
+      "20261018095850501_function_migration_destination.sql": "contract"
+    },
+    "destination_requires_full_release": true,
+    "only_migration_comments_changed": true,
+    "schema_byte_identical_to_worker_integration": true,
+    "schema_sha256": "b5a03e0b85235a93c9893c241df260e166ea11ff13530051b21a6396b364a214",
+    "migration_source_digest": "4f9c05d9d676126d0c4b66f6a53aa68ec483db74dae31ff1ce28f1659487f465",
+    "sqlc_drift": "pass",
+    "migration_compatibility": "pass",
+    "compatibility_policy_tests_passed": 51,
+    "affected_units_tests_passed": 25,
+    "deployment_plan_tests_passed": 19,
+    "unit_deployment_fixture": "pass; remote execution stubbed",
+    "unit_release_verifier_fixture": "pass; remote execution stubbed",
+    "initial_affected_units_attempt": "older default Go toolchain; rerun passed with repository-pinned toolchain",
+    "function_host_scheduler_proto_openapi_sdk_unchanged": true,
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false,
+    "additional_integrated_main": "88c804c71e75bd69691684a6a736b0306f7b6565",
+    "mail_decisions_adopt_published_main": [
+      "2026101501",
+      "2026101601"
+    ],
+    "internal_ci_recovery_decision_adopts_published_main": "1592",
+    "older_static_hosting_and_data_repair_citations_restored": [
+      "20261015",
+      "20261016"
+    ],
+    "daemon_restart_decision_retained": "20261018074719",
+    "adr_uniqueness": "1812 decisions,1608 distinct,164-entry baseline unchanged",
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "docs_links": "pass",
+    "live_docs_fixture_retry": "pass after selecting repository toolchain and granting local loopback socket permission",
+    "http_documentation_fixtures_passed": 4
+  },
+  "release_policy_and_mcp_schema_integration": {
+    "integrated_main": "3eadd00f38a449e46dc8d10d0c772256e0b557c5",
+    "tested_source_tree_before_evidence": "4e1d5ab4d798b2ac31b0f77e12112432797c06f5",
+    "hosted_failure_head": "c68bd0016df42965a0e7654e45ee40aeb3e1393a",
+    "hosted_failure_job": 117654151912,
+    "hosted_failed_test": "TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease",
+    "replacement_policy_assertions": [
+      "signature verification",
+      "signed manifest equality",
+      "all-migration eligibility",
+      "migrator digest",
+      "guarded staging before activation"
+    ],
+    "existing_full_lane_operation_cas_service_gate_rollback_assertions_retained": true,
+    "release_workflow_race_tests": {
+      "pass": 6,
+      "fail": 0,
+      "skip": 0
+    },
+    "race_log_sha256": "bba9e1bcc1d0b9eb9344a4b7fef45005ace561fcc5b3435ac12723efa2cdf902",
+    "compile_bounds": "5GiB/GOGC50;serial",
+    "runtime_bounds": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "initial_local_execution": "wrong working directory failed repository file lookups; same compiled binary passed all six tests from its package directory",
+    "clean_canonical_schema_replay": "pass; only task-owned schema_dump database reset",
+    "schema_lines": 84179,
+    "schema_sha256": "dc58d8308173c402e1ea051ff18ddd9de07201c02bd02a5d9ffe66e77f8afc24",
+    "migration_source_digest": "b4779ad555a3a1f8921d17b294fe17dc46360a921930f463e8843ca5b6fa4f06",
+    "sqlc_blocks": 18,
+    "published_query_sources_preserved": true,
+    "function_query_sources_preserved": 3,
+    "sqlc_generation_drift": "pass",
+    "clone_registry": {
+      "main_preserved": 946,
+      "function_records": 2,
+      "duplicates": 0
+    },
+    "sdk_regeneration_and_openapi_match_main": true,
+    "node_build_python_compile_starter_helper_drift": "pass",
+    "policy_tests_passed": 51,
+    "affected_unit_tests_passed": 25,
+    "release_plan_tests_passed": 19,
+    "hermetic_unit_deployment_and_verification_suites": "both pass; remote execution stubbed",
+    "adr_uniqueness": "1817 decisions,1613 distinct,164-entry baseline unchanged",
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "destination_migration_class": "contract; full release required",
+    "function_host_scheduler_proto_unchanged": true,
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
+  },
+  "rehearsal_main_schema_integration": {
+    "integrated_main": "a7aa553e2847c5dc265593c3efd2954cb915eb29",
+    "tested_source_tree_before_evidence": "18bc1b4f0929cd923b12367a8e55582024453f8e",
+    "schema_lines": 84382,
+    "schema_sha256": "b14c4a23e73a79f1ef0d2006d82c7d8e3734d887d52d68ea42ec09cac45e16d4",
+    "migration_source_digest": "37711e5df864ef032913f702bd55590e214651e81c82ed7a77a7f31e08b2480c",
+    "published_sqlc_blocks_preserved_exactly": 19,
+    "function_query_sources_added": 3,
+    "sqlc_generation_and_drift": "pass",
+    "published_migrations_preserved": true,
+    "clone_registry": {
+      "main_records_preserved": 946,
+      "function_journals": 2,
+      "rehearsal_receipt_records": 1,
+      "total_observed_tables": 949,
+      "unregistered_before_fix": [
+        "scenario_postgres_faults"
+      ],
+      "new_policy_kind": "operational",
+      "duplicates_missing_unknown_column_mismatches_after_fix": 0
+    },
+    "race_phases": [
+      {
+        "name": "compile",
+        "seconds": 551.61,
+        "exitCode": 0,
+        "log": "/tmp/function-pr4883-pgfault-integration.sysznupa/compile.log"
+      },
+      {
+        "name": "state-schema-race",
+        "seconds": 0.403,
+        "exitCode": 1,
+        "log": "/tmp/function-pr4883-pgfault-integration.sysznupa/state-schema-race.log",
+        "counts": {
+          "pass": 1,
+          "fail": 1
+        },
+        "failedTests": [
+          "TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReservation"
+        ],
+        "skippedTests": []
+      },
+      {
+        "name": "release-policy-race",
+        "seconds": 1.22,
+        "exitCode": 0,
+        "counts": {
+          "pass": 7
+        },
+        "log": "/tmp/function-pr4883-pgfault-integration.sysznupa/release-policy-race.log"
+      },
+      {
+        "name": "state-schema-race-storage-retry",
+        "seconds": 21.474,
+        "exitCode": 0,
+        "counts": {
+          "pass": 6
+        },
+        "failedTests": [],
+        "skippedTests": [],
+        "log": "/tmp/function-pr4883-pgfault-integration.sysznupa/state-schema-race-storage-retry.log"
+      }
+    ],
+    "initial_sql_failure": "fixture database could not be created: shared workspace filesystem full; SQLSTATE53100; no source assertion failure",
+    "storage_recovery": {
+      "go_idle": true,
+      "old_generated_archives_removed": 1445,
+      "archive_gib": 4.0,
+      "min_age_hours": 2,
+      "archive_magic_verified": true,
+      "modules_tools_test_binaries_source_preserved": true,
+      "same_compiled_tests_reused": true
+    },
+    "compile_bounds": "5GiB/GOGC50;serial",
+    "runtime_bounds": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "successful_schema_race_log_sha256": "b5273046b1ef35fcd28d71b60e51680b8a5029a20765641b75a4141f08c42708",
+    "successful_release_race_log_sha256": "711430b7c6d2c2a0d731887c4ba4093bc15f73eb1024b6164b90fdc7c2e0e753",
+    "sdk_regeneration": "both regenerated for newer upstream API fields and models",
+    "node_build_python_compile_starter_helpers": "pass",
+    "openapi_copies_match_main": true,
+    "migration_compatibility": "pass; destination contract requires full release",
+    "migration_policy_tests_passed": 51,
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "affected_package_selector_tests_passed": 19,
+    "adr_uniqueness": "1820 decisions,1616 distinct,164-entry baseline unchanged",
+    "function_host_scheduler_proto_unchanged": true,
+    "prior_hosted_head": "e406b27ed5104418714290d43fc37935b1046168",
+    "prior_hosted_head_never_all_green": "images workflow remained pending before main changed",
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
+  },
+  "scheduler_environment_startup_synchronization": {
+    "hosted_failure_head": "dd29f31a0b257bb4268dff11cae74447a21b2598",
+    "hosted_failure_job": 117687161440,
+    "hosted_failed_test": "TestRun_EnvMigrateLiveMaxPerTick_BadValue",
+    "cause": "fixed 200ms startup cancellation can precede environment validation",
+    "fix": "wait validation result or actual READY=1 Unixgram notification; one unchanged3s bound covers startup and drain; fail clean exit before readiness",
+    "production_schema_sdk_unchanged": true,
+    "invalid_value_assertions_preserved": true,
+    "tested_source_tree_before_evidence": "d5599d885f8e5fdf2cb0e5bbd03377c4a56261cf",
+    "compile_bounds": "5GiB/GOGC50;serial",
+    "runtime_bounds": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "validation_phases": [
+      {
+        "name": "compile",
+        "seconds": 22.84,
+        "exitCode": 0,
+        "log": "/tmp/function-pr4883-env-startup.f2eiedrh/compile.log"
+      },
+      {
+        "name": "env-race-repeat20",
+        "seconds": 180.216,
+        "exitCode": 1,
+        "log": "/tmp/function-pr4883-env-startup.f2eiedrh/env-race-repeat20.log",
+        "counts": {
+          "pass": 222,
+          "fail": 1
+        },
+        "failedTests": [
+          "TestRun_EnvHappyPath"
+        ],
+        "skippedTests": []
+      },
+      {
+        "name": "failing-env-case-race-repeat20",
+        "seconds": 33.299,
+        "exitCode": 0,
+        "counts": {
+          "pass": 20
+        },
+        "failedTests": [],
+        "skippedTests": [],
+        "log": "/tmp/function-pr4883-env-startup.f2eiedrh/failing-env-case-race-repeat20.log"
+      },
+      {
+        "name": "full-schedd-race",
+        "seconds": 34.7,
+        "exitCode": 0,
+        "counts": {
+          "pass": 130,
+          "skip": 1
+        },
+        "failedTests": [],
+        "skippedTests": [
+          "TestLoadSchedInternalSvcKey_SealedPath"
+        ],
+        "log": "/tmp/function-pr4883-env-startup.f2eiedrh/full-schedd-race.log"
+      }
+    ],
+    "initial_group_repetition": "222 passing cases before aggregate3m package timeout; incomplete, not qualified; retained historical attempt",
+    "targeted_stress_log_sha256": "1c92638cc01c315c4a11b9b293b6e8f4b83b365021261954cbb99048d8799e11",
+    "full_command_suite_log_sha256": "38bee46e0c76b51ee673c7e0b9d42c1c4df4517de43c6cb9175d2c6cee559b74",
+    "existing_root_only_skip": "TestLoadSchedInternalSvcKey_SealedPath; existing guard requires root to write /etc/faas/secrets/host.age; no host secret touched",
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
+  },
+  "node_lease_main_schema_integration": {
+    "integrated_main": "622ea65b973fd6808c8b7f2ac8adc79296e84750",
+    "tested_source_tree_before_evidence": "f8ab19c7e263345bcd4b2d726bb37e0411f15480",
+    "schema_lines": 84414,
+    "schema_sha256": "c7a32e9f468add83cd34c576c34000011e0e64052676b37f327690f0a9f07d04",
+    "migration_source_digest": "575aba09fb59a4cac517be1083d75e608139352a17a09b26c9a52fa1da5b4142",
+    "main_sqlc_blocks_preserved_exactly": 19,
+    "published_nodelease_queries_preserved": true,
+    "function_query_sources_added": 3,
+    "sqlc_generation_and_drift": "pass",
+    "published_migration_bytes_preserved": true,
+    "function_versions_follow_nodelease_version": true,
+    "clone_registry": {
+      "main_policies_preserved": 947,
+      "operational_function_journals": 2,
+      "operational_rehearsal_receipts": 1,
+      "total_observed_tables": 950,
+      "duplicates_unknown_missing_column_mismatches": 0,
+      "node_lease_kind": "operational"
+    },
+    "node_lease_scope": "off by default; phase1 renew/observe only; no workload recovery or fencing",
+    "race_phases": [
+      {
+        "name": "compile",
+        "seconds": 189.221,
+        "exitCode": 0,
+        "log": "/tmp/function-pr4883-nodelease-integration.chg91y8v/compile.log"
+      },
+      {
+        "name": "nodelease-race",
+        "seconds": 1.137,
+        "exitCode": 0,
+        "log": "/tmp/function-pr4883-nodelease-integration.chg91y8v/nodelease-race.log",
+        "counts": {
+          "pass": 4
+        },
+        "failedTests": [],
+        "skippedTests": []
+      },
+      {
+        "name": "full-schedd-race",
+        "seconds": 28.277,
+        "exitCode": 0,
+        "log": "/tmp/function-pr4883-nodelease-integration.chg91y8v/full-schedd-race.log",
+        "counts": {
+          "pass": 130,
+          "skip": 1
+        },
+        "failedTests": [],
+        "skippedTests": [
+          "TestLoadSchedInternalSvcKey_SealedPath"
+        ]
+      }
+    ],
+    "compile_bounds": "5GiB/GOGC50;serial;-ldflags=-w",
+    "runtime_bounds": "2GiB/GOGC10/GOMAXPROCS2/3m",
+    "lease_race_log_sha256": "3e0be7dbce8fa6b107f99bb493a1a6ed5071103a3de9cc02291021aa36b6bbc6",
+    "scheduler_race_log_sha256": "a73f61ef282bb3d193b4f8f5d45ea4666616dd18f174c8554047f6f9fed33921",
+    "existing_root_only_skip": "TestLoadSchedInternalSvcKey_SealedPath; no /etc/faas/secrets writes attempted",
+    "scheduler_readiness_env_test_helper_unchanged": true,
+    "function_host_scheduler_engine_proto_openapi_sdk_unchanged_from": "410c47af5591e483168a051545c5a0178cc61f61",
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "migration_policy_tests_passed": 51,
+    "adr_uniqueness": "1820 decisions,1616 distinct,164-entry baseline unchanged",
+    "destination_migration_class": "contract; full release required",
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
+  }
+}

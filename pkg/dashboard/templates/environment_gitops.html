@@ -29,6 +29,21 @@
       <p><a href="/dashboard/projects/{{.Project}}">← Project</a></p>
       {{if .Status}}
         {{$source := .Status.Source}}
+        {{with .Status.Explanation}}
+        <section>
+          <h2>Why this revision is {{.Status}}</h2>
+          <p>{{.Summary}}</p>
+          <p>Observed commit: <code>{{if .ObservedCommitSHA}}{{.ObservedCommitSHA}}{{else}}unknown{{end}}</code> · source freshness: {{.SourceFreshness}}<br>
+            Approved revision: <code>{{if .ApprovedRevisionID}}{{.ApprovedRevisionID}}{{else}}unknown{{end}}</code><br>
+            Applied revision: <code>{{if .AppliedRevisionID}}{{.AppliedRevisionID}}{{else}}unknown{{end}}</code><br>
+            Serving revision: <code>{{if .ServingRevisionID}}{{.ServingRevisionID}}{{else}}unknown{{end}}</code></p>
+          {{if .Workloads}}<table><thead><tr><th>Workload</th><th>Artifact/build</th><th>Qualification</th><th>Activation</th><th>Serving</th></tr></thead><tbody>
+          {{range .Workloads}}<tr><td><code>{{.Resource}}</code></td><td>{{.Preparation}}{{if .BuildStatus}} · build {{.BuildStatus}}{{end}}{{if .BuildCacheStatus}} · cache {{.BuildCacheStatus}}{{end}}</td><td>{{.Qualification}}</td><td>{{.Activation}}</td><td>{{.Serving}}</td></tr>{{end}}
+          </tbody></table>{{end}}
+          {{range .Issues}}<p>{{if .Resource}}<code>{{.Resource}}</code> · {{end}}{{.Message}}<br><strong>{{.Actor}}</strong>: {{.Action}}</p>{{end}}
+          <p class="muted">Read-only assessment at {{.AssessedAt.Format "2006-01-02 15:04:05 MST"}}. Unknown or missing evidence does not establish readiness. Execution gates remain separate.</p>
+        </section>
+        {{end}}
         <section>
           <h2>Git source</h2>
           <dl>
@@ -41,7 +56,7 @@
             <dt>Fully applied revision</dt><dd>{{if $source.AppliedRevisionID}}<code>{{$source.AppliedRevisionID}}</code>{{else}}No fully applied revision{{end}}</dd>
             <dt>Git availability</dt><dd>{{if $source.Suspended}}Git checks are suspended. The last approved definition remains authoritative.{{else if .SourcePollStale}}Git checks are stale. The last approved definition remains authoritative.{{else if eq $source.SourceErrorCode "environment_git_approval_not_qualified"}}The candidate does not meet the reviewed merge requirements. The last approved definition remains authoritative.{{else if eq $source.SourceErrorCode "environment_git_approval_unavailable"}}Merge review evidence could not be checked. The last approved definition remains authoritative.{{else if $source.SourceErrorCode}}The Git definition could not be verified. The last approved definition remains authoritative.{{else if .SourceVerificationStale}}Git verification is stale. The last approved definition remains authoritative.{{else if $source.SourceVerifiedAt}}Git definition verified.{{else}}Waiting for the first successful Git check.{{end}}{{if $source.SourceCheckedAt}} Last checked {{$source.SourceCheckedAt.Format "2006-01-02 15:04:05 MST"}}.{{end}}</dd>
             {{if $source.SourceCommitSHA}}<dt>Last verified candidate</dt><dd><code>{{$source.SourceCommitSHA}}</code>{{if $source.SourceVerifiedAt}} · {{$source.SourceVerifiedAt.Format "2006-01-02 15:04:05 MST"}}{{end}}.{{if eq $source.Spec.ApprovalPolicy "manual"}} Review this commit before approval.{{end}}</dd>{{end}}
-            {{with .Status.Approval}}<dt>Reviewed merge approval</dt><dd>PR #{{.Evidence.PullRequestNumber}} · {{len .Evidence.Reviews}} approving reviews · generation {{.Generation}}<br>Definition <code>{{.DefinitionDigest}}</code> · recorded {{.RecordedAt.Format "2006-01-02 15:04:05 MST"}}</dd>{{end}}
+            {{with .Status.Approval}}<dt>Reviewed merge approval</dt><dd>{{if eq $source.Spec.Provider "gitlab"}}MR !{{else}}PR #{{end}}{{.Evidence.PullRequestNumber}} · {{len .Evidence.Reviews}} approving reviews · generation {{.Generation}}<br>Definition <code>{{.DefinitionDigest}}</code> · recorded {{.RecordedAt.Format "2006-01-02 15:04:05 MST"}}</dd>{{end}}
           </dl>
           {{if eq $source.Spec.ApprovalPolicy "protected_branch"}}<p>Qualified reviewed merges are approved automatically. Existing fields still require an adoption plan before enforcement.</p>{{end}}
           <form method="POST" action="{{$target}}/review">
@@ -54,6 +69,32 @@
             <label>Candidate commit <input type="text" name="commit_sha" pattern="[a-f0-9]{40}" minlength="40" maxlength="40" required placeholder="Full immutable commit SHA" value="{{$source.SourceCommitSHA}}"></label>
             <button type="submit">Preview field changes</button>
           </form>
+        </section>
+        <section>
+          <h2>Recovery releases</h2>
+          <p>Check retained serving releases against the target manifest you intend to keep.</p>
+          <form method="GET" action="{{$target}}">
+            <label>Target manifest commit <input type="text" name="target_commit_sha" pattern="[a-f0-9]{40}" minlength="40" maxlength="40" required value="{{if .RecoveryCommit}}{{.RecoveryCommit}}{{else}}{{$source.SourceCommitSHA}}{{end}}"></label>
+            <button type="submit">Check recovery eligibility</button>
+          </form>
+          {{with .RecoveryError}}<p class="blocked">{{.}}</p>{{end}}
+          {{with .Recovery}}
+            {{$catalog := .}}
+            <p>Observed {{.ObservedAt.Format "2006-01-02 15:04:05 MST"}} for <code>{{.TargetCommitSHA}}</code>. Eligibility is an observation; fresh Git review and qualification remain required.</p>
+            {{with .RecoveryRetention}}<p>Artifact retention: up to {{.Releases}} served releases, {{.Seconds}} seconds, {{.MaxBytes}} bytes reserved. Currently charged: {{$catalog.RetentionBytes}} bytes. Count, budget or policy changes can release protection earlier.</p>{{end}}
+            <p>Release deadlines describe routing compatibility windows. They do not guarantee artifact retention or extend it.</p>
+            <table><thead><tr><th>Release / manifest commit</th><th>Previously served</th><th>Release window</th><th>Rollback eligibility</th></tr></thead><tbody>
+            {{range .Releases}}<tr>
+              <td><code>{{.ReleaseSetID}}</code>{{if .Active}} · active{{end}}<br><code>{{.CommitSHA}}</code></td>
+              <td>{{if .ServedAt}}{{.ServedAt.Format "2006-01-02 15:04:05 MST"}}{{else}}Unknown{{end}}</td>
+              <td>Artifact protection: {{.ProtectionStatus}} ({{.RetainedBytes}} bytes){{if .ArtifactsProtectedUntil}}<br>{{.ArtifactsProtectedUntil.Format "2006-01-02 15:04:05 MST"}}{{end}}<br>{{.RetentionStatus}}{{if .ExpiresAt}}<br>{{.ExpiresAt.Format "2006-01-02 15:04:05 MST"}}{{end}}</td>
+              <td>{{if eq .Eligibility "eligible"}}Eligible to propose{{else}}Blocked{{end}}<ul>{{range .BlockingReasons}}<li>{{.}}</li>{{end}}</ul>
+              {{range .Artifacts}}<p><code>{{.Resource}}</code> · <code>{{.ImageDigest}}{{.ArtifactDigest}}</code>{{if .BuildID}} · build <code>{{.BuildID}}</code>{{end}}{{if .BuildCommitSHA}} · code commit <code>{{.BuildCommitSHA}}</code>{{end}}</p>{{end}}
+              <pre>gregale projects environments gitops rollback-plan {{$catalog.Project}} {{$catalog.Environment}} --to-release {{.ReleaseSetID}} --target-commit {{$catalog.TargetCommitSHA}}</pre></td>
+            </tr>{{else}}<tr><td colspan="4">No retained serving releases for this Git binding.</td></tr>{{end}}
+            </tbody></table>
+            {{if .NextBefore}}<a href="{{$target}}?target_commit_sha={{.TargetCommitSHA}}&amp;before={{.NextBefore}}">Older recovery releases</a>{{end}}
+          {{end}}
         </section>
         {{with .PlanPreview}}
           <section class="{{if .Plan.BlockingReasons}}blocked{{end}}">
@@ -134,8 +175,7 @@
             <input type="hidden" name="expected_generation" value="{{$source.Generation}}">
             <label>Ref <input name="ref" value="{{$source.Spec.Ref}}" required></label>
             <label>Manifest path <input name="manifest_path" value="{{$source.Spec.ManifestPath}}" required></label>
-            {{if eq $source.Spec.Provider "gitlab"}}<input type="hidden" name="approval_policy" value="manual"><p>GitLab.com uses manual approval.</p>{{else}}
-            <label>Approval policy <select name="approval_policy"><option value="manual">Manual</option><option value="protected_branch" {{if eq $source.Spec.ApprovalPolicy "protected_branch"}}selected{{end}}>Protected branch</option></select></label>{{end}}
+            <label>Approval policy <select name="approval_policy"><option value="manual">Manual</option><option value="protected_branch" {{if eq $source.Spec.ApprovalPolicy "protected_branch"}}selected{{end}}>Protected branch</option></select></label>
             <button type="submit">Release ownership and rebind</button>
           </form></details>
           <form method="POST" action="{{$target}}/unbind">
@@ -149,7 +189,7 @@
             <input type="hidden" name="csrf_token" value="{{$csrf}}">
             <input type="hidden" name="expected_generation" value="{{$source.Generation}}">
             <label>Mode <select name="mode"><option value="report" {{if eq $source.Spec.Mode "report"}}selected{{end}}>Report</option><option value="enforce" disabled {{if eq $source.Spec.Mode "enforce"}}selected{{end}}>Enforce (unavailable in preview)</option></select></label>
-            {{if eq $source.Spec.Provider "gitlab"}}<p>GitLab.com reporting preserves fields omitted from Git.</p>{{else}}<label><input type="checkbox" name="prune" value="true" {{if $source.Spec.Prune}}checked{{end}}> Allow removal of previously owned fields omitted from Git</label>{{end}}
+            <label><input type="checkbox" name="prune" value="true" {{if $source.Spec.Prune}}checked{{end}}> Allow removal of previously owned fields omitted from Git</label>
             <label><input type="checkbox" name="suspended" value="true" {{if $source.Suspended}}checked{{end}}> Suspend reconciliation and retain ownership</label>
             <button type="submit">Update controls</button>
           </form>
@@ -201,11 +241,11 @@
             <button type="submit">Connect in report mode</button>
           </form>
           <h3>GitLab.com</h3>
-          <p><a href="/dashboard/account">Connect your GitLab account</a>, then choose the repository and definition. GitLab.com supports manual approval and preserves omitted fields.</p>
+          <p><a href="/dashboard/account">Connect your GitLab account</a>, then choose the repository and definition. Choose manual review or verified protected-branch merge approval.</p>
           <form method="POST" action="{{$target}}/bind">
             <input type="hidden" name="csrf_token" value="{{$csrf}}">
             <input type="hidden" name="provider" value="gitlab">
-            <input type="hidden" name="approval_policy" value="manual">
+            <label>Approval policy <select name="approval_policy"><option value="manual">Manual review in Gregale</option><option value="protected_branch">Verified reviewed merges on a protected branch</option></select></label>
             <label>Repository <input type="text" name="repository" placeholder="group/subgroup/service" required></label>
             <label>Git ref <input type="text" name="ref" value="refs/heads/main" required></label>
             <label>Definition path in Git <input type="text" name="manifest_path" placeholder="environments/{{.Environment}}.yaml" required></label>

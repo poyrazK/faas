@@ -20,7 +20,7 @@ import (
 
 // Recorder adds runtime reports; *usage.Store implements it.
 type Recorder interface {
-	Record(ctx context.Context, accountID, appID, reportID string, hours []usage.Hour, now time.Time) (usage.MonthToDate, error)
+	Record(ctx context.Context, accountID, appID, reportID string, hours []usage.Hour, access []byte, now time.Time) (usage.MonthToDate, error)
 }
 
 // Reader serves owner views; *usage.Store implements it.
@@ -57,7 +57,14 @@ func (h ReportHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid usage report", err.Error()))
 		return
 	}
-	mtd, err := h.Store.Record(r.Context(), claims.AccountID, claims.AppID, report.ReportID, hours, now)
+	var access []byte
+	if report.Access != nil {
+		if access, err = json.Marshal(report.Access); err != nil || report.Access.Validate() != nil || len(access) > api.DataAPIAccessConfigMaxBytes {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid usage report", "access settings are out of bounds"))
+			return
+		}
+	}
+	mtd, err := h.Store.Record(r.Context(), claims.AccountID, claims.AppID, report.ReportID, hours, access, now)
 	switch {
 	case errors.Is(err, usage.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "App not found", "the workload's app no longer exists"))
@@ -123,23 +130,32 @@ func (h QueryHandler) Serve(w http.ResponseWriter, r *http.Request, appID, slug 
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid usage window", err.Error()))
 		return
 	}
-	now := h.now().UTC()
+	usage, err := View(r.Context(), h.Store, appID, slug, h.now(), since, granularity)
+	if err != nil {
+		unavailable(w)
+		return
+	}
+	writeJSON(w, usage)
+}
+
+// View reads an app's usage over since, in hour or day buckets, with
+// month-to-date totals.
+func View(ctx context.Context, store Reader, appID, slug string, now time.Time, since time.Duration, granularity string) (api.DataAPIUsage, error) {
+	now = now.UTC()
 	step := time.Hour
 	if granularity == "day" {
 		step = 24 * time.Hour
 	}
 	from, to := now.Add(-since).Truncate(step), now.Truncate(time.Hour).Add(time.Hour)
-	hours, err := h.Store.Hours(r.Context(), appID, from, to)
+	hours, err := store.Hours(ctx, appID, from, to)
 	if err != nil {
-		unavailable(w)
-		return
+		return api.DataAPIUsage{}, err
 	}
-	mtd, err := h.Store.MonthToDate(r.Context(), appID, now)
+	mtd, err := store.MonthToDate(ctx, appID, now)
 	if err != nil {
-		unavailable(w)
-		return
+		return api.DataAPIUsage{}, err
 	}
-	writeJSON(w, view(slug, from, to, granularity, step, hours, mtd))
+	return view(slug, from, to, granularity, step, hours, mtd), nil
 }
 
 // parseWindow reads since (24h, 7d, 30d; default 7d, at most the query bound)

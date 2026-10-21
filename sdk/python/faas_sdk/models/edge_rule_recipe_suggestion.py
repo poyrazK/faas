@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.edge_rule_recipe_suggestion_alternative import EdgeRuleRecipeSuggestionAlternative
     from ..models.edge_rule_recipe_suggestion_params import EdgeRuleRecipeSuggestionParams
 
 
@@ -27,6 +28,9 @@ class EdgeRuleRecipeSuggestion:
     """What in the app's traffic led to the suggestion."""
     params: EdgeRuleRecipeSuggestionParams | Unset = UNSET
     """Recipe parameters to add it with; required parameters not listed must be supplied."""
+    alternative: EdgeRuleRecipeSuggestionAlternative | Unset = UNSET
+    """A softer recipe for the same observation, such as challenging browsers instead of rate-limiting (ADR-831
+    amendment 7)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +44,10 @@ class EdgeRuleRecipeSuggestion:
         if not isinstance(self.params, Unset):
             params = self.params.to_dict()
 
+        alternative: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.alternative, Unset):
+            alternative = self.alternative.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -51,11 +59,14 @@ class EdgeRuleRecipeSuggestion:
         )
         if params is not UNSET:
             field_dict["params"] = params
+        if alternative is not UNSET:
+            field_dict["alternative"] = alternative
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.edge_rule_recipe_suggestion_alternative import EdgeRuleRecipeSuggestionAlternative
         from ..models.edge_rule_recipe_suggestion_params import EdgeRuleRecipeSuggestionParams
 
         d = dict(src_dict)
@@ -72,11 +83,19 @@ class EdgeRuleRecipeSuggestion:
         else:
             params = EdgeRuleRecipeSuggestionParams.from_dict(_params)
 
+        _alternative = d.pop("alternative", UNSET)
+        alternative: EdgeRuleRecipeSuggestionAlternative | Unset
+        if isinstance(_alternative, Unset):
+            alternative = UNSET
+        else:
+            alternative = EdgeRuleRecipeSuggestionAlternative.from_dict(_alternative)
+
         edge_rule_recipe_suggestion = cls(
             recipe=recipe,
             title=title,
             reason=reason,
             params=params,
+            alternative=alternative,
         )
 
         edge_rule_recipe_suggestion.additional_properties = d

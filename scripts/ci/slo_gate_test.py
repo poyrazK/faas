@@ -6,7 +6,9 @@ import io
 import json
 import pathlib
 import re
+import shutil
 import sys
+import tempfile
 import threading
 import unittest
 import urllib.parse
@@ -251,6 +253,77 @@ class GateTest(unittest.TestCase):
         lines = []
         code = sg.main(["--unit", "schedd", "--deployed-at", "0", "--prometheus-url", "http://127.0.0.1:9"], log=lines.append)
         self.assertEqual(code, sg.INCONCLUSIVE, lines)
+
+    # --- watch mode (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md)
+
+    def watch_record(self, owner="77"):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        path = pathlib.Path(d, "unit-watch.json")
+        path.write_text(json.dumps({"kind": "gregale-unit-watch", "owner_run": owner}))
+        return path
+
+    def test_watch_holds_each_rule_for_its_own_for(self):
+        record = self.watch_record()
+
+        def rules_at(now):
+            rules = platform_rules()
+            rules[0]["duration"] = 600  # for: 10m
+            return with_alert(rules, rules[0]["name"], T0 + 60) if now >= T0 + 60 else rules
+
+        code, _ = self.gate(rules_at, "--unit", "schedd", "--duration", "30m", "--max-hold", "30m",
+                            "--watch-record", str(record), "--owner", "77")
+        self.assertEqual(code, sg.FAIL, self.lines)
+        self.assertEqual(self.elapsed(), 660)  # true at +60, held its full 10 minutes
+
+    def test_watch_stops_when_another_run_takes_the_record(self):
+        record = self.watch_record()
+
+        def rules_at(now):
+            if now >= T0 + 300:
+                record.write_text(json.dumps({"kind": "gregale-unit-watch", "owner_run": "78"}))
+            return platform_rules()
+
+        code, _ = self.gate(rules_at, "--unit", "schedd", "--duration", "30m",
+                            "--watch-record", str(record), "--owner", "77")
+        self.assertEqual(code, sg.SUPERSEDED, self.lines)
+        self.assertLess(self.elapsed(), 330)
+        self.assertTrue(any("run 78 now owns the watch" in line for line in self.lines))
+
+    def test_watch_stops_when_the_record_is_closed(self):
+        record = self.watch_record()
+        record.unlink()
+        code, _ = self.gate(lambda now: platform_rules(), "--unit", "schedd", "--duration", "30m",
+                            "--watch-record", str(record), "--owner", "77")
+        self.assertEqual(code, sg.SUPERSEDED, self.lines)
+        self.assertEqual(self.elapsed(), 0)
+
+    def test_watch_passes_while_it_owns_the_record(self):
+        record = self.watch_record()
+        code, _ = self.gate(lambda now: platform_rules(), "--unit", "schedd", "--duration", "5m",
+                            "--watch-record", str(record), "--owner", "77")
+        self.assertEqual(code, sg.PASS, self.lines)
+
+    def test_unreadable_record_keeps_watching(self):
+        record = self.watch_record()
+        record.write_text("{not json")
+        self.assertIsNone(sg.watch_owner_changed(str(record), "77"))
+
+    def test_watch_rides_out_a_short_prometheus_outage(self):
+        def rules_at(now):
+            if T0 < now <= T0 + 120:
+                raise RuntimeError("prometheus restarting")
+            return platform_rules()
+
+        code, _ = self.gate(rules_at, "--unit", "schedd", "--duration", "5m", "--max-blind-rounds", "20")
+        self.assertEqual(code, sg.PASS, self.lines)
+        code, _ = self.gate(rules_at, "--unit", "schedd", "--duration", "5m")
+        self.assertEqual(code, sg.INCONCLUSIVE, self.lines)
+
+    def test_watch_flags_go_together(self):
+        quiet = lambda *_: None  # noqa: E731
+        self.assertEqual(sg.main(["--unit", "schedd", "--deployed-at", "0", "--owner", "1"], log=quiet), sg.USAGE)
+        self.assertEqual(sg.main(["--unit", "schedd", "--deployed-at", "0", "--max-blind-rounds", "0"], log=quiet), sg.USAGE)
 
     def test_usage_errors(self):
         quiet = lambda *_: None  # noqa: E731

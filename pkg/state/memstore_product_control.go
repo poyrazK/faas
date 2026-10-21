@@ -23,6 +23,64 @@ type productMemory struct {
 	planChanges       map[string]productMemoryPlanChange
 	help              map[string]productHelpRow
 	notificationReads map[string]productNotificationRead
+	// overduePolicies are keyed by app, overdueHolds by app/tenant.
+	overduePolicies map[string]ProductOverduePolicy
+	overdueHolds    map[string]ProductOverdueHold
+	// planHistory is each customer's assignments by app/tenant, oldest
+	// first (ADR-20261021154511).
+	planHistory map[string][]productMemoryPlanEntry
+}
+
+type productMemoryPlanEntry struct {
+	account, revision, plan string
+	first                   bool
+	at                      time.Time
+}
+
+// assignProductCustomerLocked stores an assignment and, when its revision or
+// plan changed, appends it to the plan history, as the Postgres upsert does
+// (ADR-20261021154511).
+func (m *MemStore) assignProductCustomerLocked(account, app string, customer api.ProductCustomer) {
+	d := m.productLocked()
+	key := app + "/" + customer.TenantID
+	prior, existed := d.customers[key]
+	d.customers[key] = customer
+	if existed && prior.Revision == customer.Revision && prior.Plan == customer.Plan {
+		return
+	}
+	if d.planHistory == nil {
+		d.planHistory = map[string][]productMemoryPlanEntry{}
+	}
+	d.planHistory[key] = append(d.planHistory[key], productMemoryPlanEntry{account: account, revision: customer.Revision, plan: customer.Plan, first: !existed, at: time.Now().UTC()})
+}
+
+// productMonthPlansLocked is ProductControlMonthPlans for the memory store.
+func (m *MemStore) productMonthPlansLocked(scope ProductBillingScope) []productcontrol.PlanHeld {
+	start, end := productMonthBounds(scope.Period)
+	entries := m.productLocked().planHistory[scope.AppID+"/"+scope.TenantID]
+	// The assignment in force at the month's start, and every later one.
+	var inForce *time.Time
+	for _, e := range entries {
+		if e.account == scope.AccountID && !e.at.After(start) && (inForce == nil || e.at.After(*inForce)) {
+			at := e.at
+			inForce = &at
+		}
+	}
+	held := []productcontrol.PlanHeld{}
+	index := map[string]int{}
+	for _, e := range entries {
+		if e.account != scope.AccountID || !e.at.Before(end) || inForce != nil && e.at.Before(*inForce) {
+			continue
+		}
+		key := e.revision + "/" + e.plan
+		if at, ok := index[key]; ok {
+			held[at].First = held[at].First || e.first
+			continue
+		}
+		index[key] = len(held)
+		held = append(held, productcontrol.PlanHeld{Revision: e.revision, Plan: e.plan, Since: e.at, First: e.first})
+	}
+	return held
 }
 
 type productMemoryReceipt struct {
@@ -139,7 +197,7 @@ func (m *MemStore) SetProductCustomer(_ context.Context, account, appID string, 
 			return api.ProductCustomer{}, ErrConflict
 		}
 	}
-	d.customers[appID+"/"+customer.TenantID] = customer
+	m.assignProductCustomerLocked(account, appID, customer)
 	return customer, nil
 }
 
@@ -230,6 +288,9 @@ func (m *MemStore) prepareProductOperationLocked(op *Operation, def OperationDef
 	grant, err := productGrant(catalog, customer, admission.ProductFeature, def, admission.ProductControlEnabled)
 	if err != nil {
 		return err
+	}
+	if hold, held := m.productOverdueHoldLocked(op.AccountID, op.AppID, op.PlatformTenantID); held {
+		return productOverdueRefusal(hold)
 	}
 	feature := catalog.Spec.Features[admission.ProductFeature]
 	if feature.Operation != nil {

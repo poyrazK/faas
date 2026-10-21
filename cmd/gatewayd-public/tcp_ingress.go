@@ -27,7 +27,7 @@ const defaultTCPDScheddTarget = "unix:///run/faas/schedd.sock"
 // startTCPIngress is the production wiring for ADR-183. It remains opt-in;
 // when enabled, tcpd binds only durable listener ports marked enabled and
 // startup waits until the initial enabled-listener snapshot is bound.
-func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore, metrics *tcpmetrics.Metrics) (stop func(), drain func(context.Context) error, err error) {
+func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.EdgeStore, metrics *tcpmetrics.Metrics) (stop func(), drain func(context.Context) error, err error) {
 	if !envBoolOr("FAAS_TCPD_ENABLED", false) {
 		return func() {}, func(context.Context) error { return nil }, nil
 	}

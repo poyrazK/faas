@@ -4,10 +4,12 @@
 /* eslint-disable */
 import type { ProjectEnvironmentPromotionReleaseGraphResponse } from './ProjectEnvironmentPromotionReleaseGraphResponse.js';
 import type { ProjectEnvironmentPromotionStatusWorkloadResponse } from './ProjectEnvironmentPromotionStatusWorkloadResponse.js';
+import type { ProjectPromotionHealth } from './ProjectPromotionHealth.js';
 /**
  * Durable status for a project environment promotion operation.
  */
 export type ProjectEnvironmentPromotionStatusResponse = {
+  health?: ProjectPromotionHealth;
   promotion_id: string;
   project_slug: string;
   from_environment: string;
