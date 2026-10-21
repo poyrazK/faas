@@ -50,7 +50,8 @@ func (m *MemStore) SetProductCustomerTrialEnd(_ context.Context, account, app, t
 	if err := validateProductTrialEnd(customer, end, time.Now()); err != nil {
 		return api.ProductCustomer{}, err
 	}
-	end = end.UTC()
+	// Postgres keeps microseconds; both stores return what they keep.
+	end = end.UTC().Truncate(time.Microsecond)
 	customer.TrialEndsAt = &end
 	d.customers[app+"/"+tenant] = customer
 	return customer, nil
@@ -81,11 +82,11 @@ func (s *PgStore) SetProductCustomerTrialEnd(ctx context.Context, account, app, 
 		if err := validateProductTrialEnd(customer, end, time.Now()); err != nil {
 			return err
 		}
+		ended := end.UTC().Truncate(time.Microsecond)
 		if err := q.ProductControlSetTrialEnd(ctx, tx, sqlc.ProductControlSetTrialEndParams{AccountID: a, AppID: b, TenantID: c,
-			TrialEndsAt: pgtype.Timestamptz{Time: end.UTC(), Valid: true}}); err != nil {
+			TrialEndsAt: pgtype.Timestamptz{Time: ended, Valid: true}}); err != nil {
 			return err
 		}
-		ended := end.UTC()
 		customer.TrialEndsAt = &ended
 		out = customer
 		return nil

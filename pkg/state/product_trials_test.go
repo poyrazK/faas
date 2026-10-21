@@ -135,7 +135,8 @@ func productTrialsContract(t *testing.T, s productBillingRunTestStore, seedPlan 
 	// The trial ends now: the three trial starts leave pro's two included
 	// starts unused, then starts cost the unit price, and a confirmation
 	// from the trial goes stale once the price it bound changes.
-	ended := time.Now().UTC()
+	// Postgres keeps microseconds.
+	ended := time.Now().UTC().Truncate(time.Microsecond)
 	seedTrial(app.ID, trialing, *joined.TrialStartsAt, ended)
 	after := joined
 	after.TrialEndsAt = &ended

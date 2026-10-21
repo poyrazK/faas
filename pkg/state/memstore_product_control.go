@@ -44,7 +44,7 @@ func (m *MemStore) assignProductCustomerLocked(account, app string, customer api
 	d := m.productLocked()
 	key := app + "/" + customer.TenantID
 	prior, existed := d.customers[key]
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	// A customer keeps any trial they had, and without one starts the
 	// plan's trial (ADR-20261021195901).
 	customer.TrialStartsAt, customer.TrialEndsAt = prior.TrialStartsAt, prior.TrialEndsAt
