@@ -8,7 +8,7 @@ import (
 func TestConnectionBudgetRuntimeCoverageSeparatesResidentAndWakeEvidence(t *testing.T) {
 	s := budgetSnapshot()
 	b := &s.Bindings[0]
-	b.ObservedResidents, b.ObservedConnections = 1, 2
+	b.ObservedResidents, b.ObservedConnections, b.ObservedMaxConnections = 1, 2, 2
 	b.ObservationsCheckedAt = s.CheckedAt.Add(-time.Second)
 	b.ObservationsExpiresAt = s.CheckedAt.Add(10 * time.Second)
 	got := describeConnectionBudget(s, s.CheckedAt)
@@ -28,6 +28,8 @@ func TestConnectionBudgetRuntimeCoverageSeparatesResidentAndWakeEvidence(t *test
 	for _, change := range []func(*connectionBudgetBinding){
 		func(b *connectionBudgetBinding) { b.ObservedResidents = 3 },
 		func(b *connectionBudgetBinding) { b.ObservedConnections = 999 },
+		func(b *connectionBudgetBinding) { b.ObservedMaxConnections = 0 },
+		func(b *connectionBudgetBinding) { b.ObservedMaxConnections = 9 },
 		func(b *connectionBudgetBinding) { b.ObservationsExpiresAt = s.CheckedAt },
 		func(b *connectionBudgetBinding) { b.ObservationsCheckedAt = s.CheckedAt.Add(time.Second) },
 	} {
@@ -38,5 +40,32 @@ func TestConnectionBudgetRuntimeCoverageSeparatesResidentAndWakeEvidence(t *test
 		if r := got.Demand.RuntimeObservations; r.ObservedInstances != 0 || r.UnobservedInstances != 2 || r.State != "unknown" || got.Demand.DataAPIResidentEstimate != 4 {
 			t.Fatal("invalid evidence replaced estimates", r, got)
 		}
+	}
+}
+
+// adr: 20261021180534 — a configured engine pool reaches the budget through
+// observed reports, and unobserved or planned instances of the binding are
+// estimated at the largest pool observed, never below the default.
+func TestConnectionBudgetEstimatesFromTheLargestObservedPool(t *testing.T) {
+	s := budgetSnapshot()
+	b := &s.Bindings[0]
+	b.Parked = 0
+	b.ObservedResidents, b.ObservedConnections, b.ObservedMaxConnections = 1, 6, 6
+	b.ObservationsCheckedAt = s.CheckedAt.Add(-time.Second)
+	b.ObservationsExpiresAt = s.CheckedAt.Add(10 * time.Second)
+	got := describeConnectionBudget(s, s.CheckedAt)
+	r := got.Demand.RuntimeObservations
+	if r.ConfiguredConnections != 6 || r.UnobservedInstances != 1 || got.Demand.DataAPIResidentEstimate != 12 || got.Demand.DataAPIWakeEstimate != 3*6 {
+		t.Fatal("a six-connection pool was not carried into the estimates", r, got)
+	}
+	b.ObservedConnections, b.ObservedMaxConnections = 1, 1
+	got = describeConnectionBudget(s, s.CheckedAt)
+	if got.Demand.RuntimeObservations.ConfiguredConnections != 1 || got.Demand.DataAPIResidentEstimate != 1+2 || got.Demand.DataAPIWakeEstimate != 3*2 {
+		t.Fatal("a one-connection pool lowered unobserved estimates below the default", got)
+	}
+	b.ObservedConnections, b.ObservedMaxConnections = 12, 6
+	got = describeConnectionBudget(s, s.CheckedAt)
+	if got.Demand.RuntimeObservations.ObservedInstances != 0 || got.Demand.DataAPIResidentEstimate != 2*6 {
+		t.Fatal("more connections than one instance can hold were accepted", got)
 	}
 }

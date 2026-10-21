@@ -172,8 +172,11 @@ func validRuntimeConnectionCoverage(b api.ManagedPostgresConnectionBudget, now t
 			return false
 		}
 	}
-	if r.ConfiguredConnections != r.ObservedInstances*api.DataAPIMaxPoolConnections || r.ConfiguredConnections > b.Demand.DataAPIResidentEstimate ||
-		(r.ObservedInstances+r.UnobservedInstances)*api.DataAPIMaxPoolConnections != b.Demand.DataAPIResidentEstimate ||
+	// Each instance reports 1 to DataAPIMaxPoolConnections engine and refresh
+	// connections (ADR-20261021180534); older servers report the default.
+	// Unobserved instances add 1 to DataAPIMaxPoolConnections each to the estimate.
+	if r.ConfiguredConnections < r.ObservedInstances || r.ConfiguredConnections > r.ObservedInstances*api.DataAPIMaxPoolConnections ||
+		b.Demand.DataAPIResidentEstimate-r.ConfiguredConnections < r.UnobservedInstances || b.Demand.DataAPIResidentEstimate-r.ConfiguredConnections > r.UnobservedInstances*api.DataAPIMaxPoolConnections ||
 		r.ObservedInstances+r.UnobservedInstances > b.Inventory.ResidentInstances || r.ParkedInstances > b.Inventory.ParkedInstances {
 		return false
 	}

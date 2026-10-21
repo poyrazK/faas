@@ -13,8 +13,8 @@ import { createHealth } from './health.mjs'
 import { createDeadline } from './deadline.mjs'
 import { checkSQLDeadlineConnection } from './sql-deadline.mjs'
 import { streamResponse } from './response-limit.mjs'
-import { createRateLimiter, admitRateLimit } from './rate-limit.mjs'
-import { createUserConcurrency, admitUserConcurrency } from './user-concurrency.mjs'
+import { createRateLimiter, admitRateLimit, admitServerKeyRate } from './rate-limit.mjs'
+import { createUserConcurrency, admitUserConcurrency, admitServerKeyConcurrency } from './user-concurrency.mjs'
 import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
 import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
@@ -28,8 +28,10 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
   const rateLimiter = createRateLimiter(config.rateLimit)
   // Anonymous clients always have a budget and never use subject tracking slots.
   const anonymousLimiter = config.publicRead || config.publicRpc ? createRateLimiter(config.rateLimit ?? { perSecond: limits.rateLimitDefaultPerSecond, burst: limits.rateLimitDefaultBurst }) : null
-  const userConcurrency = createUserConcurrency(config.userConcurrency, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
-  const admitted = createAdmission(config.coordinatedRefresh ? limits.pool - 1 : limits.pool, res => {
+  const userConcurrency = createUserConcurrency(config.userConcurrency, config.engine)
+  const serverKeyRate = config.serverKeyRateLimit ? createRateLimiter(config.serverKeyRateLimit) : null
+  const serverKeyRequests = { active: 0 }
+  const admitted = createAdmission(config.engine, res => {
     res.setHeader('Retry-After', String(limits.overloadRetrySeconds))
     problem(res, 503, 'data_api_overloaded')
   })
@@ -113,6 +115,11 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     if (counted) counted.access = access
     if (serverKeyPermissions && !(storage ? storageServerKeyAllows(storage, serverKeyPermissions, config) : serverKeyAllows(req, serverKeyPermissions, config, rpc))) return problem(res, 403, 'server_key_permission_denied')
     if (access === 'server' && config.readOnly === true && writes) return problem(res, 403, 'read_only_identity')
+    // Server keys skip per-user budgets but have their own (ADR-20261021180534).
+    if (access === 'server') {
+      if (serverKeyRate && !admitServerKeyRate(serverKeyRate, serverKeySlot, res, problem)) return
+      if (!admitServerKeyConcurrency(serverKeyRequests, config.serverKeyConcurrency, res, problem)) return
+    }
     // Owner caps are checked before admission, against month-to-date totals.
     const cap = usage?.capReached(access)
     if (cap) {
@@ -376,7 +383,7 @@ export async function main(env = process.env) {
     config.refreshStatus = refresh.read
   }
   const jwks = createRemoteJWKSet(config.auth.jwks, { timeoutDuration: 3000, cacheMaxAge: 300000 })
-  config.poolObservation = createPoolObservation(3001, config.coordinatedRefresh ? limits.pool - 1 : limits.pool)
+  config.poolObservation = createPoolObservation(3001, config.engine)
   const verify = tokenVerifier(config.auth, jwks)
   // Avoid inheriting arbitrary PGRST_* overrides from application secrets.
   const childEnv = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith('PGRST_')))

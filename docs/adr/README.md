@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Data API engine pool size and server-key limits](20261021180534-data-api-engine-pool-and-server-key-limits.md)
 - [Data API file storage](20261021101510-data-api-file-storage.md)
 - [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)
 - [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)

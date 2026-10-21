@@ -56,6 +56,30 @@ export function createUserConcurrency(value, capacity = limits.pool, clock = () 
   }
 }
 
+// admitServerKeyConcurrency bounds the admission slots server-key requests
+// hold together (ADR-20261021180534). It refuses at once instead of queueing.
+export function admitServerKeyConcurrency(counter, max, res, problem) {
+  if (counter.active >= max) {
+    const refusal = { reason: 'server_key', max_concurrent: max, active: counter.active, cooling_down: 0, retry_after_seconds: limits.overloadRetrySeconds }
+    markConcurrencyLimit(res, refusal)
+    res.setHeader('Retry-After', String(refusal.retry_after_seconds))
+    res.setHeader('Connection', 'close')
+    problem(res, 429, 'data_api_concurrency_limited', { ...refusal, limit: { concurrent_server_key_requests: max }, observed: { active_requests: counter.active },
+      docs: 'https://gregale.dev/docs/data-api#server-key-limits' })
+    return false
+  }
+  counter.active++
+  let done = false
+  const finish = () => {
+    if (done) return
+    done = true
+    counter.active--
+  }
+  res.once('finish', finish)
+  res.once('close', finish)
+  return true
+}
+
 export function admitUserConcurrency(limiter, subject, req, res, problem) {
   const { lease, rejected } = limiter.take(subject)
   if (rejected) {

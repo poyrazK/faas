@@ -6,11 +6,22 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// dataAPIInstanceConnections estimates one unobserved or planned instance of
+// a binding (ADR-20261021180534): the largest pool an instance of it reports,
+// or the default pool when none does.
+func dataAPIInstanceConnections(b connectionBudgetBinding) int64 {
+	if b.ObservedResidents <= 0 || b.ObservedMaxConnections < api.DataAPIDefaultPoolConnections || b.ObservedMaxConnections > api.DataAPIMaxPoolConnections {
+		return api.DataAPIDefaultPoolConnections
+	}
+	return b.ObservedMaxConnections
+}
+
 func accountRuntimeConnectionCoverage(out *api.ManagedPostgresConnectionBudget, b connectionBudgetBinding) {
 	r := out.Demand.RuntimeObservations
 	r.State = "unknown"
 	observed, connections := b.ObservedResidents, b.ObservedConnections
-	if observed < 0 || observed > b.Residents || connections != observed*api.DataAPIMaxPoolConnections ||
+	if observed < 0 || observed > b.Residents || connections < observed || connections > observed*api.DataAPIMaxPoolConnections ||
+		(observed > 0 && (b.ObservedMaxConnections < 1 || b.ObservedMaxConnections > api.DataAPIMaxPoolConnections || connections > observed*b.ObservedMaxConnections)) ||
 		(observed > 0 && (b.ObservationsCheckedAt.IsZero() || !b.ObservationsExpiresAt.After(b.ObservationsCheckedAt))) {
 		observed, connections = 0, 0
 	}
@@ -18,7 +29,7 @@ func accountRuntimeConnectionCoverage(out *api.ManagedPostgresConnectionBudget, 
 	r.UnobservedInstances += max(0, b.Residents-observed)
 	r.ParkedInstances += max(0, b.Parked)
 	r.ConfiguredConnections += connections
-	out.Demand.DataAPIResidentEstimate += connections + max(0, b.Residents-observed)*api.DataAPIMaxPoolConnections
+	out.Demand.DataAPIResidentEstimate += connections + max(0, b.Residents-observed)*dataAPIInstanceConnections(b)
 	if observed > 0 {
 		checked, _ := time.Parse(time.RFC3339Nano, r.CheckedAt)
 		expires, _ := time.Parse(time.RFC3339Nano, r.ExpiresAt)

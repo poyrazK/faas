@@ -15022,7 +15022,7 @@ Deploy a single-app Data API with its migrations as the release task
 
 Change public access, aggregates, usage reporting or caps and fresh-restart the runtime
 
-`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--scope <SCOPE>] [--no-restart] <name>`
+`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--pool <N|default>] [--server-key-concurrency <N|default>] [--server-key-rate-limit <N[,burst=M]|off>] [--scope <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -15034,6 +15034,9 @@ Change public access, aggregates, usage reporting or caps and fresh-restart the 
 | `--usage-reporting <on|off>` | report usage to the platform (on for new Data APIs) | one of `on` · `off` |
 | `--monthly-caps <requests=N[,anonymous=N]|off>` | monthly owner caps; reached caps answer 429 until the next UTC month |  |
 | `--aggregates <on|off>` | aggregate queries; on also enables the SQL deadline | one of `on` · `off` |
+| `--pool <N|default>` | engine connections per instance, 1 to 8 (default 2) |  |
+| `--server-key-concurrency <N|default>` | admission slots server keys may hold together (default: all but one) |  |
+| `--server-key-rate-limit <N[,burst=M]|off>` | requests per second per server key; refusals answer 429 |  |
 | `--scope <SCOPE>` | environment scope |  |
 | `--no-restart` | store settings without a fresh restart |  |
 

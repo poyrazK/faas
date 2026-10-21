@@ -11963,7 +11963,10 @@ const (
 // Data API workload bounds (ADR-650). Embedded config.mjs mirrors these
 // constants; the CLI tripwire tests keep the runtime and platform contract aligned.
 const (
-	DataAPIMaxPoolConnections = 2
+	// Engine connections per runtime (ADR-20261021180534): the default and the
+	// largest DATA_API_POOL an owner may set.
+	DataAPIDefaultPoolConnections = 2
+	DataAPIMaxPoolConnections     = 8
 	// Read-only connection-budget planning, not SQL quotas or reservations.
 	DataAPIConnectionBudgetMaxDatabases      = 100
 	DataAPIConnectionBudgetMaxBindings       = 1024

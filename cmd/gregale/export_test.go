@@ -779,6 +779,7 @@ var CmdCronsUpdate = cmdCronsUpdate
 var CmdDLQPurge = cmdDLQPurge
 var CmdDashboard = cmdDashboard
 var CmdDataAPI = cmdDataAPI
+var CmdDataAPIConfigure = cmdDataAPIConfigure
 var CmdDataAPICreate = cmdDataAPICreate
 var CmdDataAPIDev = cmdDataAPIDev
 var CmdDataAPIExplain = cmdDataAPIExplain
