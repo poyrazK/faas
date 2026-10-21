@@ -123,10 +123,3 @@ func cmdPreviewsChange(args []string, join bool) int {
 	}
 	return 0
 }
-
-func onOff(enabled bool) string {
-	if enabled {
-		return "on"
-	}
-	return "off"
-}
