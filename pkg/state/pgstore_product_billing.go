@@ -222,6 +222,20 @@ func (s *PgStore) ListProductBillingDocuments(ctx context.Context, scope Product
 	return out, nil
 }
 
+func (s *PgStore) GetProductBillingDocument(ctx context.Context, scope ProductBillingScope, id string) (api.ProductBillingDocument, error) {
+	if !validProductUUID(id) {
+		return api.ProductBillingDocument{}, ErrInvalidArgument
+	}
+	if err := productBillingScopePG(ctx, s.pool, scope); err != nil {
+		return api.ProductBillingDocument{}, err
+	}
+	row, err := sqlc.New().ProductBillingDocument(ctx, s.pool, productBillingDocumentParams(scope, id))
+	if err != nil {
+		return api.ProductBillingDocument{}, mapErr(err)
+	}
+	return productBillingPGDocument(row)
+}
+
 func productBillingPGInsert(ctx context.Context, tx pgx.Tx, scope ProductBillingScope, doc api.ProductBillingDocument) error {
 	snapshot := []byte(`{}`)
 	if doc.Snapshot != nil {
