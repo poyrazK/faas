@@ -24,7 +24,9 @@ test('service accounts against PostgreSQL', { skip: !database }, async t => {
     CREATE TABLE auth.sso_providers(id uuid PRIMARY KEY);
     CREATE TABLE auth.identities(id uuid PRIMARY KEY,user_id uuid REFERENCES auth.users(id),provider text);
     CREATE TABLE auth.sso_domains(id uuid PRIMARY KEY,sso_provider_id uuid REFERENCES auth.sso_providers(id),domain text);`)
-  const authz = { roles: { deployer: ['docs:read', 'docs:write'], viewer: ['docs:read'], auditor: ['audit:read'] },
+  // Admins hand out only roles within their own permissions (sql/0022), so
+  // this app gives its admins the docs permissions too.
+  const authz = { roles: { admin: ['members:manage', 'org:read', 'docs:read', 'docs:write'], deployer: ['docs:read', 'docs:write'], viewer: ['docs:read'], auditor: ['audit:read'] },
     policies: [{ action: 'read', resource: 'doc', permission: 'docs:read' }, { action: 'write', resource: 'doc', permission: 'docs:write' }, { action: 'pay', resource: 'invoice', permission: 'billing:pay' }] }
   const client = await pool.connect()
   try { await applyGregaleMigrations(client, undefined, JSON.stringify(authz)) } finally { client.release() }

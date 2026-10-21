@@ -2102,6 +2102,11 @@ func (s *server) handler() http.Handler {
 	// ADR-20261017100853: a customer resumes its own waiting Operations.
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/{id}/signals", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.SignalPlatformTenantSelfOperation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operation-signals", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.SignalPlatformTenantSelfOperationsBySubject)))
+	// ADR-20261018210500: per-customer Operation concurrency, gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS.
+	mux.HandleFunc("PUT /v1/apps/{slug}/operation-concurrency", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.PutOperationConcurrencyPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operation-concurrency", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.GetOperationConcurrency))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/operation-concurrency/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.DeleteOperationConcurrencyPolicy))))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operation-queue", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.GetPlatformTenantSelfOperationQueue)))
 	// ADR-20261018183000: child Operations, gated by FAAS_OPERATION_CHILDREN_ACCOUNTS.
 	mux.Handle("POST /v1/runtime/operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.StartRuntimeChildOperation)))
 	mux.Handle("GET /v1/runtime/operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.ListRuntimeOperationChildren)))

@@ -290,10 +290,13 @@ public actor AuthClient {
     }
 
     /// Changes the email address (confirmed by email), the password or user metadata.
-    public func updateUser(email: String? = nil, password: String? = nil, data: [String: JSONValue]? = nil) async throws -> User {
+    /// A new password needs currentPassword, except in a password reset or for
+    /// a user who has no password yet.
+    public func updateUser(email: String? = nil, password: String? = nil, currentPassword: String? = nil, data: [String: JSONValue]? = nil) async throws -> User {
         var body: [String: JSONValue] = [:]
         if let email { body["email"] = .string(email) }
         if let password { body["password"] = .string(password) }
+        if let currentPassword { body["current_password"] = .string(currentPassword) }
         if let data { body["data"] = .object(data) }
         return try Self.decoder.decode(User.self, from: try await call("PUT", "/auth/v1/user", body: .object(body), token: try await accessToken()))
     }

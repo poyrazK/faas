@@ -38,7 +38,7 @@ export function createDeadline(req, res, expire) {
   res.once('finish', stop)
   res.once('close', stop)
   arm()
-  return { signal: controller.signal, check, expiresAt,
+  return { signal: controller.signal, check, expiresAt, stop,
     enter(value) { if (!check()) return false; phase = value; markPhase(res, value); return true },
     dispatch() { if (!check()) return false; dispatched = true; return true },
   }

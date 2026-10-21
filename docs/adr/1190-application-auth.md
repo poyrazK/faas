@@ -170,11 +170,22 @@ answers `authorize` checks. GoTrue verifies the caller's token on loopback;
 the front then calls one owner-only `gregale_auth` function per request in a
 transaction whose `request.jwt.claims` carry only the verified `sub` and
 `session_id`. The functions enforce the rules themselves: managing members
-needs `members:manage`, only owners grant or remove the owner role, members
-may always leave, and changes in one organization are serialized so none loses
-its last owner. An invitation token is returned once to the inviter until the
-email hook delivers it, is stored only as a hash, and can be accepted only by a
-signed-in user whose confirmed email matches the invited address.
+needs `members:manage`, a member gives, changes or removes only roles whose
+every permission it holds (`can_grant`, sql/0022; `*` covers all), only owners
+grant or remove the owner role, members may always leave, and changes in one
+organization are serialized so none loses its last owner. The same grant rule
+covers the roles of service accounts, of people joining by email domain and of
+identity-provider users, so `members:manage` never lets a member raise itself
+or anyone else above its own permissions; an app that wants admins to hand out
+a role gives the admin role that role's permissions in `AUTH_AUTHZ`. An
+invitation token is returned once to the inviter until the email hook delivers
+it, is stored only as a hash, and can be accepted only by a signed-in user
+whose confirmed email matches the invited address. Invitations send email to
+any address through the customer's provider on behalf of any member, so they
+are bounded: one pending invitation per address and organization, at most
+`AuthInvitationsPerInviterPerHour` per inviter and
+`AuthInvitationsPerAddressPerDay` per address, refused with
+`invitation_rate_limited` (429).
 
 Custom roles and policies are declarative: `gregale auth create --authz FILE`
 seals an `AUTH_AUTHZ` document (`roles` and `policies`), and the release task
@@ -642,6 +653,19 @@ ever made, so domain joining adds a person once and never undoes an owner's
 removal; the triggers do nothing that can fail inside GoTrue's transaction.
 Domains are managed with `domains:manage` or, as before, `sso:manage`.
 
+GoTrue v2.197.0 takes whatever address a SAML identity provider asserts and
+marks it confirmed, without checking the provider's domains (`samlacs.go`). A
+provider the app's operator registered is trusted for that. One an
+organization connected itself, or whose metadata or domains it changed
+through the organization API, is marked self-service
+(`sso_organizations.self_service`, sql/0023) and trusted only for the domains
+the organization verified: with organization SSO on, the before-user-created
+hook refuses its users whose address is elsewhere
+(`sso_email_domain_not_allowed`), and applies the app's invitation or waitlist
+rules to them as to anyone, where the operator's providers are exempt. GoTrue
+creates a returning SSO user's account once and never changes its address at
+later sign-ins, so the check at creation holds.
+
 ### Dark launch
 
 Application Auth reaches no customer until it launches. apid reads
@@ -686,7 +710,15 @@ user's own session, and lets it call every user endpoint, including changing
 the email address or password. The front therefore confines such tokens
 (those with a `client_id` claim): on the Auth host they reach only userinfo,
 their own sign-out and the permission check `/authz/v1/authorize`, which a
-resource server needs; everything else answers `oauth_client_token`.
+resource server needs; everything else answers `oauth_client_token`. The front
+reads `Authorization` the way GoTrue does, the scheme in any letter case, and
+refuses a bearer JWT whose claims it cannot read before GoTrue sees it, so
+no token reaches GoTrue unchecked; GoTrue checks no audience. Deny-lists, such
+as an impersonated session's, ignore trailing slashes, which GoTrue's router
+does. A new password needs the current one
+(`GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD`), except in a
+password reset or for a user without one, so a stolen access token cannot
+take over an account by setting one.
 GoTrue's custom access token hook, on only with the server, sets their
 audience to the RFC 8707 resource the client was authorized for, or
 `oauth-client` when it named none. GoTrue drops the authorization at the
