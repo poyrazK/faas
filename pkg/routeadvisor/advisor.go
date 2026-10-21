@@ -52,6 +52,8 @@ type ConsumerStats struct {
 // a rule the customer already has or has already applied for review. Enabled,
 // Priority and MaxAgeSeconds let cache rules be checked (ADR-1199).
 type ExistingRule struct {
+	// ID identifies the stored rule; analyses ignore it.
+	ID            string
 	Kind          string
 	Path          string
 	Methods       []string

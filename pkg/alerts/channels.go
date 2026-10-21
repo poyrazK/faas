@@ -110,6 +110,9 @@ func (e *Evaluator) channelMessage(ctx context.Context, rule state.AlertRule, ev
 	if rule.AppID == "" {
 		return msg
 	}
+	if rule.Metric == state.AlertMetricRouteInsightsDetected && event == alertchannels.EventFire {
+		msg.Notes = e.routeInsightNotes(ctx, rule)
+	}
 	if apps, ok := e.store.(interface {
 		AppByID(context.Context, string) (state.App, error)
 	}); ok {
