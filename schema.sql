@@ -6741,6 +6741,21 @@ $$;
 
 
 --
+-- Name: delete_project_environment_secrets(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.delete_project_environment_secrets() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    DELETE FROM project_environment_secrets
+     WHERE project_id = OLD.project_id AND environment_slug = OLD.slug;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: deployment_artifact_scan_current_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16866,6 +16881,39 @@ END $$;
 
 
 --
+-- Name: guard_project_environment_secret_write(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_project_environment_secret_write() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('release-secret-key-retirement', 0));
+    PERFORM generation FROM release_secret_key_retirement_fence WHERE singleton FOR SHARE;
+    IF EXISTS (SELECT 1 FROM release_secret_key_retirements r WHERE r.kid = NEW.kid) THEN
+        RAISE EXCEPTION 'encrypted release input uses a retired or unlabelled key'
+            USING ERRCODE = '23514', CONSTRAINT = 'release_secret_key_retired';
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        IF (NEW.account_id, NEW.project_id, NEW.environment_slug, NEW.key)
+           IS DISTINCT FROM (OLD.account_id, OLD.project_id, OLD.environment_slug, OLD.key) THEN
+            RAISE EXCEPTION 'project environment secret identity is immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'project_environment_secrets_identity_immutable';
+        END IF;
+        IF NEW.secret_version = OLD.secret_version
+           AND (NEW.value_hash IS DISTINCT FROM OLD.value_hash
+                OR (NEW.ciphertext IS DISTINCT FROM OLD.ciphertext
+                    AND current_setting('faas.release_secret_rekey', true) IS DISTINCT FROM 'on')) THEN
+            RAISE EXCEPTION 'a project environment secret value change must advance its version'
+                USING ERRCODE = '23514', CONSTRAINT = 'project_environment_secrets_version_advances';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_project_migration_publication(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -21487,6 +21535,55 @@ $$;
 
 
 --
+-- Name: project_environment_secret_runtime_change(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_environment_secret_runtime_change() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    r record;
+    changed timestamptz := clock_timestamp();
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        r := OLD;
+    ELSE
+        r := NEW;
+    END IF;
+    WITH member AS (
+        SELECT a.id FROM apps a
+         WHERE a.project_id = r.project_id AND a.account_id = r.account_id AND a.status <> 'deleted'
+    ), stamped AS (
+        INSERT INTO app_runtime_config_scope_changes (app_id, scope, changed_at)
+        SELECT member.id, r.environment_slug, changed FROM member
+        ON CONFLICT (app_id, scope) DO UPDATE
+            SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at)
+        RETURNING app_id, scope, changed_at
+    )
+    UPDATE snapshots SET stale = true
+      FROM deployments d, stamped
+     WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id
+       AND coalesce(nullif(d.scope, ''), 'default') = stamped.scope
+       AND NOT snapshots.stale AND snapshots.created_at <= stamped.changed_at;
+    IF r.environment_slug = 'production' THEN
+        INSERT INTO app_runtime_config_scope_changes (app_id, scope, changed_at)
+        SELECT a.id, 'default:project-config', changed FROM apps a
+         WHERE a.project_id = r.project_id AND a.account_id = r.account_id AND a.status <> 'deleted'
+        ON CONFLICT (app_id, scope) DO UPDATE
+            SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at);
+        UPDATE snapshots SET stale = true
+          FROM deployments d, apps a
+         WHERE snapshots.deployment_id = d.id AND d.app_id = a.id
+           AND a.project_id = r.project_id AND a.account_id = r.account_id AND a.status <> 'deleted'
+           AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+           AND NOT snapshots.stale AND snapshots.created_at <= changed;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: project_event_routing_backlog_recipient(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -23608,6 +23705,43 @@ CREATE FUNCTION public.release_secret_document_envelopes(payload jsonb, kind tex
  UNION ALL SELECT jsonb_path_query(payload,'$.workloads[*].secret_snapshot[*]') WHERE kind IN ('capture','promotion')
  UNION ALL SELECT jsonb_path_query(payload,'$.workloads[*].secret_target[*]') WHERE kind IN ('capture','promotion')
 $_$;
+
+
+--
+-- Name: project_environment_secrets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_secrets (
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    key text NOT NULL,
+    ciphertext bytea NOT NULL,
+    kid text NOT NULL,
+    value_hash text NOT NULL,
+    secret_version bigint DEFAULT 1 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_secrets_ciphertext_present CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT project_environment_secrets_environment_slug_shape CHECK ((environment_slug ~ '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'::text)),
+    CONSTRAINT project_environment_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
+    CONSTRAINT project_environment_secrets_kid_shape CHECK (((kid ~ '^age1[a-z0-9]+$'::text) AND (length(kid) <= 128))),
+    CONSTRAINT project_environment_secrets_secret_version_positive CHECK ((secret_version >= 1)),
+    CONSTRAINT project_environment_secrets_value_hash_shape CHECK (((length(value_hash) >= 1) AND (length(value_hash) <= 16)))
+);
+
+
+--
+-- Name: release_secret_project_document(public.project_environment_secrets); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.release_secret_project_document(s public.project_environment_secrets) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT jsonb_build_array(jsonb_build_object('key', (s).key, 'kid', (s).kid,
+        'ciphertext', encode((s).ciphertext, 'base64'), 'value_hash', (s).value_hash,
+        'secret_version', (s).secret_version, 'created_at', (s).created_at, 'updated_at', (s).updated_at))
+$$;
 
 
 --
@@ -49327,7 +49461,12 @@ UNION ALL
     (project_environment_promotion_release_config.promotion_id)::text AS id,
     project_environment_promotion_release_config.payload
    FROM public.project_environment_promotion_release_config
-  WHERE (project_environment_promotion_release_config.payload ? 'secrets'::text);
+  WHERE (project_environment_promotion_release_config.payload ? 'secrets'::text)
+UNION ALL
+ SELECT 'project'::text AS kind,
+    (((((((p.account_id)::text || '/'::text) || (p.project_id)::text) || '/'::text) || p.environment_slug) || '/'::text) || p.key) AS id,
+    public.release_secret_project_document(p.*) AS payload
+   FROM public.project_environment_secrets p;
 
 
 --
@@ -62651,6 +62790,14 @@ ALTER TABLE ONLY public.project_environment_route_policies
 
 
 --
+-- Name: project_environment_secrets project_environment_secrets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_secrets
+    ADD CONSTRAINT project_environment_secrets_pkey PRIMARY KEY (project_id, environment_slug, key);
+
+
+--
 -- Name: project_environment_workload_specs project_environment_workload__environment_id_app_id_revisio_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72146,6 +72293,13 @@ CREATE INDEX project_environment_route_policies_project_idx ON public.project_en
 
 
 --
+-- Name: project_environment_secrets_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_secrets_account_idx ON public.project_environment_secrets USING btree (account_id);
+
+
+--
 -- Name: project_environments_account_project_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -79234,6 +79388,34 @@ CREATE TRIGGER project_deactivation_receipt_identity BEFORE INSERT OR UPDATE ON 
 --
 
 CREATE TRIGGER project_environment_config_runtime_change AFTER INSERT ON public.project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION public.project_environment_config_runtime_change();
+
+
+--
+-- Name: project_environment_secrets project_environment_secret_runtime_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_environment_secret_runtime_change AFTER INSERT OR DELETE ON public.project_environment_secrets FOR EACH ROW EXECUTE FUNCTION public.project_environment_secret_runtime_change();
+
+
+--
+-- Name: project_environment_secrets project_environment_secret_value_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_environment_secret_value_change AFTER UPDATE ON public.project_environment_secrets FOR EACH ROW WHEN (((old.secret_version IS DISTINCT FROM new.secret_version) OR (old.value_hash IS DISTINCT FROM new.value_hash))) EXECUTE FUNCTION public.project_environment_secret_runtime_change();
+
+
+--
+-- Name: project_environment_secrets project_environment_secret_write_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_environment_secret_write_guard BEFORE INSERT OR UPDATE ON public.project_environment_secrets FOR EACH ROW EXECUTE FUNCTION public.guard_project_environment_secret_write();
+
+
+--
+-- Name: project_environments project_environment_secrets_follow_environment; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_environment_secrets_follow_environment AFTER DELETE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.delete_project_environment_secrets();
 
 
 --
@@ -92831,6 +93013,22 @@ ALTER TABLE ONLY public.project_environment_route_policies
 
 ALTER TABLE ONLY public.project_environment_route_policies
     ADD CONSTRAINT project_environment_route_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_secrets project_environment_secrets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_secrets
+    ADD CONSTRAINT project_environment_secrets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_secrets project_environment_secrets_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_secrets
+    ADD CONSTRAINT project_environment_secrets_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
 
 
 --

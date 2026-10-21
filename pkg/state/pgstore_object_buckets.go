@@ -90,7 +90,7 @@ func reserveObjectBucketTx(ctx context.Context, tx pgx.Tx, b ObjectBucket, limit
 	return objectBucketFromSQL(out), true, nil
 }
 
-func (s *PgStore) ListObjectBuckets(ctx context.Context, accountID, appID string) ([]ObjectBucket, error) {
+func (s *pgCore) ListObjectBuckets(ctx context.Context, accountID, appID string) ([]ObjectBucket, error) {
 	rows, err := sqlc.New().ObjectBucketList(ctx, s.pool, sqlc.ObjectBucketListParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)})
 	if err != nil {
 		return nil, mapErr(err)
@@ -102,7 +102,7 @@ func (s *PgStore) ListObjectBuckets(ctx context.Context, accountID, appID string
 	return out, nil
 }
 
-func (s *PgStore) GetObjectBucket(ctx context.Context, accountID, appID, id string) (ObjectBucket, error) {
+func (s *pgCore) GetObjectBucket(ctx context.Context, accountID, appID, id string) (ObjectBucket, error) {
 	b, err := sqlc.New().ObjectBucketGet(ctx, s.pool, sqlc.ObjectBucketGetParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), ID: mustPgUUID(id)})
 	return objectBucketFromSQL(b), mapErr(err)
 }
