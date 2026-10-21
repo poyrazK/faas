@@ -29,6 +29,7 @@ var memDispatched = map[string]bool{
 	"RestoreAppWithActivity":                 true,
 	"AppTaskByID":                            true,
 	"LiveDeployment":                         true,
+	"RuntimeConfigReceiptRequired":           true,
 	"ResolveEnvironmentGitOpsServiceBinding": true,
 
 	"ClaimNextQueuedBuild":                                    true,
@@ -241,6 +242,15 @@ func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.A
 		return over.AppTaskByID(ctx, account, app, id)
 	}
 	return s.MemStore.AppTaskByID(ctx, account, app, id)
+}
+
+func (s *Mem) RuntimeConfigReceiptRequired(ctx context.Context, appID, scope string) (bool, error) {
+	if o, ok := s.over.(interface {
+		RuntimeConfigReceiptRequired(context.Context, string, string) (bool, error)
+	}); ok {
+		return o.RuntimeConfigReceiptRequired(ctx, appID, scope)
+	}
+	return s.MemStore.RuntimeConfigReceiptRequired(ctx, appID, scope)
 }
 
 func (s *Mem) LiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {
