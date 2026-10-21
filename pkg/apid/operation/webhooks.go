@@ -54,6 +54,12 @@ func (s *Service) PutOperationWebhookBinding(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if req.Mode == api.OperationWebhookModeSignal {
+		for _, signal := range req.Signals {
+			if reservedSignalEvent(acct.ID, signal.Event) {
+				writeReservedSignalEvent(w)
+				return
+			}
+		}
 		if problem := s.signalBindingProblem(r.Context(), def, req); problem != nil {
 			api.WriteProblem(w, problem)
 			return

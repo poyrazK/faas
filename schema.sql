@@ -67008,6 +67008,13 @@ CREATE INDEX customer_operations_tenant_subject_history_idx ON public.customer_o
 
 
 --
+-- Name: customer_operations_waiting_event_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operations_waiting_event_idx ON public.customer_operations USING btree ((((record -> 'waiting'::text) ->> 'event'::text))) WHERE (state = 'waiting'::text);
+
+
+--
 -- Name: customer_workflow_playbook_progress_case; Type: INDEX; Schema: public; Owner: -
 --
 

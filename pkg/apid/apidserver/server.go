@@ -2119,6 +2119,10 @@ func (s *server) handler() http.Handler {
 	// ADR-20261018183000: child Operations, gated by FAAS_OPERATION_CHILDREN_ACCOUNTS.
 	mux.Handle("POST /v1/runtime/operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.StartRuntimeChildOperation)))
 	mux.Handle("GET /v1/runtime/operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.ListRuntimeOperationChildren)))
+	mux.Handle("POST /v1/runtime/job-operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.StartRuntimeJobChildOperation)))
+	mux.Handle("GET /v1/runtime/job-operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.ListRuntimeJobOperationChildren)))
+	mux.Handle("POST /v1/runtime/workflow-operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.StartRuntimeWorkflowChildOperation)))
+	mux.Handle("GET /v1/runtime/workflow-operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.ListRuntimeWorkflowOperationChildren)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/children", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.ListPlatformTenantSelfOperationChildren)))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/children", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.ListOwnedOperationChildren))))
 	// ADR-20261018161833: Operation schedules, gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS.

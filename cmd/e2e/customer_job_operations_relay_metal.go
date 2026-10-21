@@ -99,7 +99,10 @@ func (f *customerJobFixture) connect(t *testing.T, id string, loseArtifactAck bo
 			return
 		}
 		action := strings.TrimPrefix(r.URL.Path, prefix)
-		allowed := r.Method == http.MethodGet && action == "control" || r.Method == http.MethodPost && (action == "progress" || action == "result" || action == "artifacts" || action == "artifact-receipts" || action == "artifact-uploads" || action == "artifact-upload-receipts")
+		// "children" (ADR-20261018183000): a fanout job starts its child with
+		// its own run proof; apid still checks that proof.
+		allowed := r.Method == http.MethodGet && (action == "control" || action == "children") ||
+			r.Method == http.MethodPost && (action == "progress" || action == "result" || action == "artifacts" || action == "artifact-receipts" || action == "artifact-uploads" || action == "artifact-upload-receipts" || action == "children")
 		if !strings.HasPrefix(r.URL.Path, prefix) || !allowed || r.Header.Get("Authorization") != "" {
 			http.NotFound(w, r)
 			return
