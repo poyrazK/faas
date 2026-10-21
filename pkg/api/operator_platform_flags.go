@@ -25,9 +25,27 @@ type PlatformFlagRule struct {
 // PlatformFlagDefinition is the stored value of a platform flag. Enabled is
 // the kill switch; Default applies to accounts no rule matches.
 type PlatformFlagDefinition struct {
-	Enabled bool               `json:"enabled"`
-	Default bool               `json:"default"`
-	Rules   []PlatformFlagRule `json:"rules,omitempty"`
+	Enabled   bool                   `json:"enabled"`
+	Default   bool                   `json:"default"`
+	Rules     []PlatformFlagRule     `json:"rules,omitempty"`
+	SelfServe *PlatformFlagSelfServe `json:"self_serve,omitempty"`
+}
+
+// PlatformFlagSelfServe lets customers join a preview themselves (ADR
+// 20261021080640). Plans empty means every plan; MaxSubjects 0 means the
+// platform limit.
+type PlatformFlagSelfServe struct {
+	Enabled     bool     `json:"enabled"`
+	Plans       []string `json:"plans,omitempty"`
+	MaxSubjects int      `json:"max_subjects,omitempty"`
+}
+
+// OperatorPlatformFlagOptIns counts the accounts and organizations that
+// joined a self-serve preview.
+type OperatorPlatformFlagOptIns struct {
+	Accounts int   `json:"accounts"`
+	Orgs     int   `json:"orgs"`
+	Version  int64 `json:"version"`
 }
 
 // OperatorRuntimeConfigApplyReceipt is what one daemon instance reported
@@ -71,6 +89,7 @@ type OperatorPlatformFlag struct {
 	UpdatedAt   string                              `json:"updated_at,omitempty"`
 	Receipts    []OperatorRuntimeConfigApplyReceipt `json:"receipts"`
 	Convergence OperatorPlatformFlagConvergence     `json:"convergence"`
+	OptIns      OperatorPlatformFlagOptIns          `json:"opt_ins"`
 }
 
 // OperatorPlatformFlagGroups is the shared named account sets, with the
@@ -111,6 +130,8 @@ type OperatorPlatformFlagDecision struct {
 	// At is the decision time when the inspector was asked about another
 	// moment than now.
 	At string `json:"at,omitempty"`
+	// OptIn is "account" or "org" when a self-serve opt-in decided.
+	OptIn string `json:"opt_in,omitempty"`
 }
 
 // OperatorAccountPlatformFlags is GET /v1/admin/accounts/{id}/flags.

@@ -20,9 +20,37 @@ import (
 // regardless of rules or Default. When Enabled is true, rules run in order and
 // the first match decides; an account no rule matches gets Default.
 type Definition struct {
-	Enabled bool   `json:"enabled"`
-	Default bool   `json:"default"`
-	Rules   []Rule `json:"rules,omitempty"`
+	Enabled   bool       `json:"enabled"`
+	Default   bool       `json:"default"`
+	Rules     []Rule     `json:"rules,omitempty"`
+	SelfServe *SelfServe `json:"self_serve,omitempty"`
+}
+
+// SelfServe lets customers join a preview themselves (ADR 20261021080640).
+// An opted-in account or organization on an eligible plan gets the flag when
+// no rule matched; a rule, such as a value: false rule listed first, still
+// decides before any opt-in. Plans lists the eligible plans, empty for all.
+// MaxSubjects caps opted-in accounts plus organizations; 0 means
+// api.PlatformFlagsMaxOptInSubjects. Disabling it stops new opt-ins and
+// ignores existing ones without deleting them.
+type SelfServe struct {
+	Enabled     bool     `json:"enabled"`
+	Plans       []string `json:"plans,omitempty"`
+	MaxSubjects int      `json:"max_subjects,omitempty"`
+}
+
+// Capacity is the number of subjects that may opt in.
+func (s SelfServe) Capacity() int {
+	if s.MaxSubjects <= 0 {
+		return api.PlatformFlagsMaxOptInSubjects
+	}
+	return s.MaxSubjects
+}
+
+// Eligible reports whether an account on plan may use an opt-in. An unknown
+// plan is not eligible when the preview names plans.
+func (s SelfServe) Eligible(plan string) bool {
+	return len(s.Plans) == 0 || slices.Contains(s.Plans, plan)
 }
 
 // Rule targets accounts. Accounts, Orgs, Group, Plans and Rollout combine with
@@ -103,6 +131,10 @@ func decodeStrict(raw json.RawMessage, out any) error {
 // plans to lowercase so equality and hashing never depend on input casing.
 func NormalizeDefinition(def Definition) Definition {
 	out := Definition{Enabled: def.Enabled, Default: def.Default}
+	if def.SelfServe != nil {
+		selfServe := SelfServe{Enabled: def.SelfServe.Enabled, MaxSubjects: def.SelfServe.MaxSubjects, Plans: normalizePlans(def.SelfServe.Plans)}
+		out.SelfServe = &selfServe
+	}
 	if len(def.Rules) == 0 {
 		return out
 	}
@@ -120,10 +152,16 @@ func NormalizeDefinition(def Definition) Definition {
 		next.StartsAt, next.EndsAt = utcSecond(rule.StartsAt), utcSecond(rule.EndsAt)
 		next.Accounts = normalizeAccounts(rule.Accounts)
 		next.Orgs = normalizeAccounts(rule.Orgs)
-		for _, plan := range rule.Plans {
-			next.Plans = append(next.Plans, strings.ToLower(strings.TrimSpace(plan)))
-		}
+		next.Plans = normalizePlans(rule.Plans)
 		out.Rules = append(out.Rules, next)
+	}
+	return out
+}
+
+func normalizePlans(plans []string) []string {
+	var out []string
+	for _, plan := range plans {
+		out = append(out, strings.ToLower(strings.TrimSpace(plan)))
 	}
 	return out
 }
@@ -204,16 +242,31 @@ func ValidateDefinition(def Definition, groups Groups) error {
 				}
 			}
 		}
-		seenPlans := map[string]bool{}
-		for _, plan := range rule.Plans {
-			if !api.Plan(plan).Valid() || seenPlans[plan] {
-				return fmt.Errorf("rule %q: invalid or duplicate plan %q", rule.ID, plan)
-			}
-			seenPlans[plan] = true
+		if err := validatePlans(rule.Plans); err != nil {
+			return fmt.Errorf("rule %q: %w", rule.ID, err)
 		}
 		if rule.Rollout != nil && (*rule.Rollout < 0 || *rule.Rollout > 10000) {
 			return fmt.Errorf("rule %q: rollout must be 0..10000 basis points", rule.ID)
 		}
+	}
+	if s := def.SelfServe; s != nil {
+		if err := validatePlans(s.Plans); err != nil {
+			return fmt.Errorf("self_serve: %w", err)
+		}
+		if s.MaxSubjects < 0 || s.MaxSubjects > api.PlatformFlagsMaxOptInSubjects {
+			return fmt.Errorf("self_serve: max_subjects must be 0..%d", api.PlatformFlagsMaxOptInSubjects)
+		}
+	}
+	return nil
+}
+
+func validatePlans(plans []string) error {
+	seen := map[string]bool{}
+	for _, plan := range plans {
+		if !api.Plan(plan).Valid() || seen[plan] {
+			return fmt.Errorf("invalid or duplicate plan %q", plan)
+		}
+		seen[plan] = true
 	}
 	return nil
 }

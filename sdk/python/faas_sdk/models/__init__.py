@@ -3824,12 +3824,14 @@ from .operator_platform_flag import OperatorPlatformFlag
 from .operator_platform_flag_attributes_item import OperatorPlatformFlagAttributesItem
 from .operator_platform_flag_convergence import OperatorPlatformFlagConvergence
 from .operator_platform_flag_decision import OperatorPlatformFlagDecision
+from .operator_platform_flag_decision_opt_in import OperatorPlatformFlagDecisionOptIn
 from .operator_platform_flag_decision_reason import OperatorPlatformFlagDecisionReason
 from .operator_platform_flag_decision_schedule_state import OperatorPlatformFlagDecisionScheduleState
 from .operator_platform_flag_groups import OperatorPlatformFlagGroups
 from .operator_platform_flag_groups_groups import OperatorPlatformFlagGroupsGroups
 from .operator_platform_flag_groups_references import OperatorPlatformFlagGroupsReferences
 from .operator_platform_flag_list import OperatorPlatformFlagList
+from .operator_platform_flag_opt_ins import OperatorPlatformFlagOptIns
 from .operator_platform_flag_source import OperatorPlatformFlagSource
 from .operator_platform_flag_status import OperatorPlatformFlagStatus
 from .operator_restart_execution_response import OperatorRestartExecutionResponse
@@ -3997,8 +3999,11 @@ from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
 from .plan_workload_depends_on_conditions_additional_property import PlanWorkloadDependsOnConditionsAdditionalProperty
 from .plan_workload_tier import PlanWorkloadTier
 from .platform_flag_definition import PlatformFlagDefinition
+from .platform_flag_opt_ins import PlatformFlagOptIns
 from .platform_flag_rule import PlatformFlagRule
 from .platform_flag_rule_plans_item import PlatformFlagRulePlansItem
+from .platform_flag_self_serve import PlatformFlagSelfServe
+from .platform_flag_self_serve_plans_item import PlatformFlagSelfServePlansItem
 from .platform_tenant_access_token_list_response import PlatformTenantAccessTokenListResponse
 from .platform_tenant_access_token_response import PlatformTenantAccessTokenResponse
 from .platform_tenant_access_token_response_scopes_item import PlatformTenantAccessTokenResponseScopesItem
@@ -4161,6 +4166,7 @@ from .prepare_project_rollback_request import PrepareProjectRollbackRequest
 from .prepare_workflow_operation_artifact_x_gregale_operation_execution_kind import (
     PrepareWorkflowOperationArtifactXGregaleOperationExecutionKind,
 )
+from .preview import Preview
 from .preview_account_workflow_actions_body import PreviewAccountWorkflowActionsBody
 from .preview_artifact_response import PreviewArtifactResponse
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
@@ -4186,6 +4192,7 @@ from .preview_event_response import PreviewEventResponse
 from .preview_issue_compound_alert_request import PreviewIssueCompoundAlertRequest
 from .preview_issue_lifecycle_alert_request import PreviewIssueLifecycleAlertRequest
 from .preview_issue_lifecycle_alert_request_event import PreviewIssueLifecycleAlertRequestEvent
+from .preview_list import PreviewList
 from .preview_platform_tenant_self_workflow_actions_body import PreviewPlatformTenantSelfWorkflowActionsBody
 from .preview_production_changes_response import PreviewProductionChangesResponse
 from .preview_production_changes_response_configuration_changed_groups_item import (
@@ -9546,12 +9553,14 @@ __all__ = (
     "OperatorPlatformFlagAttributesItem",
     "OperatorPlatformFlagConvergence",
     "OperatorPlatformFlagDecision",
+    "OperatorPlatformFlagDecisionOptIn",
     "OperatorPlatformFlagDecisionReason",
     "OperatorPlatformFlagDecisionScheduleState",
     "OperatorPlatformFlagGroups",
     "OperatorPlatformFlagGroupsGroups",
     "OperatorPlatformFlagGroupsReferences",
     "OperatorPlatformFlagList",
+    "OperatorPlatformFlagOptIns",
     "OperatorPlatformFlagSource",
     "OperatorPlatformFlagStatus",
     "OperatorRestartExecutionResponse",
@@ -9715,8 +9724,11 @@ __all__ = (
     "PlanWorkloadDependsOnConditionsAdditionalProperty",
     "PlanWorkloadTier",
     "PlatformFlagDefinition",
+    "PlatformFlagOptIns",
     "PlatformFlagRule",
     "PlatformFlagRulePlansItem",
+    "PlatformFlagSelfServe",
+    "PlatformFlagSelfServePlansItem",
     "PlatformTenantAccessTokenListResponse",
     "PlatformTenantAccessTokenResponse",
     "PlatformTenantAccessTokenResponseScopesItem",
@@ -9859,6 +9871,7 @@ __all__ = (
     "PrepareManagedPostgresCutoverRequest",
     "PrepareProjectRollbackRequest",
     "PrepareWorkflowOperationArtifactXGregaleOperationExecutionKind",
+    "Preview",
     "PreviewAccountWorkflowActionsBody",
     "PreviewArtifactResponse",
     "PreviewCreatedWebhookPayload",
@@ -9884,6 +9897,7 @@ __all__ = (
     "PreviewIssueCompoundAlertRequest",
     "PreviewIssueLifecycleAlertRequest",
     "PreviewIssueLifecycleAlertRequestEvent",
+    "PreviewList",
     "PreviewPlatformTenantSelfWorkflowActionsBody",
     "PreviewProductionChangesResponse",
     "PreviewProductionChangesResponseConfigurationChangedGroupsItem",

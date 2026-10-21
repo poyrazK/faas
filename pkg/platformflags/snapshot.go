@@ -25,7 +25,13 @@ const (
 	ReasonFlagDisabled   = "flag_disabled"
 	ReasonAccountMissing = "account_missing"
 	ReasonRuleMatch      = "rule_match"
+	ReasonOptIn          = "opt_in"
 	ReasonDefault        = "default"
+
+	// OptInAccount and OptInOrg say which subject's self-serve opt-in
+	// decided (ADR 20261021080640).
+	OptInAccount = "account"
+	OptInOrg     = "org"
 
 	// ScheduleNotStarted and ScheduleEnded explain a rule that matched the
 	// subject but was outside its window (ADR 20261021080640).
@@ -57,6 +63,8 @@ type Decision struct {
 	Version         int64  `json:"version"`
 	ScheduledRuleID string `json:"scheduled_rule_id,omitempty"`
 	ScheduleState   string `json:"schedule_state,omitempty"`
+	// OptIn is OptInAccount or OptInOrg when a self-serve opt-in decided.
+	OptIn string `json:"opt_in,omitempty"`
 }
 
 type compiledRule struct {
@@ -89,13 +97,31 @@ type compiledFlag struct {
 	version int64
 }
 
-// Snapshot is an immutable, compiled view of every platform flag and the
-// shared groups. Evaluation performs no I/O and no locking.
+type compiledOptIns struct {
+	raw      OptIns
+	version  int64
+	accounts map[string]struct{}
+	orgs     map[string]struct{}
+}
+
+// Snapshot is an immutable, compiled view of every platform flag, the
+// shared groups and the self-serve opt-ins. Evaluation performs no I/O and no
+// locking.
 type Snapshot struct {
 	flags         map[string]compiledFlag
 	groups        map[string]map[string]struct{}
 	rawGroups     Groups
 	groupsVersion int64
+	optIns        map[string]compiledOptIns
+}
+
+// withOptIns attaches the self-serve opt-ins to a freshly compiled snapshot.
+func (s *Snapshot) withOptIns(optIns map[string]OptIns, versions map[string]int64) *Snapshot {
+	s.optIns = make(map[string]compiledOptIns, len(optIns))
+	for key, o := range optIns {
+		s.optIns[key] = compiledOptIns{raw: o, version: versions[key], accounts: toSet(o.Accounts), orgs: toSet(o.Orgs)}
+	}
+	return s
 }
 
 // Compile builds a snapshot. A rule that names a group missing from groups
@@ -207,8 +233,38 @@ func (s *Snapshot) Evaluate(key string, subject Subject) Decision {
 		d.Enabled, d.Reason, d.RuleID, d.Bucket = rule.value, ReasonRuleMatch, rule.id, bucket
 		return d
 	}
+	if via := s.optedIn(flag, account, org, subject.Plan); via != "" {
+		d.Enabled, d.Reason, d.OptIn = true, ReasonOptIn, via
+		return d
+	}
 	d.Enabled, d.Reason = flag.def.Default, ReasonDefault
 	return d
+}
+
+// optedIn reports which subject's opt-in admits the account to a self-serve
+// preview: the account itself, else the organization it acts under.
+func (s *Snapshot) optedIn(flag compiledFlag, account, org, plan string) string {
+	selfServe := flag.def.SelfServe
+	if selfServe == nil || !selfServe.Enabled || !selfServe.Eligible(plan) {
+		return ""
+	}
+	optIns := s.optIns[flag.key]
+	if _, ok := optIns.accounts[account]; ok {
+		return OptInAccount
+	}
+	if _, ok := optIns.orgs[org]; ok && org != "" {
+		return OptInOrg
+	}
+	return ""
+}
+
+// OptIns returns a flag's self-serve opt-ins and their version.
+func (s *Snapshot) OptIns(key string) (OptIns, int64) {
+	if s == nil {
+		return OptIns{}, 0
+	}
+	optIns := s.optIns[key]
+	return optIns.raw.clone(), optIns.version
 }
 
 // canonicalAccount matches an account ID against stored rules, which hold
@@ -269,13 +325,15 @@ type Set struct {
 	versions      map[string]int64
 	groups        Groups
 	groupsVersion int64
+	optIns        map[string]OptIns
+	optInVersions map[string]int64
 }
 
 // NewSet seeds the holder with boot-time definitions (version 0). Keys absent
 // from bootstrap use their catalog default. A durable value of any positive
 // version replaces the bootstrap value and is never replaced by it again.
 func NewSet(bootstrap map[string]Definition) *Set {
-	s := &Set{defs: map[string]Definition{}, versions: map[string]int64{}, groups: Groups{}}
+	s := &Set{defs: map[string]Definition{}, versions: map[string]int64{}, groups: Groups{}, optIns: map[string]OptIns{}, optInVersions: map[string]int64{}}
 	for _, spec := range Catalog() {
 		s.defs[spec.Key] = spec.Default
 	}
@@ -289,7 +347,7 @@ func NewSet(bootstrap map[string]Definition) *Set {
 }
 
 func (s *Set) publishLocked() {
-	s.current.Store(Compile(maps.Clone(s.defs), maps.Clone(s.versions), s.groups, s.groupsVersion))
+	s.current.Store(Compile(maps.Clone(s.defs), maps.Clone(s.versions), s.groups, s.groupsVersion).withOptIns(maps.Clone(s.optIns), maps.Clone(s.optInVersions)))
 }
 
 // Snapshot returns the current compiled view. A nil Set yields an empty
@@ -311,13 +369,13 @@ func (s *Set) Evaluate(key string, subject Subject) Decision {
 	return s.Snapshot().Evaluate(key, subject)
 }
 
-// ConfigKeys lists the runtime-configuration keys a Set consumes: one per
-// catalog flag plus the shared groups row.
+// ConfigKeys lists the runtime-configuration keys a Set consumes: a
+// definition and an opt-in row per catalog flag, plus the shared groups row.
 func ConfigKeys() []string {
 	specs := Catalog()
-	keys := make([]string, 0, len(specs)+1)
+	keys := make([]string, 0, 2*len(specs)+1)
 	for _, spec := range specs {
-		keys = append(keys, ConfigKey(spec.Key))
+		keys = append(keys, ConfigKey(spec.Key), OptInsConfigKey(spec.Key))
 	}
 	return append(keys, GroupsConfigKey)
 }
@@ -345,6 +403,9 @@ func (s *Set) Apply(configKey string, value json.RawMessage, version int64) erro
 		s.publishLocked()
 		return nil
 	}
+	if key, ok := FlagKeyFromOptInsConfigKey(configKey); ok {
+		return s.applyOptIns(key, value, version)
+	}
 	key, ok := FlagKeyFromConfigKey(configKey)
 	if !ok {
 		return nil
@@ -363,6 +424,26 @@ func (s *Set) Apply(configKey string, value json.RawMessage, version int64) erro
 		return nil
 	}
 	s.defs[key], s.versions[key] = def, version
+	s.publishLocked()
+	return nil
+}
+
+// applyOptIns installs one flag's opt-in row under the same version rules.
+func (s *Set) applyOptIns(key string, value json.RawMessage, version int64) error {
+	if _, known := Lookup(key); !known {
+		return fmt.Errorf("unknown platform flag %q", key)
+	}
+	optIns, err := ParseOptIns(value)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.optInVersions[key]
+	if version < current || version == 0 && current > 0 {
+		return nil
+	}
+	s.optIns[key], s.optInVersions[key] = optIns, version
 	s.publishLocked()
 	return nil
 }

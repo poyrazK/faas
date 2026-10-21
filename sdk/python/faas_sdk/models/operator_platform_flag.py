@@ -17,6 +17,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operator_platform_flag_convergence import OperatorPlatformFlagConvergence
+    from ..models.operator_platform_flag_opt_ins import OperatorPlatformFlagOptIns
     from ..models.operator_runtime_config_apply_receipt import OperatorRuntimeConfigApplyReceipt
     from ..models.platform_flag_definition import PlatformFlagDefinition
 
@@ -47,6 +48,8 @@ class OperatorPlatformFlag:
     receipts: list[OperatorRuntimeConfigApplyReceipt]
     convergence: OperatorPlatformFlagConvergence
     """Consumers of a platform flag grouped by whether every instance applied its current version."""
+    opt_ins: OperatorPlatformFlagOptIns
+    """How many accounts and organizations joined a self-serve preview, and the opt-in row's version."""
     capability: str | Unset = UNSET
     retire_by: datetime.date | Unset = UNSET
     last_error: str | Unset = UNSET
@@ -88,6 +91,8 @@ class OperatorPlatformFlag:
 
         convergence = self.convergence.to_dict()
 
+        opt_ins = self.opt_ins.to_dict()
+
         capability = self.capability
 
         retire_by: str | Unset = UNSET
@@ -118,6 +123,7 @@ class OperatorPlatformFlag:
                 "status": status,
                 "receipts": receipts,
                 "convergence": convergence,
+                "opt_ins": opt_ins,
             }
         )
         if capability is not UNSET:
@@ -134,6 +140,7 @@ class OperatorPlatformFlag:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operator_platform_flag_convergence import OperatorPlatformFlagConvergence
+        from ..models.operator_platform_flag_opt_ins import OperatorPlatformFlagOptIns
         from ..models.operator_runtime_config_apply_receipt import OperatorRuntimeConfigApplyReceipt
         from ..models.platform_flag_definition import PlatformFlagDefinition
 
@@ -176,6 +183,8 @@ class OperatorPlatformFlag:
 
         convergence = OperatorPlatformFlagConvergence.from_dict(d.pop("convergence"))
 
+        opt_ins = OperatorPlatformFlagOptIns.from_dict(d.pop("opt_ins"))
+
         capability = d.pop("capability", UNSET)
 
         _retire_by = d.pop("retire_by", UNSET)
@@ -209,6 +218,7 @@ class OperatorPlatformFlag:
             status=status,
             receipts=receipts,
             convergence=convergence,
+            opt_ins=opt_ins,
             capability=capability,
             retire_by=retire_by,
             last_error=last_error,

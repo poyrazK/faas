@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.operator_platform_flag_decision_opt_in import (
+    OperatorPlatformFlagDecisionOptIn,
+    check_operator_platform_flag_decision_opt_in,
+)
 from ..models.operator_platform_flag_decision_reason import (
     OperatorPlatformFlagDecisionReason,
     check_operator_platform_flag_decision_reason,
@@ -45,6 +49,8 @@ class OperatorPlatformFlagDecision:
     schedule_state: OperatorPlatformFlagDecisionScheduleState | Unset = UNSET
     at: datetime.datetime | Unset = UNSET
     """Decision time, when the inspector was asked about another moment than now."""
+    opt_in: OperatorPlatformFlagDecisionOptIn | Unset = UNSET
+    """Whose self-serve opt-in decided, when one did."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -82,6 +88,10 @@ class OperatorPlatformFlagDecision:
         if not isinstance(self.at, Unset):
             at = self.at.isoformat()
 
+        opt_in: str | Unset = UNSET
+        if not isinstance(self.opt_in, Unset):
+            opt_in = self.opt_in
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -109,6 +119,8 @@ class OperatorPlatformFlagDecision:
             field_dict["schedule_state"] = schedule_state
         if at is not UNSET:
             field_dict["at"] = at
+        if opt_in is not UNSET:
+            field_dict["opt_in"] = opt_in
 
         return field_dict
 
@@ -158,6 +170,13 @@ class OperatorPlatformFlagDecision:
         else:
             at = datetime.datetime.fromisoformat(_at)
 
+        _opt_in = d.pop("opt_in", UNSET)
+        opt_in: OperatorPlatformFlagDecisionOptIn | Unset
+        if isinstance(_opt_in, Unset):
+            opt_in = UNSET
+        else:
+            opt_in = check_operator_platform_flag_decision_opt_in(_opt_in)
+
         operator_platform_flag_decision = cls(
             flag=flag,
             account_id=account_id,
@@ -173,6 +192,7 @@ class OperatorPlatformFlagDecision:
             scheduled_rule_id=scheduled_rule_id,
             schedule_state=schedule_state,
             at=at,
+            opt_in=opt_in,
         )
 
         operator_platform_flag_decision.additional_properties = d

@@ -76,14 +76,16 @@ Realtimed has no database pool. Rather than give it one, apid decides the realti
     - `PUT /v1/previews/{key}`
     - `DELETE /v1/previews/{key}`
     - `gregale previews list|join|leave`
-  - An organization owner or admin can do the same for a company under `/v1/orgs/{organization}/previews`.
+  - An organization owner or admin can do the same for a company under `/v1/orgs/{slug}/previews`, beside the other organization settings. A new org action, `org.manage_previews` (owner and admin), gates it; listing needs `org.view`.
+  - A flag decided where the organization is unknown takes only account opt-ins.
 - **Storage.** Opt-ins are their own hot runtime-config row per flag, `platform_flag_opt_ins.<key>` (`{accounts, orgs}`).
   - Every consumer receives them through the existing watcher, with receipts, history and rollback, and without a new table or delivery path.
   - apid writes the row on the customer's behalf with the expected version, retrying on conflict. The audit records the customer as the actor.
 - **Evaluation order:** kill switch, then rules (first match), then opt-in (eligible plan and opted-in account or organization), then `default`.
   - An operator excludes an account by putting a `value: false` rule first.
   - Turning `self_serve` off stops new opt-ins and ignores existing ones without deleting them.
-- **Entitlement.** A preview never grants a plan entitlement. A preview tied to a paid capability lists only entitled plans.
+- **Entitlement.** A preview never grants a plan entitlement. A preview tied to a paid capability lists only entitled plans; a definition that offers it to another plan is refused.
+- **Eligibility** is checked against the deciding account's plan, at join time and at every decision, for account and organization opt-ins alike.
 
 ## Why
 

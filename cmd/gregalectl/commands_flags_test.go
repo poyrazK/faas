@@ -180,6 +180,35 @@ func TestFlagsRetireByMarksOverdueFlags(t *testing.T) {
 	}
 }
 
+func TestFlagsSelfServeKeepsUnchangedSettings(t *testing.T) {
+	current := api.PlatformFlagDefinition{Enabled: true, SelfServe: &api.PlatformFlagSelfServe{Plans: []string{"pro"}, MaxSubjects: 50}}
+	for _, tc := range []struct {
+		name  string
+		extra []string
+		want  platformflags.SelfServe
+	}{
+		{"open keeps plans and cap", nil, platformflags.SelfServe{Enabled: true, Plans: []string{"pro"}, MaxSubjects: 50}},
+		{"every plan, platform cap", []string{"--plans", "all", "--max-subjects", "0"}, platformflags.SelfServe{Enabled: true}},
+		{"new plans", []string{"--plans", "pro, scale"}, platformflags.SelfServe{Enabled: true, Plans: []string{"pro", "scale"}, MaxSubjects: 50}},
+	} {
+		var write operatorConfigPatchRequest
+		server := flagsServer(t, testFlagsList(current, "operator", 3), "/v1/admin/config/platform_flag.ai_gateway", &write)
+		args := append([]string{"self-serve", "--key", platformflags.AIGateway, "--enabled", "true", "--reason", "open preview", "--trace-id", testConfigTraceID, "--yes"}, tc.extra...)
+		code, _, stderr := runFlagsCommand(t, server.URL, args...)
+		server.Close()
+		if code != 0 {
+			t.Fatalf("%s: exit = %d, stderr=%s", tc.name, code, stderr)
+		}
+		got := decodeFlagValue(t, write.Value).SelfServe
+		if got == nil || got.Enabled != tc.want.Enabled || got.MaxSubjects != tc.want.MaxSubjects || strings.Join(got.Plans, ",") != strings.Join(tc.want.Plans, ",") {
+			t.Fatalf("%s: self_serve = %+v, want %+v", tc.name, got, tc.want)
+		}
+		if write.ExpectedVersion == nil || *write.ExpectedVersion != 3 {
+			t.Fatalf("%s: the write must expect the current version", tc.name)
+		}
+	}
+}
+
 func TestFlagsFirstWriteCreatesTheRowAndRolloutTargetsPlans(t *testing.T) {
 	var enable operatorConfigPatchRequest
 	server := flagsServer(t, testFlagsList(api.PlatformFlagDefinition{}, "default_or_environment", 0), "/v1/admin/config/platform_flag.ai_gateway", &enable)

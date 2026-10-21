@@ -45,6 +45,8 @@ import type { OrgMemberResponse } from '../models/OrgMemberResponse.js';
 import type { OrgPlanResponse } from '../models/OrgPlanResponse.js';
 import type { OrgResponse } from '../models/OrgResponse.js';
 import type { PatchOrgRequest } from '../models/PatchOrgRequest.js';
+import type { Preview } from '../models/Preview.js';
+import type { PreviewList } from '../models/PreviewList.js';
 import type { RevokeApplicationStandardExceptionRequest } from '../models/RevokeApplicationStandardExceptionRequest.js';
 import type { RotateOrgAPIKeyRequest } from '../models/RotateOrgAPIKeyRequest.js';
 import type { RotateOrgAPIKeyResponse } from '../models/RotateOrgAPIKeyResponse.js';
@@ -1997,6 +1999,135 @@ export class OrgsService {
         immutable and cannot be modified by PATCH. Stable code
         \`org_personal_immutable\`.
         `,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the platform previews the organization can join.
+   * Like `GET /v1/previews`, for the organization: `joined` is the
+   * company's opt-in, and `enabled` is decided for you acting under the
+   * company. Previews released per account only are not listed. Requires
+   * `org.view`.
+   *
+   * @returns PreviewList The previews.
+   * @throws ApiError
+   */
+  public static listOrgPreviews({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<PreviewList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/previews',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `\`org_role_forbidden\`.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Join a platform preview for the organization.
+   * Opts the organization in: every member gets the preview while acting
+   * for the company, if their plan is eligible. Requires
+   * `org.manage_previews` (owner or admin).
+   *
+   * @returns Preview The preview after joining.
+   * @throws ApiError
+   */
+  public static joinOrgPreview({
+    slug,
+    key,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Platform preview key, as GET /v1/previews lists it.
+     */
+    key: string,
+  }): CancelablePromise<Preview> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/previews/{key}',
+      path: {
+        'slug': slug,
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `\`org_role_forbidden\` or \`preview_plan_not_eligible\`.`,
+        404: `\`preview_not_offered\`, or the organization does not exist.`,
+        409: `\`preview_full\`, \`preview_org_unsupported\` (the preview is released per account only) or a concurrent change.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Leave a platform preview for the organization.
+   * Removes the organization's opt-in. Requires `org.manage_previews` (owner or admin).
+   * @returns Preview The preview after leaving.
+   * @throws ApiError
+   */
+  public static leaveOrgPreview({
+    slug,
+    key,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Platform preview key, as GET /v1/previews lists it.
+     */
+    key: string,
+  }): CancelablePromise<Preview> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{slug}/previews/{key}',
+      path: {
+        'slug': slug,
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `\`org_role_forbidden\`.`,
+        404: `\`preview_not_offered\`, or the organization does not exist.`,
+        409: `\`preview_org_unsupported\`.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

@@ -178,7 +178,7 @@ func decideAt(snapshot *platformflags.Snapshot, spec platformflags.Spec, target 
 	out := api.OperatorPlatformFlagDecision{
 		Flag: spec.Key, AccountID: target.ID, OrgID: orgID, Plan: string(target.Plan), Enabled: d.Enabled,
 		Reason: d.Reason, RuleID: d.RuleID, Bucket: d.Bucket, Version: d.Version, Available: d.Enabled,
-		ScheduledRuleID: d.ScheduledRuleID, ScheduleState: d.ScheduleState,
+		ScheduledRuleID: d.ScheduledRuleID, ScheduleState: d.ScheduleState, OptIn: d.OptIn,
 	}
 	if !at.IsZero() {
 		out.At = at.Format(time.RFC3339)
@@ -243,6 +243,8 @@ func (v view) flag(spec platformflags.Spec) api.OperatorPlatformFlag {
 	}
 	out.Receipts = toAPIReceipts(v.receipts[configKey])
 	out.Convergence = convergence(spec.Consumers, v.receipts[configKey], out.Version, out.Source == "operator")
+	optIns, optInsVersion := v.snapshot.OptIns(spec.Key)
+	out.OptIns = api.OperatorPlatformFlagOptIns{Accounts: len(optIns.Accounts), Orgs: len(optIns.Orgs), Version: optInsVersion}
 	return out
 }
 
@@ -310,6 +312,9 @@ func toAPIDefinition(def platformflags.Definition) api.PlatformFlagDefinition {
 			ID: rule.ID, Accounts: slices.Clone(rule.Accounts), Orgs: slices.Clone(rule.Orgs), Group: rule.Group,
 			Plans: slices.Clone(rule.Plans), Rollout: rule.Rollout, StartsAt: rule.StartsAt, EndsAt: rule.EndsAt, Value: rule.Value,
 		})
+	}
+	if ss := def.SelfServe; ss != nil {
+		out.SelfServe = &api.PlatformFlagSelfServe{Enabled: ss.Enabled, Plans: slices.Clone(ss.Plans), MaxSubjects: ss.MaxSubjects}
 	}
 	return out
 }

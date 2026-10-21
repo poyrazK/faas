@@ -56,7 +56,9 @@ runtime-configuration row, `platform_flag.<key>`. Its value is a definition:
   absent. Either bound may be left out, and a rule may have a window and no
   other constraint ("everyone from Monday 09:00 UTC"). The inspector names a
   scheduled rule that would have matched but is not yet started or has ended.
-- An account no rule matches gets `default`.
+- An account no rule matches gets its **self-serve opt-in**, if it or its
+  company joined the preview (see [Self-serve previews](#self-serve-previews)),
+  and otherwise `default`.
 - Accounts are account UUIDs. Groups live in one shared row,
   `platform_flag_groups`, so a list such as `design-partners` is maintained
   once for every flag.
@@ -146,6 +148,46 @@ its current bound.
 The operator console's **Flags** page (`/operations/flags`) does the same
 through the same API.
 
+## Self-serve previews
+
+An operator can let customers join a preview themselves (ADR
+20261021080640):
+
+```bash
+gregalectl flags self-serve --key change_timeline --enabled true --plans pro,scale --reason "open preview" --yes
+gregalectl flags self-serve --key change_timeline --enabled true --max-subjects 200 --reason "cap the cohort" --yes
+gregalectl flags self-serve --key change_timeline --enabled false --reason "pause sign-ups" --yes
+```
+
+The definition's `self_serve` holds `enabled`, the eligible `plans` (empty
+means every plan) and `max_subjects` (accounts plus organizations, at most
+5,000; 0 means 5,000).
+
+Customers join and leave with `GET /v1/previews`, `PUT /v1/previews/{key}`
+and `DELETE /v1/previews/{key}`, or `gregale previews list|join|leave`. An
+organization owner or admin joins for the whole company with
+`/v1/orgs/{slug}/previews` or `--org`; members then get the preview while
+acting for the company. A flag decided where the organization is unknown
+(`ai_gateway`, `live_queries`, the two Operation flags) takes only account
+opt-ins.
+
+- Opt-ins live in their own hot row, `platform_flag_opt_ins.<key>`
+  (`{"accounts": [...], "orgs": [...]}`), so a customer joining never
+  rewrites the operator's definition. Every consumer receives it through the
+  existing watcher, with history and rollback. apid writes it on the
+  customer's behalf with the expected version, and the audit log records
+  `platform_flag.opt_in` and `platform_flag.opt_out` with the customer as the
+  actor.
+- Opt-ins decide after the rules: a `value: false` rule listed first still
+  excludes an opted-in account. `gregalectl flags deny` keeps working.
+- `--enabled false` stops new opt-ins and ignores existing ones without
+  deleting them. Customers can always leave.
+- A preview never grants a plan entitlement. A flag that releases a paid
+  capability (`ai_gateway`) must list only entitled plans; any other plan is
+  refused with `409`.
+- `gregalectl flags show` prints the opt-in counts, and `inspect` prints
+  `opt_in=account` or `opt_in=org` when an opt-in decided.
+
 ## Retiring previews
 
 A preview flag carries a `RetireBy` date in its catalog entry: the day it
@@ -189,6 +231,7 @@ The shared watcher also reports receipts for the other hot runtime settings
 | `GET /v1/admin/accounts/{id}/flags` | Every flag decided for one account |
 | `PATCH /v1/admin/config/platform_flag.<key>` | Write a flag definition |
 | `PATCH /v1/admin/config/platform_flag_groups` | Write the groups |
+| `PATCH /v1/admin/config/platform_flag_opt_ins.<key>` | Write a preview's opt-ins (operators; customers use `/v1/previews`) |
 | `POST /v1/admin/config/{key}/rollback`, `GET …/revisions` | History and rollback, as for every runtime setting |
 
 The server rejects a rule that names an unknown group, and a groups write
@@ -210,8 +253,9 @@ that removes a group a flag still uses, with `409`.
 ## Limits
 
 At most 32 rules per flag, 1,000 accounts and 1,000 organizations per rule,
-100 groups and 5,000 accounts per group (`pkg/api/limits.go`). Larger
-audiences belong in a group, a plan constraint or a rollout.
+100 groups and 5,000 accounts per group, and 5,000 opted-in accounts plus
+organizations per preview (`pkg/api/limits.go`). Larger audiences belong in
+a group, a plan constraint or a rollout.
 
 `allow`, `deny` and `revoke` take exactly one of `--account-id` or
 `--org-id`. Their rules sit first, in this order: a person's deny, a person's

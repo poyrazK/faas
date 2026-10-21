@@ -133,6 +133,16 @@ func (s *server) checkRuntimeConfigChange(def runtimeConfigDefinition, value jso
 				fmt.Sprintf("remove these groups from the flags that use them first: %s", strings.Join(missing, "; ")))
 		}
 		return groups.Marshal(), nil
+	case runtimeConfigKindPlatformFlagOptIns:
+		optIns, _ := platformflags.ParseOptIns(value)
+		if key, ok := platformflags.FlagKeyFromOptInsConfigKey(def.Key); ok {
+			if spec, ok := platformflags.Lookup(key); ok {
+				if err := platformflags.ValidateOptIns(spec, optIns); err != nil {
+					return nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Opt-in this flag cannot evaluate", err.Error())
+				}
+			}
+		}
+		return optIns.Marshal(), nil
 	}
 	return value, nil
 }

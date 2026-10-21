@@ -14,7 +14,7 @@ export type OperatorPlatformFlagDecision = {
   org_id?: string;
   plan: string;
   enabled: boolean;
-  reason: 'unknown_flag' | 'flag_disabled' | 'account_missing' | 'rule_match' | 'default';
+  reason: 'unknown_flag' | 'flag_disabled' | 'account_missing' | 'rule_match' | 'opt_in' | 'default';
   rule_id?: string;
   bucket?: number;
   version: number;
@@ -29,5 +29,9 @@ export type OperatorPlatformFlagDecision = {
    * Decision time, when the inspector was asked about another moment than now.
    */
   at?: string;
+  /**
+   * Whose self-serve opt-in decided, when one did.
+   */
+  opt_in?: 'account' | 'org';
 };
 

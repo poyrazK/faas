@@ -57,14 +57,14 @@ type flagsMutation struct {
 
 func cmdFlagsDispatch(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl flags: missing subcommand; want list|show|inspect|account|enable|disable|allow|deny|revoke|rollout|default|set|schedule|groups|group-add|group-remove|history|rollback")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl flags: missing subcommand; want list|show|inspect|account|enable|disable|allow|deny|revoke|rollout|default|set|schedule|self-serve|groups|group-add|group-remove|history|rollback")
 		return 2
 	}
 	handlers := map[string]func([]string) int{
 		"list": cmdFlagsList, "show": cmdFlagsShow, "inspect": cmdFlagsInspect, "account": cmdFlagsAccount,
 		"enable": cmdFlagsSwitch(true), "disable": cmdFlagsSwitch(false),
 		"allow": cmdFlagsAccountRule("allow"), "deny": cmdFlagsAccountRule("deny"), "revoke": cmdFlagsAccountRule("revoke"),
-		"rollout": cmdFlagsRollout, "default": cmdFlagsDefault, "set": cmdFlagsSet, "schedule": cmdFlagsSchedule,
+		"rollout": cmdFlagsRollout, "default": cmdFlagsDefault, "set": cmdFlagsSet, "schedule": cmdFlagsSchedule, "self-serve": cmdFlagsSelfServe,
 		"groups": cmdFlagsGroups, "group-add": cmdFlagsGroupMember(true), "group-remove": cmdFlagsGroupMember(false),
 		"history": cmdFlagsHistory, "rollback": cmdFlagsRollback,
 	}
@@ -115,6 +115,10 @@ func cmdFlagsShow(args []string) int {
 		return emitOperatorJSON(item)
 	}
 	printPlatformFlagSummary(item)
+	if ss := item.Definition.SelfServe; ss != nil {
+		_, _ = fmt.Fprintf(osStdout, "self_serve enabled=%t plans=%s max_subjects=%d opted_in_accounts=%d opted_in_orgs=%d opt_ins_version=%d\n",
+			ss.Enabled, strings.Join(ss.Plans, ","), ss.MaxSubjects, item.OptIns.Accounts, item.OptIns.Orgs, item.OptIns.Version)
+	}
 	definition, _ := json.Marshal(item.Definition)
 	_, _ = fmt.Fprintf(osStdout, "label=%s\ncapability=%s\nadr=%s\nconsumers=%s\nattributes=%s\nlegacy_env=%s\ndefinition=%s\n",
 		item.Label, item.Capability, item.ADR, strings.Join(item.Consumers, ","), strings.Join(item.Attributes, ","), strings.Join(item.LegacyEnv, ","), definition)
@@ -340,6 +344,50 @@ func cmdFlagsDefault(args []string) int {
 	return runFlagsMutation(*key, mutation)
 }
 
+// cmdFlagsSelfServe opens or closes a preview to customer opt-ins (ADR
+// 20261021080640). Closing keeps the opt-ins but ignores them.
+func cmdFlagsSelfServe(args []string) int {
+	fs := flagsFlagSet("self-serve")
+	key, mutation := flagsMutationFlags(fs)
+	enabled := fs.String("enabled", "", "true opens the preview to opt-ins; false ignores existing ones")
+	plans := fs.String("plans", "", "comma-separated eligible plans, or all; empty keeps the current list")
+	maxSubjects := fs.Int("max-subjects", -1, "cap on opted-in accounts plus organizations (0 = platform limit); -1 keeps it")
+	if err := fs.Parse(args); err != nil || !flagsNoPositional(fs, "self-serve") {
+		return 2
+	}
+	open, err := strconv.ParseBool(strings.TrimSpace(*enabled))
+	if err != nil {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl flags self-serve: --enabled must be true or false")
+		return 2
+	}
+	mutation.name = "self-serve"
+	mutation.edit = func(def *platformflags.Definition) error {
+		selfServe := platformflags.SelfServe{}
+		if def.SelfServe != nil {
+			selfServe = *def.SelfServe
+		}
+		selfServe.Enabled = open
+		switch list := strings.TrimSpace(*plans); list {
+		case "":
+		case "all":
+			selfServe.Plans = nil
+		default:
+			selfServe.Plans = nil
+			for _, plan := range strings.Split(list, ",") {
+				if plan = strings.TrimSpace(plan); plan != "" {
+					selfServe.Plans = append(selfServe.Plans, plan)
+				}
+			}
+		}
+		if *maxSubjects >= 0 {
+			selfServe.MaxSubjects = *maxSubjects
+		}
+		def.SelfServe = &selfServe
+		return nil
+	}
+	return runFlagsMutation(*key, mutation)
+}
+
 func cmdFlagsSet(args []string) int {
 	fs := flagsFlagSet("set")
 	key, mutation := flagsMutationFlags(fs)
@@ -545,6 +593,9 @@ func fromAPIDefinition(in api.PlatformFlagDefinition) platformflags.Definition {
 			ID: rule.ID, Accounts: slices.Clone(rule.Accounts), Orgs: slices.Clone(rule.Orgs), Group: rule.Group,
 			Plans: slices.Clone(rule.Plans), Rollout: rule.Rollout, StartsAt: rule.StartsAt, EndsAt: rule.EndsAt, Value: rule.Value,
 		})
+	}
+	if ss := in.SelfServe; ss != nil {
+		out.SelfServe = &platformflags.SelfServe{Enabled: ss.Enabled, Plans: slices.Clone(ss.Plans), MaxSubjects: ss.MaxSubjects}
 	}
 	return out
 }
@@ -786,6 +837,9 @@ func printPlatformFlagDecision(d api.OperatorPlatformFlagDecision) {
 	}
 	if d.At != "" {
 		scheduled += " at=" + d.At
+	}
+	if d.OptIn != "" {
+		scheduled += " opt_in=" + d.OptIn
 	}
 	_, _ = fmt.Fprintf(osStdout, "flag=%s account=%s%s plan=%s enabled=%t reason=%s rule=%s entitled=%s available=%t version=%d%s\n",
 		d.Flag, d.AccountID, org, d.Plan, d.Enabled, d.Reason, d.RuleID, entitled, d.Available, d.Version, scheduled)

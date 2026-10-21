@@ -19,6 +19,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -263,6 +265,30 @@ func ValidateTargeting(spec Spec, def Definition) error {
 			return fmt.Errorf("rule %q targets organizations, but %s is decided where the organization is unknown (%s)", rule.ID, spec.Key, strings.Join(spec.Consumers, ", "))
 		}
 	}
+	if def.SelfServe != nil {
+		return validateSelfServe(spec, *def.SelfServe)
+	}
+	return nil
+}
+
+// validateSelfServe keeps a self-serve preview from implying an entitlement:
+// a flag that releases a paid capability may only be offered to plans that
+// include it, which needs the plan where the flag is decided.
+func validateSelfServe(spec Spec, selfServe SelfServe) error {
+	if len(selfServe.Plans) > 0 && !spec.Supports(AttributePlan) {
+		return fmt.Errorf("self_serve limits plans, but %s is decided where the plan is unknown (%s)", spec.Key, strings.Join(spec.Consumers, ", "))
+	}
+	if spec.Capability == "" || !selfServe.Enabled {
+		return nil
+	}
+	if len(selfServe.Plans) == 0 {
+		return fmt.Errorf("self_serve for %s must list the plans entitled to %s", spec.Key, spec.Capability)
+	}
+	for _, plan := range selfServe.Plans {
+		if entitled, err := api.CapabilityEntitled(spec.Capability, api.Plan(plan)); err != nil || !entitled {
+			return fmt.Errorf("self_serve for %s offers the %s plan, which is not entitled to %s", spec.Key, plan, spec.Capability)
+		}
+	}
 	return nil
 }
 
@@ -276,9 +302,12 @@ func FlagKeyFromConfigKey(configKey string) (string, bool) {
 }
 
 // IsConfigKey reports whether a runtime-configuration key belongs to platform
-// flags (a flag row or the groups row).
+// flags (a flag row, an opt-in row or the groups row).
 func IsConfigKey(configKey string) bool {
 	if configKey == GroupsConfigKey {
+		return true
+	}
+	if _, ok := FlagKeyFromOptInsConfigKey(configKey); ok {
 		return true
 	}
 	_, ok := FlagKeyFromConfigKey(configKey)

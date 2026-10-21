@@ -371,6 +371,13 @@ func TestCatalogIsWellFormed(t *testing.T) {
 		if key, ok := FlagKeyFromConfigKey(ConfigKey(spec.Key)); !ok || key != spec.Key || !IsConfigKey(ConfigKey(spec.Key)) {
 			t.Fatalf("config key round trip failed for %q", spec.Key)
 		}
+		optInsKey := OptInsConfigKey(spec.Key)
+		if key, ok := FlagKeyFromOptInsConfigKey(optInsKey); !ok || key != spec.Key || !IsConfigKey(optInsKey) {
+			t.Fatalf("opt-in config key round trip failed for %q", spec.Key)
+		}
+		if _, ok := FlagKeyFromConfigKey(optInsKey); ok {
+			t.Fatalf("opt-in key %q must not parse as a flag definition key", optInsKey)
+		}
 		if _, ok := spec.RetireByTime(); spec.RetireBy != "" && !ok {
 			t.Fatalf("flag %q retire_by %q must be YYYY-MM-DD", spec.Key, spec.RetireBy)
 		}
@@ -383,7 +390,94 @@ func TestCatalogIsWellFormed(t *testing.T) {
 	if !IsConfigKey(GroupsConfigKey) || IsConfigKey("hsts_enabled") {
 		t.Fatal("IsConfigKey misclassifies keys")
 	}
-	if got := len(ConfigKeys()); got != len(Catalog())+1 {
-		t.Fatalf("ConfigKeys = %d, want one per flag plus groups", got)
+	if got := len(ConfigKeys()); got != 2*len(Catalog())+1 {
+		t.Fatalf("ConfigKeys = %d, want a definition and an opt-in row per flag plus groups", got)
+	}
+}
+
+func TestSelfServeOptInsDecideAfterRulesAndBeforeDefault(t *testing.T) {
+	const orgA = "44444444-4444-4444-8444-444444444444"
+	set := NewSet(nil)
+	def := Definition{Enabled: true, Rules: []Rule{{ID: "deny-b", Accounts: []string{acctB}, Value: boolPtr(false)}},
+		SelfServe: &SelfServe{Enabled: true, Plans: []string{"pro", "scale"}}}
+	if err := set.Apply(ConfigKey(ApplicationAuth), def.Marshal(), 4); err != nil {
+		t.Fatal(err)
+	}
+	optIns := OptIns{}.With(acctA, false).With(acctB, false).With(strings.ToUpper(orgA), true)
+	if err := set.Apply(OptInsConfigKey(ApplicationAuth), optIns.Marshal(), 2); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name    string
+		subject Subject
+		enabled bool
+		reason  string
+		via     string
+	}{
+		{"opted-in account on an eligible plan", Subject{AccountID: acctA, Plan: "pro"}, true, ReasonOptIn, OptInAccount},
+		{"opted-in account on an ineligible plan", Subject{AccountID: acctA, Plan: "free"}, false, ReasonDefault, ""},
+		{"a deny rule beats the opt-in", Subject{AccountID: acctB, Plan: "pro"}, false, ReasonRuleMatch, ""},
+		{"member acting under an opted-in company", Subject{AccountID: acctC, Plan: "scale", OrgID: orgA}, true, ReasonOptIn, OptInOrg},
+		{"same member outside the company", Subject{AccountID: acctC, Plan: "scale"}, false, ReasonDefault, ""},
+	}
+	for _, tc := range cases {
+		d := set.Evaluate(ApplicationAuth, tc.subject)
+		if d.Enabled != tc.enabled || d.Reason != tc.reason || d.OptIn != tc.via {
+			t.Errorf("%s: %+v, want enabled=%t reason=%s opt_in=%q", tc.name, d, tc.enabled, tc.reason, tc.via)
+		}
+	}
+	if got, version := set.Snapshot().OptIns(ApplicationAuth); got.Count() != 3 || version != 2 || !got.HasOrg(orgA) {
+		t.Fatalf("OptIns = %+v v%d", got, version)
+	}
+	if err := set.Apply(OptInsConfigKey(ApplicationAuth), OptIns{}.Marshal(), 1); err != nil {
+		t.Fatal(err)
+	}
+	if !set.Enabled(ApplicationAuth, Subject{AccountID: acctA, Plan: "pro"}) {
+		t.Fatal("an older opt-in version must not replace a newer one")
+	}
+	def.SelfServe.Enabled = false
+	if err := set.Apply(ConfigKey(ApplicationAuth), def.Marshal(), 5); err != nil {
+		t.Fatal(err)
+	}
+	if set.Enabled(ApplicationAuth, Subject{AccountID: acctA, Plan: "pro"}) {
+		t.Fatal("turning self_serve off must ignore existing opt-ins")
+	}
+	if kept, _ := set.Snapshot().OptIns(ApplicationAuth); kept.Count() != 3 {
+		t.Fatal("turning self_serve off must keep the opt-ins")
+	}
+}
+
+func TestSelfServeAndOptInsValidate(t *testing.T) {
+	if _, err := ParseDefinition(json.RawMessage(`{"enabled":true,"default":false,"self_serve":{"enabled":true,"max_subjects":5001}}`)); err == nil {
+		t.Fatal("max_subjects above the limit must be refused")
+	}
+	if _, err := ParseDefinition(json.RawMessage(`{"enabled":true,"default":false,"self_serve":{"enabled":true,"plans":["gold"]}}`)); err == nil {
+		t.Fatal("an unknown self_serve plan must be refused")
+	}
+	if _, err := ParseOptIns(json.RawMessage(`{"accounts":["not-a-uuid"]}`)); err == nil {
+		t.Fatal("a malformed opt-in account must be refused")
+	}
+	if _, err := ParseOptIns(json.RawMessage(`{"acounts":[]}`)); err == nil {
+		t.Fatal("an unknown opt-in field must be refused")
+	}
+	if (OptIns{}.With(acctA, false).Without(acctA, false)).Count() != 0 {
+		t.Fatal("Without must remove the subject")
+	}
+	live, _ := Lookup(LiveQueries)
+	if err := ValidateTargeting(live, Definition{Enabled: true, SelfServe: &SelfServe{Enabled: true, Plans: []string{"pro"}}}); err == nil {
+		t.Fatal("live_queries cannot limit self-serve plans: the realtime path knows only the account")
+	}
+	gateway, _ := Lookup(AIGateway)
+	if err := ValidateOptIns(gateway, OptIns{Orgs: []string{acctA}}); err == nil {
+		t.Fatal("ai_gateway cannot take organization opt-ins")
+	}
+	if err := ValidateTargeting(gateway, Definition{Enabled: true, SelfServe: &SelfServe{Enabled: true}}); err == nil {
+		t.Fatal("a paid capability's preview must list its entitled plans")
+	}
+	if err := ValidateTargeting(gateway, Definition{Enabled: true, SelfServe: &SelfServe{Enabled: true, Plans: []string{"free"}}}); err == nil {
+		t.Fatal("a paid capability's preview must not be offered to an unentitled plan")
+	}
+	if c := (SelfServe{}).Capacity(); c != 5000 {
+		t.Fatalf("default capacity = %d", c)
 	}
 }

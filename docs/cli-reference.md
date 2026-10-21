@@ -55,6 +55,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`test`](#test) | Run scenario suites, lifecycle profiles, and bounded local HTTP load tests |
 | [`chaos`](#chaos) | Inject bounded faults into isolated real-VM scenario tests |
 | [`preview`](#preview) | Manage preview environments for pull requests |
+| [`previews`](#previews) | Join or leave platform previews (previews list\|join\|leave) |
 | [`flags`](#flags) | Release application behavior to selected customers |
 | [`consumers`](#consumers) | Identify your API&#39;s consumers, issue their keys and meter their requests |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
@@ -9925,6 +9926,54 @@ Examples:
 ```sh
 gregale preview destroy pr-42-my-api
 ```
+
+
+## previews
+
+Join or leave platform previews (previews list|join|leave)
+
+`gregale previews [<subcommand>]`
+
+Joining releases an early platform feature to your account; a preview never adds a plan entitlement.
+
+With --org, an owner or admin joins for the whole organization: members get it while acting for the company.
+
+### previews list
+
+List previews you can join or already joined
+
+`gregale previews list [--org <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | act for this organization (owner or admin to join or leave) |  |
+
+### previews join
+
+Join a preview
+
+`gregale previews join [--org <SLUG>] <key>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | act for this organization (owner or admin to join or leave) |  |
+
+Examples:
+
+```sh
+gregale previews join change_timeline
+gregale previews join change_timeline --org acme
+```
+
+### previews leave
+
+Leave a preview
+
+`gregale previews leave [--org <SLUG>] <key>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | act for this organization (owner or admin to join or leave) |  |
 
 
 ## flags

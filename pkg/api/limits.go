@@ -1369,7 +1369,7 @@ const (
 
 // Platform flag (ADR-1700) structural bounds. They keep every daemon's
 // compiled snapshot small; larger audiences belong in a group or a rollout.
-// Organizations per rule: ADR 20261021080640.
+// Organizations per rule and self-serve opt-ins: ADR 20261021080640.
 const (
 	PlatformFlagsMaxRules            = 32
 	PlatformFlagsMaxAccountsPerRule  = 1000
@@ -1378,6 +1378,10 @@ const (
 	PlatformFlagsMaxAccountsPerGroup = 5000
 	PlatformFlagsMaxDefinitionBytes  = 64 << 10
 	PlatformFlagsMaxGroupsBytes      = 512 << 10
+	// PlatformFlagsMaxOptInSubjects caps the accounts plus organizations
+	// that may opt in to one self-serve preview.
+	PlatformFlagsMaxOptInSubjects = 5000
+	PlatformFlagsMaxOptInsBytes   = 256 << 10
 )
 
 // MaxOutboundRequestsPerDay is the structural upper bound for a

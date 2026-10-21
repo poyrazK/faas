@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperatorPlatformFlagConvergence } from './OperatorPlatformFlagConvergence.js';
+import type { OperatorPlatformFlagOptIns } from './OperatorPlatformFlagOptIns.js';
 import type { OperatorRuntimeConfigApplyReceipt } from './OperatorRuntimeConfigApplyReceipt.js';
 import type { PlatformFlagDefinition } from './PlatformFlagDefinition.js';
 /**
@@ -33,5 +34,6 @@ export type OperatorPlatformFlag = {
   updated_at?: string;
   receipts: Array<OperatorRuntimeConfigApplyReceipt>;
   convergence: OperatorPlatformFlagConvergence;
+  opt_ins: OperatorPlatformFlagOptIns;
 };
 
