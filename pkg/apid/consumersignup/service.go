@@ -60,10 +60,9 @@ type Service struct {
 	// Enabled pauses the cleanup worker while it reports false; nil runs it.
 	Enabled func() bool
 
-	mu       sync.Mutex
-	creates  map[string]*rate.Limiter
-	reads    map[string]*rate.Limiter
-	lastTrim time.Time
+	mu      sync.Mutex
+	creates map[string]*rate.Limiter
+	reads   map[string]*rate.Limiter
 }
 
 func (s *Service) now() time.Time {
