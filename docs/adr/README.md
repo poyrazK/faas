@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261021083000: Accept nested-KVM evidence for the GitOps native journey](20261021083000-gitops-nested-kvm-acceptance-evidence.md)
+- [ADR-20261021080847: Release GitOps execution per account with a platform flag](20261021080847-gitops-execution-platform-flag.md)
 - [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
 - [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)

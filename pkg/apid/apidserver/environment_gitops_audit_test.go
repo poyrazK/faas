@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -34,41 +35,35 @@ func TestEnvironmentGitOpsCustomerEnforcementGate(t *testing.T) {
 	if err != nil || current.Generation != source.Generation || current.Spec.Mode != "report" {
 		t.Fatalf("rejection mutated source: %+v %v", current, err)
 	}
-	stop := srv.startEnvironmentGitAcceptanceEnforcement(t.Context(), func(name string) string {
-		if name == environmentGitOpsAcceptanceEnforcementFlag {
-			return "1"
+	for name, env := range map[string]map[string]string{
+		"flag without markers":      {environmentGitOpsAcceptanceEnforcementFlag: "1"},
+		"markers without dev":       {environmentGitOpsAcceptanceEnforcementFlag: "1", "GREGALE_GITOPS_ACCEPTANCE": "1"},
+		"production control plane":  {},
+		"dispatch kill switch only": {"FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH": "1"},
+	} {
+		srv.seedEnvPlatformFlags(func(key string) string { return env[key] })
+		stop := srv.startEnvironmentGitEnforcement(t.Context())
+		rec = gitOpsHandlerRequest(t, srv, account, http.MethodPatch, "source", map[string]any{"expected_generation": source.Generation, "mode": "enforce"}, srv.updateEnvironmentGitSource)
+		stop()
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("%s opened customer enforcement: %d %s", name, rec.Code, rec.Body.String())
 		}
-		return ""
-	})
-	stop()
-	if srv.environmentGitOpsAcceptanceEnforcement.Load() {
-		t.Fatal("acceptance flag without the test marker opened customer enforcement")
 	}
-	stop = srv.startEnvironmentGitAcceptanceEnforcement(t.Context(), func(name string) string {
-		if name == environmentGitOpsAcceptanceEnforcementFlag || name == "GREGALE_GITOPS_ACCEPTANCE" {
-			return "1"
-		}
-		return ""
-	})
-	stop()
-	if srv.environmentGitOpsAcceptanceEnforcement.Load() {
-		t.Fatal("acceptance markers without the dev marker opened customer enforcement")
-	}
-	stop = srv.startEnvironmentGitAcceptanceEnforcement(t.Context(), func(name string) string {
-		if name == environmentGitOpsAcceptanceEnforcementFlag || name == "GREGALE_GITOPS_ACCEPTANCE" || name == "FAAS_DEV" {
-			return "1"
-		}
-		return ""
-	})
+	// An operator release for this account opens enforce mode while the worker runs.
+	value := true
+	srv.seedPlatformFlag(platformflags.EnvironmentGitOpsExecution, platformflags.Definition{Enabled: true,
+		Rules: []platformflags.Rule{{ID: "accounts", Accounts: []string{account.ID}, Value: &value}}})
+	stop := srv.startEnvironmentGitEnforcement(t.Context())
 	rec = gitOpsHandlerRequest(t, srv, account, http.MethodPatch, "source", map[string]any{"expected_generation": source.Generation, "mode": "enforce"}, srv.updateEnvironmentGitSource)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("isolated acceptance gate rejected enforce mode: %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("admitted account was refused enforce mode: %d %s", rec.Code, rec.Body.String())
 	}
 	stop()
-	if srv.environmentGitOpsAcceptanceEnforcement.Load() {
-		t.Fatal("stopped acceptance worker left customer enforcement open")
+	if srv.environmentGitEnforcementAvailable(account) {
+		t.Fatal("stopped enforce worker left customer enforcement open")
 	}
 }
+
 func TestEnvironmentGitOpsBindingLifecycleHandlers(t *testing.T) {
 	srv, store, account, project, _ := newProjectLifecycleFixture(t)
 	if _, err := store.UpdateProjectBinding(t.Context(), account.ID, project.ID, "example/shop", "main", 42); err != nil {

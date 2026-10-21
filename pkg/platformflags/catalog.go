@@ -38,6 +38,8 @@ const (
 	ChangeTimeline       = "change_timeline"
 	AnomalyAlerts        = "anomaly_alerts"
 	TriggerBatchDelivery = "trigger_batch_delivery"
+	// EnvironmentGitOpsExecution releases GitOps enforce mode (ADR-20261021080847).
+	EnvironmentGitOpsExecution = "environment_gitops_execution"
 )
 
 // Spec declares one platform flag. Adding a flag is a code change: the
@@ -123,6 +125,14 @@ var catalog = []Spec{
 		ADR:         "ADR-1321",
 		Consumers:   []string{"apid"},
 		LegacyEnv:   []string{"FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED"},
+	},
+	{
+		Key:         EnvironmentGitOpsExecution,
+		Label:       "GitOps execution",
+		Description: "Release GitOps enforce mode to accounts: apid applies their approved revisions and qualifies, activates and serves the candidates. The kill switch also stops qualification dispatch in schedd on every node and holds every enforced source; report mode is unaffected.",
+		ADR:         "ADR-20261021080847",
+		Consumers:   []string{"apid", "schedd"},
+		LegacyEnv:   []string{"FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH"},
 	},
 }
 

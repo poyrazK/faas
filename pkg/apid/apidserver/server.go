@@ -129,7 +129,7 @@ type server struct {
 	nativeTrackerProvider                  issuetracker.StatusProvider
 	nativeTicketProvider                   issuetracker.Provider
 	dataPipelines                          *pipelineapi.Handler
-	environmentGitOpsAcceptanceEnforcement atomic.Bool
+	environmentGitOpsEnforcementWorkerLive atomic.Bool // ADR-20261021080847
 	profileBackend                         profiling.Backend
 	profileQuerySlots                      chan struct{}
 	guestTracingEnabled                    bool            // ADR-958 broker on (FAAS_GUEST_TRACING_ENABLED=1)

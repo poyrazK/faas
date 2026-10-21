@@ -55,6 +55,7 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | `change_timeline` | App change timeline preview (ADR-751) | apid | `FAAS_CHANGE_TIMELINE_ENABLED` |
 | `anomaly_alerts` | Baseline alert comparisons (ADR-744) | apid | `FAAS_ANOMALY_ALERTS_ENABLED` |
 | `trigger_batch_delivery` | `delivery: batch` on triggers (ADR-1321) | apid | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` |
+| `environment_gitops_execution` | GitOps enforce mode: applying approved revisions and qualifying, activating and serving their candidates (ADR-20261021080847) | apid, schedd | `FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH` (kill switch only) |
 
 The environment and TOML values seed the flag at boot. Once an operator has
 written the flag, they are ignored, including after a restart.
@@ -70,6 +71,13 @@ Two of these flags have limits:
   only the account. Plan rules never match it.
 - Unless `live_queries` includes every account, the live-query routes stay
   hidden from accounts outside it.
+
+`environment_gitops_execution` is decided in two places. apid evaluates the
+account before an enforced source runs, and holds a source it refuses as
+`blocked` (`environment_git_enforcement_unavailable`). schedd reads only the
+kill switch, before each qualification dispatch pass. Its legacy variable turns
+the kill switch on and admits no account, so a new account always needs an
+`allow`. Report mode is not gated.
 
 Turning `anomaly_alerts` off refuses only new or changed baseline rules.
 Existing rules keep evaluating. In the same way, turning
@@ -115,7 +123,7 @@ through the same API.
 ## Propagation and convergence
 
 A write updates `runtime_config_entries`. apid applies it in the request and
-notifies `runtime_config_changed`. Every other consumer (outboundd today)
+notifies `runtime_config_changed`. Every other consumer (outboundd and schedd)
 re-reads the table on that notification and every five seconds, so a change
 is live everywhere within seconds even if a notification is lost.
 

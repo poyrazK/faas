@@ -1,0 +1,8 @@
+[Service]
+# ADR-20261021080847: GitOps qualification reaches a candidate's bound services
+# through this node's private guest-service proxy (ADR-384, port 10081). HTTPS
+# bindings qualify only where gatewayd's private HTTPS listener is staged.
+Environment=FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTP_URL=http://{{ (faas_gatewayd_service_proxy_listen | default('10.100.0.1:10080', true)).split(':')[0] }}:10081
+{% if faas_gatewayd_service_proxy_https_listen | default('') | length > 0 %}
+Environment=FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTPS_URL=https://{{ faas_gatewayd_service_proxy_https_listen }}
+{% endif %}

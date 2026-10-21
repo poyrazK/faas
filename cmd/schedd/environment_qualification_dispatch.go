@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -43,13 +44,15 @@ func (c *environmentQualificationDispatchCursor) dispatchPage(ctx context.Contex
 }
 
 // startEnvironmentQualificationDispatch is the production recovery poller for
-// durable candidate graphs. It is opt-in because qualification can create
-// native VMs and remains gated on dedicated Linux capture/restore acceptance.
-// Every pass is bounded by the engine's graph page limit and each candidate is
-// revalidated under its durable lease before any VM effect.
+// durable candidate graphs. Each pass first checks open, the
+// environment_gitops_execution kill switch (ADR-20261021080847), because
+// qualification creates native VMs. Account admission stays with apid, which
+// queues graphs only for admitted accounts. Every pass is bounded by the
+// engine's graph page limit and each candidate is revalidated under its
+// durable lease before any VM effect.
 func startEnvironmentQualificationDispatch(ctx context.Context, engine environmentQualificationGraphDispatchEngine,
-	store environmentQualificationRecoveryNodeStore, ownerNodeID string, enabled bool, log *slog.Logger) {
-	if !enabled || engine == nil || store == nil || log == nil {
+	store environmentQualificationRecoveryNodeStore, ownerNodeID string, open func() bool, log *slog.Logger) {
+	if open == nil || engine == nil || store == nil || log == nil {
 		return
 	}
 	go func() {
@@ -57,7 +60,19 @@ func startEnvironmentQualificationDispatch(ctx context.Context, engine environme
 		defer ticker.Stop()
 		cursor := &environmentQualificationDispatchCursor{}
 		nodeID := ""
+		wasOpen := false
 		dispatchPage := func() {
+			if !open() {
+				if wasOpen {
+					log.Info("schedd: environment GitOps qualification dispatch stopped by the environment_gitops_execution kill switch")
+				}
+				wasOpen, cursor.after = false, ""
+				return
+			}
+			if !wasOpen {
+				log.Info("schedd: environment GitOps qualification dispatch enabled by the environment_gitops_execution kill switch")
+				wasOpen = true
+			}
 			resolved, err := environmentQualificationRecoveryNodeID(ctx, store, ownerNodeID)
 			if err != nil {
 				log.Warn("schedd: environment qualification dispatch node lookup failed", "err", err)
@@ -85,6 +100,18 @@ func environmentQualificationDispatchEnabled(value string) bool {
 	return strings.TrimSpace(value) == "1"
 }
 
-func environmentQualificationDispatchAllowed(value string, seedLedgerReady bool) bool {
-	return seedLedgerReady && environmentQualificationDispatchEnabled(value)
+// environmentQualificationDispatchBootstrap seeds the flag's kill switch from
+// FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH until an operator writes it.
+// It admits no account: only apid decides accounts.
+func environmentQualificationDispatchBootstrap(value string) platformflags.Definition {
+	return platformflags.Definition{Enabled: environmentQualificationDispatchEnabled(value)}
+}
+
+// environmentQualificationDispatchGate is nil, so dispatch never starts, when
+// admission ledger seeding failed; otherwise it reads the live kill switch.
+func environmentQualificationDispatchGate(flags *platformflags.Set, seedLedgerReady bool) func() bool {
+	if flags == nil || !seedLedgerReady {
+		return nil
+	}
+	return func() bool { return flags.Snapshot().GloballyEnabled(platformflags.EnvironmentGitOpsExecution) }
 }

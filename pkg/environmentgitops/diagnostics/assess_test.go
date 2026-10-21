@@ -120,3 +120,32 @@ func TestExplanationRedactsUnknownErrorsAndDoesNotAliasInputs(t *testing.T) {
 		t.Fatal("assessment mutated its input")
 	}
 }
+
+func TestExplanationHeldEnforcementUsesNewestRun(t *testing.T) {
+	now := time.Now().UTC()
+	earlier, later := now.Add(-time.Minute), now
+	held := "environment_git_enforcement_unavailable"
+	for name, tc := range map[string]struct {
+		runs []api.EnvironmentGitOpsRun
+		mode string
+		held bool
+	}{
+		"newest held":     {runs: []api.EnvironmentGitOpsRun{{CompletedAt: &earlier}, {ErrorCode: held, CompletedAt: &later}}, mode: "enforce", held: true},
+		"admitted again":  {runs: []api.EnvironmentGitOpsRun{{CompletedAt: &later}, {ErrorCode: held, CompletedAt: &earlier}}, mode: "enforce"},
+		"running ignored": {runs: []api.EnvironmentGitOpsRun{{ErrorCode: held}}, mode: "enforce"},
+		"report mode":     {runs: []api.EnvironmentGitOpsRun{{ErrorCode: held, CompletedAt: &later}}, mode: "report"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			status := diagnosticStatus(now)
+			status.Source.Spec.Mode, status.Runs = tc.mode, tc.runs
+			result := Assess(status, now)
+			found := false
+			for _, issue := range result.Issues {
+				found = found || issue.Code == held && issue.Stage == "mode"
+			}
+			if found != tc.held || tc.held && result.Status != "blocked" {
+				t.Fatalf("held=%v issues=%+v status=%s", tc.held, result.Issues, result.Status)
+			}
+		})
+	}
+}

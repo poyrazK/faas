@@ -2634,7 +2634,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
 	defer srv.startInternalCIWorker(ctx, log)()
 	defer srv.startEnvironmentGitDriftReporting(ctx, deps.getenv)()
-	defer srv.startEnvironmentGitAcceptanceEnforcement(ctx, deps.getenv)()
+	defer srv.startEnvironmentGitEnforcement(ctx)()
 	notifyStop := wire.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()

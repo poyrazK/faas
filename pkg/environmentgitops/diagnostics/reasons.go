@@ -24,6 +24,9 @@ func Explain(resource, code string) api.EnvironmentGitOpsDiagnostic {
 	case "report_mode":
 		issue.Stage, issue.Actor = "mode", "customer"
 		issue.Message, issue.Action = "This source reports drift without applying it.", "Review the reported plan. Production execution remains separately gated; do not enable it from this assessment."
+	case "environment_git_enforcement_unavailable":
+		issue.Stage = "mode"
+		issue.Message, issue.Action = "GitOps execution is not enabled for this account, so the approved revision is held without changes.", "Keep the source in report mode until execution is available; existing serving state is unchanged."
 	case "current_graph_missing", "current_graph_stale":
 		issue.Stage = "preparation"
 		issue.Message, issue.Action = "No matching current workload graph is available.", "Inspect the current reconciliation attempt and ownership plan; historical applied revisions do not prove serving."

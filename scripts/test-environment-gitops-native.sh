@@ -58,10 +58,15 @@ case "$GREGALE_GITOPS_NATIVE_HOST_CLASS" in
     [[ "$virtualization_status" == 1 && "$virtualization" == none ]] ||
       die virtualized_host "an unverified or virtual host cannot provide dedicated native acceptance"
     ;;
-  nested-diagnostic)
-    echo "GitOps native acceptance: diagnostic only; production gates remain closed" >&2
+  nested)
+    [[ "$virtualization_status" == 0 && -n "$virtualization" && "$virtualization" != none ]] ||
+      die unverified_nested_host "a nested host must report its hypervisor"
+    echo "GitOps native acceptance: nested KVM host ($virtualization), accepted evidence per ADR-20261021083000" >&2
     ;;
-  *) die unsupported_host_class "host class must be native or nested-diagnostic" ;;
+  nested-diagnostic)
+    echo "GitOps native acceptance: diagnostic only; this run cannot qualify" >&2
+    ;;
+  *) die unsupported_host_class "host class must be native, nested or nested-diagnostic" ;;
 esac
 for fixture in "$FAAS_TEST_KERNEL" "$FAAS_GUEST_INIT"; do
   [[ -f "$fixture" && -r "$fixture" ]] || die missing_fixture "a required native fixture is unreadable"

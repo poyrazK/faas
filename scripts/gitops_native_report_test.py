@@ -127,11 +127,29 @@ class NativeReportTests(unittest.TestCase):
         self.assertTrue(value["native_acceptance_passed"])
         self.assertTrue(value["source_scheduled_jobs_passed"])
         self.assertEqual(value["result"], "passed")
+        self.assertEqual(value["evidence_host"], "native")
         passed, value = self.finish(host_class="nested-diagnostic")
         self.assertTrue(passed)
         self.assertFalse(value["native_acceptance_passed"])
         self.assertEqual(value["result"], "diagnostic_passed")
         self.assertFalse(value["source_scheduled_jobs_passed"])
+        self.assertIsNone(value["evidence_host"])
+
+    def test_nested_kvm_host_qualifies_only_with_a_named_hypervisor(self):
+        nested = metadata()
+        nested["host"].update(virtualization_probe="kvm")
+        passed, value = self.finish(nested, host_class="nested")
+        self.assertTrue(passed)
+        self.assertTrue(value["native_acceptance_passed"])
+        self.assertTrue(value["source_scheduled_jobs_passed"])
+        self.assertEqual((value["result"], value["evidence_host"]), ("passed", "nested"))
+        for probe in ("none", None, ""):
+            with self.subTest(probe=probe):
+                nested["host"].update(virtualization_probe=probe)
+                passed, value = self.finish(nested, host_class="nested")
+                self.assertFalse(passed)
+                self.assertFalse(value["native_acceptance_passed"])
+                self.assertIn("unsupported_or_unverified_host", value["failure_reasons"])
 
     def test_old_or_changed_report_contract_cannot_qualify(self):
         for field, value in (("schema", "gregale.dev/gitops-native-acceptance/v1"), ("coverage", {})):

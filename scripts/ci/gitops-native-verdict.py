@@ -60,7 +60,7 @@ def verify(directory, expected_sha, runner_outcome="success"):
         value = read_json(private / "report.json")
         if value.get("schema") != report.SCHEMA or value.get("coverage") != report.required_coverage() or value.get("evidence_kind") != "local_operator_run":
             raise ValueError("invalid report contract")
-        if value.get("host_class") != "native" or value.get("production_enforcement_enabled") is not False:
+        if value.get("host_class") not in report.QUALIFYING_HOST_CLASSES or value.get("production_enforcement_enabled") is not False:
             errors.append("unsupported_scope_or_host")
         if value["initial"]["source"]["commit"] != expected_sha or value["final"]["source"]["commit"] != expected_sha:
             errors.append("source_sha_mismatch")
@@ -87,7 +87,8 @@ def verify(directory, expected_sha, runner_outcome="success"):
         summary["operator_report"] = report.fingerprint(private / "report.json")
         summary["artifacts"] = fingerprints
         if not errors:
-            summary.update(result="passed", source_commit=expected_sha, native_acceptance_passed=True, source_scheduled_jobs_passed=True)
+            summary.update(result="passed", source_commit=expected_sha, native_acceptance_passed=True, source_scheduled_jobs_passed=True,
+                           evidence_host=observed["evidence_host"])
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         errors.append("native_report_missing_or_invalid")
     return summary
@@ -100,7 +101,8 @@ def publish(directory, summary):
     public.chmod(0o755)
     report.write_json(public / "summary.json", summary)
     lines = ["## GitOps native acceptance", "", f"Result: **{summary['result']}**",
-             f"Dispatch commit: `{summary['expected_commit'] or 'unverified'}`", "",
+             f"Dispatch commit: `{summary['expected_commit'] or 'unverified'}`",
+             f"Evidence host: {summary.get('evidence_host') or 'none'}", "",
              f"Required test nodes passed: {sum(state == 'pass' for state in summary['tests'].values())}/{len(report.required_tests())}",
              "", "Production qualification and enforcement remain disabled.",
              "Provider access uses local fixtures; live provider and protected review qualification are outside this evidence.", ""]

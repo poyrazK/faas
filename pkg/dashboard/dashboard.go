@@ -142,6 +142,9 @@ type EnvironmentGitOpsData struct {
 	Runs                    []EnvironmentGitOpsRunView
 	SourcePollStale         bool
 	SourceVerificationStale bool
+	// EnforcementAvailable is true when GitOps execution is released to the
+	// account (ADR-20261021080847), so enforce mode can be selected.
+	EnforcementAvailable bool
 }
 
 type EnvironmentGitOpsRunView struct {

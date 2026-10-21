@@ -82,6 +82,14 @@ class NativeCIContracts(unittest.TestCase):
         self.assertIsNone(verdict.verify(self.directory, "b" * 40)["source_commit"])
         self.make_report(host_class="nested-diagnostic")
         self.assertFalse(verdict.verify(self.directory, SHA)["native_acceptance_passed"])
+        self.make_report(host_class="nested")
+        self.assertFalse(verdict.verify(self.directory, SHA)["native_acceptance_passed"], "nested without a hypervisor probe")
+        nested = fixtures.metadata()
+        nested["host"]["virtualization_probe"] = "kvm"
+        self.make_report(metadata=nested, host_class="nested")
+        summary = verdict.verify(self.directory, SHA)
+        self.assertTrue(summary["native_acceptance_passed"], summary["errors"])
+        self.assertEqual(summary["evidence_host"], "nested")
         for change in (lambda v: v.update(production_enforcement_enabled=True),
                        lambda v: v.update(schema="gregale.dev/gitops-native-acceptance/v1"),
                        lambda v: v["initial"]["base_images"].update(builder="latest")):

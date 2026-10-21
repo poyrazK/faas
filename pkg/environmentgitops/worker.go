@@ -41,11 +41,19 @@ type RuntimeVerifier interface {
 	VerifyRuntime(context.Context, state.EnvironmentGitOpsLease, environmentsync.Plan) (bool, error)
 }
 
+// EnforcementUnavailableCode is recorded on an enforced source whose account
+// is not admitted to GitOps execution.
+const EnforcementUnavailableCode = "environment_git_enforcement_unavailable"
+
 type Worker struct {
 	Store   state.EnvironmentGitOpsStore
 	Backend Backend
 	// Mode restricts claims atomically; empty retains the full executor's scope.
-	Mode          string
+	Mode string
+	// Admit, when set, decides per account whether an enforced source may
+	// execute (the environment_gitops_execution platform flag). A source it
+	// refuses is finished as blocked without observing or applying anything.
+	Admit         func(context.Context, string) bool
 	Log           *slog.Logger
 	Now           func() time.Time
 	LeaseDuration time.Duration
@@ -98,6 +106,17 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	}
 	if w.Mode != "" && lease.Source.Spec.Mode != w.Mode {
 		return true, fmt.Errorf("environment GitOps claim returned a different mode")
+	}
+	if w.Admit != nil && lease.Source.Spec.Mode == "enforce" && !w.Admit(ctx, lease.Source.AccountID) {
+		// Release withdrawn: hold the approved revision without effects and
+		// check again at the normal interval, not the failure retry rate.
+		now := w.clock()
+		rawPlan, _ := json.Marshal(environmentsync.Plan{})
+		err = w.Store.FinishEnvironmentGitOps(ctx, lease, "blocked", rawPlan, []byte("[]"), EnforcementUnavailableCode, now, now.Add(w.CheckInterval))
+		if errors.Is(err, state.ErrConflict) {
+			return true, nil
+		}
+		return true, err
 	}
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)

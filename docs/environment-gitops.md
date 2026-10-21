@@ -702,12 +702,14 @@ See [ADR-20261017190813](adr/20261017190813-gitops-rollout-outcome-notifications
 
 ## Isolated enforcement acceptance
 
-The real apid enforcement worker can run only in an isolated development
-acceptance process with all three settings set to `1`: `FAAS_DEV`,
-`GREGALE_GITOPS_ACCEPTANCE`, and
-`FAAS_ENVIRONMENT_GITOPS_ACCEPTANCE_ENFORCEMENT`. The production control-plane
-role rejects the dev-only enforcement setting at boot. Customer enforcement
-remains closed by default.
+The apid enforce worker runs in every apid and executes only accounts that the
+`environment_gitops_execution` platform flag admits. An isolated development
+acceptance process with all three settings set to `1` (`FAAS_DEV`,
+`GREGALE_GITOPS_ACCEPTANCE` and
+`FAAS_ENVIRONMENT_GITOPS_ACCEPTANCE_ENFORCEMENT`) seeds that flag on for every
+account. The production control-plane role rejects the dev-only enforcement
+setting at boot, so production starts with execution off until an operator
+releases it.
 
 Against a disposable PostgreSQL cluster, run the subprocess journey with:
 
@@ -729,7 +731,8 @@ isolated designated x86_64 KVM
 host, a disposable PostgreSQL database, a qualified kernel, guest-init built
 from the same checkout, and registry access to three pinned base images. Run
 `make test-environment-gitops-native` with `DATABASE_URL`, `FAAS_TEST_KERNEL`,
-`FAAS_GUEST_INIT`, `GREGALE_GITOPS_NATIVE_HOST_CLASS=native`, and these explicit
+`FAAS_GUEST_INIT`, `GREGALE_GITOPS_NATIVE_HOST_CLASS` (`native` on bare metal,
+`nested` on a nested-KVM host such as the internal n2 node), and these explicit
 `repository@sha256:...` image references:
 
 - `GREGALE_GITOPS_NATIVE_BUILDER_REF`: the real builder image with Railpack and BuildKit.
@@ -744,9 +747,11 @@ checkout, refuses active Gregale services, checks leaks before and after, and
 builds fresh daemon/fixture binaries rather than reusing a caller's prebuilt
 directory. It
 requires both named metal tests, both providers and every required scenario
-to pass rather than skip. Set the host class to
-`nested-diagnostic` only for troubleshooting; that result cannot qualify a
-production gate. A passing journey must prove API serving through the gateway,
+to pass rather than skip. A complete `native` or `nested` run qualifies
+([ADR-20261021083000](adr/20261021083000-gitops-nested-kvm-acceptance-evidence.md));
+the report records which in `evidence_host`. `nested-diagnostic` is for
+troubleshooting only and cannot qualify. No report enables production
+execution; that is the `environment_gitops_execution` platform flag. A passing journey must prove API serving through the gateway,
 a completed scoped customer queue delivery for each applied generation, and
 repair of a console change after its temporary override expires while the
 graph is serving. It observes activation before sending the delivery needed to
@@ -1305,9 +1310,14 @@ objects remain retained without granting cleanup authority.
 
 ## Ownership and source maintenance
 
-Customer source creation and updates support `report` mode. A request to enable
-`enforce` returns `409 environment_git_enforcement_unavailable`; the dashboard
-also disables that choice. Internal executor qualification remains separate.
+Customer source creation and updates always support `report` mode. `enforce`
+is released per account by the `environment_gitops_execution` platform flag
+([ADR-20261021080847](adr/20261021080847-gitops-execution-platform-flag.md)).
+For an account the flag does not admit, a request to enable `enforce` returns
+`409 environment_git_enforcement_unavailable`, and the dashboard disables that
+choice. If an account is withdrawn later, its enforced sources are held:
+each check records a `blocked` run with that code, and nothing is applied
+until the account is admitted again or the source returns to report mode.
 
 The Terraform provider reserves the scoped fields managed by `gregale_env` and
 `gregale_project_environment_config`, plus workload source intent for scoped

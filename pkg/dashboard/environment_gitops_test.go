@@ -29,9 +29,23 @@ func TestGitOpsDashboardSupportsGitLabBindingAndProviderControls(t *testing.T) {
 					t.Fatalf("GitLab binding missing %s", want)
 				}
 			}
-		} else if !strings.Contains(body, `value="protected_branch"`) || !strings.Contains(body, `name="prune"`) || !strings.Contains(body, "Continuous enforcement is unavailable") {
+		} else if !strings.Contains(body, `value="protected_branch"`) || !strings.Contains(body, `name="prune"`) || !strings.Contains(body, "Continuous enforcement is unavailable") ||
+			!strings.Contains(body, `<option value="enforce" disabled`) {
 			t.Fatalf("GitLab trust controls or production gate missing: %s", body)
 		}
+	}
+}
+
+func TestGitOpsDashboardOffersEnforceModeOnlyWhenReleased(t *testing.T) {
+	data := EnvironmentGitOpsData{Project: "shop", Environment: "production", CSRFToken: "csrf", EnforcementAvailable: true,
+		Status: &api.EnvironmentGitOpsStatusResponse{Source: api.EnvironmentGitSource{Spec: api.EnvironmentGitSourceSpec{Mode: "report", ApprovalPolicy: "manual"}}}}
+	rec := httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "", Page{Title: "GitOps", Body: "environment_gitops", Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<option value="enforce" >Enforce</option>`) || strings.Contains(body, "unavailable for this account") {
+		t.Fatalf("released account cannot select enforce mode: %s", body)
 	}
 }
 

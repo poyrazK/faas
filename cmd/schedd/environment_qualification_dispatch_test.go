@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -82,10 +83,41 @@ func TestEnvironmentQualificationDispatchGateIsExplicit(t *testing.T) {
 	if !environmentQualificationDispatchEnabled("1") || !environmentQualificationDispatchEnabled(" 1 ") {
 		t.Fatal("dispatch gate did not accept the explicit enabled value")
 	}
-	if environmentQualificationDispatchAllowed("1", false) || !environmentQualificationDispatchAllowed("1", true) ||
-		environmentQualificationDispatchAllowed("", true) {
-		t.Fatal("dispatch gate did not require both explicit opt-in and successful ledger seeding")
+	flagsFor := func(value string) *platformflags.Set {
+		return platformflags.NewSet(map[string]platformflags.Definition{
+			platformflags.EnvironmentGitOpsExecution: environmentQualificationDispatchBootstrap(value)})
 	}
+	if environmentQualificationDispatchGate(flagsFor("1"), false) != nil {
+		t.Fatal("dispatch started although admission ledger seeding failed")
+	}
+	if environmentQualificationDispatchGate(flagsFor(""), true)() || !environmentQualificationDispatchGate(flagsFor("1"), true)() {
+		t.Fatal("dispatch gate did not follow the explicit boot fallback")
+	}
+	if flagsFor("1").Enabled(platformflags.EnvironmentGitOpsExecution, platformflags.Subject{AccountID: "9387ca52-9fe6-4920-866e-a53018ef8839"}) {
+		t.Fatal("schedd's boot fallback admitted an account")
+	}
+	// A durable operator value decides from then on, in both directions.
+	flags := flagsFor("1")
+	open := environmentQualificationDispatchGate(flags, true)
+	if err := flags.Apply(platformflags.ConfigKey(platformflags.EnvironmentGitOpsExecution), []byte(`{"enabled":false,"default":false}`), 1); err != nil || open() {
+		t.Fatalf("operator kill switch did not stop dispatch: %v", err)
+	}
+	if err := flags.Apply(platformflags.ConfigKey(platformflags.EnvironmentGitOpsExecution), []byte(`{"enabled":true,"default":false}`), 2); err != nil || !open() {
+		t.Fatalf("operator release did not start dispatch: %v", err)
+	}
+}
+
+func TestEnvironmentQualificationDispatchSkipsPassWhileKillSwitchIsOff(t *testing.T) {
+	// The fake has no page results, so any dispatch call would panic.
+	engine := &qualificationDispatchEngineFake{}
+	store := qualificationDispatchNodeStoreFake{node: state.ComputeNode{ID: "9387ca52-9fe6-4920-866e-a53018ef8839", Name: state.DefaultLocalNodeName}}
+	checked := make(chan struct{})
+	startEnvironmentQualificationDispatch(t.Context(), engine, store, "", func() bool {
+		close(checked)
+		return false
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	<-checked
+	startEnvironmentQualificationDispatch(t.Context(), engine, store, "", nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 type qualificationDispatchNodeStoreFake struct {

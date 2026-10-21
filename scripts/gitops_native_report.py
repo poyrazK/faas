@@ -42,6 +42,9 @@ SCENARIOS = (
     "retirement_recovery",
 )
 ARTIFACTS = ("test-events.jsonl", "runner.log", "leak-before.log", "leak-after.log", "postgres-probe.log")
+# Host classes whose complete run qualifies: a bare-metal KVM host, or a
+# nested-KVM host such as the internal n2 node (ADR-20261021083000).
+QUALIFYING_HOST_CLASSES = ("native", "nested")
 
 
 def utc_now():
@@ -252,15 +255,16 @@ def assess(report, final, stages, reason, exit_code, events):
                          all(initial["fixtures"].get(key) and initial["fixtures"][key]["bytes"] > 0 for key in FIXTURES) and
                          all(versions.get(key) for key in ("go", "firecracker", "jailer", "postgres_client")) and
                          versions["go"] == versions["go_required"])
-    native = (report["host_class"] == "native" and initial["host"]["system"] == "Linux" and
-              initial["host"]["architecture"] == "x86_64" and initial["host"]["virtualization_probe"] == "none")
-    supported = (native or report["host_class"] == "nested-diagnostic" and
-                 initial["host"]["system"] == "Linux" and initial["host"]["architecture"] == "x86_64" and
-                 bool(initial["host"]["virtualization_probe"]))
+    linux = initial["host"]["system"] == "Linux" and initial["host"]["architecture"] == "x86_64"
+    probe = initial["host"]["virtualization_probe"]
+    # A nested claim needs a named hypervisor; bare metal cannot pose as nested.
+    qualifying = linux and (report["host_class"] == "native" and probe == "none" or
+                            report["host_class"] == "nested" and bool(probe) and probe != "none")
+    supported = qualifying or linux and report["host_class"] == "nested-diagnostic" and bool(probe)
     passed = (contract_current and supported and exit_code == 0 and identity_stable and metadata_complete and events["complete"] and
               all(stages.get(key) == "pass" for key in ("preflight", "leak_before", "journey", "leak_after", "source")))
     if passed:
-        result = "passed" if native else "diagnostic_passed"
+        result = "passed" if qualifying else "diagnostic_passed"
     else:
         result = "blocked" if stages.get("preflight") != "pass" else "failed"
     failures = [reason] if reason else []
@@ -278,7 +282,8 @@ def assess(report, final, stages, reason, exit_code, events):
     return dict(final=final, source_and_inputs_unchanged=identity_stable,
                 metadata_complete=bool(metadata_complete), stages=stages, failure_reasons=failures,
                 command_exit_code=exit_code, exit_code=exit_code or (0 if passed else 1), events=events, result=result,
-                native_acceptance_passed=bool(passed and native), source_scheduled_jobs_passed=bool(passed and native))
+                evidence_host=report["host_class"] if passed and qualifying else None,
+                native_acceptance_passed=bool(passed and qualifying), source_scheduled_jobs_passed=bool(passed and qualifying))
 
 
 def finish(repo, directory, stages, reason, exit_code):

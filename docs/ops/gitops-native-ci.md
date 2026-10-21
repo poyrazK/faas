@@ -7,8 +7,10 @@ It tests the exact dispatch commit on `main`, with no alternate source-ref input
 PR trigger, automatic schedule, deployment or production configuration change.
 The reviewed code must land on `main` before this lane can exercise it.
 
-This lane has not established a passing native result. It needs an exclusive
-physical x86_64 Linux KVM host; the shared nested internal node is not eligible.
+This lane needs an exclusive physical x86_64 Linux KVM host. The internal n2
+node provides nested-KVM evidence outside this lane: run the guarded runner
+there with `GREGALE_GITOPS_NATIVE_HOST_CLASS=nested`
+([ADR-20261021083000](../adr/20261021083000-gitops-nested-kvm-acceptance-evidence.md)).
 Do not stop tenant VMs to make a host eligible. A missing dedicated runner leaves
 the job queued; an invalid host or incomplete evidence cannot produce a pass.
 

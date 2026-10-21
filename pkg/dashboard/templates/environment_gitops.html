@@ -28,7 +28,7 @@
       {{$csrf := .CSRFToken}}
       <p><a href="/dashboard/projects/{{.Project}}">← Project</a></p>
       {{if .Status}}
-        {{$source := .Status.Source}}
+        {{$source := .Status.Source}}{{$enforce := .EnforcementAvailable}}
         {{with .Status.Explanation}}
         <section>
           <h2>Why this revision is {{.Status}}</h2>
@@ -184,11 +184,11 @@
             <button type="submit">Disconnect source and release ownership</button>
           </form>
           <h2>Reconciliation controls</h2>
-          <p>Report mode records drift and allows edits. Continuous enforcement is unavailable in this preview.</p>
+          {{if $enforce}}<p>Report mode records drift and allows edits. Enforce mode applies each approved revision and qualifies, activates and serves its candidates.</p>{{else}}<p>Report mode records drift and allows edits. Continuous enforcement is unavailable for this account.</p>{{end}}
           <form method="POST" action="{{$target}}/controls">
             <input type="hidden" name="csrf_token" value="{{$csrf}}">
             <input type="hidden" name="expected_generation" value="{{$source.Generation}}">
-            <label>Mode <select name="mode"><option value="report" {{if eq $source.Spec.Mode "report"}}selected{{end}}>Report</option><option value="enforce" disabled {{if eq $source.Spec.Mode "enforce"}}selected{{end}}>Enforce (unavailable in preview)</option></select></label>
+            <label>Mode <select name="mode"><option value="report" {{if eq $source.Spec.Mode "report"}}selected{{end}}>Report</option>{{if $enforce}}<option value="enforce" {{if eq $source.Spec.Mode "enforce"}}selected{{end}}>Enforce</option>{{else}}<option value="enforce" disabled {{if eq $source.Spec.Mode "enforce"}}selected{{end}}>Enforce (unavailable)</option>{{end}}</select></label>
             <label><input type="checkbox" name="prune" value="true" {{if $source.Spec.Prune}}checked{{end}}> Allow removal of previously owned fields omitted from Git</label>
             <label><input type="checkbox" name="suspended" value="true" {{if $source.Suspended}}checked{{end}}> Suspend reconciliation and retain ownership</label>
             <button type="submit">Update controls</button>

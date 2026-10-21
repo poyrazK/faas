@@ -138,4 +138,12 @@ func (s *server) seedEnvPlatformFlags(getenv func(string) string) {
 	s.seedPlatformFlag(platformflags.ChangeTimeline, platformflags.FromAccountList(s.changeTimelineEnabled, true, nil))
 	s.seedPlatformFlag(platformflags.AnomalyAlerts, platformflags.FromAccountList(s.anomalyAlertsEnabled, true, nil))
 	s.seedPlatformFlag(platformflags.TriggerBatchDelivery, platformflags.FromAccountList(s.triggerBatchDeliveryEnabled, true, nil))
+	// Only an isolated acceptance run releases GitOps execution to accounts at
+	// boot. The dispatch variable turns on the kill switch alone, as in schedd,
+	// so a production control plane admits no account until an operator does.
+	gitOps := platformflags.FromAccountList(strings.TrimSpace(getenv("FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH")) == "1", false, nil)
+	if environmentGitAcceptanceEnforcement(getenv) {
+		gitOps = platformflags.FromAccountList(true, true, nil)
+	}
+	s.seedPlatformFlag(platformflags.EnvironmentGitOpsExecution, gitOps)
 }

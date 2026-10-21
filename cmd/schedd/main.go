@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -697,7 +698,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// atomically when the acknowledged runtime value changes.
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	defer runtimeCancel()
-	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyDataPlacement},
+	// ADR-20261021080847: GitOps qualification dispatch follows the
+	// environment_gitops_execution platform flag's kill switch.
+	platformFlags := platformflags.NewSet(map[string]platformflags.Definition{
+		platformflags.EnvironmentGitOpsExecution: environmentQualificationDispatchBootstrap(os.Getenv("FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH")),
+	})
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
@@ -712,7 +718,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}
 			return nil
-		}, log)
+		}, platformFlags)
+	watcher := runtimeconfig.New(store, pool, runtimeKeys, runtimeApply, log)
 	watcher.Daemon = "schedd" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("schedd: initial runtime config reconcile failed", "err", err)
@@ -1003,17 +1010,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := startDataRepairRehearsals(ctx, engine, store, vmmRouter, ownerNodeID, seedLedgerReady, log); err != nil {
 		return err
 	}
-	qualificationDispatchValue := os.Getenv("FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH")
-	qualificationDispatchRequested := environmentQualificationDispatchEnabled(qualificationDispatchValue)
-	qualificationDispatchEnabled := environmentQualificationDispatchAllowed(qualificationDispatchValue, seedLedgerReady)
-	if qualificationDispatchEnabled {
-		log.Info("schedd: environment GitOps qualification dispatch enabled by explicit gate")
-	} else if qualificationDispatchRequested {
+	qualificationDispatchOpen := environmentQualificationDispatchGate(platformFlags, seedLedgerReady)
+	if qualificationDispatchOpen == nil {
 		log.Warn("schedd: environment GitOps qualification dispatch withheld because admission ledger seeding failed")
-	} else {
-		log.Info("schedd: environment GitOps qualification dispatch disabled; native acceptance is still required")
 	}
-	startEnvironmentQualificationDispatch(ctx, engine, store, ownerNodeID, qualificationDispatchEnabled, log)
+	startEnvironmentQualificationDispatch(ctx, engine, store, ownerNodeID, qualificationDispatchOpen, log)
 
 	// gRPC surface for gatewayd-internal (ADR-018): unix socket by default;
 	// tcp requires the tls_* cluster and is issue #95.

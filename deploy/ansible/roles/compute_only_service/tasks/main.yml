@@ -133,6 +133,15 @@
     group: root
     mode: "0644"
 
+- name: compute_only_service — install schedd GitOps qualification proxy (ADR-20261021080847)
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: 99-faas-schedd-gitops-qualification.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-gitops-qualification.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 
 - name: compute_only_service — assert schedd PKI leaves exist (M9)
   ansible.builtin.stat:

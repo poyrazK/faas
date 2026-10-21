@@ -50,8 +50,9 @@ func TestEnvironmentGitOpsRetirementHTTPReviewAndBackendCutover(t *testing.T) {
 	}
 	sha := strings.Repeat("b", 40)
 	srv.githubd = &environmentGitOpsClient{repositories: []Repo{{ID: 123, FullName: "example/shop"}}, resolvedSHA: sha, archive: environmentGitOpsArchiveDefinition(t, "api_version: gregale.dev/environment/v1\nproject: shop\nenvironment: production\nworkload_pruning_policy: retain\nworkloads: {}\n")}
-	// Only this isolated test executor opens the existing acceptance API gate.
-	srv.environmentGitOpsAcceptanceEnforcement.Store(true)
+	// Only this isolated test executor opens the enforce-mode API gate.
+	srv.seedEnvPlatformFlags(acceptanceEnforcementEnv)
+	srv.environmentGitOpsEnforcementWorkerLive.Store(true)
 	preview := gitOpsHandlerRequest(t, srv, account, http.MethodPost, "preview", map[string]string{"commit_sha": sha}, srv.previewEnvironmentGitPlan)
 	var reviewed api.PreviewEnvironmentGitPlanResponse
 	if preview.Code != http.StatusOK || json.Unmarshal(preview.Body.Bytes(), &reviewed) != nil {

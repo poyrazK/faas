@@ -59,6 +59,7 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 			data.Recovery = &recovery
 		}
 	}
+	data.EnforcementAvailable = s.environmentGitEnforcementAvailable(acct)
 	data.Status = &api.EnvironmentGitOpsStatusResponse{Source: source, Runs: runs}
 	data.Status.Approval, err = s.environmentGitApprovalForSource(r.Context(), source)
 	if err != nil {

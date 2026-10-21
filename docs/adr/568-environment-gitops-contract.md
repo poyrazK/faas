@@ -4528,3 +4528,13 @@ retained workloads first. This feature does not delete customer data.
 Production enforcement remains gated. These changes do not replace the
 required end-to-end run and leak checks on an exclusive dedicated native
 x86_64 KVM host.
+
+## Execution release and nested-KVM evidence (2026-10-21)
+
+Enforce mode is released per account by the `environment_gitops_execution`
+platform flag, which apid evaluates for each enforced source and whose kill
+switch gates schedd qualification dispatch
+([ADR-20261021080847](20261021080847-gitops-execution-platform-flag.md)).
+The guarded native runner also qualifies a complete run on a nested-KVM host
+such as the internal n2 node
+([ADR-20261021083000](20261021083000-gitops-nested-kvm-acceptance-evidence.md)).

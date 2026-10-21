@@ -46,6 +46,10 @@ func Assess(status api.EnvironmentGitOpsStatusResponse, now time.Time) api.Envir
 	if source.Spec.Mode == "report" {
 		add("", "report_mode")
 	}
+	held := source.Spec.Mode == "enforce" && latestRunErrorCode(status.Runs) == "environment_git_enforcement_unavailable"
+	if held {
+		add("", "environment_git_enforcement_unavailable")
+	}
 	evidence := status.WorkloadEvidence
 	if evidence == nil {
 		add("", "current_graph_missing")
@@ -92,7 +96,25 @@ func Assess(status api.EnvironmentGitOpsStatusResponse, now time.Time) api.Envir
 	if source.Spec.Mode == "report" {
 		result.Status, result.Summary = "reporting", "Report mode records drift against the approved revision; it does not apply changes."
 	}
+	if held {
+		result.Status, result.Summary = "blocked", "GitOps execution is not enabled for this account; the approved revision is held without changes."
+	}
 	return result
+}
+
+// latestRunErrorCode reads the newest completed run, whatever order the
+// caller listed them in.
+func latestRunErrorCode(runs []api.EnvironmentGitOpsRun) string {
+	var latest *api.EnvironmentGitOpsRun
+	for i := range runs {
+		if runs[i].CompletedAt != nil && (latest == nil || runs[i].CompletedAt.After(*latest.CompletedAt)) {
+			latest = &runs[i]
+		}
+	}
+	if latest == nil {
+		return ""
+	}
+	return latest.ErrorCode
 }
 
 func currentEvidence(source api.EnvironmentGitSource, evidence api.EnvironmentWorkloadActivationEvidence) bool {
