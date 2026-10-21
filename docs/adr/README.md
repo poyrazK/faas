@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261021090000: Rehearsal queue capture](20261021090000-rehearsal-queue-capture.md)
 - [ADR-20261020200000: Rehearsal crons fire from the recipe, not the clock](20261020200000-rehearsal-crons-fire-from-the-recipe.md)
 - [ADR-20261020180000: Rehearsal PostgreSQL schema inventory](20261020180000-rehearsal-postgres-schema-inventory.md)
 - [ADR-20261020150000: Contained rehearsals run the candidate's release command](20261020150000-rehearsal-contained-release-commands.md)

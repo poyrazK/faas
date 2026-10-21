@@ -25,7 +25,39 @@ const (
 	// larger data is retained only as an incomplete marker.
 	MaxScenarioCapturedEventDataBytes = 64 << 10
 	MaxScenarioSuppressedEventCount   = 1 << 16
+	// ScenarioQueueCaptureVersion marks snapshots that carry the queue sends
+	// and delayed tasks an enrolled app requested through the run-local
+	// platform API (ADR-20261021090000). Zero means an older server.
+	ScenarioQueueCaptureVersion      = 1
+	MaxScenarioCapturedQueueMessages = 256
+	// MaxScenarioCapturedQueueMessageBytes bounds one captured request body;
+	// a larger one is retained only as an incomplete marker.
+	MaxScenarioCapturedQueueMessageBytes = 64 << 10
 )
+
+// Queue capture kinds and the run-local platform API host. "api" is a reserved
+// app slug, so no customer service can be reached at this name.
+const (
+	ScenarioQueueKindQueue       = "queue"
+	ScenarioQueueKindDelayedTask = "delayed_task"
+	ScenarioPlatformAPIHost      = "api.svc.gregale"
+	ScenarioPlatformAPIURLEnv    = "GREGALE_API_URL"
+)
+
+// ScenarioCapturedQueueMessage is a queue send or delayed task an enrolled app
+// requested. It was never enqueued; the run's sealed snapshot is its only
+// record. Target is workload:<name> for a member of the same run, otherwise
+// app:<slug>. Schedule is delay:<seconds> or absolute for a delayed task, so a
+// wall-clock instant never compares. Message is the request's business content.
+type ScenarioCapturedQueueMessage struct {
+	ID        string          `json:"id"`
+	Workload  string          `json:"workload"`
+	Kind      string          `json:"kind"`
+	Target    string          `json:"target"`
+	QueueName string          `json:"queue_name,omitempty"`
+	Schedule  string          `json:"schedule,omitempty"`
+	Message   json.RawMessage `json:"message"`
+}
 
 // ScenarioCapturedEvent is an event an enrolled app published. It never reached
 // the account's event bus; the run's sealed snapshot is its only record. The
@@ -98,6 +130,10 @@ type ScenarioActionSnapshot struct {
 	PublishedEvents          []ScenarioCapturedEvent           `json:"published_events,omitempty"`
 	SuppressedWebhookEvents  []ScenarioSuppressedWebhookEvents `json:"suppressed_webhook_events,omitempty"`
 	IncompleteCapturedEvents int64                             `json:"incomplete_captured_events,omitempty"`
+	// Queue capture (ADR-20261021090000) is additive in the same way.
+	QueueCaptureVersion     int                            `json:"queue_capture_version,omitempty"`
+	QueueMessages           []ScenarioCapturedQueueMessage `json:"queue_messages,omitempty"`
+	IncompleteQueueMessages int64                          `json:"incomplete_queue_messages,omitempty"`
 }
 
 // ScenarioReceiverFingerprint identifies the destination configuration observed

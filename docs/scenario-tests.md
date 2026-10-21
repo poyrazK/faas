@@ -1322,9 +1322,37 @@ contained members of the same run through TCP 10081 (for example,
 redirected to a private-only resolver, including before the app becomes ready;
 it never uses a public upstream. Direct HTTP/HTTPS, SMTP, public DNS, private-network
 routes, direct service TCP, aliases, development tunnels and operator egress
-exceptions are blocked. Host-mediated live outbound relay, federated identity and
-guest event publishing are refused as well; the IP firewall alone cannot
-contain those channels.
+exceptions are blocked. Host-mediated live outbound relay and federated identity
+are refused as well; the IP firewall alone cannot contain those channels. Guest
+event publishes are captured into the run (see above).
+
+Queue sends and delayed tasks use a run-local platform API. The scheduler sets
+`GREGALE_API_URL=http://api.svc.gregale:10081` for every contained boot and
+command, so a client configured from that variable keeps working unchanged:
+
+```js
+const client = new FaaSClient(process.env.GREGALE_API_URL, { token: process.env.GREGALE_TOKEN });
+```
+
+`POST /v1/apps/{slug}/queues/send` and `POST /v1/apps/{slug}/delayed-tasks` are
+validated like the public API. They answer `201` with
+`X-Gregale-Rehearsal: captured`, and are recorded as run evidence instead of
+being enqueued. The target is named by workload for a member of the same run and
+by slug otherwise. A delayed task compares by its `delay_seconds`, or only as
+`absolute` when it gives `scheduled_at`.
+
+Sealed snapshots carry `queue_capture_version: 1` and `queue_messages`.
+Requests compare as a multiset per workload, kind, target and queue, by
+schedule and canonical request body, so a duplicate or missing send fails the
+comparison. Captured messages are not delivered, even to a run member; drive a
+consumer from the recipe.
+
+More than 256 requests or a body over 64 KiB make the evidence incomplete.
+Requests after sealing are refused with `409`. A customer *secret* named
+`GREGALE_API_URL` overrides the platform value and stays blocked. Org-scoped
+routes are not served. See
+[ADR-20261021090000](adr/20261021090000-rehearsal-queue-capture.md).
+
 Database and object-store access require future isolated adapters. Ordinary app tasks,
 live migration, managed application-standard native admission and GitOps
 qualification remain unsupported for contained apps. Explicit

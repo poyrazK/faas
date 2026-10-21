@@ -145,6 +145,32 @@ FROM scenario_captured_events e JOIN scenario_test_action_policies p ON p.app_id
 WHERE e.account_id=sqlc.arg(account_id)::text::uuid AND e.run_id=sqlc.arg(run_id)::text
 ORDER BY e.created_at,e.id LIMIT 257;
 
+-- name: ScenarioQueueCaptureState :one
+SELECT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE account_id=sqlc.arg(account_id)::text::uuid
+  AND run_id=sqlc.arg(run_id)::text AND sealed_at IS NOT NULL)::boolean AS sealed,
+ (SELECT count(*) FROM scenario_captured_queue_messages WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text)::bigint AS captured;
+
+-- name: ScenarioQueueCaptureTarget :one
+-- A member of the same run is named by its workload, so sibling runs compare;
+-- any other app must exist in the caller's account, as for a real send.
+SELECT coalesce((SELECT 'workload:' || p.workload_name FROM scenario_test_action_policies p JOIN apps a ON a.id=p.app_id
+  WHERE p.account_id=sqlc.arg(account_id)::text::uuid AND p.run_id=sqlc.arg(run_id)::text AND p.workload_name<>''
+  AND (p.workload_name=sqlc.arg(slug)::text OR a.slug=sqlc.arg(slug)::text) ORDER BY p.workload_name LIMIT 1),
+ (SELECT 'app:' || a.slug FROM apps a WHERE a.slug=sqlc.arg(slug)::text AND a.account_id=sqlc.arg(account_id)::text::uuid),
+ '')::text AS target;
+
+-- name: InsertScenarioCapturedQueueMessage :one
+INSERT INTO scenario_captured_queue_messages(account_id,run_id,app_id,kind,target,queue_name,schedule,message,oversized)
+VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(kind)::text,
+ sqlc.arg(target)::text,sqlc.arg(queue_name)::text,sqlc.arg(schedule)::text,sqlc.narg(message)::jsonb,sqlc.arg(oversized)::boolean)
+RETURNING id::text AS id;
+
+-- name: ScenarioCapturedQueueMessages :many
+SELECT m.id::text AS id,p.workload_name AS workload,m.kind,m.target,m.queue_name,m.schedule,m.message,m.oversized
+FROM scenario_captured_queue_messages m JOIN scenario_test_action_policies p ON p.app_id=m.app_id AND p.account_id=m.account_id AND p.run_id=m.run_id
+WHERE m.account_id=sqlc.arg(account_id)::text::uuid AND m.run_id=sqlc.arg(run_id)::text
+ORDER BY m.created_at,m.id LIMIT 257;
+
 -- name: ScenarioSuppressedWebhookEvents :many
 -- Ordinary webhook deliveries the capture fence suppressed, attributed like
 -- the snapshot summary: the delivery's app first, then the receiver's app.
