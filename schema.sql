@@ -7679,9 +7679,11 @@ BEGIN
         EXCEPTION WHEN invalid_text_representation THEN
             RAISE EXCEPTION 'tenant event identity must be UUIDs' USING ERRCODE = '23514';
         END;
-        recipients := coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
+        recipients := coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
             FROM workflow_tenant_event_recipients(NEW.subject, target_app, target_tenant,
-                NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+                NEW.data->>'source', NEW.data->>'type') AS w(recipient)
+            WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
+                WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
     ELSE
         SELECT coalesce(jsonb_agg(jsonb_build_object(
             'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
@@ -7714,10 +7716,13 @@ BEGIN
           ON p.app_id = b.app_id AND p.name = b.policy_name
         WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
           AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
-          AND event_fanout_pattern_matches(s.type, NEW.data->>'type');
+          AND event_fanout_pattern_matches(s.type, NEW.data->>'type')
+          AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x WHERE x.app_id = s.app_id);
 
-        recipients := recipients || coalesce((SELECT jsonb_agg(recipient ORDER BY recipient->>'id')
-            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type')), '[]'::jsonb);
+        recipients := recipients || coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
+            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
+            WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
+                WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
     END IF;
 
     INSERT INTO event_fanout_outbox
@@ -25033,8 +25038,10 @@ BEGIN
   OR policy.network_mode IS DISTINCT FROM 'contained' OR policy.simulation_plan IS NULL
   OR policy.sealed_at IS NOT NULL OR policy.recorder_closing OR policy.simulation_failed
   OR spec->>'run_id'<>policy.run_id OR spec->>'deployment_id'<>NEW.deployment_id::text
-  OR NEW.kind<>'manual' OR NEW.command_shell OR NEW.max_output_bytes<>65536
-  OR NOT EXISTS(SELECT 1 FROM deployments WHERE id=NEW.deployment_id AND app_id=NEW.app_id AND status='live')
+  OR NEW.command_shell OR NEW.max_output_bytes<>65536
+  OR NOT (NEW.kind='manual' AND EXISTS(SELECT 1 FROM deployments WHERE id=NEW.deployment_id AND app_id=NEW.app_id AND status='live')
+   OR NEW.kind='release' AND EXISTS(SELECT 1 FROM deployments d WHERE d.id=NEW.deployment_id AND d.app_id=NEW.app_id AND d.status='snapshotting'
+    AND scenario_rehearsal_release_matches(NEW.command,d.id,d.release_command,d.release_command_shell)))
   OR EXISTS(SELECT 1 FROM app_task_attach_sessions WHERE task_id=NEW.id) THEN
   RAISE EXCEPTION 'contained command admission is unavailable' USING ERRCODE='23514';
  END IF;
@@ -25127,10 +25134,27 @@ CREATE FUNCTION public.scenario_rehearsal_execution_active(target_app uuid, exec
  OR EXISTS(SELECT 1 FROM app_tasks t JOIN scenario_test_action_policies p ON p.app_id=t.app_id
   WHERE t.id=execution_id AND t.app_id=target_app AND t.account_id=p.account_id
   AND (deployment IS NULL OR t.deployment_id=deployment) AND t.status IN ('restoring','running')
-  AND t.kind='manual' AND NOT t.command_shell AND t.max_output_bytes=65536
+  AND t.kind IN ('manual','release') AND NOT t.command_shell AND t.max_output_bytes=65536
   AND scenario_rehearsal_command_spec(t.command)->>'run_id'=p.run_id
   AND scenario_rehearsal_command_spec(t.command)->>'deployment_id'=t.deployment_id::text
   AND p.network_mode='contained' AND p.simulation_plan IS NOT NULL AND p.sealed_at IS NULL));
+$$;
+
+
+--
+-- Name: scenario_rehearsal_release_matches(text[], uuid, text[], boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.scenario_rehearsal_release_matches(command text[], deployment uuid, release_command text[], release_shell boolean) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT coalesce(cardinality(release_command)>0
+  AND (NOT release_shell OR cardinality(release_command)=1)
+  AND scenario_rehearsal_command_spec(command)->>'deployment_id'=deployment::text
+  AND NOT (scenario_rehearsal_command_spec(command) ? 'env')
+  AND NOT (scenario_rehearsal_command_spec(command) ? 'files')
+  AND scenario_rehearsal_command_spec(command)->'command'=to_jsonb(CASE WHEN release_shell
+   THEN ARRAY['/bin/sh','-lc',release_command[1]] ELSE release_command END),false);
 $$;
 
 
@@ -51168,6 +51192,85 @@ CREATE TABLE public.saved_route_requirements (
 
 
 --
+-- Name: scenario_captured_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_captured_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    app_id uuid NOT NULL,
+    source text NOT NULL,
+    type text NOT NULL,
+    schema_version text DEFAULT ''::text NOT NULL,
+    data jsonb,
+    oversized boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    event_id text,
+    CONSTRAINT scenario_captured_events_check CHECK ((oversized = (data IS NULL))),
+    CONSTRAINT scenario_captured_events_data_check CHECK (((data IS NULL) OR (octet_length((data)::text) <= 262144))),
+    CONSTRAINT scenario_captured_events_event_id_check CHECK (((event_id IS NULL) OR ((char_length(event_id) >= 1) AND (char_length(event_id) <= 256)))),
+    CONSTRAINT scenario_captured_events_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_captured_events_schema_version_check CHECK ((char_length(schema_version) <= 256)),
+    CONSTRAINT scenario_captured_events_source_check CHECK (((char_length(source) >= 1) AND (char_length(source) <= 256))),
+    CONSTRAINT scenario_captured_events_type_check CHECK (((char_length(type) >= 1) AND (char_length(type) <= 256)))
+);
+
+
+--
+-- Name: scenario_captured_platform_calls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_captured_platform_calls (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    app_id uuid NOT NULL,
+    kind text NOT NULL,
+    target text NOT NULL,
+    name text NOT NULL,
+    idempotency_key text,
+    message jsonb,
+    oversized boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT scenario_captured_platform_calls_check CHECK ((oversized = (message IS NULL))),
+    CONSTRAINT scenario_captured_platform_calls_idempotency_key_check CHECK (((idempotency_key IS NULL) OR ((char_length(idempotency_key) >= 1) AND (char_length(idempotency_key) <= 255)))),
+    CONSTRAINT scenario_captured_platform_calls_kind_check CHECK ((kind = ANY (ARRAY['workflow_run'::text, 'workflow_event'::text, 'realtime_publish'::text, 'realtime_signal'::text]))),
+    CONSTRAINT scenario_captured_platform_calls_message_check CHECK (((message IS NULL) OR (octet_length((message)::text) <= 262144))),
+    CONSTRAINT scenario_captured_platform_calls_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 256))),
+    CONSTRAINT scenario_captured_platform_calls_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_captured_platform_calls_target_check CHECK (((target ~ '^(workload|app|run|endpoint):'::text) AND (char_length(target) <= 512)))
+);
+
+
+--
+-- Name: scenario_captured_queue_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scenario_captured_queue_messages (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    app_id uuid NOT NULL,
+    kind text NOT NULL,
+    target text NOT NULL,
+    queue_name text DEFAULT ''::text NOT NULL,
+    schedule text DEFAULT ''::text NOT NULL,
+    message jsonb,
+    oversized boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT scenario_captured_queue_messages_check CHECK ((oversized = (message IS NULL))),
+    CONSTRAINT scenario_captured_queue_messages_check1 CHECK ((((kind = 'delayed_task'::text) = (schedule <> ''::text)) OR oversized)),
+    CONSTRAINT scenario_captured_queue_messages_kind_check CHECK ((kind = ANY (ARRAY['queue'::text, 'delayed_task'::text]))),
+    CONSTRAINT scenario_captured_queue_messages_message_check CHECK (((message IS NULL) OR (octet_length((message)::text) <= 262144))),
+    CONSTRAINT scenario_captured_queue_messages_queue_name_check CHECK ((char_length(queue_name) <= 256)),
+    CONSTRAINT scenario_captured_queue_messages_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_captured_queue_messages_schedule_check CHECK (((schedule = ''::text) OR (schedule = 'absolute'::text) OR (schedule ~ '^delay:[0-9]{1,8}$'::text))),
+    CONSTRAINT scenario_captured_queue_messages_target_check CHECK ((target ~ '^(workload|app):[a-z0-9][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
 -- Name: scenario_cold_preparations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -63960,6 +64063,30 @@ ALTER TABLE ONLY public.saved_route_requirements
 
 
 --
+-- Name: scenario_captured_events scenario_captured_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_events
+    ADD CONSTRAINT scenario_captured_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scenario_captured_platform_calls scenario_captured_platform_calls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_platform_calls
+    ADD CONSTRAINT scenario_captured_platform_calls_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: scenario_captured_queue_messages scenario_captured_queue_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_queue_messages
+    ADD CONSTRAINT scenario_captured_queue_messages_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: scenario_cold_preparations scenario_cold_preparations_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -73492,6 +73619,27 @@ CREATE INDEX runtime_upgrade_operations_due ON public.runtime_upgrade_operations
 --
 
 CREATE INDEX runtime_upgrade_verifications_due ON public.runtime_upgrade_verifications USING btree (next_attempt_at, created_at, operation_id) WHERE (phase = 'pending'::text);
+
+
+--
+-- Name: scenario_captured_events_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_captured_events_run_idx ON public.scenario_captured_events USING btree (account_id, run_id, created_at, id);
+
+
+--
+-- Name: scenario_captured_platform_calls_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_captured_platform_calls_run_idx ON public.scenario_captured_platform_calls USING btree (account_id, run_id, created_at, id);
+
+
+--
+-- Name: scenario_captured_queue_messages_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX scenario_captured_queue_messages_run_idx ON public.scenario_captured_queue_messages USING btree (account_id, run_id, created_at, id);
 
 
 --
@@ -94618,6 +94766,54 @@ ALTER TABLE ONLY public.saved_route_requirements
 
 ALTER TABLE ONLY public.saved_route_requirements
     ADD CONSTRAINT saved_route_requirements_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_events scenario_captured_events_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_events
+    ADD CONSTRAINT scenario_captured_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_events scenario_captured_events_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_events
+    ADD CONSTRAINT scenario_captured_events_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.scenario_test_action_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_platform_calls scenario_captured_platform_calls_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_platform_calls
+    ADD CONSTRAINT scenario_captured_platform_calls_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_platform_calls scenario_captured_platform_calls_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_platform_calls
+    ADD CONSTRAINT scenario_captured_platform_calls_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.scenario_test_action_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_queue_messages scenario_captured_queue_messages_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_queue_messages
+    ADD CONSTRAINT scenario_captured_queue_messages_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scenario_captured_queue_messages scenario_captured_queue_messages_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scenario_captured_queue_messages
+    ADD CONSTRAINT scenario_captured_queue_messages_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.scenario_test_action_policies(app_id) ON DELETE CASCADE;
 
 
 --
