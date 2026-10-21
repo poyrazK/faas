@@ -50,8 +50,9 @@ func postgresNativeStarterPhases(t *testing.T, starter postgresstarter.Starter, 
 		}
 		req.Host = slug + ".apps.test.example"
 		req.Header.Set("Content-Type", "application/json")
-		if path == "internal/after-restore" {
+		if path == "internal/after-restore" || path == "internal/before-checkpoint" {
 			req.Header.Set("X-Faas-After-Restore", "1")
+			req.Header.Set("X-Faas-Before-Checkpoint", "1")
 			req.Header.Set("X-Forwarded-For", "127.0.0.1")
 		}
 		response, err := h.HTTPClient().Do(req)
@@ -164,6 +165,10 @@ func postgresNativeStarterPhases(t *testing.T, starter postgresstarter.Starter, 
 			t.Fatal(err)
 		}
 		*snapshotID = waitAfterRestoreSnapshot(t, store, *deploymentID, "")
+		// Retire any sessions left by the previous Go workload before counting
+		// this starter's sessions independently. The new starter is parked.
+		proxy.Disconnect()
+		postgresNativeWait(t, "previous workload SQL drain", func(context.Context) bool { return proxy.ConnectionCount() == 0 })
 		// Health reads the migrated relation but never creates it. A new note is
 		// issued once; requests containing mutations are never replayed by the test.
 		body, wakeID, status := doGetWithHostCapturingWakeID(t, h.HTTPClient(), gatewayAppURL(h, slug)+"healthz", slug+".apps.test.example", 45*time.Second)
@@ -234,7 +239,51 @@ func postgresNativeStarterPhases(t *testing.T, starter postgresstarter.Starter, 
 		proxy.Disconnect()
 		read(t, "restore")
 		request(t, http.MethodPost, "internal/after-restore", nil, http.StatusForbidden)
+		request(t, http.MethodPost, "internal/before-checkpoint", nil, http.StatusForbidden)
 	})
+	if starter.Template == "rest-api-postgres" {
+		starterPhase("frozen_pool_recovery", func(t *testing.T) {
+			app, err := store.AppByID(t.Context(), appID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"FAAS_FROZEN_TIER", "FAAS_FROZEN_TIER_APPS"} {
+				if err := h.SetScheddEnv(name, "1"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			defer func() {
+				setAppIdleTimeout(t, h, key, slug, app.IdleTimeoutS)
+				for _, name := range []string{"FAAS_FROZEN_TIER", "FAAS_FROZEN_TIER_APPS"} {
+					if err := h.SetScheddEnv(name, "0"); err != nil {
+						t.Error(err)
+					}
+				}
+				if err := h.RestartSchedd(); err != nil {
+					t.Error(err)
+				}
+			}()
+			if err := h.RestartSchedd(); err != nil {
+				t.Fatal(err)
+			}
+			setAppIdleTimeout(t, h, key, slug, api.IdleTimeoutFloorSeconds)
+			read(t, "")
+			instances, err := e2etest.WaitForInstanceState(t.Context(), t, pool, appID, state.StateFrozen, 45*time.Second)
+			if err != nil {
+				t.Fatal("starter did not freeze with retained SQL sessions")
+			}
+			frozen := pickState(instances, state.StateFrozen)
+			if frozen.ID == "" || proxy.ConnectionCount() == 0 {
+				t.Fatal("frozen starter did not retain a SQL session for the thaw fault")
+			}
+			proxy.Disconnect()
+			read(t, "restore")
+			instances, err = e2etest.WaitForInstanceState(t.Context(), t, pool, appID, state.StateRunning, 10*time.Second)
+			if err != nil || pickState(instances, state.StateRunning).ID != frozen.ID {
+				t.Fatal("starter replaced the frozen guest instead of reconnecting on thaw")
+			}
+		})
+	}
 	starterPhase("failed_hook_cold_boot", func(t *testing.T) {
 		park(t)
 		failedSnapshot := *snapshotID

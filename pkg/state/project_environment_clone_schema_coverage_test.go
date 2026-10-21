@@ -32,6 +32,9 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"data_repair_rehearsals":            state.CloneSchemaOperational,
 		"migration_verifications":           state.CloneSchemaOperational,
 		"project_migrations":                state.CloneSchemaOperational,
+		// Function capture and destination authority stay with their original instance.
+		"function_migration_sources":      state.CloneSchemaOperational,
+		"function_migration_destinations": state.CloneSchemaOperational,
 
 		// MCP policies and notification credentials need an isolated strategy.
 		// Evidence, overrides, leases and incident delivery authority stay at source.

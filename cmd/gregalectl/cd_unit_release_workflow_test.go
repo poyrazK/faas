@@ -123,6 +123,19 @@ func TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease(t *testing.T)
 			t.Errorf("ordinary unit activation must leave %q to the full lane", forbidden)
 		}
 	}
+	// ADR-20261018084150 permits only verified, lane-eligible migrations
+	// before activation.
+	verifier := readRepoFile(t, "scripts", "ci", "verify_unit_release.sh")
+	orderedIn(t, "signed migration eligibility", verifier,
+		"cosign verify-blob",
+		`cmp "$manifest" "$dir/units-manifest.json"`,
+		`if jq -e '(.data.migrations // []) | length > 0' "$manifest"`,
+		`.data.eligible == true`,
+		`all(.data.migrations[]; .eligible == true)`,
+		`(.tools.migrate.sha256 | type == "string")`,
+		"exit 1",
+		`(cd "$dir/unpacked" && sha256sum -c --quiet -)`,
+	)
 	orderedIn(t, "planned migration staging", helper,
 		`if jq -e '.replace["bin/migrate"]' "$plan" >/dev/null; then`,
 		`install -m 0755 "$units/tools/migrate" "$local_stage/bin/migrate"`,

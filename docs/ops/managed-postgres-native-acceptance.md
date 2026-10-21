@@ -19,7 +19,7 @@ managed database and binding services, catalog, age/HMAC credential delivery,
 release task, scheduler, vmmd, imaged, builderd and gateway. It needs no Neon key or
 paid provider resources.
 
-The strict verdict requires all nineteen phases and the parent test to pass:
+The strict verdict requires all twenty phases (suite version 4) and the parent test to pass:
 
 1. Upload a scratch Dockerfile containing the SQL probe compiled from the current
    checkout; run its normal release migration; restore the initial serving guest
@@ -54,43 +54,47 @@ The strict verdict requires all nineteen phases and the parent test to pass:
    customer database. Disconnect external SQL sessions and require the
    gateway's `restore` receipt with the same note. A forwarded external request
    to the lifecycle path must be forbidden.
-10. Capture again and delay the next SQL connection by 2.5 seconds: beyond the
+10. For the Node starter, enable the isolated frozen tier, retain a real SQL
+    session, freeze and disconnect it, then require the same physical guest to
+    thaw and read the unchanged dataset with fresh SQL sessions. Restore the
+    original scheduler settings.
+11. Capture again and delay the next SQL connection by 2.5 seconds: beyond the
     starter's 1.5-second recovery budget. The one-shot fault is consumed by
     restore, so SQL is healthy for the fresh cold boot.
     Require vmmd's failed-hook acknowledgment, a `cold_boot` wake receipt, stale
     failed snapshot, one resident replacement guest, and unchanged note data.
-11. Rotate the running starter through the public API, await the scheduler and
+13. Rotate the running starter through the public API, await the scheduler and
     public completion state, reject old SQL authentication, preserve the original
     note and perform a new write using the replacement credential.
-12. Capture the replacement process even when fallback/rotation retired every
+13. Capture the replacement process even when fallback/rotation retired every
     earlier snapshot. Stop schedd before rotating the parked starter through the public API, then
     restart it. Require
     recovered retirement/completion, preserved data and another successful write. An independent SQL read
     confirms the complete notes dataset was neither lost nor replayed.
-13. Deploy the unchanged `rest-api-postgres-python` source, requirements and
+14. Deploy the unchanged `rest-api-postgres-python` source, requirements and
     manifest, with the same public CA under `runtime/fixture-ca.pem` and a
     nonsecret build token. Set `SSL_CERT_FILE=/app/runtime/fixture-ca.pem` for
     release and serving processes. Its pinned libpq driver uses explicit system
     trust with `verify-full`; managed connection URIs are unchanged. Require its
     ordinary `python migrate.py` release, initial snapshot restore, preservation
     of all Node notes and one new Python HTTP write.
-14. Run an ordinary Python application task and require the runtime credential
+15. Run an ordinary Python application task and require the runtime credential
     while rejecting the migration credential. Serving startup also rejects it.
-15. Retain the shipped `psycopg_pool` pool, capture a fresh snapshot, require
+16. Retain the shipped `psycopg_pool` pool, capture a fresh snapshot, require
     that its `before_checkpoint` drain left no client session, disconnect
     external SQL sessions and require a real restore with every existing note.
     Require external lifecycle requests to be forbidden.
-16. Delay the next SQL connection beyond the recovery budget and require a
+17. Delay the next SQL connection beyond the recovery budget and require a
     failed-hook acknowledgment, cold-boot receipt, stale failed snapshot and one
     resident replacement, preserving the complete notes dataset.
-17. Rotate the running Python starter through the public API. Require scheduler
+18. Rotate the running Python starter through the public API. Require scheduler
     retirement and public completion, reject retired SQL authentication and
     preserve all data while adding one write under the new credential.
-18. Park the replacement Python process, stop schedd before rotation and restart
+19. Park the replacement Python process, stop schedd before rotation and restart
     it afterward. Require durable recovery, retirement/completion, preserved
     data and one new write. Independently read every note and its total count
     through SQL to catch loss, substitution or replay across both starters.
-19. Stop owned daemons, disable fixture provisioning, delete every owned binding,
+20. Stop owned daemons, disable fixture provisioning, delete every owned binding,
    independently prove encrypted-secret removal and SQL credential retirement,
    then delete the managed database. Cleanup failures fail the parent test;
    role/database teardown and host leak checks are also required.
@@ -125,14 +129,15 @@ check. Both starters share the notes dataset, and an independent SQL check after
 each journey verifies all expected IDs and bodies without replaying mutations.
 
 The local TLS/SCRAM race tests exercise retained sessions beyond that former
-deadline, socket loss, concurrent writes, pre-commit cancellation, hook failure,
+deadline, socket loss, concurrent writes, pre-commit cancellation, checkpoint
+draining, hook deadlines, credential refresh, TLS hostname/password rejection,
 and retirement of held sessions and fresh logins. Mutations use explicit
 transactions and are never automatically retried. A failed COMMIT can still
 have an uncertain outcome; these checks do not establish exactly-once delivery
 for application retries.
 
 The deployed runner must actually pass to establish guest pool/hook acceptance.
-Version-1/version-2 reports and partial Node-only reports fail the current verdict.
+Suite versions 1–3 and partial Node-only reports fail the current verdict. The added Node frozen-thaw phase requires fresh native execution.
 Compilation and local SQL tests alone cannot do so. This fixture does not qualify
 provider pooling, real-provider DNS/Internet access, branching or point-in-time
 recovery: its pooled/direct endpoints share one SQL server. Fresh backend-specific
@@ -205,7 +210,7 @@ readiness and must be regenerated. These test binary
 hashes are not production daemon hashes; approve their source revision and
 qualification build together with the intended release.
 
-The verdict requires all nineteen phases once, in contract order, one cleanup
+The verdict requires all twenty phases (suite version 4) once, in contract order, one cleanup
 identity after all phases and before the parent pass, and a final package pass.
 It reassembles Go test2json's fragmented identity log lines with a 16 KiB bound;
 truncated, interrupted, duplicate or oversized identities are rejected. Reports

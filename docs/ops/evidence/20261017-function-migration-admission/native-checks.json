@@ -1,0 +1,22 @@
+{
+  "uid": 1000,
+  "kvm_character_device": false,
+  "native_host_marker": false,
+  "kernel_configured": false,
+  "loop_devices_present": [],
+  "strict_gate": {
+    "command": "make test-function-background-native",
+    "exit": 2,
+    "output": "requires root on the isolated native KVM acceptance host\nmake: *** [Makefile:470: test-function-background-native] Error 1\n"
+  },
+  "standard_metal": {
+    "command": "RUN_REGEX='^TestMetalNativeSnapshotCaptureMeasuresWarmAndParkAndPreservesRetry$' make test-metal PKGS=./pkg/fcvm",
+    "exit": 2,
+    "output": "--- FAIL: TestMetalNativeSnapshotCaptureMeasuresWarmAndParkAndPreservesRetry (0.00s)\n    runtime_snapshot_capture_metal_test.go:39: native standards acceptance requires readable FAAS_TEST_KERNEL: open : no such file or directory\nFAIL\nFAIL\tgithub.com/onebox-faas/faas/pkg/fcvm\t0.089s\nFAIL\nmake: *** [Makefile:462: test-metal] Error 1\n"
+  },
+  "leakcheck": {
+    "command": "make leakcheck",
+    "exit": 2,
+    "output": "LEAK: cannot inspect native loop loop0: [Errno 2] No such file or directory: '/dev/loop0'\nLEAK: cannot inspect native loop loop1: [Errno 2] No such file or directory: '/dev/loop1'\nLEAK: cannot inspect native loop loop2: [Errno 2] No such file or directory: '/dev/loop2'\nLEAK: cannot inspect native loop loop3: [Errno 2] No such file or directory: '/dev/loop3'\nLEAK: cannot inspect native loop loop4: [Errno 2] No such file or directory: '/dev/loop4'\nLEAK: cannot inspect native loop loop5: [Errno 2] No such file or directory: '/dev/loop5'\nLEAK: cannot inspect native loop loop6: [Errno 2] No such file or directory: '/dev/loop6'\nLEAK: cannot inspect native loop loop7: [Errno 2] No such file or directory: '/dev/loop7'\nleakcheck FAILED\nmake: *** [Makefile:501: leakcheck] Error 1\n"
+  }
+}

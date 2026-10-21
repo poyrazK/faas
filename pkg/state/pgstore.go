@@ -3572,6 +3572,9 @@ func (s *PgStore) MarkInstanceMigrating(ctx context.Context, instanceID, current
 	if leaseToken == "" {
 		return fmt.Errorf("state: mark instance migrating: empty leaseToken")
 	}
+	if handled, err := s.markFunctionMigrationSource(ctx, instanceID, currentNodeID, leaseToken); handled {
+		return err
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update instances
 		    set state = 'migrating',
@@ -3712,7 +3715,9 @@ func (s *PgStore) CancelInstanceMigration(ctx context.Context, instanceID, origi
 // 'migrating' without a peer commit, so the unresolved row is the input
 // set. A row in 'migrating' without a lease or start timestamp is ignored
 // by the aged production query and remains visible through the legacy
-// unfiltered form for repair tooling.
+// unfiltered form for repair tooling. Instances with a function migration
+// source record are excluded: their own reconciler owns recovery, and
+// sources whose recovery keeps failing must not fill every page.
 //
 // Sorted by instance id ASC for determinism so two peers
 // observing the same bad-owner event read the same input
@@ -3740,7 +3745,8 @@ func (s *PgStore) ListExpiredMigrations(ctx context.Context, maxPerTick int, old
 	          from instances i
 	         where i.state = 'migrating'
 	           and i.lease_token is not null
-		           and ($2::timestamptz IS NULL OR i.migration_started_at <= $2)`
+		           and ($2::timestamptz IS NULL OR i.migration_started_at <= $2)
+	           and not exists (select 1 from function_migration_sources f where f.instance_id = i.id)`
 	orderBy := "i.id asc"
 	if cutoff != nil {
 		orderBy = "i.migration_started_at asc nulls first, i.id asc"
@@ -25982,7 +25988,7 @@ func mapErr(err error) error {
 			return ErrLayerArtifactRetired
 		case "account_shared_app_ownership_pending":
 			return ErrOrgAppOwnershipPending
-		case "migration_admission_current", "migration_source_current":
+		case "migration_admission_current", "migration_source_current", "function_migration_node_pending":
 			return ErrConflict
 		case "migration_admission_capacity":
 			return ErrNodeCapacity
@@ -26086,6 +26092,9 @@ func mapErr(err error) error {
 			}
 			if pgErr.ConstraintName == "managed_postgres_cutover_admission_fenced" {
 				return ErrManagedPostgresAdmissionFenced
+			}
+			if pgErr.ConstraintName == "function_migration_destination_capacity" {
+				return ErrNodeCapacity
 			}
 			if pgErr.ConstraintName == "service_capacity_protection" {
 				return &ServiceCapacityError{}

@@ -660,6 +660,14 @@ jobs:
           python3 scripts/ci/managed-service-native-verdict_test.py
           python3 scripts/ci/managed-service-native-runner_test.py
           sh -n scripts/test-managed-service-native.sh
+          # Build without executing test bodies. The commands below retain
+          # the step's 2 GiB/GOGC 10 runtime bounds and their test selections.
+          build_dir="$(mktemp -d "$RUNNER_TEMP/light-binding-builds.XXXXXX")"
+          trap 'rm -rf "$build_dir"' EXIT
+          GOMEMLIMIT=5GiB GOGC=50 go test -race -p 1 -c -o "$build_dir/" \
+            ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter \
+            ./pkg/e2etest/queuestarter ./pkg/e2etest/servicestarter \
+            ./pkg/e2etest/testdata/helloserver ./pkg/e2etest
           go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter ./pkg/e2etest/servicestarter ./pkg/e2etest/testdata/helloserver
           go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest|ServiceGuest)'
       - uses: actions/setup-python@v7
@@ -721,8 +729,10 @@ jobs:
           status=0
           if [[ -n "$PKGS" ]]; then
             echo "::group::compile race test binaries (bounded memory)"
+            # Serial compilation uses a larger GC target to avoid spending
+            # the test allowance on compiler churn. Actual tests keep 2 GiB.
             # shellcheck disable=SC2086 # space-separated package list
-            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS
+            GOMEMLIMIT=5GiB GOGC=50 GOMAXPROCS=2 go test -race -p 1 -count=1 -run '^$' $PKGS
             echo "::endgroup::"
             echo "testing with -race: $PKGS"
             # The complete GitOps PostgreSQL suite reached test 157 of 195
