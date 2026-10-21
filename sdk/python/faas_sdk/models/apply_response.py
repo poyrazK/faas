@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..models.plan_detection_warning import PlanDetectionWarning
     from ..models.plan_managed import PlanManaged
     from ..models.plan_workload import PlanWorkload
+    from ..models.project_safe_release import ProjectSafeRelease
 
 
 T = TypeVar("T", bound="ApplyResponse")
@@ -30,6 +31,10 @@ class ApplyResponse:
     scan_source: str
     can_apply: bool
     plan_token: str
+    safe_release: ProjectSafeRelease | Unset = UNSET
+    """Server-owned safe project release checkpoint. Activation occurs only after all zero-traffic candidates
+    complete readiness."""
+    submission_attempt_id: str | Unset = UNSET
     repo_full_name: str | Unset = UNSET
     tier: str | Unset = UNSET
     workloads: list[PlanWorkload] | Unset = UNSET
@@ -78,6 +83,12 @@ class ApplyResponse:
         can_apply = self.can_apply
 
         plan_token = self.plan_token
+
+        safe_release: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.safe_release, Unset):
+            safe_release = self.safe_release.to_dict()
+
+        submission_attempt_id = self.submission_attempt_id
 
         repo_full_name = self.repo_full_name
 
@@ -203,6 +214,10 @@ class ApplyResponse:
                 "plan_token": plan_token,
             }
         )
+        if safe_release is not UNSET:
+            field_dict["safe_release"] = safe_release
+        if submission_attempt_id is not UNSET:
+            field_dict["submission_attempt_id"] = submission_attempt_id
         if repo_full_name is not UNSET:
             field_dict["repo_full_name"] = repo_full_name
         if tier is not UNSET:
@@ -268,6 +283,7 @@ class ApplyResponse:
         from ..models.plan_detection_warning import PlanDetectionWarning
         from ..models.plan_managed import PlanManaged
         from ..models.plan_workload import PlanWorkload
+        from ..models.project_safe_release import ProjectSafeRelease
 
         d = dict(src_dict)
         project_slug = d.pop("project_slug")
@@ -277,6 +293,15 @@ class ApplyResponse:
         can_apply = d.pop("can_apply")
 
         plan_token = d.pop("plan_token")
+
+        _safe_release = d.pop("safe_release", UNSET)
+        safe_release: ProjectSafeRelease | Unset
+        if isinstance(_safe_release, Unset):
+            safe_release = UNSET
+        else:
+            safe_release = ProjectSafeRelease.from_dict(_safe_release)
+
+        submission_attempt_id = d.pop("submission_attempt_id", UNSET)
 
         repo_full_name = d.pop("repo_full_name", UNSET)
 
@@ -405,6 +430,8 @@ class ApplyResponse:
             scan_source=scan_source,
             can_apply=can_apply,
             plan_token=plan_token,
+            safe_release=safe_release,
+            submission_attempt_id=submission_attempt_id,
             repo_full_name=repo_full_name,
             tier=tier,
             workloads=workloads,

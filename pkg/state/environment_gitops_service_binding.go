@@ -14,6 +14,8 @@ import (
 // from the guest's Host header. Scheduled Job callers reach this resolver only
 // after the live-instance identity lookup proves their claimed scheduled task.
 type EnvironmentGitOpsServiceBindingRoute struct {
+	AppProtocol        string
+	WebSocketEnabled   bool
 	CallerAppID        string
 	CallerDeploymentID string
 	TargetAppID        string

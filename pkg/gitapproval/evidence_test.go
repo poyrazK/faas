@@ -61,3 +61,27 @@ func TestReviewedMergeEvidenceRequiresExactFreshHumanReviewReceipt(t *testing.T)
 		t.Fatal("valid receipt rejected")
 	}
 }
+
+func TestGitLabEvidenceCannotBorrowGitHubProfilesOrInstallation(t *testing.T) {
+	now := time.Now().UTC()
+	e := mergeFixture(now)
+	e.Policy.InstallationID = 0
+	e.Profile, e.Policy.Profile = GitLabReviewedMergeProfile, GitLabProtectedBranchProfile
+	if !e.ValidForProvider("gitlab", 0, 123, "octo/api", "main", strings.Repeat("a", 40), now, time.Minute) {
+		t.Fatal("valid GitLab receipt rejected")
+	}
+	for _, mutate := range []func(*MergeEvidence){
+		func(e *MergeEvidence) { e.Profile = ReviewedMergeProfile },
+		func(e *MergeEvidence) { e.Policy.Profile = ProtectedBranchProfile },
+		func(e *MergeEvidence) { e.Policy.InstallationID = 42 },
+	} {
+		bad := e
+		mutate(&bad)
+		if bad.ValidForProvider("gitlab", 0, 123, "octo/api", "main", strings.Repeat("a", 40), now, time.Minute) {
+			t.Fatal("foreign provider evidence qualified")
+		}
+	}
+	if e.ValidForProvider("github", 42, 123, "octo/api", "main", strings.Repeat("a", 40), now, time.Minute) || e.ValidForProvider("unknown", 0, 123, "octo/api", "main", strings.Repeat("a", 40), now, time.Minute) {
+		t.Fatal("GitLab proof authorized another provider")
+	}
+}

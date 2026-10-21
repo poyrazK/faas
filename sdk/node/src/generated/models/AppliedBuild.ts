@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DeploymentConfigurationStatus } from './DeploymentConfigurationStatus.js';
 /**
  * Per-workload build result from the apply-time build-enqueue loop.
  * On success: slug + app_id + deployment_id + build_id. On failure:
@@ -21,6 +22,7 @@ export type AppliedBuild = {
    * Terminal build status added by wait-aware CLI responses.
    */
   build_status?: string;
+  configuration?: DeploymentConfigurationStatus;
   /**
    * Staging or enqueue error message; partial-failure rows carry this in lieu of IDs.
    */

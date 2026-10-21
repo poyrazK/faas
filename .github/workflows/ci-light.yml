@@ -37,12 +37,18 @@ on:
   pull_request:
   push:
     branches: [main]
+  # A merge queue tests each entry on top of main and the entries ahead of
+  # it, under the same required check names. Prepared for the ruleset's
+  # merge_queue rule (docs/adr/20261020214632-automatic-unit-deploy-safety-
+  # rails.md, docs/runbooks/MainMergeQueue.md).
+  merge_group:
   workflow_dispatch:
 
 concurrency:
   group: ci-light-${{ github.ref }}
-  # Supersede stale pull-request pushes. Main runs queue instead, so every
-  # merge gets its own light verdict.
+  # Supersede stale pull-request pushes. Main runs queue instead. A merge
+  # group is never cancelled: a cancelled check takes the entry out of the
+  # queue (each group has its own gh-readonly-queue ref anyway).
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -158,17 +164,12 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
-          # A pull_request checkout is the merge commit: its first parent is
-          # the base branch tip, so HEAD^1..HEAD is exactly the PR's change.
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            base="$(git rev-parse HEAD^1)"
-          elif [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            base="$BEFORE"
-          else
-            base="$(git rev-parse HEAD~1)"
-          fi
+          # The commit this change sits on: a PR's merge-commit parent, a
+          # merge group's parent, or the push's previous tip.
+          base="$(scripts/ci/light_diff_base.sh)"
           git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed-paths.txt"
           python3 scripts/ci/affected_packages.py summary < "$RUNNER_TEMP/changed-paths.txt"
           echo "LINT_SELECTED_AT=$(date +%s)" >> "$GITHUB_ENV"
@@ -354,18 +355,10 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
-          # A pull_request checkout is the merge commit: its first parent is
-          # the base branch tip, so HEAD^1..HEAD is exactly the PR's change.
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            base="$(git rev-parse HEAD^1)"
-          elif [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            base="$BEFORE"
-          else
-            base="$(git rev-parse HEAD~1)"
-          fi
-          echo "LIGHT_DIFF_BASE=$base" >> "$GITHUB_ENV"
+          echo "LIGHT_DIFF_BASE=$(scripts/ci/light_diff_base.sh)" >> "$GITHUB_ENV"
 
       # ---- policy gates (static, seconds each) ----
       - name: light-tier package selector tests
@@ -374,22 +367,27 @@ jobs:
           python3 scripts/ci/select_package_tests_test.py
           python3 scripts/ci/select_importers_test.py
           python3 scripts/ci/cancel_conflicted_pr_runs_test.py
+          bash scripts/ci/light_diff_base_test.sh
       - name: deploy Action scripts (vendored CLI, push-head guard, environment preflight)
         run: |
           make deploy-action-cli-check
           make verify-action-ref-contents-check
           make deploy-action-head-check
           make environment-preflight-action-check
-      - name: release-safety tool tests (migration lint, SLO gate)
+      - name: release-safety tool tests (migration lint, SLO gate, deploy preflight, post-deploy watch)
         run: |
           python3 scripts/ci/check_migration_expand_contract_test.py
           python3 scripts/ci/slo_gate_test.py
+          python3 scripts/ci/deploy_preflight_test.py
+          python3 scripts/ci/unit_watch_record_test.py
+          python3 scripts/ci/unit_watch_test.py
       - name: per-unit release selection and planning tests
         run: |
           python3 scripts/ci/host_roles_test.py
           python3 scripts/ci/affected_units_test.py
           python3 scripts/ci/check_daemon_deps_test.py
           python3 scripts/ci/blast_radius_test.py
+          python3 scripts/ci/binary_code_test.py
           python3 scripts/ci/plan_unit_deploy_test.py
           python3 scripts/ci/plan_host_config_test.py
           python3 scripts/ci/plan_edge_rollout_test.py
@@ -597,16 +595,11 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
-          # A pull_request checkout is the merge commit: its first parent is
-          # the base branch tip, so HEAD^1..HEAD is exactly the PR's change.
-          base="$(git rev-parse HEAD^1)"
-          if [[ "$EVENT_NAME" != "pull_request" && -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]]; then
-            if git fetch -q --depth=1 origin "$BEFORE" && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-              base="$BEFORE"
-            fi
-          fi
+          # Fetches a base this depth-2 checkout lacks (a push's BEFORE).
+          base="$(scripts/ci/light_diff_base.sh)"
           git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed-paths.txt"
           echo "LIGHT_DIFF_BASE=$base" >> "$GITHUB_ENV"
       # pkg/managedpostgres durable credential qualification delivers
@@ -689,6 +682,14 @@ jobs:
             exit 0
           fi
           bash scripts/ci/test_python_storage_starter.sh
+      - name: GitOps report and provider fixture contracts (no KVM)
+        if: matrix.shard == 1
+        run: |
+          if ! grep -qE '^(cmd/e2e/environment_gitops|pkg/e2etest/(gitarchive/|gitlabfixture/|builderbase|harness|testdata/gitopsjob/)|scripts/(test-environment-gitops-native|gitops_native_report|ci/(gitops.native|run-gitops-native))|\.github/workflows/(ci(-light)?|gitops-native)\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+            exit 0
+          fi
+          make test-environment-gitops-report
+          go test -race -p 1 ./pkg/e2etest/gitarchive ./pkg/e2etest/gitlabfixture -count=1 -v -timeout=2m
       # The managed-Postgres fixture API check and the GitOps native e2e
       # compile build apidserver and cmd/e2e under extra build tags, which
       # nothing caches: 18 minutes on their own. The mega tier runs both (pg
@@ -723,12 +724,18 @@ jobs:
             GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS
             echo "::endgroup::"
             echo "testing with -race: $PKGS"
+            # The complete GitOps PostgreSQL suite reached test 157 of 195
+            # before a 10m package deadline. Whichever shard the diff assigns
+            # it to keeps every test and the 40m job bound (~13m of race
+            # builds, then the run) with a bounded 18m package deadline.
+            package_timeout=10m
+            if [[ " $PKGS " == *" ./pkg/environmentsync/pgintegration "* ]]; then package_timeout=18m; fi
             # shellcheck disable=SC2086 # space-separated package list
-            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout=10m $PKGS || status=1
+            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" $PKGS || status=1
           fi
           for pkg in $LARGE; do
-            run="$(python3 scripts/ci/select_package_tests.py --package "${pkg#./}" --cap "$SELECTIVE_CAP" --base "$LIGHT_DIFF_BASE" < "$RUNNER_TEMP/changed-paths.txt")"
-            if [[ -z "$run" ]]; then
+            runs="$(python3 scripts/ci/select_package_tests.py --package "${pkg#./}" --cap "$SELECTIVE_CAP" --batch-size 50 --base "$LIGHT_DIFF_BASE" < "$RUNNER_TEMP/changed-paths.txt")"
+            if [[ -z "$runs" ]]; then
               echo "$pkg: no tests relate to this change; the mega tier runs its full suite"
               continue
             fi
@@ -736,8 +743,14 @@ jobs:
               # pkg/state verifies the whole PostgreSQL catalogue; it keeps the
               # shard's second service to itself.
               [[ "$pkg" == ./pkg/state ]] && export DATABASE_URL="$SPLIT_DATABASE_URL"
-              echo "testing related tests of $pkg (no -race)"
-              go test -count=1 -timeout=8m -run "$run" "$pkg"
+              # Keep every selected test and the per-invocation deadline.
+              # A broad release can select too much PG work for one 8m run.
+              batch_status=0
+              while IFS= read -r run; do
+                echo "testing related test batch of $pkg (no -race)"
+                go test -count=1 -timeout=8m -run "$run" "$pkg" || batch_status=1
+              done <<< "$runs"
+              exit "$batch_status"
             ) || status=1
           done
           exit "$status"

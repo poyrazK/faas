@@ -73,6 +73,7 @@ Commands:
   github        GitHub delivery + Check Run recovery (status|retry-delivery|retry-check)
   status        Publish incidents and maintenance (status incident|maintenance ...)
   release-acceptance  Mint and revoke short-lived production acceptance credentials
+  promotion-rollout  Inspect readiness and manage signed promotion rollout approvals
   version      Print the CLI version
   completion   Print a shell completion script (bash|zsh|fish|powershell)
   man          Print the gregalectl(1) man page (or gregalectl-<command>(1) with one arg)
@@ -110,6 +111,8 @@ func run(args []string) int {
 		return code
 	}
 	switch args[0] {
+	case "promotion-rollout":
+		return cmdPromotionRollout(args[1:])
 	case "version", "--version", "-v":
 		if len(args) > 1 && (args[1] == "--help" || args[1] == "-h") {
 			PrintUsage(os.Stderr, "usage: gregalectl version", "version")

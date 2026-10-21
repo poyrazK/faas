@@ -591,3 +591,46 @@ is either running or not.
 - `pkg/rekey/rekey.go` — the crash-safe walk primitive wrapped
   by `cmd/apid/rekey_runner.go::Runner` (PR-C).
 - `cmd/gregale/commands_host_age.go` — the operator CLI.
+
+## Release snapshot rotation and retirement (ADR-20261019120021)
+
+The APID `FAAS_REKEY_ENABLED=true` worker also covers staged release secret
+bundles, immutable deployment snapshots and saved release captures. It retains
+secret version IDs, HMACs and delivery versions while replacing encryption
+recipients and ciphertext. Restart retries outstanding documents from the
+beginning, including failed work and copies inserted behind the previous cursor.
+A clean progress count alone cannot authorize key removal: dependency checks
+cover retained and expired copies, and unlabelled envelopes block retirement.
+
+Distribute the new current identity and the old overlap identity to readers
+before switching APID's recipient. Fleet readers now load `fleet.age.previous`
+(or `faas_fleet_age_identity_previous` in a systemd credential directory).
+Restart all readers to load the overlap, switch the sealing recipient, enable
+APID's rekey worker and monitor its existing progress endpoint. Keep the host
+HMAC identity unchanged during this operation.
+
+For a previous host identity, `gregalectl host-age prune-previous --dry-run`
+requires the deploy database connection and verifies the release dependency
+inventory. The real prune records a durable retirement barrier before removing
+`host.age.previous`. `--force` skips the age check and still requires this
+verification. Database failure and outstanding references retain the file.
+
+For a previous fleet recipient, record the release-storage barrier explicitly:
+
+```sh
+gregalectl fleet-seal retire-release-key \
+  --kid "$previous_recipient" --current-key /etc/faas/secrets/fleet.age \
+  --dry-run --json
+gregalectl fleet-seal retire-release-key \
+  --kid "$previous_recipient" --current-key /etc/faas/secrets/fleet.age --json
+```
+
+The command uses the existing deploy database environment or `--pg-dsn`/`--db-env`.
+It refuses the current recipient. This barrier covers live app secrets and all
+release copies; MFA, signing keys, provider credentials and other sealed objects
+require their separate migration evidence before identity files can be retired.
+Restart every reader after retiring an overlap identity to discard cached keys.
+
+Atomic secret admission remains disabled until the strengthened native lane
+proves cold boot and rollback after key removal. See
+[ADR-20261019120021](../adr/20261019120021-release-secret-envelope-rotation.md).

@@ -102,7 +102,16 @@ the 70,000-line generated `queries.sql.go`, above queries vmmd runs.
    (report-only, poyrazK/faas#5056) comments the closure set and, of it,
    the binaries whose code or only line table changes.
 
-## Proposed next step (needs an owner decision; not part of this record's changes)
+## Next step: selection by code (decided 2026-10-21)
+
+Decided and built in ADR-1650, "Selection by code": the release keeps the
+closure as its candidate set, builds the candidates at base and head as
+`blast_radius.py` does (the build and digest code now lives in
+`scripts/ci/binary_code.py`, shared by both), and a host restarts a unit
+only when the code it runs differs from the release's. `lines` binaries do
+not restart; ADR-1650 gives the reasons. Unit versions keep naming the
+commit a binary was built from, and a host keeps the version of a unit
+whose code it already runs. The proposal as first written:
 
 **Select per-unit release binaries by code, not by closure.** The release
 lane would build each closure candidate at the base release and at head
@@ -124,8 +133,8 @@ whose code it runs. Costs and open points:
 ## Consequences
 
 - vmmd, imaged and builderd no longer restart for scheduler-only fixes;
-  vmmd no longer restarts for store query changes it does not run (once
-  selection by code lands).
+  vmmd no longer restarts for store query changes it does not run (with
+  selection by code, ADR-1650).
 - Daemon binaries shrink (vmmd 112.4 MB → 47.0 MB stripped), which lowers
   RSS on every node.
 - `pkg/sched` re-exports the moved contracts; code outside `pkg/sched`

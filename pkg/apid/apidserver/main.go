@@ -77,6 +77,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/promotionrollout"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -774,6 +775,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		go srv.runCronActivationWorker(ctx)
+		go srv.runSafeProjectReleaseWorker(ctx)
+		go srv.runPromotionHealthWorker(ctx)
 		go srv.runMailOutbox(ctx)
 		go srv.runHostingReconciler(ctx)
 		go srv.runSafeReleaseEmergencyAbort(ctx)
@@ -1520,6 +1524,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithAtomicWorkerReleaseEnabled(deps.getenv("FAAS_ATOMIC_WORKER_RELEASES_ENABLED") == "1").
+		WithProjectCanariesEnabled(deps.getenv("FAAS_PROJECT_CANARIES_ENABLED") == "1").
+		WithPromotionHealthEnabled(deps.getenv("FAAS_PROMOTION_HEALTH_ENABLED") == "1").
+		WithPromotionServiceGraphEnabled(deps.getenv("FAAS_PROMOTION_SERVICE_GRAPH_ENABLED") == "1").
+		WithPromotionMigrationsEnabled(deps.getenv("FAAS_PROMOTION_MIGRATIONS_ENABLED") == "1").
+		WithPromotionWorkersEnabled(deps.getenv("FAAS_PROMOTION_WORKERS_ENABLED") == "1").
+		WithProjectReleaseSecretsEnabled(deps.getenv("FAAS_PROJECT_RELEASE_SECRETS_ENABLED") == "1").
+		WithAtomicServiceAdditionsEnabled(deps.getenv("FAAS_ATOMIC_SERVICE_ADDITIONS_ENABLED") == "1").
+		WithProjectMigrationContractsEnabled(deps.getenv("FAAS_PROJECT_MIGRATION_CONTRACTS_ENABLED") == "1").
 		WithInteractiveAppTasksEnabled(apptaskattach.EnabledFromEnv(deps.getenv)).
 		WithImageRunsEnabled(imagerun.EnabledFromEnv(deps.getenv)).
 		WithInternalCIConfig(ci.ConfigFromEnv(deps.getenv)).
@@ -1532,6 +1545,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRealtimeFairUseEnabled(deps.getenv("FAAS_REALTIME_FAIR_USE_ENABLED") == "1").
 		WithTriggerBatchDeliveryEnabled(deps.getenv("FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	srv.promotionRollout = promotionrollout.FromEnv(deps.getenv, wire.GitSHA)
 	if err := srv.configureMailOutbox(ctx, deps.pool, deps.getenv); err != nil {
 		return fmt.Errorf("apid: producer mail outbox: %w", err)
 	}
@@ -2640,13 +2654,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			errc <- err
 		}
 	}()
-	// On `systemctl reload` a successor takes the sockets; this generation
-	// then stops its background work (ctx) and finishes its requests.
+	// On `systemctl reload` a successor takes the sockets once it passed
+	// this generation's pre-traffic checks; this generation then stops its
+	// background work (ctx) and finishes its requests.
 	handedOff := make(chan struct{})
 	wire.WatchHandoffs(ctx, "apid", log, func() {
 		close(handedOff)
 		endGeneration()
-	})
+	}, HandoffChecks(listenBind, metricsAddr)...)
 	select {
 	case err := <-errc:
 		return err

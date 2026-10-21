@@ -37,6 +37,12 @@ func BuildPlan(desired DesiredState, observed ObservedState, owners []Ownership,
 		if workload.Source == nil || workload.Source.Kind == "image" {
 			continue
 		}
+		if workload.Source.BuildArtifactID != "" {
+			// An explicit artifact replaces commit-based build intent. Keep
+			// ownership and clear the obsolete commit without enabling prune.
+			compiled.Fields = append(compiled.Fields, Field{Resource: "workload/" + name, Path: "source_revision", Value: json.RawMessage("null")})
+			continue
+		}
 		if !validCommitSHA(options.CommitSHA) {
 			return plan, fmt.Errorf("source workloads require an immutable approved commit SHA")
 		}

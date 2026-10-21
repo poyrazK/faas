@@ -304,7 +304,7 @@ The default wait is 1200 seconds (20 minutes), covering the server's 15-minute
 cold-build budget plus post-build scanning and snapshot preparation. A timed-out
 wait returns a non-zero exit code but retains the accepted deployment ID in
 `--json` output, along with an exact `resume_command`; resume it with
-`gregale deployment wait <deployment-id> --timeout ...`.
+`gregale deploy resume <session-id> --timeout ...` to also finish pending settings.
 
 Before changing remote state or uploading source, human-readable deploys print
 one deployment plan containing the selected source, runtime resolution,
@@ -396,9 +396,11 @@ transition, such as `1% traffic · step 1/4` followed by `10% traffic · step
 2/4`. JSON output remains a single deployment record. If the wait times out,
 the JSON receipt includes the exact resume command.
 
-Every deploy also has a stable retry key derived from the app, source digest,
-and deploy intent. Pass `--idempotency-key KEY` when an external CI workflow
-needs to reuse one logical key across separate invocations. The CLI scopes the
+Archive and full-commit-SHA deploys derive a stable retry key from the app,
+source and deploy intent. Branches, tags, short SHAs, and deploys with a secrets
+bundle use a fresh key per invocation; transport retries keep that key. This
+lets a new invocation deploy a moved ref or changed secrets. Pass
+`--idempotency-key KEY` to reuse one logical key across separate invocations. The CLI scopes the
 logical key per transport and resumable-upload chunk before sending it to the
 API, so unrelated mutations cannot replay one another.
 
@@ -539,7 +541,7 @@ to act on without explicit operator intent. See
 
 `gregale deploy --json` emits a single JSON document with the
 `DeploymentResponse` shape promoted to top-level (via embedding)
-plus four provenance-only fields:
+plus provenance and local recovery fields:
 
 | Field            | Type   | Source                                                          |
 |------------------|--------|-----------------------------------------------------------------|
@@ -551,6 +553,9 @@ plus four provenance-only fields:
 | `commit_sha`     | string | `git rev-parse HEAD^{commit}` from the zero-config branch; empty on image / source-ref / non-git fallback paths |
 | `dirty`          | bool   | `git status --porcelain` is non-empty; omitempty so a clean repo renders no key |
 | `source_sha256`  | string | lower-case hex sha256 of the tarball bytes just shipped; empty on image and source-ref (server pulls) paths |
+| `session_id` | string | local saved deploy session, scoped to the selected profile, endpoint and credential |
+| `resume_command` | string | command to reconnect to this session and complete pending settings |
+| `configuration_complete` | bool | whether every saved lifecycle/scaling settings step has completed |
 
 The receipt is consumed by CI / GitHub Actions tooling that needs to
 pin a deploy to a specific upstream artifact. Parse with any JSON
@@ -630,15 +635,120 @@ selection, preview (`--plan`, `--diff`, `--dry-run`), `--github`, or `--create-o
 
 ## Recover an interrupted deployment
 
+Single-app deployments save recovery metadata before staging profiling or tracing
+and before submission. Reconnect to the latest local attempt for an app, or select
+the exact session from a receipt:
+
+```bash
+gregale deploy resume --app my-api
+gregale deploy resume SESSION_ID --json --timeout 1200
+```
+
+Resume waits for the same deployment's readiness and the original safe rollout,
+then completes saved lifecycle/scaling settings. It works from any directory
+without the original source or manifest. It never creates an app, uploads source,
+submits another build, or promotes a dark deployment. A conflicting change to a
+pending field or a newer app deployment stops settings recovery. Fields already
+at the desired value count as complete, including after a lost update reply.
+Pending settings writes include server-enforced preconditions for the exact app,
+newest live deployment, and every targeted field. The server checks and updates
+inside one database transaction, preserving edits made after resume's read.
+Conflicts return `409 deploy_settings_conflict`, identify changed field names,
+and leave the session pending. Unrelated edits are preserved when rebuilding a
+lifecycle update from the current app row. Older servers that do not support
+these preconditions reject the update; resume never falls back to an unchecked
+write.
+
+Each attempt gets its own record; `--app` selects the most recently created one,
+including an attempt that failed before acceptance. Use its explicit session ID
+to recover an earlier accepted deployment. Records are private local files under
+`$XDG_STATE_HOME/gregale/deploys` (or the user config directory), retained until
+removed by the user. They contain no credentials, secret values, environment
+variables, or source bytes; a policy journal saves only typed profiling and tracing
+settings and recovery metadata. Keep the original profile, endpoint and credential;
+credential rotation selects a different local scope. Project apply continues to
+use its project recovery workflow.
+
+Before deployment submission, selected profiling and tracing policies are recorded
+in a private journal with their previous and intended values. The server stages
+them atomically with a revision and ownership guard. A hard process kill or lost
+staging reply can be recovered with the same `deploy resume` command, without
+source files or the manifest. Recovery restores only policies still owned by that
+attempt. A concurrent policy edit, including an edit away and back or an explicit
+same-value policy PATCH, stops obsolete cleanup. Unrelated manifest edits survive
+cleanup. Cleanup that arrives before a delayed stage fences that stage out.
+
+The journal marks `submission_started` immediately before a deployment-creating
+HTTP send, including resumable upload commit. If saving the marker fails, no
+request is sent. Upload start and chunk transfer do not mark submission. An old
+uncertain upload commit is preserved conservatively. Accepted or uncertain
+submission keeps policies; a definitively rejected or never-submitted attempt can
+finish cleanup. A missing deployment receipt never authorizes rollback of an
+uncertain submission.
+
+A cleanup-only resume returns success after recovering profiling and tracing and
+creates zero deployments. Its JSON receipt contains `session_id`, `app_id`,
+`app_slug`, `submission_outcome` (`not_submitted` or `rejected`),
+`policy_cleanup_complete: true`, `deployment_created: false`, and `resume_command`.
+Rerun the original deploy to submit after cleanup. A conflict leaves the journal
+pending and the current configuration intact. Old servers cannot stage journaled
+policies; there is no unchecked fallback. Old saved sessions without a policy
+journal keep their previous behavior.
+
+Manifest-managed HTTP cron triggers also use a saved journal and atomic server
+staging. Resume restores their previous scheduling set after a pre-submission
+crash without creating another build. Explicit `triggers: []` clears HTTP crons;
+omitted triggers and `--no-triggers` leave them unmanaged. Command crons remain
+untouched and count toward app/account quotas. Whole-set replacement works at
+the exact quota, and a quota failure leaves all schedules unchanged.
+
+Concurrent HTTP cron edits, including same-value updates and edits away and back,
+leave cleanup pending. Scheduler firing and suspension bookkeeping are preserved.
+Recovery restores scheduling configuration; it cannot undo already dispatched
+work or deleted run history and related resources. Cleanup JSON also includes
+`cron_cleanup_complete: true` when cron recovery is complete or unmanaged.
+Accepted or uncertain submissions preserve the staged cron set. Old servers fail
+before staging; there is no unguarded CRUD fallback.
+
+The journals cover profiling, tracing and HTTP crons for single-app CLI staging.
+Bindings, secrets, project apply and server-side source-ref manifest staging
+retain their existing recovery behavior.
+
+For unknown acceptance, resume reads durable acceptance evidence without sending
+another deployment. Image, multipart and source-ref submissions save an opaque
+attempt ID before sending the request. Resume looks up that attempt's server
+receipt and reconnects to the original deployment, including a deployment that
+has since failed or been superseded. Source files and the original manifest are
+not needed. The receipt is stored atomically with deployment creation and retained
+until the deployment or app is purged.
+
+Resumable uploads use their saved upload receipt: a matching committed session
+establishes the deployment ID. An open, expired, missing or unavailable receipt
+leaves acceptance uncertain. Older saved attempts without a submission attempt ID,
+and servers that do not support receipt lookup, still require inspection of
+deployment history for image, multipart or source-ref acceptance. A missing
+receipt never triggers resubmission or proves rejection.
+Resume cannot finish a source upload that stopped before acceptance; rerun the
+original deploy with the same source and retry intent as described below.
+
 Submission failures now include recovery details: the stage (`upload`,
 `submission`, or `deployment`), app, any confirmed deployment ID, an inspection
 command, and the logical idempotency key when that transport uses one.
-In JSON mode, these appear in the stderr Problem object's `recovery` field.
+In JSON mode, these appear in the stderr Problem object's `recovery` field,
+including `submission_outcome`: `accepted`, `rejected`, or `unknown`.
 Its `next_command` identifies the recommended action: resume observation of an
 accepted deployment, or inspect history when acceptance is unknown. Failed
 deployment receipts recommend logs for that exact deployment instead of waiting
 again. `inspect --errors` includes the same recovery data alongside its existing
 deployment fields, including when the server has not recorded a failure code.
+
+A confirmed deployment ID or committed upload preserves staged triggers,
+profiling, and tracing even if fetching deployment status fails. A definite
+rejection restores the previous settings. Unknown acceptance keeps the settings
+and reports a nonzero exit; it does not schedule automatic rollback. After an
+uncertain resumable commit, Gregale checks the upload session once, for at most
+two seconds, including after Ctrl-C. A matching committed receipt recovers the
+deployment ID while preserving the original error or interruption exit.
 
 If no deployment ID was confirmed, inspect the app's history before retrying:
 
@@ -652,10 +762,28 @@ options, account, API endpoint, and selected profile unchanged. The flag uses
 the same logical key that the original request used; the CLI scopes wire keys
 per operation. Replay protection is limited by the server's retention window.
 Use a new logical key for an intentional new deployment. Upload-stage failures
-can recover saved resumable state when it is available; commit-stage failures
-retain their recovery state so the next invocation can discover an accepted
-deployment. A developer source-sync failure does not advertise a retry key
+retain their resumable session on interruption, request timeout, or exhausted
+transient retries. Rerunning with unchanged source and intent finds the saved
+session even though Gregale creates a new temporary archive, asks the server for
+its acknowledged offset, and sends only the remaining bytes. If a commit response
+was lost, the retry retrieves the original accepted deployment instead of
+submitting another build. A developer source-sync failure does not advertise a retry key
 because that transport does not use this deploy key.
+
+Recovery requires the same credential, endpoint, app, source bytes, options, and
+logical key. A secrets bundle uses a fresh key by default, so reuse the printed
+`retry_flag` to resume it. Expired or cancelled sessions restart the upload when
+commit was not attempted or was definitely rejected. Once a commit is uncertain,
+an open, missing, or expired session cannot prove rejection: Gregale retains the
+checkpoint and avoids starting a replacement deployment. Inspect deployment
+history before explicitly choosing a new intent or changing retained settings.
+The server's existing upload TTL is 24 hours. Local checkpoint metadata is kept
+for at most seven days, with a maximum of 256 records. Inspect it with
+`gregale upload-cache list`, or remove it with `gregale upload-cache cleanup`.
+Cleanup only removes local metadata; abandoned server bytes expire separately.
+Older checkpoint formats cannot be resumed after upgrading. Credentials and
+source bytes are never stored in the checkpoint directory. Canary/traffic
+deploys and older-server multipart fallbacks still use a single-request upload.
 
 When a deployment ID is known, inspect or resume that deployment instead of
 submitting another one:
@@ -670,9 +798,198 @@ Generated recovery commands preserve the selected named connection through
 `gregale --profile NAME`. Keep any API and credential environment overrides the
 same as the original operation.
 
-For JSON deploy waits, the stdout receipt includes `wait_stage` (`deployment`
-or `rollout`) and `recovery` when waiting stops. A deadline sets `timed_out`
+For JSON deploy waits and resumes, the stdout receipt includes `session_id`,
+`configuration_complete`, and `wait_stage` (`deployment`, `rollout`, or
+`configuration`) with `recovery` when completion stops. Waited success is emitted
+after pending settings complete. A deadline sets `timed_out`
 and retains exit `3`; cancellation sets `interrupted` and exits `130`.
 The stderr Problem contains matching inspection and resume guidance. A terminal
 failed deployment or aborted rollout exits `1` and identifies its stage in the
 receipt. Stopping a local wait leaves server processing running.
+
+### Secrets and accepted deployments
+
+`--secrets-file PATH` keeps the selected file out of automatically packed source,
+including committed HEAD, even when secret scanning is off or `.gregaleignore`
+tries to reinclude it. Keep secrets out of any archive you supply with `--tarball`.
+
+For projects, apply carries the bundle separately and seals it for every selected
+workload in the requested environment before it queues any build. This requires
+`secrets:write` or `admin` in addition to deploy permission. A secret configuration
+failure queues no builds; app rows and any secrets already written remain available
+for retry. The bundle is not a database transaction across workloads.
+
+Accepted or uncertain submission preserves staged triggers, profiling, and tracing configuration.
+A readiness timeout or interruption ends only the local wait and preserves that
+configuration. Resume with `gregale deployment wait <deployment-id>`.
+
+## Retry failed project workloads
+
+```bash
+gregale deploy retry SESSION_ID --path . --source=worktree --yes
+gregale deploy retry SESSION_ID --tarball source.tar.gz --yes
+```
+
+Retry reads current statuses from a saved project deploy and rebuilds only
+confirmed failed deployments, including when source is unchanged. Supply source
+again; the saved session contains identities, not source or secrets. The current
+source is scanned and reviewed. Healthy, pending and unconfirmed workloads are
+excluded. Replaced apps or newer deployments stop the retry.
+
+Use `--path DIR` to select a directory, or omit source flags to use the current
+working directory. `--source=auto` follows normal deploy behavior: committed HEAD
+when Git provenance is available, otherwise working files. `--source=head` requires
+a Git commit; `--source=worktree` includes local changes. `--worktree` is an alias
+for `--source=worktree`. Directory retries use normal file exclusions and secret
+scanning. Tarballs cannot be combined with directory source selectors.
+
+The new submission gets its own saved session and resume command. `--no-wait`
+returns after acceptance; `--timeout SECONDS` controls waiting. Current schedules
+and secrets are preserved. Configuration conflicts, cancelled deployments and
+unconfirmed build publication need inspection before another apply. Deploy the
+updated APID before using this command.
+
+## Safe project source releases
+
+```bash
+gregale deploy --project --atomic --project-slug shop --path . --source=worktree --yes
+```
+
+Safe mode rebuilds the complete existing HTTP project at zero traffic and keeps
+its previous release selected until every candidate completes readiness. APID
+then publishes the ready graph atomically. A failed or incomplete batch leaves
+production on the previous graph. The server continues after the local wait
+ends; use `--no-wait` to return acceptance, or the saved resume command to reconnect.
+
+An active production release set and revision retention on every workload are
+required. The first version accepts source-only changes: membership and workload
+configuration must match. It preserves secrets and triggers and refuses service
+workers, images, managed resources, release commands, operation declarations,
+partial selection and exclusion changes. Existing release-set routing and
+retention rules apply. Candidate IDs remain available for inspection and cleanup
+when a batch fails. This mode does not promise rollback of database side effects
+or automatic rollback after cutover.
+
+### Verify an atomic project release
+
+```sh
+gregale deploy --project --atomic --verify --project-slug shop --path . --yes
+```
+
+Configure GET/HEAD route-health probes for critical endpoints first. This mode
+requires an existing production release graph with at least 15 minutes of
+retention and a configured gateway probe sender. It supports up to five probe
+routes across the project and inherits the source-only HTTP restrictions of
+`--atomic`.
+
+After cutover, Gregale probes the new and retained previous deployments. Two
+healthy rounds a minute apart report `succeeded`. Repeated candidate 5xx with a
+healthy baseline restore the complete previous graph. If health remains unknown
+for ten minutes, Gregale also attempts rollback; missing evidence never counts
+as healthy. If the latest probes show that the previous release also fails,
+Gregale reports `rollback_failed` for operator action. Critical probes require 2xx responses and preserve authentication.
+
+Verification and rollback continue on the server after disconnect. Use
+`gregale deploy resume SESSION_ID` to observe the result. `rolled_back`,
+`rollback_failed`, and `conflicted` return a failing exit status. A newer operator
+release is preserved. JSON receipts include the probe evidence and, after
+rollback, `restored_release_id`.
+
+### Deploy code and non-secret variables together
+
+Create `release.json` with complete variable sets for the workloads you want to
+change:
+
+```json
+{"env":{"api":{"MODE":"new","LOG_LEVEL":"info"}}}
+```
+
+```sh
+gregale deploy --project --atomic --verify --config-file release.json --project-slug shop --path . --yes
+```
+
+Each named workload replaces its entire plaintext variable snapshot. Use `{}`
+for an empty set; omitted workloads inherit their previous release variables.
+Existing non-secret project metadata is preserved. Secret values, managed-binding
+shadows, resource settings and route changes are unsupported. Existing variable
+quotas and a 64 KiB document limit apply. The explicit configuration file uses
+its current bytes even when code is selected with `--source=head`.
+
+Candidates receive their new variables before readiness. The old release retains
+its variables until cutover, and code plus the project configuration version
+switch in one transaction. Verification failure restores the old graph and
+configuration together. A newer operator configuration stops automatic activation
+or rollback with `conflicted`.
+
+Once configured, a deployment uses immutable variables on later cold reads.
+Subsequent atomic source deployments inherit them without needing the local file.
+Use `--config-file` to update those variables; later `env set` writes cannot change
+an already pinned deployment. Secrets keep their existing separate delivery path.
+Cloning or synchronizing configuration from these releases is currently refused
+until snapshot transfer is supported.
+
+`deploy resume` observes the server operation even if `release.json` has been
+removed. Configuration values are absent from saved recovery journals; receipts
+show the request/target fingerprints and `target_version` / `restored_version`.
+The mode requires the configuration migration and updated runtime readers before
+production use, plus the probe and retention prerequisites of `--verify`.
+
+### Database migrations before atomic cutover
+
+Use `--migrate` with a verified atomic project deploy to run one declared,
+backward-compatible migration before switching production traffic:
+
+```bash
+gregale deploy --project --atomic --verify --migrate --project-slug shop --path . --yes
+```
+
+Declare the command in `gregale.yaml` for a single-workload project:
+
+```yaml
+release:
+  command: "npm run db:migrate"
+```
+
+Alternatively, declare one `release: npm run db:migrate` process in the root
+Procfile. Multi-workload projects use the Procfile's deterministic release owner.
+The mode requires an existing HTTP production release, revision retention and
+configured verification probes. Add `--config-file release.json` to give the
+migration and candidate the proposed non-secret variables.
+
+`--migrate` asserts that the previous release remains compatible with the schema
+changes. Use expansion migrations such as new tables or nullable columns. The
+old release keeps serving while the command runs. Gregale does not inspect SQL
+or reverse database changes, including when a command fails halfway through or
+post-cutover verification restores the previous code and variables.
+
+The deploy receipt includes `safe_release.release_command` with the immutable
+command hash, task ID, state and exit/failure evidence. Read the task's bounded
+stdout/stderr through `GET /v1/apps/{slug}/tasks/{task_id}` or the SDK's task-read
+method; task reads require the existing app-task API gate. A lost result after
+execution starts is reported as `uncertain` and blocks cutover. Inspect the task
+and database before starting a new deploy. `gregale deploy resume <session-id>`
+only reads the original attempt and never reruns its command; source files are
+not needed to resume.
+
+The first milestone supports one command and refuses conflicting pending atomic
+migrations. It does not coordinate migration commands in other projects or
+ordinary deployments. Enable `FAAS_RELEASE_PHASE_ENABLED=1` on imaged and
+`FAAS_APP_TASK_DISPATCH=1` on schedd, update APID/CLI/SDKs and complete native-host
+acceptance before production enablement. Commands fail closed when execution is
+unavailable. Destructive schema changes and automatic schema rollback are outside
+this contract.
+
+### Verified push-worker handoff
+
+Use `gregale deploy --project --atomic --verify --workers` for a project with HTTP
+workloads and exactly one existing production push-queue worker. The worker must
+have one enabled named-production push binding and one matching consumer.
+`--config-file` and `--migrate` can be combined with this mode.
+
+Candidate startup/configuration proof gates cutover; platform production jobs
+continue through the previous graph until publication. Old workers retire within
+their configured stop grace (default 30 seconds, maximum accepted 60 seconds).
+`deploy resume SESSION_ID` reconnects to the durable attempt without rebuilding or
+resubmitting. Rollback restores graph admission and paired variables, preserving
+completed-job, external and database effects. The server gate is disabled by
+default pending native acceptance; see [ADR-20261019120008](../adr/20261019120008-atomic-project-push-worker-handoff.md).

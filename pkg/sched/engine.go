@@ -2112,7 +2112,7 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 		release()
 		return CoordOutcome{}, nil
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		release()
 		return CoordOutcome{}, fmt.Errorf("sched: restart app: list instances %s: %w", appID, err)
@@ -6906,7 +6906,11 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 		return count, coldErr
 	}
 
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	// The reaper calls ParkApp for every parked app on every tick, so read
+	// live rows only: a parked app's history holds thousands of rows, each
+	// of which was re-read below (about 1,000 lookups a second on
+	// production-us for five parked apps).
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return 0, fmt.Errorf("sched: park app: list instances %s: %w", appID, err)
 	}
