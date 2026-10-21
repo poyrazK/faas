@@ -21,31 +21,37 @@ import (
 // docsURL is the canonical link printed at the bottom of the usage string.
 var docsURL = docsSiteURL
 
-func topLevelUsage(showAdvanced bool) string {
+// topLevelUsage renders root help. The default view is the first screen for
+// a new customer; showAll lists every customer command by journey group, and
+// showOperator adds operator and compatibility commands.
+func topLevelUsage(showAll, showOperator bool) string {
 	var b strings.Builder
 	b.WriteString("gregale — deploy apps and functions that scale to zero.\n\n")
-	b.WriteString("Usage:\n  gregale <command> [flags]\n\n")
-	if showAdvanced {
-		b.WriteString("Customer commands:\n")
+	b.WriteString("Usage:\n  gregale <command> [flags]\n")
+	if showAll {
 		writeGroupedCommands(&b, customerCliCommands())
-		b.WriteString("\nAdvanced/operator compatibility:\n")
-		for _, command := range advancedCliCommands() {
-			fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
+		if showOperator {
+			b.WriteString("\nOperator and compatibility:\n")
+			for _, command := range advancedCliCommands() {
+				writeRootHelpEntry(&b, command.Name, command.Short)
+			}
 		}
-		b.WriteString("  help                   Show this help message\n")
 	} else {
-		b.WriteString("Get started:\n")
+		b.WriteString("\nGet started:\n")
 		for _, name := range []string{"start", "menu", "login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
 			command, _ := lookupCliCommand(name)
-			fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
+			writeRootHelpEntry(&b, command.Name, command.Short)
 		}
-		b.WriteString("  help                   Show command help\n")
+		writeRootHelpEntry(&b, "help", "Show command help")
 		b.WriteString("\nExamples:\n")
-		b.WriteString("  gregale start\n  gregale start ./my-api\n  gregale deploy --plan\n")
+		b.WriteString("  gregale start\n  gregale start ./my-api\n  gregale deploy --preview\n")
 		b.WriteString("\nRun 'gregale help --all' for every command, or 'gregale help deploy' for a topic.\n")
 	}
-	b.WriteString("\nRun 'gregale <command> --help' for command details.\n\n")
-	b.WriteString("Global flags:\n")
+	b.WriteString("\nRun 'gregale <command> --help' for command details.\n")
+	if showAll && !showOperator {
+		b.WriteString("Run 'gregale help --all --operator' to include operator and compatibility commands.\n")
+	}
+	b.WriteString("\nGlobal flags:\n")
 	b.WriteString("  --json                 Machine-readable output where supported. Slices emit\n")
 	b.WriteString("                         NDJSON; scalars emit indented JSON; errors print\n")
 	b.WriteString("                         RFC 7807 to stderr. Equivalent env: FAAS_JSON=1.\n")
@@ -56,26 +62,37 @@ func topLevelUsage(showAdvanced bool) string {
 	return b.String()
 }
 
-// writeGroupedCommands keeps the root help useful as the manifest grows. The
-// manifest remains ordered for completion/man output, while customer discovery
-// is grouped around the API-hosting workflow.
+// writeGroupedCommands lists customer commands in the journey order of
+// cliHelpGroups. The manifest order still drives completion and man output.
 func writeGroupedCommands(b *strings.Builder, commands []cliCommand) {
-	groups := []string{"Core", "API", "Data", "Delivery", "Observe", "Advanced"}
-	byGroup := make(map[string][]cliCommand, len(groups))
+	byGroup := make(map[string][]cliCommand, len(cliHelpGroups)+1)
 	for _, command := range commands {
 		group := cliHelpGroup(command)
 		byGroup[group] = append(byGroup[group], command)
 	}
-	for _, group := range groups {
-		groupCommands := byGroup[group]
-		if len(groupCommands) == 0 {
-			continue
+	for _, group := range cliHelpGroups {
+		fmt.Fprintf(b, "\n%s:\n", group.Title)
+		for _, name := range group.Commands {
+			for _, command := range byGroup[group.Title] {
+				if command.Name == name {
+					writeRootHelpEntry(b, command.Name, command.Short)
+				}
+			}
 		}
-		fmt.Fprintf(b, "\n%s:\n", group)
-		for _, command := range groupCommands {
-			fmt.Fprintf(b, "  %-22s %s\n", command.Name, command.Short)
+		if group.Title == cliHelpGroups[0].Title {
+			writeRootHelpEntry(b, "help", "Show command help")
 		}
 	}
+	if other := byGroup[cliHelpGroupOther]; len(other) > 0 {
+		fmt.Fprintf(b, "\n%s:\n", cliHelpGroupOther)
+		for _, command := range other {
+			writeRootHelpEntry(b, command.Name, command.Short)
+		}
+	}
+}
+
+func writeRootHelpEntry(b *strings.Builder, name, short string) {
+	fmt.Fprintf(b, "  %-22s %s\n", name, short)
 }
 
 func hasHelpFlag(args []string) bool {
@@ -137,7 +154,7 @@ func run(args []string) (status int) {
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
 	if len(args) == 0 {
-		_, _ = fmt.Fprint(osStdout, topLevelUsage(false))
+		_, _ = fmt.Fprint(osStdout, topLevelUsage(false, false))
 		return 0
 	}
 	if !cliCommandAvailable(args[0]) {
@@ -171,8 +188,8 @@ func run(args []string) (status int) {
 		_, _ = fmt.Fprintf(osStdout, "gregale %s\n", wire.Version)
 		return 0
 	case "help", "--help", "-h":
-		if len(args) == 1 || (len(args) == 2 && (args[1] == "--all" || hasHelpFlag(args[1:]))) {
-			_, _ = fmt.Fprint(osStdout, topLevelUsage(len(args) == 2 && args[1] == "--all"))
+		if showAll, showOperator, ok := rootHelpFlags(args[1:]); ok {
+			_, _ = fmt.Fprint(osStdout, topLevelUsage(showAll, showOperator))
 			return 0
 		}
 		if command, ok := lookupCliCommand(args[1]); ok && cliCommandAvailable(command.Name) {
@@ -870,24 +887,14 @@ func printLocalCommandHelpDetail(w io.Writer, command cliCommand, showAll bool) 
 		usage += " [flags]"
 	}
 	_, _ = fmt.Fprintf(w, "%s\n\nUsage:\n  %s\n", command.Short, usage)
-	if len(command.Subcommands) > 0 {
-		heading := "Commands:"
-		if compact {
-			heading = "Common commands:"
-		}
-		_, _ = fmt.Fprintln(w, "\n"+heading)
-		for _, sub := range command.Subcommands {
-			if !compact || sub.Common {
-				printHelpEntry(w, sub.Name, sub.Short)
-			}
-		}
-	}
+	printLocalHelpSubcommands(w, command.Subcommands, compact)
 	printLocalHelpFlags(w, command.Flags, compact)
 	if len(command.Examples) > 0 {
 		_, _ = fmt.Fprintln(w, "\nExamples:")
 		printCLIExamples(w, command.Examples)
 	}
 	printHelpNotes(w, command.HelpNotes)
+	printHelpSeeAlso(w, command.Name)
 	if command.CompactHelp {
 		_, _ = fmt.Fprintln(w)
 		if !showAll {
@@ -900,6 +907,41 @@ func printLocalCommandHelpDetail(w io.Writer, command cliCommand, showAll bool) 
 		_, _ = fmt.Fprintln(w)
 	}
 	_, _ = fmt.Fprintf(w, "Docs: %s\n", docsURLForTopic(command.DocSlug))
+}
+
+// printLocalHelpSubcommands lists a command's verbs. Compact help shows only
+// Common verbs and omits the section when none are marked.
+func printLocalHelpSubcommands(w io.Writer, subcommands []cliSub, compact bool) {
+	heading := "Commands:"
+	if compact {
+		heading = "Common commands:"
+	}
+	printed := false
+	for _, sub := range subcommands {
+		if compact && !sub.Common {
+			continue
+		}
+		if !printed {
+			_, _ = fmt.Fprintln(w, "\n"+heading)
+			printed = true
+		}
+		printHelpEntry(w, sub.Name, sub.Short)
+	}
+}
+
+// printHelpSeeAlso points at commands whose names are easy to confuse with
+// this one (cliRelatedCommands); `help --all` lists their summaries together.
+func printHelpSeeAlso(w io.Writer, name string) {
+	related := cliSeeAlso(name, customerCliCommands())
+	if len(related) == 0 {
+		return
+	}
+	names := make([]string, 0, len(related))
+	for _, command := range related {
+		names = append(names, "gregale "+command.Name)
+	}
+	_, _ = fmt.Fprintln(w)
+	printHelpText(w, "", "See also: "+strings.Join(names, ", "))
 }
 
 func printLocalSubcommandHelp(w io.Writer, command cliCommand, sub cliSub) {

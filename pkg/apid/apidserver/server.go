@@ -3263,6 +3263,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/config", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentConfig))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/config", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentConfig)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/config/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.diffProjectEnvironmentConfig))))
+	// ADR-1139: secrets shared by every service of a project environment.
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/secrets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.projectSecrets().List))))
+	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/secrets/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.projectSecrets().Set))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.projectSecrets().Rotate))))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/secrets/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.projectSecrets().Delete))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/promotion-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewProjectEnvironmentPromotionSecrets))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/promotion-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewProjectEnvironmentPromotion))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.approveProjectEnvironment)))))

@@ -55,6 +55,7 @@ var allowRoleMatrix = map[OrgAction]map[state.OrgRole]bool{
 	OrgActionConfigureProject:          {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
 	OrgActionDeployProject:             {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
 	OrgActionManageProjectSecurity:     {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
+	OrgActionManageProjectSecrets:      {state.OrgRoleOwner: true, state.OrgRoleAdmin: true, state.OrgRoleDeveloper: true},
 	OrgActionApproveProjectEnvironment: {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
 	OrgActionDeleteProject:             {state.OrgRoleOwner: true, state.OrgRoleAdmin: true},
 	OrgActionSetApplicationStandardLocalIntent: {

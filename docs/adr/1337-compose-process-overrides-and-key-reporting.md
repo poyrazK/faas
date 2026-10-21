@@ -90,6 +90,7 @@ classifies its keys:
   names); the `include` warning lists the files whose services were not
   loaded. Both tell the user to inline them. Rejecting them would break
   projects that deploy today, when these keys were already ignored.
+  ADR-20261019190527 later resolves both.
 
 Managed database and cache services are not reported: the managed resource
 replaces the container and its keys.
@@ -97,7 +98,8 @@ replaces the container and its keys.
 ## Consequences
 
 - A project using `extends` or `include` keeps deploying as before, now with a
-  warning that names the settings or services it does not get.
+  warning that names the settings or services it does not get (until
+  ADR-20261019190527 resolves them).
 - Build arguments and targets remain unsupported for source builds. Carrying
   them would need builder, cache-key and frozen-profile changes, and build
   argument values would become stored configuration; that is a separate
