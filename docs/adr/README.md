@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)
 - [Product Control billing records survive app purge](20261020090607-product-control-billing-records-survive-app-purge.md)
 - [Product Control customers keep their billing details in the owner's Paddle](20261020120000-product-control-customer-billing-details.md)
 - [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
