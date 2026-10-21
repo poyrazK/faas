@@ -1990,7 +1990,10 @@ a clone of a native database stops after the fork.
 
 Backups nobody restores prove nothing, and this ADR makes restore drills
 ship-blocking. schedd's idle sweep runs them (`dbsched.RunDrills`, every
-sample, at most one per node per `DrillEvery`, 24 h):
+sample, at most one per node per `DrillEvery`, 24 h). The manifest's
+`managed_postgres.drill_every` sets it: a Go duration of at least an
+hour, or `off`, which renders schedd's `drill_every = "-1s"` and turns
+drills off:
 
 - **Pick.** On each active node with no drill running, one database that
   was created and base-backed up before the drill. It is chosen by a hash

@@ -81,6 +81,7 @@ managed_postgres:
   shared_archive: true           # every dbbackupd shares one bucket
   app_route: true                # guests reach pgproxyd at 198.18.0.1:5432
   evacuate_draining: true        # move databases off draining nodes
+  drill_every: 24h               # restore drill spacing per node (default 24h; off turns drills off)
 ```
 
 The generator renders the `database_nodes` inventory group and each node's

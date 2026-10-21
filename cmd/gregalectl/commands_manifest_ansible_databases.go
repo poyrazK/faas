@@ -105,6 +105,14 @@ func (d manifestDatabases) controlPlaneVars() string {
 	if d.config.EvacuateDraining {
 		b.WriteString("  evacuate_draining: true\n")
 	}
+	switch d.config.DrillEvery {
+	case "":
+	case manifest.DrillsOff:
+		// schedd turns drills off for a negative spacing.
+		b.WriteString("  drill_every: \"-1s\"\n")
+	default:
+		fmt.Fprintf(&b, "  drill_every: %q\n", d.config.DrillEvery)
+	}
 	b.WriteString("  nodes:\n")
 	var cidrs []string
 	for _, n := range d.nodes {

@@ -209,7 +209,11 @@ take `sum`.
 
 ### FaasDatabaseRestoreDrillFailed and FaasDatabaseRestoreDrillStale (warn)
 
-Every day, schedd restores one database per active node from that node's
+Every day (`managed_postgres.drill_every` in the manifest; `off` turns
+drills off, for example while a node is short of room, and then nothing
+proves the backups restore: schedd stops updating the drill gauges, so
+the stale alert cannot fire either), schedd restores one database per
+active node from that node's
 backups. First the source commits the drill's id into
 `gregale.restore_drill_mark`, a one-row table in its `postgres`
 maintenance database that only the guest's superuser can reach. The drill

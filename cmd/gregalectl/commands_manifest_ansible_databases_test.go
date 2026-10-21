@@ -191,3 +191,25 @@ func TestRenderManifestAnsibleFiles_NoDatabaseNodes(t *testing.T) {
 		}
 	}
 }
+
+// drill_every reaches schedd's database scheduler; "off" becomes schedd's
+// negative spacing, and leaving it out keeps schedd's default.
+func TestRenderManifestAnsibleFiles_DatabaseDrillEvery(t *testing.T) {
+	for setting, want := range map[string]string{
+		"  drill_every: 48h\n": "  drill_every: \"48h\"\n",
+		"  drill_every: off\n": "  drill_every: \"-1s\"\n",
+		"":                     "",
+	} {
+		m := databaseManifest(t, "managed_postgres:\n  host_suffix: db.gregale.dev\n  shared_archive: true\n"+setting)
+		cp := renderedFiles(t, m)["fsn-1.yml"]
+		if want == "" {
+			if strings.Contains(cp, "drill_every") {
+				t.Errorf("no setting rendered drill_every:\n%s", cp)
+			}
+			continue
+		}
+		if !strings.Contains(cp, want) {
+			t.Errorf("%q: control plane vars lack %q:\n%s", setting, want, cp)
+		}
+	}
+}

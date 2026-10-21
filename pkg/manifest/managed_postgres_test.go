@@ -55,6 +55,8 @@ func TestValidate_ManagedPostgres(t *testing.T) {
 		"address outside mesh":                {withDatabase(strings.Replace(databaseHost, "10.42.0.5", "10.43.0.5", 1), managed), "outside overlay.cidr"},
 		"bad lifecycle":                       {withDatabase(databaseHost+"        lifecycle: retired\n", managed), `lifecycle "retired"`},
 		"evacuation without a shared archive": {withDatabase(databaseHost, managed+"  evacuate_draining: true\n"), "managed_postgres.evacuate_draining: needs shared_archive"},
+		"drills too often":                    {withDatabase(databaseHost, managed+"  drill_every: 10m\n"), "managed_postgres.drill_every"},
+		"drills not a duration":               {withDatabase(databaseHost, managed+"  drill_every: daily\n"), "managed_postgres.drill_every"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			m, err := Parse([]byte(tc.body))

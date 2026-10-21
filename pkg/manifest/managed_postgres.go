@@ -1,6 +1,9 @@
 package manifest
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Native managed PostgreSQL (ADR-1027). Database nodes are fleet hosts
 // with role `database`: vmmd runs database VMs only and pgproxyd is their
@@ -42,7 +45,17 @@ type ManagedPostgres struct {
 	// EvacuateDraining moves databases off draining nodes, one at a time
 	// (needs shared_archive).
 	EvacuateDraining bool `yaml:"evacuate_draining,omitempty"`
+	// DrillEvery spaces each database node's restore drills, as a Go
+	// duration (empty: schedd's default, 24h); "off" turns them off.
+	DrillEvery string `yaml:"drill_every,omitempty"`
 }
+
+// DrillsOff is DrillEvery's value that turns restore drills off.
+const DrillsOff = "off"
+
+// minDrillEvery is the shortest drill spacing: a drill restores a whole
+// database on the node.
+const minDrillEvery = time.Hour
 
 // DatabaseHost is a database node's place in schedd's database scheduler.
 type DatabaseHost struct {
@@ -131,6 +144,11 @@ func (m *Manifest) validateManagedPostgres() Errors {
 	// A move hands the archive over through the shared bucket.
 	if mp != nil && mp.EvacuateDraining && !mp.SharedArchive {
 		errs = append(errs, Error{"managed_postgres.evacuate_draining", "needs shared_archive: moves hand the archive over through the shared bucket"})
+	}
+	if mp != nil && mp.DrillEvery != "" && mp.DrillEvery != DrillsOff {
+		if every, err := time.ParseDuration(mp.DrillEvery); err != nil || every < minDrillEvery {
+			errs = append(errs, Error{"managed_postgres.drill_every", fmt.Sprintf("drill_every %q must be %q or a duration of at least %s (e.g. 24h)", mp.DrillEvery, DrillsOff, minDrillEvery)})
+		}
 	}
 	return errs
 }

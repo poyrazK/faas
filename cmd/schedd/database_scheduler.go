@@ -25,6 +25,7 @@ import (
 //	idle_timeout = "5m"
 //	wake_queue_wait = "30s"
 //	evict_idle_after = "2m"
+//	drill_every = "24h"
 //	[[database_scheduler.nodes]]
 //	id = "db-1"
 //	target_url = "tcp://10.0.2.10:7443"
@@ -58,6 +59,9 @@ type DatabaseSchedulerConfig struct {
 	// before it turns asynchronous (default 30s; negative starts every
 	// wake asynchronous, as before ADR-1027's resume).
 	StandbyResumeTimeout time.Duration `toml:"standby_resume_timeout"`
+	// DrillEvery spaces each database node's restore drills (default 24h;
+	// negative turns them off).
+	DrillEvery time.Duration `toml:"drill_every"`
 	// SharedArchive: every database node's dbbackupd uploads to the same
 	// bucket and prefix, so restores may run on any node (ADR-1027).
 	SharedArchive bool                 `toml:"shared_archive"`
@@ -158,7 +162,7 @@ func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, 
 	sched := dbsched.New(store, vmm, dbsched.Config{IdleTimeout: cfg.IdleTimeout, SharedArchive: cfg.SharedArchive,
 		WakeQueueWait: cfg.WakeQueueWait, EvictIdleAfter: cfg.EvictIdleAfter,
 		EvacuateDraining: cfg.EvacuateDraining, MoveTimeout: cfg.MoveTimeout, AutoFailoverAfter: cfg.AutoFailoverAfter,
-		StandbyResumeTimeout: cfg.StandbyResumeTimeout, Metrics: metrics}, log)
+		StandbyResumeTimeout: cfg.StandbyResumeTimeout, DrillEvery: cfg.DrillEvery, Metrics: metrics}, log)
 	if err := sched.Recover(ctx); err != nil {
 		_ = vmm.Close()
 		return nil, nil, fmt.Errorf("schedd: recover databases: %w", err)

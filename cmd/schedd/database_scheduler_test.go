@@ -38,6 +38,7 @@ idle_timeout = "7m"
 wake_queue_wait = "20s"
 evict_idle_after = "-1s"
 evacuate_draining = true
+drill_every = "-1s"
 [[database_scheduler.nodes]]
 id = "db-1"
 target_url = "tcp://10.0.2.10:7443"
@@ -56,7 +57,7 @@ postgres_majors = [16, 17]
 	ds := cfg.DatabaseScheduler
 	if ds == nil || ds.IdleTimeout.Minutes() != 7 || len(ds.Nodes) != 1 || ds.Nodes[0].AdmissionCeilingMB != 48000 || ds.Nodes[0].VolumeCapacityBytes != 3000000000000 ||
 		ds.WakeQueueWait.Seconds() != 20 || ds.EvictIdleAfter >= 0 || ds.Nodes[0].BootSlots != 8 || !ds.EvacuateDraining ||
-		len(ds.Nodes[0].PostgresMajors) != 2 {
+		len(ds.Nodes[0].PostgresMajors) != 2 || ds.DrillEvery >= 0 {
 		t.Fatalf("database_scheduler = %+v", ds)
 	}
 }

@@ -4,6 +4,9 @@
 [database_scheduler]
 shared_archive = {{ faas_schedd_database_scheduler.shared_archive | default(false) | bool | lower }}
 evacuate_draining = {{ faas_schedd_database_scheduler.evacuate_draining | default(false) | bool | lower }}
+{% if faas_schedd_database_scheduler.drill_every is defined %}
+drill_every = "{{ faas_schedd_database_scheduler.drill_every }}"
+{% endif %}
 {% for node in faas_schedd_database_scheduler.nodes %}
 
 [[database_scheduler.nodes]]
