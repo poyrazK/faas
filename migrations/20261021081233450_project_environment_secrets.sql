@@ -10,7 +10,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 
-CREATE TABLE project_environment_secrets (
+CREATE TABLE IF NOT EXISTS project_environment_secrets (
     account_id uuid NOT NULL REFERENCES resource_namespaces(id) ON DELETE CASCADE,
     project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     environment_slug text NOT NULL,
@@ -30,13 +30,13 @@ CREATE TABLE project_environment_secrets (
     CONSTRAINT project_environment_secrets_secret_version_positive CHECK (secret_version >= 1)
 );
 
-CREATE INDEX project_environment_secrets_account_idx ON project_environment_secrets (account_id);
+CREATE INDEX IF NOT EXISTS project_environment_secrets_account_idx ON project_environment_secrets (account_id);
 
 -- +goose StatementBegin
 -- The same lock, fence and retired-key check as guard_release_secret_key_retirement,
 -- plus: identity columns never change, and a value change outside a reseal
 -- advances the version so the runtime-change trigger sees it.
-CREATE FUNCTION guard_project_environment_secret_write()
+CREATE OR REPLACE FUNCTION guard_project_environment_secret_write()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     PERFORM pg_advisory_xact_lock_shared(hashtextextended('release-secret-key-retirement', 0));
@@ -64,7 +64,7 @@ END;
 $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER project_environment_secret_write_guard
+CREATE OR REPLACE TRIGGER project_environment_secret_write_guard
     BEFORE INSERT OR UPDATE ON project_environment_secrets
     FOR EACH ROW EXECUTE FUNCTION guard_project_environment_secret_write();
 
@@ -72,7 +72,7 @@ CREATE TRIGGER project_environment_secret_write_guard
 -- Mirrors project_environment_config_runtime_change (ADR-1136): every member
 -- app's scope is stamped and its snapshots in that scope go stale; production
 -- also stamps the default scope's own project boundary.
-CREATE FUNCTION project_environment_secret_runtime_change()
+CREATE OR REPLACE FUNCTION project_environment_secret_runtime_change()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     r record;
@@ -116,20 +116,20 @@ END;
 $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER project_environment_secret_runtime_change
+CREATE OR REPLACE TRIGGER project_environment_secret_runtime_change
     AFTER INSERT OR DELETE ON project_environment_secrets
     FOR EACH ROW EXECUTE FUNCTION project_environment_secret_runtime_change();
 
 -- A reseal changes only kid and ciphertext, which does not change what a
 -- guest receives.
-CREATE TRIGGER project_environment_secret_value_change
+CREATE OR REPLACE TRIGGER project_environment_secret_value_change
     AFTER UPDATE ON project_environment_secrets
     FOR EACH ROW
     WHEN (OLD.secret_version IS DISTINCT FROM NEW.secret_version OR OLD.value_hash IS DISTINCT FROM NEW.value_hash)
     EXECUTE FUNCTION project_environment_secret_runtime_change();
 
 -- +goose StatementBegin
-CREATE FUNCTION release_secret_project_document(s project_environment_secrets)
+CREATE OR REPLACE FUNCTION release_secret_project_document(s project_environment_secrets)
 RETURNS jsonb LANGUAGE sql STABLE AS $$
     SELECT jsonb_build_array(jsonb_build_object('key', (s).key, 'kid', (s).kid,
         'ciphertext', encode((s).ciphertext, 'base64'), 'value_hash', (s).value_hash,

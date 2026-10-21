@@ -8,7 +8,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
-CREATE FUNCTION delete_project_environment_secrets()
+CREATE OR REPLACE FUNCTION delete_project_environment_secrets()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     DELETE FROM project_environment_secrets
@@ -18,7 +18,7 @@ END;
 $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER project_environment_secrets_follow_environment
+CREATE OR REPLACE TRIGGER project_environment_secrets_follow_environment
     AFTER DELETE ON project_environments
     FOR EACH ROW EXECUTE FUNCTION delete_project_environment_secrets();
 
