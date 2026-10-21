@@ -30,6 +30,12 @@
       <dt>Waiting since</dt><dd id="since"></dd>
       <dt>Aborted after</dt><dd id="expires"></dd>
     </dl>
+    <section id="changes" hidden>
+      <h2>What changed</h2>
+      <p id="changes-summary"></p>
+      <p id="changes-code"></p>
+      <ul id="changes-list"></ul>
+    </section>
     <h2 id="decisions-title" hidden>Decisions</h2>
     <ul id="decisions"></ul>
     <form id="decide" hidden>
@@ -86,6 +92,38 @@
       $('decide').hidden = s.state !== 'waiting';
       if (s.app) { $('app-link').href = '/dashboard/apps/' + encodeURIComponent(s.app); $('app-link').hidden = false; }
     };
+    const renderChanges = (d) => {
+      text('changes-summary', d.summary);
+      const code = $('changes-code');
+      code.replaceChildren();
+      if (d.code && (d.code.from_commit || d.code.to_commit)) {
+        code.append('Commit ' + (d.code.from_commit || '—').slice(0, 12) + ' → ' + (d.code.to_commit || '—').slice(0, 12) + ' ');
+        if (typeof d.code.compare_url === 'string' && d.code.compare_url.startsWith('https://github.com/')) {
+          const a = document.createElement('a');
+          a.href = d.code.compare_url; a.rel = 'noreferrer noopener'; a.target = '_blank'; a.textContent = 'compare on GitHub';
+          code.append(a);
+        }
+      }
+      const list = $('changes-list');
+      list.replaceChildren();
+      const item = (line) => { const li = document.createElement('li'); li.textContent = line; list.appendChild(li); };
+      const keys = (label, rows) => { for (const k of (rows || [])) { item(label + ' ' + k.key + ' ' + k.change); } };
+      if (d.config && d.config.known) { keys('Variable', d.config.variables); keys('Secret', d.config.secrets); }
+      else if (d.config && d.config.note) { item('Config: ' + d.config.note); }
+      const deps = d.dependencies || {};
+      if (deps.known) {
+        for (const p of (deps.changed || []).slice(0, 10)) { item('Package ' + p.name + ' ' + p.from + ' → ' + p.to); }
+        const more = (deps.added || []).length + (deps.removed || []).length + Math.max((deps.changed || []).length - 10, 0);
+        if (more > 0) { item(more + ' more package change(s); run gregale deployment diff ' + id); }
+      } else if (deps.note) { item('Packages: ' + deps.note); }
+      for (const f of (d.runtime || [])) { item('Setting ' + f.field + ': ' + (f.from || '—') + ' → ' + (f.to || '—')); }
+      if (d.database && d.database.changed) { item('Release command: ' + (d.database.from_release_command || 'none') + ' → ' + (d.database.to_release_command || 'none')); }
+      $('changes').hidden = false;
+    };
+    const loadChanges = async () => {
+      const response = await fetch('/v1/deployments/' + encodeURIComponent(id) + '/diff', { credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer' });
+      if (response.ok) { renderChanges(await response.json()); }
+    };
     const load = async () => {
       const response = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer' });
       if (!response.ok) { text('summary', 'Could not load this release: ' + await problemText(response)); return; }
@@ -114,6 +152,7 @@
     if (intent === 'reject') { $('reject').classList.add('suggested'); }
     history.replaceState(null, '', location.pathname);
     load().catch(() => text('summary', 'Could not reach Gregale. Try again.'));
+    loadChanges().catch(() => {});
   </script>
 </body>
 </html>

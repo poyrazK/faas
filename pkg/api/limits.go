@@ -835,6 +835,12 @@ const ReleaseApprovalCommentMax = 200
 // tries an approval event at most ReleaseApprovalNotifyAttemptsMax times,
 // waiting ReleaseApprovalNotifyRetryBase doubled per attempt between tries.
 const ReleaseApprovalNotifyChannelsMax = 5
+
+// A release diff (ADR-20261021101117) lists at most ReleaseDiffPackagesMax
+// packages per change kind and reads at most ReleaseDiffSBOMMaxBytes of each
+// build's SBOM.
+const ReleaseDiffPackagesMax = 100
+const ReleaseDiffSBOMMaxBytes = 16 << 20
 const ReleaseApprovalNotifyAttemptsMax = 6
 const ReleaseApprovalNotifyRetryBase = time.Minute
 

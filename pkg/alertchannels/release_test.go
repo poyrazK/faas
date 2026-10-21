@@ -14,7 +14,7 @@ import (
 func requestedNotice() ReleaseNotice {
 	return ReleaseNotice{Event: EventApprovalRequested, App: "shop", DeploymentID: "3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10",
 		Revision: 42, DeployedBy: "ana <@U123> & co", Commit: "a1b2c3d", Reason: "checkout fix", Stage: 1, TotalStages: 4,
-		TrafficPercent: 5, Approvals: 1, Required: 2, ExpiresAt: "2026-10-21T09:00:00Z",
+		TrafficPercent: 5, Approvals: 1, Required: 2, ExpiresAt: "2026-10-21T09:00:00Z", Changes: "new code, 2 config keys",
 		ReviewURL: "https://console.gregale.dev/dashboard/releases/3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10/approval"}
 }
 
@@ -26,7 +26,7 @@ func TestReleaseSlackPayloadButtonsAndEscaping(t *testing.T) {
 	}
 	body := string(raw)
 	for _, want := range []string{"Approval needed: release v42 of shop", "Waiting for 1 more approval(s) (1 of 2) at 5% traffic, canary stage 1 of 4.",
-		`"action_id":"release_approve"`, `"action_id":"release_reject"`, `"action_id":"release_review"`,
+		`"action_id":"release_approve"`, `"action_id":"release_reject"`, `"action_id":"release_review"`, "What changed: new code, 2 config keys",
 		"approval?intent=approve", "approval?intent=reject", "ana \\u0026lt;@U123\\u0026gt; \\u0026amp; co"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("Slack payload lacks %q:\n%s", want, body)

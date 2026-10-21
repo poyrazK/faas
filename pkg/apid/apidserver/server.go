@@ -4283,6 +4283,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/release-approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listReleaseApprovals)))
 	mux.HandleFunc("GET /v1/deployments/{id}/approvals", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getReleaseApproval)))
 	mux.HandleFunc("POST /v1/deployments/{id}/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.decideReleaseApproval)))))
+	// Release diff (ADR-20261021101117).
+	mux.HandleFunc("GET /v1/deployments/{id}/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getReleaseDiff)))
 
 	// Data upstreams (ADR-098 §D4 / PR-B). The full handler family is
 	// gated on s.dataPlacementEnabled (FAAS_DATA_PLACEMENT=1); when

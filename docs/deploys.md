@@ -214,6 +214,35 @@ How each gate judges:
 A gate that has too few requests or values (`--min-samples`, default 20) is
 not judged. A gate never holds a rollout on missing evidence.
 
+## What changed between releases
+
+`gregale deployment diff` shows what a release changes compared with the
+release that served before it
+([ADR-20261021101117](adr/20261021101117-release-diff.md)):
+
+```bash
+gregale deployment diff v42                 # against the release before it
+gregale deployment diff v42 --against v38   # against any release of the app
+```
+
+It reports:
+- **Code:** both commits, a GitHub compare link when both releases came
+  from the same repository, and whether the image changed.
+- **Configuration:** env variables and secrets added, removed or changed,
+  by key. Values are never shown.
+- **Packages:** packages added, removed or upgraded, from the two builds'
+  SBOMs (at most 100 per list).
+- **Runtime settings:** handler, runtime base, port, entrypoint, command,
+  probes, minimum instances, sidecars, workflows and env override keys.
+- **Release command:** the step that runs database migrations.
+
+A section shows as unknown when its history is gone: config history keeps
+the last 100 revisions per scope, and image releases have no build SBOM.
+The approval page and the "approval needed" message show the same
+comparison. `gregale deployment summary` remains the quick cockpit view:
+rollout status, rollback target, and release fields against the previous
+deployment.
+
 ## Release approvals
 
 Require people to approve each production release before it takes more than

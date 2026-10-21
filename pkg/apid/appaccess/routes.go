@@ -55,4 +55,6 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/release-approvals":          authz.OrgActionReadApp,
 	"GET /v1/deployments/{id}/approvals":             authz.OrgActionReadApp,
 	"POST /v1/deployments/{id}/approvals":            authz.OrgActionApproveAppRelease,
+	// Release diff (ADR-20261021101117).
+	"GET /v1/deployments/{id}/diff": authz.OrgActionReadApp,
 }

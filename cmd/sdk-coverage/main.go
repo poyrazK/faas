@@ -1134,6 +1134,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/release-approvals":                                                           "ListReleaseApprovals",
 	"GET /v1/deployments/{id}/approvals":                                                              "GetReleaseApproval",
 	"POST /v1/deployments/{id}/approvals":                                                             "DecideReleaseApproval",
+	"GET /v1/deployments/{id}/diff":                                                                   "GetReleaseDiff",
 	"PUT /v1/apps/{slug}/secrets/{key}":                                                               "SetSecret",
 	"GET /v1/apps/{slug}/secret-references":                                                           "ListAppSecretReferences",
 	"PUT /v1/apps/{slug}/secret-references/{key}":                                                     "SetAppSecretReference",

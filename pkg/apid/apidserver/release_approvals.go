@@ -377,7 +377,15 @@ func (s *server) notifyReleaseApproval(ctx context.Context, app state.App, d sta
 	if !ok {
 		return
 	}
-	payload, err := json.Marshal(approval.Notice(event, app, d, status, actor, comment, s.releaseApprovalReviewURL(d.ID)))
+	notice := approval.Notice(event, app, d, status, actor, comment, s.releaseApprovalReviewURL(d.ID))
+	if event == state.ReleaseApprovalEventRequested {
+		// ADR-20261021101117: tell approvers what the release changes. A
+		// diff that cannot be computed leaves the line out.
+		if from, problem := s.releaseDiffBase(ctx, app, d, ""); problem == nil {
+			notice.Changes = s.computeReleaseDiff(ctx, app, from, d).Summary
+		}
+	}
+	payload, err := json.Marshal(notice)
 	if err != nil {
 		s.log.Warn("apid: encode release approval notice failed", "deployment", d.ID, "err", err)
 		return
@@ -502,11 +510,17 @@ func (s *server) recordApprovalWait(ctx context.Context, app state.App, d state.
 		accountID = &parsed
 	}
 	now := time.Now().UTC()
-	if _, _, err := holds.RecordRolloutHold(ctx, state.RolloutHoldParams{
+	recorded, _, err := holds.RecordRolloutHold(ctx, state.RolloutHoldParams{
 		DeploymentID: d.ID, AccountID: accountID, ExpectedStep: d.CanaryStep, Rule: api.RolloutRuleHoldAwaitingApproval,
 		Decision: approval.HoldDecision(status, d, now), Actor: canaryProgressionActor, At: now,
-	}); err != nil {
+	})
+	if err != nil {
 		s.log.Warn("apid: record approval hold failed", "deployment", d.ID, "err", err)
+	}
+	// A repeated hold within the refresh interval is not recorded; the
+	// request it would announce was already recorded with it.
+	if err == nil && !recorded {
+		return
 	}
 	s.notifyReleaseApproval(ctx, app, d, policy, state.ReleaseApprovalEventRequested, status, "", "")
 }

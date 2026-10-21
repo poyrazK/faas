@@ -30032,6 +30032,30 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/{id}/diff:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+      - name: against
+        in: query
+        required: false
+        description: The release to compare with; defaults to the release of the same scope that served before this one.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [deployments]
+      operationId: getReleaseDiff
+      summary: Show what changed between two releases (ADR-20261021101117).
+      description: "Compares the code, configuration keys, packages, runtime settings and release command of two releases of one app. Never returns variable values, secret fingerprints or SBOM files. A section whose history is missing reports known=false with a note."
+      responses:
+        '200':
+          description: The release diff.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseDiff' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/deployments/{id}/canary/advance:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -106761,6 +106785,94 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ReleaseApprovalStatus' } }
+    ReleaseDiff:
+      description: "What changed between two releases of one app (ADR-20261021101117)."
+      type: object
+      required: [app, to, summary, code, config, dependencies, runtime, database]
+      properties:
+        app: { type: string }
+        from: { $ref: '#/components/schemas/ReleaseDiffSide' }
+        to: { $ref: '#/components/schemas/ReleaseDiffSide' }
+        summary: { type: string, description: "One line, such as \"new code, 2 config keys, 5 packages\"." }
+        code: { $ref: '#/components/schemas/ReleaseDiffCode' }
+        config: { $ref: '#/components/schemas/ReleaseDiffConfig' }
+        dependencies: { $ref: '#/components/schemas/ReleaseDiffDependencies' }
+        runtime: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffField' } }
+        database: { $ref: '#/components/schemas/ReleaseDiffDatabase' }
+    ReleaseDiffSide:
+      description: "One of the two compared releases."
+      type: object
+      required: [deployment_id, created_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        deployed_by: { type: string }
+        reason: { type: string }
+        tag: { type: string }
+        pr_number: { type: integer, minimum: 0 }
+        commit: { type: string }
+    ReleaseDiffCode:
+      description: "How the releases' source and image differ."
+      type: object
+      required: [changed, image_changed]
+      properties:
+        changed: { type: boolean }
+        from_commit: { type: string }
+        to_commit: { type: string }
+        compare_url: { type: string, format: uri, description: "GitHub's compare page when both releases came from the same GitHub repository." }
+        image_changed: { type: boolean }
+    ReleaseDiffKey:
+      description: "A configuration key that differs; values are never included."
+      type: object
+      required: [key, change]
+      properties:
+        key: { type: string }
+        change: { type: string, enum: [added, removed, changed] }
+    ReleaseDiffConfig:
+      description: "How the configuration each release started with differs, by key."
+      type: object
+      required: [known, variables, secrets]
+      properties:
+        known: { type: boolean, description: "False when the retained config history no longer reaches one of the releases." }
+        note: { type: string }
+        variables: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffKey' } }
+        secrets: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffKey' } }
+    ReleaseDiffPackage:
+      description: "A package whose presence or version differs between the builds."
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, description: "The package's purl without its version, or its group and name." }
+        from: { type: string }
+        to: { type: string }
+    ReleaseDiffDependencies:
+      description: "How the builds' SBOM packages differ. Each list holds at most 100 entries."
+      type: object
+      required: [known, added, removed, changed]
+      properties:
+        known: { type: boolean, description: "False when either release has no build SBOM." }
+        note: { type: string }
+        added: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffPackage' } }
+        removed: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffPackage' } }
+        changed: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffPackage' } }
+        truncated: { type: boolean }
+    ReleaseDiffField:
+      description: "A runtime setting that differs; env overrides compare by key."
+      type: object
+      required: [field, from, to]
+      properties:
+        field: { type: string, enum: [kind, handler, runtime_base, port, entrypoint, command, min_instances, healthcheck, liveness_probe, readiness_probe, sidecars, workflows, env_override_keys] }
+        from: { type: string }
+        to: { type: string }
+    ReleaseDiffDatabase:
+      description: "How the releases' release commands, which run database migrations, differ (ADR-1448)."
+      type: object
+      required: [changed]
+      properties:
+        changed: { type: boolean }
+        from_release_command: { type: string }
+        to_release_command: { type: string }
     ReleaseGateResult:
       description: "One judged release gate in a rollout decision. Aggregates only: no routes, messages or metric labels."
       type: object

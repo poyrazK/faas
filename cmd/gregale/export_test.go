@@ -1598,6 +1598,7 @@ var RedactErrorText = redactErrorText
 var RedactTestDiagnosticText = redactTestDiagnosticText
 var RehearsalTestRepo = rehearsalTestRepo
 var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
+var ReleaseDiffLines = releaseDiffLines
 var ReleaseGateRequest = releaseGateRequest
 var ReleaseSummaryLine = releaseSummaryLine
 var ReleasedUsage = releasedUsage

@@ -36,6 +36,9 @@ type ReleaseNotice struct {
 	Actor          string `json:"actor,omitempty"`
 	Comment        string `json:"comment,omitempty"`
 	ReviewURL      string `json:"review_url,omitempty"`
+	// Changes summarizes the release diff (ADR-20261021101117), such as
+	// "new code, 2 config keys".
+	Changes string `json:"changes,omitempty"`
 }
 
 // ErrReleaseNoticeKind refuses a channel kind that does not receive release
@@ -89,6 +92,9 @@ func releaseLines(n ReleaseNotice) []string {
 			max(n.Required-n.Approvals, 0), n.Approvals, n.Required, n.TrafficPercent, n.Stage, n.TotalStages))
 		if n.ExpiresAt != "" {
 			lines = append(lines, "It is aborted if nobody approves by "+n.ExpiresAt+".")
+		}
+		if n.Changes != "" {
+			lines = append(lines, "What changed: "+n.Changes)
 		}
 	}
 	if n.Comment != "" {
