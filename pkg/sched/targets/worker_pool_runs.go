@@ -46,12 +46,14 @@ func (r *workerPoolRuns) add(pool ScopedWorkerPoolEngine, app state.App) {
 // account's worker cap while no other run changes the account's workers. An
 // account whose previous run is still going is skipped and picked up by a
 // later tick. Runs use Tick's context, which schedd keeps for the loop's
-// lifetime.
-func (t *Trigger) startWorkerPoolRuns(ctx context.Context, runs workerPoolRuns) {
+// lifetime. It returns the number of runs it started.
+func (t *Trigger) startWorkerPoolRuns(ctx context.Context, runs workerPoolRuns) int {
+	started := 0
 	for _, key := range runs.order {
 		if !t.claimWorkerPoolRun(key) {
 			continue
 		}
+		started++
 		run := runs.byKey[key]
 		t.workerRuns.Add(1)
 		go func() {
@@ -70,6 +72,7 @@ func (t *Trigger) startWorkerPoolRuns(ctx context.Context, runs workerPoolRuns) 
 			}
 		}()
 	}
+	return started
 }
 
 func (t *Trigger) claimWorkerPoolRun(key string) bool {

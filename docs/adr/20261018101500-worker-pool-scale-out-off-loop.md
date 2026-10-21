@@ -41,6 +41,16 @@
      correlation; the prime's boot then proves its deployment.
      Requests, services, jobs and every deployment's first boot on a node
      keep the full window.
+  3. *A queue message wakes an idle pool.* schedd already listens on
+     `invocation_due`, which fires when a message is inserted or returns to
+     pending. For a queue message it starts that app's pool run at once
+     instead of at the next tick, when the last tick saw the app as a
+     queue-driven worker pool, the app is outside admission backoff and the
+     node ledger counts no serving instance of it (a frozen worker holds
+     none). It is the tick's per-account run, so a run already going for
+     the account starts nothing, and the tick still covers a dropped
+     notification. A pool with a serving worker leaves the message to that
+     worker's lease and the tick, so a busy queue adds no reconciles.
 - **Consequences:** A pool's later workers are ready about 1 s after their
   process starts instead of 10 s, and the pool admits the next worker that
   much sooner; with ADR-1141's 2026-10-17 amendment each still takes its
@@ -52,6 +62,10 @@
   more than a second after start passes as a worker, where the full window
   would have rejected it as `http`; workers never join the gateway target
   set either way.
+  An idle pool's first worker, a thaw (ADR-20261019103000) or a cold boot,
+  starts up to one tick (1 s) sooner. The ledger count is per app, so an
+  app with a serving worker in one environment and an idle pool in another
+  still waits for the tick there.
 - **Rejected alternatives:** *Admitting a pool's missing workers in
   parallel.* Tried on n2 (branch `worker-parallel-admission-wip`): three
   workers were admitted within 0.4 s, but three concurrent cold boots on two
@@ -66,7 +80,10 @@
   boots finish but leaves the ten-second wait in every boot.
 - **Validation:** `pkg/sched/targets` tests cover a tick that does not wait
   for a blocked reconcile, one run per account at a time in tick order, and
-  another account's run going ahead meanwhile. `pkg/fcvm` tests cover the
+  another account's run going ahead meanwhile; a queue wake that reconciles
+  only an idle queue-driven pool the last tick saw, honors admission
+  backoff and joins the account's run; and, in `cmd/schedd`, which
+  notifications are queue messages. `pkg/fcvm` tests cover the
   boot argument (declared workers only) and which boots prove or forget a
   deployment; `guest/init` tests cover the short window and the kernel
   argument parsing; a `pkg/sched` test covers the cold-boot RPC's identity

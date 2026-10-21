@@ -500,6 +500,11 @@ type Trigger struct {
 	workerRunMu   sync.Mutex
 	workerRunning map[string]bool
 	workerRuns    sync.WaitGroup
+
+	// workerApps holds the queue-driven worker pool apps the last tick saw,
+	// by app id, for WakeWorkerPool.
+	workerAppsMu sync.Mutex
+	workerApps   map[string]state.App
 }
 
 // Options is the functional-options bag for New(). All fields are
@@ -725,7 +730,11 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		return fmt.Errorf("targets: list apps: %w", err)
 	}
 	var workerPools workerPoolRuns
-	defer func() { t.startWorkerPoolRuns(ctx, workerPools) }()
+	workerApps := map[string]state.App{}
+	defer func() {
+		t.rememberWorkerPoolApps(workerApps)
+		t.startWorkerPoolRuns(ctx, workerPools)
+	}()
 	for _, app := range apps {
 		// A parked or suspended app is not scaled: the reaper parks whatever
 		// a target admits for it (H5-54).
@@ -758,6 +767,9 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		workerWorkload := app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker
 		if workerWorkload && (haveQueueTarget || haveQueueLagTarget || len(customTargets) > 0) {
 			if pool, ok := t.engine.(ScopedWorkerPoolEngine); ok {
+				if haveQueueTarget || haveQueueLagTarget {
+					workerApps[app.ID] = app
+				}
 				// Keep queue gauges for visibility. These aggregate
 				// observations never authorize a scoped mutation. Custom
 				// worker metrics are read by ReconcileWorkerPools, which
