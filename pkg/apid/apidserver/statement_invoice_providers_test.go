@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -37,7 +37,8 @@ type fakePaddle struct {
 }
 
 // customerEntity serves /customers/{id}/addresses and /businesses, newest
-// first, except a customer's address preset in addresses.
+// created first, except a customer's address preset in addresses. Like
+// Paddle, it orders lists only by ID.
 func (f *fakePaddle) customerEntity(w http.ResponseWriter, r *http.Request) bool {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/customers/"), "/")
 	if !strings.HasPrefix(r.URL.Path, "/customers/") || len(parts) < 2 || (parts[1] != "addresses" && parts[1] != "businesses") {
@@ -56,8 +57,13 @@ func (f *fakePaddle) customerEntity(w http.ResponseWriter, r *http.Request) bool
 	stamp := time.Date(2026, 10, 1, 0, 0, f.writes, 0, time.UTC).Format(time.RFC3339)
 	switch {
 	case r.Method == http.MethodGet && len(parts) == 2:
-		items := append([]map[string]any(nil), f.entities[key]...)
-		sort.Slice(items, func(i, j int) bool { return fmt.Sprint(items[i]["updated_at"]) > fmt.Sprint(items[j]["updated_at"]) })
+		if order := r.URL.Query().Get("order_by"); order != "" && order != "id[ASC]" && order != "id[DESC]" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"error":{"type":"request_error","code":"bad_request","detail":"Invalid request."}}`)
+			return true
+		}
+		items := slices.Clone(f.entities[key])
+		slices.Reverse(items)
 		raw, _ := json.Marshal(items)
 		_, _ = fmt.Fprintf(w, `{"data":%s}`, raw)
 	case r.Method == http.MethodPost && len(parts) == 2:

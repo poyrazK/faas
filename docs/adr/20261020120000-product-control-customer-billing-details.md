@@ -1,6 +1,6 @@
 # ADR-20261020120000: Product Control customers keep their billing details in the owner's Paddle
 
-- **Status:** accepted for internal implementation; needs Paddle sandbox qualification before owners rely on it
+- **Status:** accepted for internal implementation; needs Paddle sandbox qualification before owners rely on it; amendment 1 (2026-10-21)
 - **Date:** 2026-10-20
 - **Amends:** ADR-20261019100333 (Paddle invoices sent by Paddle): a billed transaction also carries the customer's business
 - **Implements:** ADR-20261018212918 §6 and slice 5 ("customer billing details so Paddle exports can be billed")
@@ -19,3 +19,16 @@
 - **Rejected alternatives:**
   - **Storing the address in Gregale** and sending it on each export would make Gregale hold customers' postal and tax data and keep it in sync with Paddle.
   - **Reusing `manage_plan` or `view_billing`** would let roles that choose plans or read statements also change where invoices are addressed.
+
+## Amendment 1 (2026-10-21): newest created, not most recently updated
+
+Paddle documents `id` as the only valid ordering field of address and business
+lists (`order_by=id[ASC|DESC]`), but this ADR and ADR-20261019100333 sent
+`order_by=updated_at[DESC]`. Both now read the customer's newest active address and business with
+`order_by=id[DESC]`, and Paddle IDs grow with creation time. The portal still
+updates that address and business in place, so a customer who only uses the
+portal keeps one of each and nothing changes for them. A customer with several
+active addresses in Paddle is billed with the newest one created, not the one
+edited last. The provider qualification
+(`TestProductControlProviderQualification`) checks this ordering against the
+Paddle sandbox.
