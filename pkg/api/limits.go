@@ -12978,6 +12978,23 @@ const (
 	MaxChannelsPerAlertRule           = 5
 )
 
+// Object storage in budgets (ADR-20261020160000): apid records each billing
+// account's live estimate every FinancialObjectStorageEstimateInterval; the
+// cost report treats an estimate older than FinancialObjectStorageEstimateFreshness
+// as stale.
+const (
+	FinancialObjectStorageEstimateInterval  = 5 * time.Minute
+	FinancialObjectStorageEstimateFreshness = 15 * time.Minute
+)
+
+// Budget alert channels (ADR-20261019193500). A delivery that keeps failing is
+// abandoned after FinancialBudgetChannelAttemptsMax claims; the account email
+// alert (ADR-566) is unaffected.
+const (
+	MaxChannelsPerFinancialBudget     = 5
+	FinancialBudgetChannelAttemptsMax = 12
+)
+
 // Change timeline bounds (ADR-751). Each source is read with the event cap so
 // one busy source cannot starve the others before the newest-first merge.
 const (

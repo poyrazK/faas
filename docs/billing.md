@@ -228,6 +228,65 @@ revision conditions, retry headers and readiness fields. Revision history is
 intent history; `runtime.stops` separately retains threshold decisions and
 current scheduler acknowledgements.
 
+### Budget alerts on Slack, PagerDuty and email channels
+
+A budget's threshold alerts always go to the account email. They can also go to
+up to five of the account's notification channels (the same Slack, PagerDuty
+and email channels alert rules use;
+[ADR 20261019193500](adr/20261019193500-budget-alert-channels.md)):
+
+```bash
+gregale channels list                                         # find channel IDs
+gregale billing budgets channels --set CHANNEL_ID,CHANNEL_ID POLICY_ID
+gregale billing budgets channels POLICY_ID                    # last delivery per channel
+gregale billing budgets channels --clear POLICY_ID
+```
+
+The REST form is `GET`/`PUT /v1/billing/budgets/{id}/channels` with
+`{"channel_ids": [...]}`; `PUT` needs `admin`, session MFA and an
+`Idempotency-Key`. Changing channels does not change the policy revision.
+
+Each threshold is sent once to each channel. A failed send is retried with
+backoff (1 minute, doubling to 1 hour) and given up after 12 attempts; the
+channel shows the last error. A channel added mid-month receives a threshold
+already crossed this month at the next evaluation. Removing a channel pauses
+its pending alerts, and deleting it discards them. On PagerDuty, every threshold
+of one budget in one month updates a single incident: `warning` below the
+limit, `error` at it. Amounts are the selected usage meters, not the invoice.
+
+### Projected overruns
+
+Each evaluation also projects the budget to the end of the UTC month at this
+month's usage rate (`runtime.evaluation.projected_millicents`; `gregale billing
+budgets get` prints "Projected month end"). When the projection reaches the
+limit while known usage is still below it, the account email and the bound
+channels get one "projected to exceed its limit" alert for the month. It
+shows the projected amount, the limit and the usage so far. It is an estimate,
+not an invoice, and it never stops a workload.
+
+A projection needs complete, fresh evidence for every selected meter and at
+least a day of usage this month. Otherwise `projection_reason` says why it is
+unavailable (for example `compute:insufficient_history`). Editing the budget
+starts a new revision, so a still-projected overrun can alert again.
+
+### Object storage in budgets
+
+A monitored account budget can include object storage by adding
+`object_storage` to `meters`, for example `["compute", "object_storage"]`.
+Object storage cannot be selected on app, job, project or environment budgets
+(buckets carry no such attribution), or on strict budgets
+([ADR 20261020160000](adr/20261020160000-object-storage-in-budgets.md)).
+
+The amount is the live object-storage estimate: this month's stored
+GiB-months, requests and egress, priced with the same rates and plan
+allowance as `gregale usage object-storage` and month close. Gross is before the
+allowance and net is after. apid refreshes it every five minutes, and an
+estimate more than 15 minutes old counts as stale. `GET /v1/billing/costs`
+shows it as the `object_storage` meter. Threshold and projected-overrun alerts
+count it like compute and egress. The invoice line still comes from month
+close, which also applies the overage cap; the budget counts the uncapped
+estimate.
+
 ## Active spending notifications
 
 For example, save this specification to `budget.json` and run

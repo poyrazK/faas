@@ -5219,6 +5219,26 @@ type FinancialBudgetAlert struct {
 	LastError           string
 }
 
+type FinancialBudgetAlertChannelDelivery struct {
+	AlertID       pgtype.UUID
+	Kind          string
+	ChannelID     pgtype.UUID
+	AccountID     pgtype.UUID
+	PolicyID      pgtype.UUID
+	State         string
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LeaseToken    pgtype.UUID
+	DeliveredAt   pgtype.Timestamptz
+	LastError     string
+}
+
+type FinancialBudgetChannel struct {
+	AccountID pgtype.UUID
+	PolicyID  pgtype.UUID
+	ChannelID pgtype.UUID
+}
+
 type FinancialBudgetEvaluation struct {
 	AccountID         pgtype.UUID
 	PolicyID          pgtype.UUID
@@ -5237,6 +5257,22 @@ type FinancialBudgetPolicy struct {
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
 	DeletedAt pgtype.Timestamptz
+}
+
+type FinancialBudgetProjectionAlert struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	PolicyID        pgtype.UUID
+	Revision        int64
+	PeriodStart     pgtype.Timestamptz
+	LimitMillicents int64
+	Payload         []byte
+	State           string
+	Attempts        int32
+	NextAttemptAt   pgtype.Timestamptz
+	LeaseToken      pgtype.UUID
+	DeliveredAt     pgtype.Timestamptz
+	LastError       string
 }
 
 type FinancialBudgetRevision struct {
@@ -5351,6 +5387,24 @@ type FinancialEvidenceCoverage struct {
 type FinancialFundingCurrency struct {
 	Singleton bool
 	Currency  string
+}
+
+type FinancialObjectStorageEstimate struct {
+	AccountID                    pgtype.UUID
+	PeriodStart                  pgtype.Timestamptz
+	ObservedAt                   pgtype.Timestamptz
+	UsageThrough                 pgtype.Timestamptz
+	Fresh                        bool
+	StoredByteHours              int64
+	RequestCount                 int64
+	EgressBytes                  int64
+	Currency                     string
+	StorageMillicentsPerGibMonth int64
+	RequestsMillicentsPerMillion int64
+	EgressMillicentsPerGib       int64
+	IncludedByteHours            int64
+	IncludedRequests             int64
+	IncludedEgressBytes          int64
 }
 
 type FinancialPreviewCommandRuntime struct {

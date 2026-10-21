@@ -31,6 +31,9 @@ func PagerDutyPayload(routingKey string, msg Message) map[string]any {
 		return out
 	}
 	severity := "error"
+	if msg.Severity != "" {
+		severity = msg.Severity
+	}
 	if msg.Event == EventTest {
 		severity = "info"
 	}
@@ -49,6 +52,9 @@ func PagerDutyPayload(routingKey string, msg Message) map[string]any {
 			"comparison": msg.Comparison, "threshold": msg.Threshold, "window": msg.Window,
 		},
 	}
+	if msg.Summary != "" {
+		out["payload"].(map[string]any)["custom_details"] = map[string]any{"rule": msg.RuleName, "summary": msg.Summary}
+	}
 	if msg.DashboardURL != "" {
 		out["links"] = []map[string]any{{"href": msg.DashboardURL, "text": "Open in Gregale"}}
 	}
@@ -65,7 +71,11 @@ func EmailContent(msg Message) (subject, body string) {
 	if msg.DashboardURL != "" {
 		fmt.Fprintf(&b, "Dashboard: %s\n", msg.DashboardURL)
 	}
-	b.WriteString("\nYou receive this because a Gregale alert rule sends to this address. Manage channels with `gregale channels list`.\n")
+	footer := msg.Footer
+	if footer == "" {
+		footer = "You receive this because a Gregale alert rule sends to this address. Manage channels with `gregale channels list`."
+	}
+	b.WriteString("\n" + footer + "\n")
 	return "[Gregale] " + Headline(msg), b.String()
 }
 

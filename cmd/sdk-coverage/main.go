@@ -778,6 +778,8 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/billing/budgets/{id}":                                             "UpdateFinancialBudget",
 	"DELETE /v1/billing/budgets/{id}":                                          "DeleteFinancialBudget",
 	"GET /v1/billing/budgets/{id}/revisions":                                   "ListFinancialBudgetRevisions",
+	"GET /v1/billing/budgets/{id}/channels":                                    "GetFinancialBudgetChannels",
+	"PUT /v1/billing/budgets/{id}/channels":                                    "SetFinancialBudgetChannels",
 	"POST /v1/execution-workflows":                                             "CreateManagedExecutionWorkflow",
 	"GET /v1/execution-workflows/{workflow_id}":                                "GetExecutionWorkflow",
 	"GET /v1/executions/capabilities":                                          "GetExecutionCapabilities",
