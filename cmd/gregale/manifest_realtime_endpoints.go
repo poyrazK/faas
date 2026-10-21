@@ -55,6 +55,9 @@ func reconcileManifestRealtimeEndpoints(ctx context.Context, client any, slug st
 	if !manage {
 		return nil, nil
 	}
+	if !realtimePreviewCLI() {
+		return nil, errRealtimeManifestHidden
+	}
 	rt, ok := client.(manifestRealtimeEndpointClient)
 	if !ok {
 		if len(desired) == 0 {

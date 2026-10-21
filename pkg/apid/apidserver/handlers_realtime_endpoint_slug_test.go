@@ -13,6 +13,7 @@ import (
 // and can be renamed or cleared.
 func TestManagedRealtimeEndpointSlug(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithRealtimePreview(apidserver.RealtimePreviewEveryone())
 	t.Cleanup(apidserver.WithTestRecipient(t))
 	apidserver.MustSeedApp(t, e, "rt-slugs")
 	create := func(slug string) (int, api.ManagedRealtimeEndpointResponse) {

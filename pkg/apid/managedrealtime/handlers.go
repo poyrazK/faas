@@ -239,7 +239,9 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 		LiveRoutes:       liveRoutes,
 
 		AccountMaxConnections: accountMaxConnections,
-		ChannelRules:          append([]api.RealtimeChannelRule(nil), row.ChannelRules...),
+		// Channel rules are a preview field (ADR-20261019102657): an
+		// account that leaves the rollout falls back to the callback.
+		ChannelRules: previewChannelRules(s.PreviewVisible(row.AccountID), row.ChannelRules),
 		// Live queries ride the v2 protocol, so an endpoint with live routes
 		// (FAAS_LIVE_QUERIES_ACCOUNTS) is marked too.
 		Preview: s.PreviewVisible(row.AccountID) || len(liveRoutes) > 0,
@@ -340,6 +342,9 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 	var req api.CreateManagedRealtimeEndpointRequest
 	if err := httpkit.DecodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	if s.hiddenEndpointField(w, acct.ID, req.Slug != "", req.ChannelRules != nil) {
 		return
 	}
 	limits, allowed := s.realtimePlanLimits(acct)
@@ -481,6 +486,9 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 	var req api.UpdateManagedRealtimeEndpointRequest
 	if err := httpkit.DecodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	if s.hiddenEndpointField(w, acct.ID, req.Slug != nil, req.ChannelRules != nil) {
 		return
 	}
 	if _, ok := s.realtimePlanLimits(acct); !ok {

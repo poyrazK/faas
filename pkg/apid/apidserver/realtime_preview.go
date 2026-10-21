@@ -5,6 +5,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
+	"github.com/onebox-faas/faas/pkg/apid/realtimepreview"
 )
 
 // configureRealtimePreview reads FAAS_REALTIME_PREVIEW_ACCOUNTS, the accounts
@@ -22,6 +23,21 @@ func (s *server) configureRealtimePreview(getenv func(string) string) error {
 func (s *server) WithRealtimePreview(gate managedrealtime.PreviewGate) *server {
 	s.realtime.Preview = gate
 	return s
+}
+
+// realtimePreviewPublished reports whether every account sees the realtime
+// preview, so the served OpenAPI document may list it.
+func (s *server) realtimePreviewPublished() bool {
+	all, ok := s.realtime.Preview.(interface{ All() bool })
+	return ok && all.All()
+}
+
+// realtimePreviewProbe reports whether a request that matched no route
+// probes a realtime preview path with another method. Until every account
+// sees the preview it answers like an unregistered route, not 405, so the
+// Allow header cannot reveal the preview.
+func (s *server) realtimePreviewProbe(r *http.Request) bool {
+	return !s.realtimePreviewPublished() && realtimepreview.Path(r.URL.Path)
 }
 
 // realtimePreviewRoute answers as an unregistered route, before

@@ -27,8 +27,11 @@ snapshots, reducers, read progress, realtime triggers, publisher and worker
 credentials), tickets, access controls, occupancy, the usage API, and on
 realtimed the v2 protocol, SSE and live occupancy, which apply only to
 endpoints apid marks for a listed account. For any other account the routes
-answer as unregistered ones. Turn a preview on by setting its flag on apid and
-every realtime node and listing your account, then widen to `*`.
+answer as unregistered ones. The served OpenAPI document and `/docs` list the
+preview only at `*`. The CLI shows its verbs, `--delivery retained` and the
+gregale.yaml `realtime:` section only when `FAAS_REALTIME_PREVIEW_ACCOUNTS` is
+set in the shell. Turn a preview on by setting its flag on apid and every
+realtime node and listing your account, then widen to `*`.
 
 | Flag | Daemons | Turns on |
 |---|---|---|

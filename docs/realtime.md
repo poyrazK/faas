@@ -24,7 +24,9 @@ preview gates, limits, recovery behavior, and rollout procedures.
 
 Name each endpoint with a `slug` and declare it next to your app, so every
 deploy creates it, keeps it in step with the file, and can recreate it in
-another account:
+another account. This is a preview (ADR-20261019102657): until your account
+is in it, the API refuses `slug` and `channel_rules` and the CLI treats
+`realtime:` as an unknown key.
 
 ```yaml
 realtime:

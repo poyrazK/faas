@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 )
 
@@ -63,6 +64,9 @@ func (r PreviewRollout) Allows(accountID string) bool {
 // Off reports whether no account sees realtime previews.
 func (r PreviewRollout) Off() bool { return !r.all && len(r.accounts) == 0 }
 
+// All reports whether every account sees the previews ("*").
+func (r PreviewRollout) All() bool { return r.all }
+
 // PreviewVisible reports whether an account sees realtime previews. A
 // Service without a gate shows them to nobody.
 func (s *Service) PreviewVisible(accountID string) bool {
@@ -82,4 +86,33 @@ func (s *Service) previewUnavailable(w http.ResponseWriter, accountID string, en
 		return true
 	}
 	return false
+}
+
+// hiddenEndpointField refuses an endpoint's preview fields (slug,
+// channel_rules) from an account outside the rollout with the error a field
+// the API does not know gets.
+func (s *Service) hiddenEndpointField(w http.ResponseWriter, accountID string, slug, channelRules bool) bool {
+	if s.PreviewVisible(accountID) {
+		return false
+	}
+	field := ""
+	switch {
+	case slug:
+		field = "slug"
+	case channelRules:
+		field = "channel_rules"
+	default:
+		return false
+	}
+	api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("json: unknown field %q", field)))
+	return true
+}
+
+// previewChannelRules returns the rules realtimed may apply: none outside
+// the rollout.
+func previewChannelRules(visible bool, rules []api.RealtimeChannelRule) []api.RealtimeChannelRule {
+	if !visible {
+		return nil
+	}
+	return append([]api.RealtimeChannelRule(nil), rules...)
 }

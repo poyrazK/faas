@@ -1551,3 +1551,8 @@ func RealtimePreviewEveryone() managedrealtime.PreviewRollout {
 	}
 	return r
 }
+
+// AppWebhookEventsForTest is the app webhook vocabulary accountID may choose.
+func (s *server) AppWebhookEventsForTest(accountID string) []string {
+	return s.appWebhookEvents(accountID)
+}

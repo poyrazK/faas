@@ -16,8 +16,8 @@ import (
 type fakeRealtimeEndpointClient struct {
 	*fakeRealtimeTriggerClient
 	endpoints map[string]api.ManagedRealtimeEndpointResponse // by ID
-	groups    map[string][]string                             // endpoint ID + channel → names
-	secrets   map[string]string                               // app/key → value
+	groups    map[string][]string                            // endpoint ID + channel → names
+	secrets   map[string]string                              // app/key → value
 	restarts  []string
 	nextID    int
 	log       []string
@@ -134,6 +134,7 @@ func (f *fakeRealtimeEndpointClient) bySlug(slug string) (api.ManagedRealtimeEnd
 // adr: 20261019102657 — a deploy creates declared endpoints and groups,
 // resolves triggers' endpoint slugs, and rolls all of it back.
 func TestReconcileManifestRealtimeCreatesAndRollsBack(t *testing.T) {
+	t.Setenv("FAAS_REALTIME_PREVIEW_ACCOUNTS", "*")
 	client := newFakeRealtimeEndpointClient()
 	m := &gregalemanifest.Manifest{
 		Realtime: &gregalemanifest.RealtimeConfig{Endpoints: []gregalemanifest.RealtimeEndpoint{{
@@ -191,6 +192,7 @@ func reconcileManifestRealtimeEndpointsOnly(t *testing.T, client *fakeRealtimeEn
 // slugged endpoint is disabled (never deleted), and endpoints without a slug
 // are left alone; rollback restores both.
 func TestReconcileManifestRealtimeUpdatesAndDisables(t *testing.T) {
+	t.Setenv("FAAS_REALTIME_PREVIEW_ACCOUNTS", "*")
 	client := newFakeRealtimeEndpointClient(
 		api.ManagedRealtimeEndpointResponse{ID: "e-chat", Slug: "chat", AuthMode: api.RealtimeAuthModeNone, Enabled: true,
 			AllowedOrigins: []string{}, ConnectPath: api.DefaultRealtimeConnectPath, MessagePath: api.DefaultRealtimeMessagePath,
@@ -227,6 +229,7 @@ func TestReconcileManifestRealtimeUpdatesAndDisables(t *testing.T) {
 // adr: 20261019102657 — `auth: <app>` names an Application Auth app, which
 // stays unavailable while Auth is dark-launched.
 func TestReconcileManifestRealtimeAuthAppNeedsApplicationAuth(t *testing.T) {
+	t.Setenv("FAAS_REALTIME_PREVIEW_ACCOUNTS", "*")
 	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "")
 	client := newFakeRealtimeEndpointClient()
 	m := &gregalemanifest.Manifest{Realtime: &gregalemanifest.RealtimeConfig{Endpoints: []gregalemanifest.RealtimeEndpoint{
@@ -249,6 +252,7 @@ func TestReconcileManifestRealtimeAuthAppNeedsApplicationAuth(t *testing.T) {
 // adr: 20261019102657 — declared channel rules reach the endpoint and a
 // changed rule set is updated in place.
 func TestReconcileManifestRealtimeChannelRules(t *testing.T) {
+	t.Setenv("FAAS_REALTIME_PREVIEW_ACCOUNTS", "*")
 	client := newFakeRealtimeEndpointClient()
 	oidc := &gregalemanifest.RealtimeOIDC{Issuer: "https://id.example", JWKSURL: "https://id.example/jwks", Algorithms: []string{"RS256"}}
 	m := &gregalemanifest.Manifest{Realtime: &gregalemanifest.RealtimeConfig{Endpoints: []gregalemanifest.RealtimeEndpoint{
