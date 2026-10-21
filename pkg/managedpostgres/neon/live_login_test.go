@@ -102,7 +102,15 @@ func TestSQLLiveLoginIssueAndRevoke(t *testing.T) {
 	_ = repl.Close(ctx)
 
 	slot := "lq_revoke_" + login.scope[:8]
-	executeSQL(t, f.admin, `SELECT pg_create_logical_replication_slot('`+slot+`', 'pgoutput')`)
+	// A logical slot needs wal_level=logical; elsewhere revoke runs against
+	// a slot that does not exist, which it must also accept.
+	var walLevel string
+	if err := f.admin.QueryRow(ctx, `SHOW wal_level`).Scan(&walLevel); err != nil {
+		t.Fatal(err)
+	}
+	if walLevel == "logical" {
+		executeSQL(t, f.admin, `SELECT pg_create_logical_replication_slot('`+slot+`', 'pgoutput')`)
+	}
 	if err := live.Revoke(ctx, f.material, f.readonly, slot); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
