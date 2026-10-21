@@ -75,6 +75,9 @@ type Message struct {
 	IdempotencyKey string
 	// Footer, when set, replaces the email footer that names an alert rule.
 	Footer string
+	// Notes are optional lines explaining what fired, such as the route
+	// insights behind route_insights_detected (ADR-20261020161310).
+	Notes []string
 }
 
 // Target is a channel's decrypted destination.

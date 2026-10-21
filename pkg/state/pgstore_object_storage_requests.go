@@ -28,7 +28,7 @@ func (s *pgCore) RecordObjectStorageProviderEgress(ctx context.Context, bucketID
 	})
 }
 
-func (s *PgStore) ListObjectStorageProviderRequestMetrics(ctx context.Context, backendID, fingerprint string, periodStart time.Time) ([]ObjectStorageProviderRequestMetric, error) {
+func (s *pgCore) ListObjectStorageProviderRequestMetrics(ctx context.Context, backendID, fingerprint string, periodStart time.Time) ([]ObjectStorageProviderRequestMetric, error) {
 	rows, err := sqlc.New().ObjectStorageProviderRequestMetrics(ctx, s.pool, sqlc.ObjectStorageProviderRequestMetricsParams{
 		BackendID: backendID, BackendFingerprint: fingerprint, PeriodStart: objectUsageTime(ObjectStoragePeriod(periodStart)),
 	})
@@ -46,7 +46,7 @@ func (s *PgStore) ListObjectStorageProviderRequestMetrics(ctx context.Context, b
 	return out, nil
 }
 
-func (s *PgStore) ListObjectStorageProviderBuckets(ctx context.Context, backendID, fingerprint string) ([]ObjectBucket, error) {
+func (s *pgCore) ListObjectStorageProviderBuckets(ctx context.Context, backendID, fingerprint string) ([]ObjectBucket, error) {
 	rows, err := sqlc.New().ObjectStorageProviderBuckets(ctx, s.pool, sqlc.ObjectStorageProviderBucketsParams{BackendID: backendID, BackendFingerprint: fingerprint, PeriodStart: objectUsageTime(objectUsagePeriod(ctx))})
 	if err != nil {
 		return nil, err

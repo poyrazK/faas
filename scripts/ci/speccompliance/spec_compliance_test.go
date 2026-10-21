@@ -505,6 +505,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/jobs/{name}/policy":                            true, // HTML form, scheduled-work policy editor (ADR-385)
 	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":           true, // HTML form, failed job partition replay (ADR-385)
 	"POST /dashboard/apps/{slug}/rollback":                          true, // HTML form, app rollback (issue #248)
+	"POST /dashboard/apps/{slug}/routes/insights/{id}/fix":          true, // HTML form, route insight fix (ADR-20261020161310); same core as the /v1 fix
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":            true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes

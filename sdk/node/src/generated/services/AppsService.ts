@@ -151,6 +151,8 @@ import type { RouteHealthHistoryEntry } from '../models/RouteHealthHistoryEntry.
 import type { RouteHealthHistoryPage } from '../models/RouteHealthHistoryPage.js';
 import type { RouteHealthInvestigation } from '../models/RouteHealthInvestigation.js';
 import type { RouteHealthReport } from '../models/RouteHealthReport.js';
+import type { RouteInsightFixRequest } from '../models/RouteInsightFixRequest.js';
+import type { RouteInsightFixResponse } from '../models/RouteInsightFixResponse.js';
 import type { RouteInsightsResponse } from '../models/RouteInsightsResponse.js';
 import type { RouteLifecycleApproval } from '../models/RouteLifecycleApproval.js';
 import type { RouteLifecycleHistoryPage } from '../models/RouteLifecycleHistoryPage.js';
@@ -8005,6 +8007,72 @@ export class AppsService {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Apply a route insight's fix.
+   * Applies the edge-rule change the insight's `fix` describes
+   * (ADR-20261020161310): `create_cache_rule` creates an enabled `@app`
+   * cache rule with the measured safe max-age, `set_cache_max_age` and
+   * `disable_cache_rule` change the cache rule serving exactly this route,
+   * and `add_cache_override` adds a narrower rule ahead of a rule that also
+   * covers other routes. A `cache_stale` fix then purges the route's cached
+   * responses. Rules are written through the same path as the edge-rules
+   * API, so plan quotas, validation and fleet convergence apply.
+   *
+   * `fix_id` must be the `fix.id` the insight lists now; if the insight or
+   * the app's edge rules changed, the request fails with 409
+   * `route_insight_fix_changed` and nothing is written. An insight that is
+   * resolved or has no fix fails with 409 `route_insight_no_fix`. On
+   * success the route's affected insights resolve with `fix_action` and
+   * `fixed_at`, and stay resolved for at least one evidence window. Uses
+   * the deploy-write scopes, completed MFA, the DebugTelemetryEnabled plan
+   * gate and Idempotency-Key replay.
+   *
+   * @returns RouteInsightFixResponse The fix was applied.
+   * @throws ApiError
+   */
+  public static fixRouteInsight({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The insight id from GET /v1/apps/{slug}/routes/insights.
+     */
+    id: string,
+    requestBody: RouteInsightFixRequest,
+  }): CancelablePromise<RouteInsightFixResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/routes/insights/{id}/fix',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The insight has no fix to apply (\`route_insight_no_fix\`), or the fix changed since it was read (\`route_insight_fix_changed\`).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
