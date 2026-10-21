@@ -20,6 +20,26 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  # ADR 20261021080640: preview platform flags carry a retire-by date. Past it,
+  # a ticket reminds operators to fold the preview into general availability
+  # or remove the flag, so flags do not accumulate as permanent gates.
+  - name: faas_platform_flags
+    interval: 1h
+    rules:
+      - alert: FaasPlatformFlagPastRetireBy
+        expr: |
+          max by (flag) (apid_platform_flag_retire_by_timestamp_seconds) < time()
+        for: 1h
+        labels:
+          severity: warn
+          component: apid
+          family: platform_flags
+          public_status: internal
+        annotations:
+          summary: "Platform flag {{ $labels.flag }} is past its retire-by date"
+          description: "The preview platform flag {{ $labels.flag }} has passed the retire-by date in its catalog entry. Release it to everyone and remove the gate, or move the date with a reason in the PR."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPlatformFlagPastRetireBy.md"
+
   # ADR-387: source discovery health is separate from approved-intent/runtime
   # convergence. Counts come from one durable fleet observation per scrape;
   # max avoids counting the same sources again on every apid replica.

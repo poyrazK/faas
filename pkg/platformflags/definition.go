@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -31,14 +32,20 @@ type Definition struct {
 // constraints admit (1000 = 10%, 10000 = all) and uses the same stable hash as
 // customer Flags, so raising it keeps the earlier cohort. Value is required so
 // a rule can never enable a feature by omission.
+//
+// StartsAt and EndsAt bound when the rule applies (ADR 20261021080640):
+// outside the window it does not match and evaluation falls through. A rule
+// with only a window and no targeting applies to everyone inside it.
 type Rule struct {
-	ID       string   `json:"id"`
-	Accounts []string `json:"accounts,omitempty"`
-	Orgs     []string `json:"orgs,omitempty"`
-	Group    string   `json:"group,omitempty"`
-	Plans    []string `json:"plans,omitempty"`
-	Rollout  *int     `json:"rollout,omitempty"`
-	Value    *bool    `json:"value"`
+	ID       string     `json:"id"`
+	Accounts []string   `json:"accounts,omitempty"`
+	Orgs     []string   `json:"orgs,omitempty"`
+	Group    string     `json:"group,omitempty"`
+	Plans    []string   `json:"plans,omitempty"`
+	Rollout  *int       `json:"rollout,omitempty"`
+	StartsAt *time.Time `json:"starts_at,omitempty"`
+	EndsAt   *time.Time `json:"ends_at,omitempty"`
+	Value    *bool      `json:"value"`
 }
 
 // Groups are the shared named account sets rules reference by name. They are
@@ -110,6 +117,7 @@ func NormalizeDefinition(def Definition) Definition {
 			value := *rule.Value
 			next.Value = &value
 		}
+		next.StartsAt, next.EndsAt = utcSecond(rule.StartsAt), utcSecond(rule.EndsAt)
 		next.Accounts = normalizeAccounts(rule.Accounts)
 		next.Orgs = normalizeAccounts(rule.Orgs)
 		for _, plan := range rule.Plans {
@@ -118,6 +126,16 @@ func NormalizeDefinition(def Definition) Definition {
 		out.Rules = append(out.Rules, next)
 	}
 	return out
+}
+
+// utcSecond stores a schedule boundary in UTC at whole-second precision, so
+// a definition round-trips byte for byte.
+func utcSecond(at *time.Time) *time.Time {
+	if at == nil {
+		return nil
+	}
+	t := at.UTC().Truncate(time.Second)
+	return &t
 }
 
 // NormalizeGroups canonicalizes every member account ID.
@@ -163,8 +181,12 @@ func ValidateDefinition(def Definition, groups Groups) error {
 		if rule.Value == nil {
 			return fmt.Errorf("rule %q requires an explicit boolean value", rule.ID)
 		}
-		if len(rule.Accounts) == 0 && len(rule.Orgs) == 0 && rule.Group == "" && len(rule.Plans) == 0 && rule.Rollout == nil {
-			return fmt.Errorf("rule %q requires accounts, orgs, group, plans or rollout targeting", rule.ID)
+		if len(rule.Accounts) == 0 && len(rule.Orgs) == 0 && rule.Group == "" && len(rule.Plans) == 0 && rule.Rollout == nil &&
+			rule.StartsAt == nil && rule.EndsAt == nil {
+			return fmt.Errorf("rule %q requires accounts, orgs, group, plans, rollout or a schedule window", rule.ID)
+		}
+		if rule.StartsAt != nil && rule.EndsAt != nil && !rule.EndsAt.After(*rule.StartsAt) {
+			return fmt.Errorf("rule %q: ends_at must be after starts_at", rule.ID)
 		}
 		if err := validateAccounts(rule.Accounts, api.PlatformFlagsMaxAccountsPerRule); err != nil {
 			return fmt.Errorf("rule %q: %w", rule.ID, err)

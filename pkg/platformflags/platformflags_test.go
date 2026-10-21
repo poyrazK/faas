@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -313,6 +314,47 @@ func TestOrgRulesValidateAndRespectTargetingSupport(t *testing.T) {
 	}
 }
 
+// adr: 20261021080640 — a rule outside its window does not match;
+// evaluation falls through and the decision names the inactive rule.
+func TestScheduledRulesApplyOnlyInsideTheirWindow(t *testing.T) {
+	start := time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)
+	end := start.Add(48 * time.Hour)
+	def, err := ParseDefinition(json.RawMessage(`{"enabled":true,"rules":[
+		{"id":"launch","accounts":["` + acctA + `"],"starts_at":"2026-11-02T12:00:00+03:00","ends_at":"2026-11-04T09:00:00Z","value":true},
+		{"id":"everyone-later","starts_at":"2026-12-01T00:00:00Z","value":true}]}`))
+	if err != nil {
+		t.Fatalf("a windowed rule and a window-only rule must be valid: %v", err)
+	}
+	if got := *def.Rules[0].StartsAt; !got.Equal(start) || got.Location() != time.UTC {
+		t.Fatalf("starts_at = %v, want %v in UTC", got, start)
+	}
+	snap := compileOne(def, nil)
+	cases := []struct {
+		name    string
+		at      time.Time
+		subject string
+		enabled bool
+		reason  string
+		state   string
+	}{
+		{"before the window", start.Add(-time.Minute), acctA, false, ReasonDefault, ScheduleNotStarted},
+		{"at the start", start, acctA, true, ReasonRuleMatch, ""},
+		{"inside", start.Add(time.Hour), acctA, true, ReasonRuleMatch, ""},
+		{"at the end", end, acctA, false, ReasonDefault, ScheduleEnded},
+		{"other account inside", start.Add(time.Hour), acctB, false, ReasonDefault, ScheduleNotStarted}, // everyone-later
+		{"everyone after general availability", time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC), acctB, true, ReasonRuleMatch, ""},
+	}
+	for _, tc := range cases {
+		d := snap.Evaluate(AIGateway, Subject{AccountID: tc.subject, At: tc.at})
+		if d.Enabled != tc.enabled || d.Reason != tc.reason || d.ScheduleState != tc.state {
+			t.Errorf("%s: %+v, want enabled=%v reason=%s state=%q", tc.name, d, tc.enabled, tc.reason, tc.state)
+		}
+	}
+	if _, err := ParseDefinition(json.RawMessage(`{"enabled":true,"rules":[{"id":"x","starts_at":"2026-11-04T00:00:00Z","ends_at":"2026-11-02T00:00:00Z","value":true}]}`)); err == nil {
+		t.Fatal("ends_at before starts_at must be refused")
+	}
+}
+
 func TestCatalogIsWellFormed(t *testing.T) {
 	seen := map[string]bool{}
 	for _, spec := range Catalog() {
@@ -328,6 +370,9 @@ func TestCatalogIsWellFormed(t *testing.T) {
 		}
 		if key, ok := FlagKeyFromConfigKey(ConfigKey(spec.Key)); !ok || key != spec.Key || !IsConfigKey(ConfigKey(spec.Key)) {
 			t.Fatalf("config key round trip failed for %q", spec.Key)
+		}
+		if _, ok := spec.RetireByTime(); spec.RetireBy != "" && !ok {
+			t.Fatalf("flag %q retire_by %q must be YYYY-MM-DD", spec.Key, spec.RetireBy)
 		}
 		if spec.Capability != "" {
 			if key, ok := FlagForCapability(spec.Capability); !ok || key != spec.Key {

@@ -21,6 +21,9 @@ func (r *server) SeedPlatformFlag(flagKey string, def platformflags.Definition) 
 	r.seedPlatformFlag(flagKey, def)
 }
 
+// RegisterPlatformFlagRetireBy exports the preview retire-by gauge.
+var RegisterPlatformFlagRetireBy = registerPlatformFlagRetireBy
+
 // SeedEnvPlatformFlags seeds the env-gated flags' boot fallbacks from getenv.
 func (r *server) SeedEnvPlatformFlags(getenv func(string) string) { r.seedEnvPlatformFlags(getenv) }
 

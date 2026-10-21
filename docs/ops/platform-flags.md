@@ -51,6 +51,11 @@ runtime-configuration row, `platform_flag.<key>`. Its value is a definition:
   admit: `1000` is 10%, `10000` is all. The bucket is a stable hash of the
   flag key and account, so widening a rollout keeps every account already in
   it.
+- `starts_at` and `ends_at` (RFC 3339, stored to the second in UTC) give a
+  rule a **schedule**: outside its window the rule is skipped, as if it were
+  absent. Either bound may be left out, and a rule may have a window and no
+  other constraint ("everyone from Monday 09:00 UTC"). The inspector names a
+  scheduled rule that would have matched but is not yet started or has ended.
 - An account no rule matches gets `default`.
 - Accounts are account UUIDs. Groups live in one shared row,
   `platform_flag_groups`, so a list such as `design-partners` is maintained
@@ -119,6 +124,9 @@ gregalectl flags allow   --key application_auth --org-id <uuid> --reason "compan
 gregalectl flags rollout --key ai_gateway --percent 10 --plans pro,scale --reason "widen" --yes
 gregalectl flags default --key ai_gateway --value true --reason "general availability" --yes
 gregalectl flags disable --key ai_gateway --reason "incident 123" --yes   # kill switch
+gregalectl flags schedule --key ai_gateway --rule-id rollout --starts-at 2026-11-02T09:00:00Z --reason "launch day" --yes
+gregalectl flags schedule --key ai_gateway --rule-id rollout --starts-at none --ends-at none --reason "unschedule" --yes
+gregalectl flags inspect  --key ai_gateway --account-id <uuid> --at 2026-11-02T09:00:00Z   # decide as of a time
 
 gregalectl flags group-add --group design-partners --account-id <uuid> --reason "new partner" --yes
 gregalectl flags groups
@@ -132,8 +140,21 @@ gregalectl flags set      --key ai_gateway --file flag.json --reason "reviewed c
 then `accounts`. An explicit decision therefore always beats a group, plan or
 rollout rule; `revoke` removes the account from both.
 
+`schedule` sets or clears (`none`) a rule's window; a flag left empty keeps
+its current bound.
+
 The operator console's **Flags** page (`/operations/flags`) does the same
 through the same API.
+
+## Retiring previews
+
+A preview flag carries a `RetireBy` date in its catalog entry: the day it
+should be released to everyone and its gate removed. `gregalectl flags list`
+prints `retire_by=` and, once the date has passed, `overdue=true`. apid
+exports `apid_platform_flag_retire_by_timestamp_seconds{flag}`, and
+`FaasPlatformFlagPastRetireBy` opens a ticket for an overdue flag
+([runbook](../runbooks/FaasPlatformFlagPastRetireBy.md)). Moving the date is a
+catalog change with its reason in the PR.
 
 ## Propagation and convergence
 
@@ -164,7 +185,7 @@ The shared watcher also reports receipts for the other hot runtime settings
 | --- | --- |
 | `GET /v1/admin/flags` | Every flag, its definition, version, receipts and convergence, plus the groups and which flags use each group |
 | `GET /v1/admin/flags/{key}` | One flag |
-| `GET /v1/admin/flags/{key}/decision?account_id=` | Inspector: the decision, matching rule, reason and plan entitlement for one account |
+| `GET /v1/admin/flags/{key}/decision?account_id=[&org_id=][&at=]` | Inspector: the decision, matching rule, reason and plan entitlement for one account, optionally under an organization and as of an RFC 3339 time |
 | `GET /v1/admin/accounts/{id}/flags` | Every flag decided for one account |
 | `PATCH /v1/admin/config/platform_flag.<key>` | Write a flag definition |
 | `PATCH /v1/admin/config/platform_flag_groups` | Write the groups |

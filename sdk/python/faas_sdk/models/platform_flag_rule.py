@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
 from uuid import UUID
@@ -28,6 +29,10 @@ class PlatformFlagRule:
     plans: list[PlatformFlagRulePlansItem] | Unset = UNSET
     rollout: int | Unset = UNSET
     """Basis points of the accounts the other constraints admit."""
+    starts_at: datetime.datetime | Unset = UNSET
+    """The rule applies from this moment (inclusive); stored in UTC."""
+    ends_at: datetime.datetime | Unset = UNSET
+    """The rule stops applying at this moment (exclusive); must be after starts_at."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,6 +65,14 @@ class PlatformFlagRule:
 
         rollout = self.rollout
 
+        starts_at: str | Unset = UNSET
+        if not isinstance(self.starts_at, Unset):
+            starts_at = self.starts_at.isoformat()
+
+        ends_at: str | Unset = UNSET
+        if not isinstance(self.ends_at, Unset):
+            ends_at = self.ends_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -78,6 +91,10 @@ class PlatformFlagRule:
             field_dict["plans"] = plans
         if rollout is not UNSET:
             field_dict["rollout"] = rollout
+        if starts_at is not UNSET:
+            field_dict["starts_at"] = starts_at
+        if ends_at is not UNSET:
+            field_dict["ends_at"] = ends_at
 
         return field_dict
 
@@ -119,6 +136,20 @@ class PlatformFlagRule:
 
         rollout = d.pop("rollout", UNSET)
 
+        _starts_at = d.pop("starts_at", UNSET)
+        starts_at: datetime.datetime | Unset
+        if isinstance(_starts_at, Unset):
+            starts_at = UNSET
+        else:
+            starts_at = datetime.datetime.fromisoformat(_starts_at)
+
+        _ends_at = d.pop("ends_at", UNSET)
+        ends_at: datetime.datetime | Unset
+        if isinstance(_ends_at, Unset):
+            ends_at = UNSET
+        else:
+            ends_at = datetime.datetime.fromisoformat(_ends_at)
+
         platform_flag_rule = cls(
             id=id,
             value=value,
@@ -127,6 +158,8 @@ class PlatformFlagRule:
             group=group,
             plans=plans,
             rollout=rollout,
+            starts_at=starts_at,
+            ends_at=ends_at,
         )
 
         platform_flag_rule.additional_properties = d

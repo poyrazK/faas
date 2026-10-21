@@ -20,5 +20,14 @@ export type OperatorPlatformFlagDecision = {
   version: number;
   entitled?: boolean;
   available: boolean;
+  /**
+   * First rule that matched but was outside its window.
+   */
+  scheduled_rule_id?: string;
+  schedule_state?: 'rule_not_started' | 'rule_ended';
+  /**
+   * Decision time, when the inspector was asked about another moment than now.
+   */
+  at?: string;
 };
 

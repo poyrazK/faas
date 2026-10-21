@@ -3825,6 +3825,7 @@ from .operator_platform_flag_attributes_item import OperatorPlatformFlagAttribut
 from .operator_platform_flag_convergence import OperatorPlatformFlagConvergence
 from .operator_platform_flag_decision import OperatorPlatformFlagDecision
 from .operator_platform_flag_decision_reason import OperatorPlatformFlagDecisionReason
+from .operator_platform_flag_decision_schedule_state import OperatorPlatformFlagDecisionScheduleState
 from .operator_platform_flag_groups import OperatorPlatformFlagGroups
 from .operator_platform_flag_groups_groups import OperatorPlatformFlagGroupsGroups
 from .operator_platform_flag_groups_references import OperatorPlatformFlagGroupsReferences
@@ -9546,6 +9547,7 @@ __all__ = (
     "OperatorPlatformFlagConvergence",
     "OperatorPlatformFlagDecision",
     "OperatorPlatformFlagDecisionReason",
+    "OperatorPlatformFlagDecisionScheduleState",
     "OperatorPlatformFlagGroups",
     "OperatorPlatformFlagGroupsGroups",
     "OperatorPlatformFlagGroupsReferences",

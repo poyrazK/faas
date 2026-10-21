@@ -9844,6 +9844,11 @@ paths:
           required: false
           schema: { type: string, format: uuid }
           description: Organization the request would act under (ADR 20261021080640); omit to evaluate outside any organization.
+        - name: at
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Decide as of this moment instead of now, to check scheduled rules.
       responses:
         '200':
           description: Decision
@@ -80522,6 +80527,8 @@ components:
           type: array
           items: { type: string, enum: [free, hobby, pro, scale] }
         rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of the accounts the other constraints admit." }
+        starts_at: { type: string, format: date-time, description: "The rule applies from this moment (inclusive); stored in UTC." }
+        ends_at: { type: string, format: date-time, description: "The rule stops applying at this moment (exclusive); must be after starts_at." }
         value: { type: boolean }
 
     PlatformFlagDefinition:
@@ -80629,6 +80636,9 @@ components:
         version: { type: integer, format: int64 }
         entitled: { type: boolean }
         available: { type: boolean }
+        scheduled_rule_id: { type: string, description: "First rule that matched but was outside its window." }
+        schedule_state: { type: string, enum: [rule_not_started, rule_ended] }
+        at: { type: string, format: date-time, description: "Decision time, when the inspector was asked about another moment than now." }
 
     OperatorAccountPlatformFlags:
       description: "Every platform flag decided for one account."

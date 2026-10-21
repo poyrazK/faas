@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
@@ -207,6 +209,23 @@ func (s *server) seedEnvPlatformFlags(getenv func(string) string) {
 	s.seedPlatformFlag(platformflags.ServiceMap, platformflags.FromAccountList(s.serviceMap.Enabled, true, nil))
 	s.seedPlatformFlag(platformflags.GuestTracing, platformflags.FromAccountList(s.guestTracingEnabled, true, nil))
 	s.seedPlatformFlag(platformflags.StaticEgressIP, platformflags.FromAccountList(envTruthy(getenv("FAAS_STATIC_EGRESS_IP_ENABLED")), true, nil))
+}
+
+// registerPlatformFlagRetireBy exports each preview flag's retire-by date as
+// apid_platform_flag_retire_by_timestamp_seconds{flag}, so the
+// FaasPlatformFlagPastRetireBy alert reminds operators to fold a preview into
+// general availability or remove it (ADR 20261021080640).
+func registerPlatformFlagRetireBy(registry *prometheus.Registry) {
+	gauge := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "apid_platform_flag_retire_by_timestamp_seconds",
+		Help: "Unix timestamp of a preview platform flag's retire-by date (start of day, UTC).",
+	}, []string{"flag"})
+	for _, spec := range platformflags.Catalog() {
+		if at, ok := spec.RetireByTime(); ok {
+			gauge.WithLabelValues(spec.Key).Set(float64(at.Unix()))
+		}
+	}
+	registry.MustRegister(gauge)
 }
 
 // envAccountList splits a comma-separated account allowlist, dropping blanks.

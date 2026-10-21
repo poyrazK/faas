@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -56,14 +57,14 @@ type flagsMutation struct {
 
 func cmdFlagsDispatch(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl flags: missing subcommand; want list|show|inspect|account|enable|disable|allow|deny|revoke|rollout|default|set|groups|group-add|group-remove|history|rollback")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl flags: missing subcommand; want list|show|inspect|account|enable|disable|allow|deny|revoke|rollout|default|set|schedule|groups|group-add|group-remove|history|rollback")
 		return 2
 	}
 	handlers := map[string]func([]string) int{
 		"list": cmdFlagsList, "show": cmdFlagsShow, "inspect": cmdFlagsInspect, "account": cmdFlagsAccount,
 		"enable": cmdFlagsSwitch(true), "disable": cmdFlagsSwitch(false),
 		"allow": cmdFlagsAccountRule("allow"), "deny": cmdFlagsAccountRule("deny"), "revoke": cmdFlagsAccountRule("revoke"),
-		"rollout": cmdFlagsRollout, "default": cmdFlagsDefault, "set": cmdFlagsSet,
+		"rollout": cmdFlagsRollout, "default": cmdFlagsDefault, "set": cmdFlagsSet, "schedule": cmdFlagsSchedule,
 		"groups": cmdFlagsGroups, "group-add": cmdFlagsGroupMember(true), "group-remove": cmdFlagsGroupMember(false),
 		"history": cmdFlagsHistory, "rollback": cmdFlagsRollback,
 	}
@@ -129,6 +130,7 @@ func cmdFlagsInspect(args []string) int {
 	key := fs.String("key", "", "platform flag key")
 	accountID := fs.String("account-id", "", "account UUID")
 	orgID := fs.String("org-id", "", "organization UUID the request would act under (optional)")
+	at := fs.String("at", "", "decide as of this RFC 3339 time instead of now (optional)")
 	if err := fs.Parse(args); err != nil || !flagsNoPositional(fs, "inspect") {
 		return 2
 	}
@@ -140,6 +142,9 @@ func cmdFlagsInspect(args []string) int {
 	path := "/v1/admin/flags/" + url.PathEscape(cleanKey) + "/decision?account_id=" + url.QueryEscape(strings.TrimSpace(*accountID))
 	if org := strings.TrimSpace(*orgID); org != "" {
 		path += "&org_id=" + url.QueryEscape(org)
+	}
+	if when := strings.TrimSpace(*at); when != "" {
+		path += "&at=" + url.QueryEscape(when)
 	}
 	if code := flagsGet("inspect", path, &decision); code != 0 {
 		return code
@@ -219,6 +224,68 @@ func cmdFlagsAccountRule(name string) func([]string) int {
 		}
 		return runFlagsMutation(*key, mutation)
 	}
+}
+
+// cmdFlagsSchedule sets or clears the window of one existing rule (ADR
+// 20261021080640). "none" clears a boundary; an omitted flag keeps it.
+func cmdFlagsSchedule(args []string) int {
+	fs := flagsFlagSet("schedule")
+	key, mutation := flagsMutationFlags(fs)
+	ruleID := fs.String("rule-id", "", "rule to schedule (see flags show)")
+	startsAt := fs.String("starts-at", "", "RFC 3339 time the rule starts applying, or none")
+	endsAt := fs.String("ends-at", "", "RFC 3339 time the rule stops applying, or none")
+	if err := fs.Parse(args); err != nil || !flagsNoPositional(fs, "schedule") {
+		return 2
+	}
+	id := strings.TrimSpace(*ruleID)
+	if id == "" || (strings.TrimSpace(*startsAt) == "" && strings.TrimSpace(*endsAt) == "") {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl flags schedule: --rule-id and at least one of --starts-at or --ends-at required")
+		return 2
+	}
+	starts, keepStarts, err := parseScheduleBoundary(*startsAt)
+	if err != nil {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl flags schedule: --starts-at: %v\n", err)
+		return 2
+	}
+	ends, keepEnds, err := parseScheduleBoundary(*endsAt)
+	if err != nil {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl flags schedule: --ends-at: %v\n", err)
+		return 2
+	}
+	mutation.name = "schedule"
+	mutation.edit = func(def *platformflags.Definition) error {
+		for i := range def.Rules {
+			if def.Rules[i].ID != id {
+				continue
+			}
+			if !keepStarts {
+				def.Rules[i].StartsAt = starts
+			}
+			if !keepEnds {
+				def.Rules[i].EndsAt = ends
+			}
+			return nil
+		}
+		return fmt.Errorf("flag has no rule %q", id)
+	}
+	return runFlagsMutation(*key, mutation)
+}
+
+// parseScheduleBoundary reads one --starts-at/--ends-at value: empty keeps
+// the current boundary, "none" clears it, anything else must be RFC 3339.
+func parseScheduleBoundary(raw string) (at *time.Time, keep bool, err error) {
+	switch raw = strings.TrimSpace(raw); raw {
+	case "":
+		return nil, true, nil
+	case "none":
+		return nil, false, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, false, fmt.Errorf("%q is not an RFC 3339 time (for example 2026-11-02T09:00:00Z)", raw)
+	}
+	parsed = parsed.UTC()
+	return &parsed, false, nil
 }
 
 func cmdFlagsRollout(args []string) int {
@@ -476,7 +543,7 @@ func fromAPIDefinition(in api.PlatformFlagDefinition) platformflags.Definition {
 	for _, rule := range in.Rules {
 		out.Rules = append(out.Rules, platformflags.Rule{
 			ID: rule.ID, Accounts: slices.Clone(rule.Accounts), Orgs: slices.Clone(rule.Orgs), Group: rule.Group,
-			Plans: slices.Clone(rule.Plans), Rollout: rule.Rollout, Value: rule.Value,
+			Plans: slices.Clone(rule.Plans), Rollout: rule.Rollout, StartsAt: rule.StartsAt, EndsAt: rule.EndsAt, Value: rule.Value,
 		})
 	}
 	return out
@@ -686,9 +753,23 @@ func sortedGroupNames(groups map[string][]string) []string {
 }
 
 func printPlatformFlagSummary(item api.OperatorPlatformFlag) {
-	_, _ = fmt.Fprintf(osStdout, "key=%s enabled=%t default=%t rules=%d version=%d source=%s status=%s converged=%s pending=%s failed=%s\n",
+	_, _ = fmt.Fprintf(osStdout, "key=%s enabled=%t default=%t rules=%d version=%d source=%s status=%s converged=%s pending=%s failed=%s%s\n",
 		item.Key, item.Definition.Enabled, item.Definition.Default, len(item.Definition.Rules), item.Version, item.Source, item.Status,
-		strings.Join(item.Convergence.Converged, ","), strings.Join(item.Convergence.Pending, ","), strings.Join(item.Convergence.Failed, ","))
+		strings.Join(item.Convergence.Converged, ","), strings.Join(item.Convergence.Pending, ","), strings.Join(item.Convergence.Failed, ","),
+		flagsRetireBy(item.RetireBy, time.Now()))
+}
+
+// flagsRetireBy renders a preview flag's retire-by date, marking it overdue
+// once the date has passed (ADR 20261021080640).
+func flagsRetireBy(retireBy string, now time.Time) string {
+	if retireBy == "" {
+		return ""
+	}
+	out := " retire_by=" + retireBy
+	if at, err := time.Parse(time.DateOnly, retireBy); err == nil && !now.Before(at) {
+		out += " overdue=true"
+	}
+	return out
 }
 
 func printPlatformFlagDecision(d api.OperatorPlatformFlagDecision) {
@@ -696,10 +777,16 @@ func printPlatformFlagDecision(d api.OperatorPlatformFlagDecision) {
 	if d.Entitled != nil {
 		entitled = strconv.FormatBool(*d.Entitled)
 	}
-	org := ""
+	org, scheduled := "", ""
 	if d.OrgID != "" {
 		org = " org=" + d.OrgID
 	}
-	_, _ = fmt.Fprintf(osStdout, "flag=%s account=%s%s plan=%s enabled=%t reason=%s rule=%s entitled=%s available=%t version=%d\n",
-		d.Flag, d.AccountID, org, d.Plan, d.Enabled, d.Reason, d.RuleID, entitled, d.Available, d.Version)
+	if d.ScheduledRuleID != "" {
+		scheduled = " scheduled_rule=" + d.ScheduledRuleID + " schedule_state=" + d.ScheduleState
+	}
+	if d.At != "" {
+		scheduled += " at=" + d.At
+	}
+	_, _ = fmt.Fprintf(osStdout, "flag=%s account=%s%s plan=%s enabled=%t reason=%s rule=%s entitled=%s available=%t version=%d%s\n",
+		d.Flag, d.AccountID, org, d.Plan, d.Enabled, d.Reason, d.RuleID, entitled, d.Available, d.Version, scheduled)
 }

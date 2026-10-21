@@ -15,6 +15,14 @@ export type PlatformFlagRule = {
    * Basis points of the accounts the other constraints admit.
    */
   rollout?: number;
+  /**
+   * The rule applies from this moment (inclusive); stored in UTC.
+   */
+  starts_at?: string;
+  /**
+   * The rule stops applying at this moment (exclusive); must be after starts_at.
+   */
+  ends_at?: string;
   value: boolean;
 };
 

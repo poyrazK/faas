@@ -474,6 +474,7 @@ export class OperatorService {
     key,
     accountId,
     orgId,
+    at,
   }: {
     /**
      * Platform flag key.
@@ -487,6 +488,10 @@ export class OperatorService {
      * Organization the request would act under (ADR 20261021080640); omit to evaluate outside any organization.
      */
     orgId?: string,
+    /**
+     * Decide as of this moment instead of now, to check scheduled rules.
+     */
+    at?: string,
   }): CancelablePromise<OperatorPlatformFlagDecision> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -497,6 +502,7 @@ export class OperatorService {
       query: {
         'account_id': accountId,
         'org_id': orgId,
+        'at': at,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

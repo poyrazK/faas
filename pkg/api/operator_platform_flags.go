@@ -1,5 +1,7 @@
 package api
 
+import "time"
+
 // Platform flags (ADR-1700) are operator-managed release gates. These are
 // the read shapes of /v1/admin/flags and /v1/admin/accounts/{id}/flags;
 // writes go through PATCH /v1/admin/config/{config_key}.
@@ -7,14 +9,17 @@ package api
 // PlatformFlagRule targets accounts. Accounts, orgs, group, plans and rollout
 // combine with AND; the first matching rule decides. Orgs matches the
 // organization a request acts under (ADR 20261021080640).
+// StartsAt and EndsAt bound when the rule applies.
 type PlatformFlagRule struct {
-	ID       string   `json:"id"`
-	Accounts []string `json:"accounts,omitempty"`
-	Orgs     []string `json:"orgs,omitempty"`
-	Group    string   `json:"group,omitempty"`
-	Plans    []string `json:"plans,omitempty"`
-	Rollout  *int     `json:"rollout,omitempty"`
-	Value    *bool    `json:"value"`
+	ID       string     `json:"id"`
+	Accounts []string   `json:"accounts,omitempty"`
+	Orgs     []string   `json:"orgs,omitempty"`
+	Group    string     `json:"group,omitempty"`
+	Plans    []string   `json:"plans,omitempty"`
+	Rollout  *int       `json:"rollout,omitempty"`
+	StartsAt *time.Time `json:"starts_at,omitempty"`
+	EndsAt   *time.Time `json:"ends_at,omitempty"`
+	Value    *bool      `json:"value"`
 }
 
 // PlatformFlagDefinition is the stored value of a platform flag. Enabled is
@@ -99,6 +104,13 @@ type OperatorPlatformFlagDecision struct {
 	Version   int64  `json:"version"`
 	Entitled  *bool  `json:"entitled,omitempty"`
 	Available bool   `json:"available"`
+	// ScheduledRuleID and ScheduleState name the first rule that matched but
+	// was outside its window (rule_not_started or rule_ended).
+	ScheduledRuleID string `json:"scheduled_rule_id,omitempty"`
+	ScheduleState   string `json:"schedule_state,omitempty"`
+	// At is the decision time when the inspector was asked about another
+	// moment than now.
+	At string `json:"at,omitempty"`
 }
 
 // OperatorAccountPlatformFlags is GET /v1/admin/accounts/{id}/flags.

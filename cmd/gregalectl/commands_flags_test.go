@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -145,6 +146,37 @@ func TestFlagsOrgDecisionsSitAfterAccountDecisions(t *testing.T) {
 	}
 	if flagsRequireSubject("allow", testFlagsAccount, org) || flagsRequireSubject("allow", "", "") || !flagsRequireSubject("allow", "", org) {
 		t.Fatal("allow needs exactly one of --account-id or --org-id")
+	}
+}
+
+// adr: 20261021080640 — schedule boundaries: empty keeps, none clears,
+// anything else is RFC 3339 stored in UTC.
+func TestFlagsScheduleBoundaries(t *testing.T) {
+	if at, keep, err := parseScheduleBoundary(""); at != nil || !keep || err != nil {
+		t.Fatalf("empty = %v %v %v, want keep", at, keep, err)
+	}
+	if at, keep, err := parseScheduleBoundary("none"); at != nil || keep || err != nil {
+		t.Fatalf("none = %v %v %v, want clear", at, keep, err)
+	}
+	at, keep, err := parseScheduleBoundary("2026-11-02T12:00:00+03:00")
+	if err != nil || keep || at == nil || at.Location() != time.UTC || at.Hour() != 9 {
+		t.Fatalf("offset time = %v %v %v, want 09:00 UTC", at, keep, err)
+	}
+	if _, _, err := parseScheduleBoundary("next monday"); err == nil {
+		t.Fatal("a non-RFC 3339 time must be refused")
+	}
+}
+
+func TestFlagsRetireByMarksOverdueFlags(t *testing.T) {
+	now := time.Date(2027, 1, 31, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct{ retireBy, want string }{
+		{"", ""},
+		{"2027-02-01", " retire_by=2027-02-01"},
+		{"2027-01-31", " retire_by=2027-01-31 overdue=true"},
+	} {
+		if got := flagsRetireBy(tc.retireBy, now); got != tc.want {
+			t.Errorf("flagsRetireBy(%q) = %q, want %q", tc.retireBy, got, tc.want)
+		}
 	}
 }
 

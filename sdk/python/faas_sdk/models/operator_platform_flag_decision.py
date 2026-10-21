@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
 from uuid import UUID
@@ -10,6 +11,10 @@ from attrs import field as _attrs_field
 from ..models.operator_platform_flag_decision_reason import (
     OperatorPlatformFlagDecisionReason,
     check_operator_platform_flag_decision_reason,
+)
+from ..models.operator_platform_flag_decision_schedule_state import (
+    OperatorPlatformFlagDecisionScheduleState,
+    check_operator_platform_flag_decision_schedule_state,
 )
 from ..types import UNSET, Unset
 
@@ -35,6 +40,11 @@ class OperatorPlatformFlagDecision:
     rule_id: str | Unset = UNSET
     bucket: int | Unset = UNSET
     entitled: bool | Unset = UNSET
+    scheduled_rule_id: str | Unset = UNSET
+    """First rule that matched but was outside its window."""
+    schedule_state: OperatorPlatformFlagDecisionScheduleState | Unset = UNSET
+    at: datetime.datetime | Unset = UNSET
+    """Decision time, when the inspector was asked about another moment than now."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +72,16 @@ class OperatorPlatformFlagDecision:
 
         entitled = self.entitled
 
+        scheduled_rule_id = self.scheduled_rule_id
+
+        schedule_state: str | Unset = UNSET
+        if not isinstance(self.schedule_state, Unset):
+            schedule_state = self.schedule_state
+
+        at: str | Unset = UNSET
+        if not isinstance(self.at, Unset):
+            at = self.at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -83,6 +103,12 @@ class OperatorPlatformFlagDecision:
             field_dict["bucket"] = bucket
         if entitled is not UNSET:
             field_dict["entitled"] = entitled
+        if scheduled_rule_id is not UNSET:
+            field_dict["scheduled_rule_id"] = scheduled_rule_id
+        if schedule_state is not UNSET:
+            field_dict["schedule_state"] = schedule_state
+        if at is not UNSET:
+            field_dict["at"] = at
 
         return field_dict
 
@@ -116,6 +142,22 @@ class OperatorPlatformFlagDecision:
 
         entitled = d.pop("entitled", UNSET)
 
+        scheduled_rule_id = d.pop("scheduled_rule_id", UNSET)
+
+        _schedule_state = d.pop("schedule_state", UNSET)
+        schedule_state: OperatorPlatformFlagDecisionScheduleState | Unset
+        if isinstance(_schedule_state, Unset):
+            schedule_state = UNSET
+        else:
+            schedule_state = check_operator_platform_flag_decision_schedule_state(_schedule_state)
+
+        _at = d.pop("at", UNSET)
+        at: datetime.datetime | Unset
+        if isinstance(_at, Unset):
+            at = UNSET
+        else:
+            at = datetime.datetime.fromisoformat(_at)
+
         operator_platform_flag_decision = cls(
             flag=flag,
             account_id=account_id,
@@ -128,6 +170,9 @@ class OperatorPlatformFlagDecision:
             rule_id=rule_id,
             bucket=bucket,
             entitled=entitled,
+            scheduled_rule_id=scheduled_rule_id,
+            schedule_state=schedule_state,
+            at=at,
         )
 
         operator_platform_flag_decision.additional_properties = d

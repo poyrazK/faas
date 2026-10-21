@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -416,5 +417,25 @@ func TestEnvGatesSeedTheirPlatformFlags(t *testing.T) {
 	}
 	if def, _, _ := s.PlatformFlagSet().Snapshot().Definition(platformflags.ChangeTimeline); def.Enabled {
 		t.Fatal("an unset FAAS_CHANGE_TIMELINE_ENABLED must seed change_timeline off")
+	}
+}
+
+func TestRetireByGaugeCoversOnlyDatedPreviews(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	apidserver.RegisterPlatformFlagRetireBy(registry)
+	families, err := registry.Gather()
+	if err != nil || len(families) != 1 || families[0].GetName() != "apid_platform_flag_retire_by_timestamp_seconds" {
+		t.Fatalf("gather = %v, %v", families, err)
+	}
+	got := map[string]float64{}
+	for _, metric := range families[0].GetMetric() {
+		got[metric.GetLabel()[0].GetValue()] = metric.GetGauge().GetValue()
+	}
+	for _, spec := range platformflags.Catalog() {
+		at, dated := spec.RetireByTime()
+		value, exported := got[spec.Key]
+		if exported != dated || (dated && value != float64(at.Unix())) {
+			t.Errorf("%s: exported=%t value=%v, want exported=%t at %v", spec.Key, exported, value, dated, at)
+		}
 	}
 }

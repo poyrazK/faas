@@ -99,7 +99,16 @@ func (s *Service) Decision(w http.ResponseWriter, r *http.Request, acct state.Ac
 		}
 		orgID = id.String()
 	}
-	httpkit.WriteJSON(w, http.StatusOK, decide(s.Host.PlatformFlags().Snapshot(), spec, target, orgID))
+	var at time.Time
+	if raw := strings.TrimSpace(r.URL.Query().Get("at")); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid decision time", "at must be an RFC 3339 timestamp"))
+			return
+		}
+		at = parsed.UTC()
+	}
+	httpkit.WriteJSON(w, http.StatusOK, decideAt(s.Host.PlatformFlags().Snapshot(), spec, target, orgID, at))
 }
 
 // AccountFlags handles GET /v1/admin/accounts/{id}/flags: every platform
@@ -160,10 +169,19 @@ func (s *Service) loadAccount(w http.ResponseWriter, r *http.Request, rawID stri
 // decide explains one flag for an account, acting under orgID when it is set
 // (the organization a request would carry; ADR 20261021080640).
 func decide(snapshot *platformflags.Snapshot, spec platformflags.Spec, target state.Account, orgID string) api.OperatorPlatformFlagDecision {
-	d := snapshot.Evaluate(spec.Key, platformflags.Subject{AccountID: target.ID, Plan: string(target.Plan), OrgID: orgID})
+	return decideAt(snapshot, spec, target, orgID, time.Time{})
+}
+
+// decideAt explains a decision at a given moment; zero means now.
+func decideAt(snapshot *platformflags.Snapshot, spec platformflags.Spec, target state.Account, orgID string, at time.Time) api.OperatorPlatformFlagDecision {
+	d := snapshot.Evaluate(spec.Key, platformflags.Subject{AccountID: target.ID, Plan: string(target.Plan), OrgID: orgID, At: at})
 	out := api.OperatorPlatformFlagDecision{
 		Flag: spec.Key, AccountID: target.ID, OrgID: orgID, Plan: string(target.Plan), Enabled: d.Enabled,
 		Reason: d.Reason, RuleID: d.RuleID, Bucket: d.Bucket, Version: d.Version, Available: d.Enabled,
+		ScheduledRuleID: d.ScheduledRuleID, ScheduleState: d.ScheduleState,
+	}
+	if !at.IsZero() {
+		out.At = at.Format(time.RFC3339)
 	}
 	if spec.Capability != "" {
 		entitled, err := api.CapabilityEntitled(spec.Capability, target.Plan)
@@ -290,7 +308,7 @@ func toAPIDefinition(def platformflags.Definition) api.PlatformFlagDefinition {
 	for _, rule := range def.Rules {
 		out.Rules = append(out.Rules, api.PlatformFlagRule{
 			ID: rule.ID, Accounts: slices.Clone(rule.Accounts), Orgs: slices.Clone(rule.Orgs), Group: rule.Group,
-			Plans: slices.Clone(rule.Plans), Rollout: rule.Rollout, Value: rule.Value,
+			Plans: slices.Clone(rule.Plans), Rollout: rule.Rollout, StartsAt: rule.StartsAt, EndsAt: rule.EndsAt, Value: rule.Value,
 		})
 	}
 	return out

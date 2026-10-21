@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 )
 
 const (
@@ -97,6 +98,7 @@ var catalog = []Spec{
 		Consumers:   []string{"apid", "outboundd"},
 		Attributes:  []Attribute{AttributePlan},
 		LegacyEnv:   []string{"FAAS_AI_GATEWAY_ENABLED", "FAAS_AI_GATEWAY_ACCOUNTS"},
+		RetireBy:    "2027-01-31",
 	},
 	{
 		Key:         CustomerFlags,
@@ -116,6 +118,7 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		LegacyEnv:   []string{"FAAS_APPLICATION_AUTH_ENABLED", "FAAS_APPLICATION_AUTH_ACCOUNTS"},
+		RetireBy:    "2027-01-31",
 	},
 	{
 		Key:         LiveQueries,
@@ -124,6 +127,7 @@ var catalog = []Spec{
 		ADR:         "ADR-20261016151947",
 		Consumers:   []string{"apid"},
 		LegacyEnv:   []string{"FAAS_LIVE_QUERIES_ACCOUNTS"},
+		RetireBy:    "2027-01-31",
 	},
 	{
 		Key:         ChangeTimeline,
@@ -133,6 +137,7 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		LegacyEnv:   []string{"FAAS_CHANGE_TIMELINE_ENABLED"},
+		RetireBy:    "2027-01-31",
 	},
 	{
 		Key:         AnomalyAlerts,
@@ -142,6 +147,7 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		LegacyEnv:   []string{"FAAS_ANOMALY_ALERTS_ENABLED"},
+		RetireBy:    "2027-01-31",
 	},
 	{
 		Key:         TriggerBatchDelivery,
@@ -151,6 +157,7 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		LegacyEnv:   []string{"FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED"},
+		RetireBy:    "2027-01-31",
 	},
 	{
 		Key:         OperationSchedules,
@@ -176,6 +183,7 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan, AttributeOrg},
 		LegacyEnv:   []string{"FAAS_SERVICE_MAP_ENABLED"},
+		RetireBy:    "2027-01-31",
 	},
 	{
 		Key:         GuestTracing,
@@ -229,6 +237,15 @@ func FlagForCapability(capability string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// RetireByTime is RetireBy as the start of that day in UTC.
+func (s Spec) RetireByTime() (time.Time, bool) {
+	if s.RetireBy == "" {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.DateOnly, s.RetireBy)
+	return at, err == nil
 }
 
 // Supports reports whether every consumer of the flag can supply attr.

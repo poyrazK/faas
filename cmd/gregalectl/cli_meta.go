@@ -675,6 +675,7 @@ var cliCommands = []cliCommand{
 				{Name: "key", Short: "platform flag key", Req: true},
 				{Name: "account-id", Short: "account UUID", Req: true},
 				{Name: "org-id", Short: "organization UUID the request would act under"},
+				{Name: "at", Short: "decide as of this RFC 3339 time"},
 			}},
 			{Name: "account", Short: "Show every flag decided for an account", Flags: []cliFlag{
 				{Name: "account-id", Short: "account UUID", Req: true},
@@ -688,6 +689,10 @@ var cliCommands = []cliCommand{
 				cliFlag{Name: "percent", Short: "share of eligible accounts, 0..100", Req: true},
 				cliFlag{Name: "plans", Short: "comma-separated plans the rollout is limited to"})},
 			{Name: "default", Short: "Set the value for accounts no rule matches", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "value", Short: "true or false", Req: true})},
+			{Name: "schedule", Short: "Set or clear the time window of one rule", Flags: append(flagsMutationCLIFlags(true),
+				cliFlag{Name: "rule-id", Short: "rule to schedule", Req: true},
+				cliFlag{Name: "starts-at", Short: "RFC 3339 start, or none to clear"},
+				cliFlag{Name: "ends-at", Short: "RFC 3339 end, or none to clear"})},
 			{Name: "set", Short: "Replace a flag's definition from a JSON file", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "file", Short: "JSON definition file, or - for stdin", Req: true})},
 			{Name: "groups", Short: "List account groups and the flags that use them"},
 			{Name: "group-add", Short: "Add an account to a group", Flags: append(flagsMutationCLIFlags(false),

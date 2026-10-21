@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -25,26 +26,37 @@ const (
 	ReasonAccountMissing = "account_missing"
 	ReasonRuleMatch      = "rule_match"
 	ReasonDefault        = "default"
+
+	// ScheduleNotStarted and ScheduleEnded explain a rule that matched the
+	// subject but was outside its window (ADR 20261021080640).
+	ScheduleNotStarted = "rule_not_started"
+	ScheduleEnded      = "rule_ended"
 )
 
 // Subject is the account a decision is made for. Plan may be empty when the
 // caller does not know it; a rule that constrains plans then does not match.
 // OrgID is the organization the request acts under (ADR 20261021080640), empty
 // outside a company context; a rule that constrains orgs then does not match.
+// At is the decision time; zero means now. Only the inspector and tests set it.
 type Subject struct {
 	AccountID string
 	Plan      string
 	OrgID     string
+	At        time.Time
 }
 
-// Decision explains one evaluation.
+// Decision explains one evaluation. ScheduledRuleID and ScheduleState name
+// the first rule that matched the subject but was outside its window, when
+// that changed the outcome's rule.
 type Decision struct {
-	Flag    string `json:"flag"`
-	Enabled bool   `json:"enabled"`
-	Reason  string `json:"reason"`
-	RuleID  string `json:"rule_id,omitempty"`
-	Bucket  *int   `json:"bucket,omitempty"`
-	Version int64  `json:"version"`
+	Flag            string `json:"flag"`
+	Enabled         bool   `json:"enabled"`
+	Reason          string `json:"reason"`
+	RuleID          string `json:"rule_id,omitempty"`
+	Bucket          *int   `json:"bucket,omitempty"`
+	Version         int64  `json:"version"`
+	ScheduledRuleID string `json:"scheduled_rule_id,omitempty"`
+	ScheduleState   string `json:"schedule_state,omitempty"`
 }
 
 type compiledRule struct {
@@ -55,6 +67,19 @@ type compiledRule struct {
 	plans    map[string]struct{}
 	rollout  int // -1 when the rule has no rollout constraint
 	value    bool
+	starts   *time.Time
+	ends     *time.Time
+}
+
+// windowState is "" inside the window, else why the rule is inactive at now.
+func (r compiledRule) windowState(now time.Time) string {
+	switch {
+	case r.starts != nil && now.Before(*r.starts):
+		return ScheduleNotStarted
+	case r.ends != nil && !now.Before(*r.ends):
+		return ScheduleEnded
+	}
+	return ""
 }
 
 type compiledFlag struct {
@@ -96,6 +121,7 @@ func Compile(defs map[string]Definition, versions map[string]int64, groups Group
 			if rule.Value != nil {
 				compiled.value = *rule.Value
 			}
+			compiled.starts, compiled.ends = rule.StartsAt, rule.EndsAt
 			flag.rules = append(flag.rules, compiled)
 		}
 		s.flags[key] = flag
@@ -135,6 +161,10 @@ func (s *Snapshot) Evaluate(key string, subject Subject) Decision {
 		return d
 	}
 	org := canonicalAccount(subject.OrgID)
+	now := subject.At
+	if now.IsZero() {
+		now = time.Now()
+	}
 	for _, rule := range flag.rules {
 		if rule.accounts != nil {
 			if _, ok := rule.accounts[account]; !ok {
@@ -160,14 +190,21 @@ func (s *Snapshot) Evaluate(key string, subject Subject) Decision {
 				continue
 			}
 		}
+		var bucket *int
 		if rule.rollout >= 0 {
-			bucket := flags.Bucket(bucketSeed, key, account)
-			if bucket >= rule.rollout {
+			b := flags.Bucket(bucketSeed, key, account)
+			if b >= rule.rollout {
 				continue
 			}
-			d.Bucket = &bucket
+			bucket = &b
 		}
-		d.Enabled, d.Reason, d.RuleID = rule.value, ReasonRuleMatch, rule.id
+		if state := rule.windowState(now); state != "" {
+			if d.ScheduledRuleID == "" {
+				d.ScheduledRuleID, d.ScheduleState = rule.id, state
+			}
+			continue
+		}
+		d.Enabled, d.Reason, d.RuleID, d.Bucket = rule.value, ReasonRuleMatch, rule.id, bucket
 		return d
 	}
 	d.Enabled, d.Reason = flag.def.Default, ReasonDefault
