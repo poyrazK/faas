@@ -61,6 +61,14 @@ func TestPostgresAIQualitySignals(t *testing.T) {
 	if item := usageItem(); item.TruncatedRequests != 1 || item.EmptyRequests != 0 {
 		t.Fatalf("usage item = %+v", item)
 	}
+	// The call ID keys the settlement: a retry of one that committed counts
+	// nothing again.
+	if _, err := backend.RecordAIUsageAlerts(ctx, record); err != nil {
+		t.Fatalf("a repeated settlement = %v", err)
+	}
+	if item := usageItem(); item.Requests != 1 || item.TruncatedRequests != 1 {
+		t.Fatalf("a repeated settlement counted again: %+v", item)
+	}
 
 	// Ratings: a second rating moves the day's count; another app cannot
 	// rate the call.

@@ -141,7 +141,14 @@ func scanOpenedAISettlement(results pgx.BatchResults, leaseID uuid.UUID, record 
 		return opened, err
 	}
 	if record.Log != nil {
-		if err := results.QueryRow().Scan(&opened.logID); err != nil {
+		err := results.QueryRow().Scan(&opened.logID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// ADR 20261021171712: the call's ID is already logged, so an
+			// earlier attempt committed this settlement.
+			opened.settled = true
+			return opened, nil
+		}
+		if err != nil {
 			return opened, err
 		}
 	}
@@ -577,6 +584,7 @@ func queueAIRequestLog(batch *pgx.Batch, integrationID uuid.UUID, record AIUsage
 		     trace_id, tool_calls, id, quality_flags)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''), $16, NULLIF($17, ''), $18,
 		        COALESCE($19::uuid, gen_random_uuid()), $20)
+		ON CONFLICT (id) DO NOTHING
 		RETURNING id`,
 		integrationID, record.Caller, routeID, usage.Model, record.Log.Status, string(record.Outcome), usage.InputTokens,
 		usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens, record.CostMillicents,
