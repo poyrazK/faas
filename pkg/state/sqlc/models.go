@@ -636,6 +636,13 @@ type App struct {
 	ManagedPostgresAdmissionCutoverID pgtype.UUID
 	ManagedPostgresAdmissionFencedAt  pgtype.Timestamptz
 	ServiceAddressIndex               pgtype.Int4
+	DeploymentPolicyRevision          int64
+	DeploymentPolicyOwner             string
+	DeploymentPolicyFingerprint       string
+	DeploymentCronRevision            int64
+	DeploymentCronOwner               string
+	DeploymentCronFingerprint         string
+	DeploymentCronBefore              []byte
 	DeploymentMailRevision            int64
 }
 
@@ -3455,6 +3462,26 @@ type DeploymentCodePinDeadline struct {
 	ExpiresAt    interface{}
 }
 
+type DeploymentCronActivation struct {
+	AppID       pgtype.UUID
+	UploadID    pgtype.Text
+	SessionID   string
+	Intent      []byte
+	Fingerprint string
+	Revision    int64
+	Status      string
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type DeploymentCronOutcome struct {
+	DeploymentID pgtype.UUID
+	SessionID    string
+	Revision     int64
+	Status       string
+	Reason       string
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type DeploymentDependencyGate struct {
 	DeploymentID pgtype.UUID
 	Pins         []byte
@@ -3562,6 +3589,13 @@ type DeploymentOpenapiSnapshot struct {
 	CapturedAt    pgtype.Timestamptz
 }
 
+type DeploymentProjectReleaseWorker struct {
+	DeploymentID pgtype.UUID
+	AccountID    pgtype.UUID
+	ProjectID    pgtype.UUID
+	AttemptID    string
+}
+
 type DeploymentPublicBuildUrl struct {
 	DeploymentID pgtype.UUID
 	Urls         []byte
@@ -3601,6 +3635,17 @@ type DeploymentRegistryVerification struct {
 	Signature     []byte
 	VerifiedAt    pgtype.Timestamptz
 	ExpiresAt     pgtype.Timestamptz
+}
+
+type DeploymentReleaseEnvSnapshot struct {
+	DeploymentID pgtype.UUID
+	ValuesJson   []byte
+}
+
+type DeploymentReleaseSecretSnapshot struct {
+	DeploymentID pgtype.UUID
+	ValuesJson   []byte
+	CreatedAt    pgtype.Timestamptz
 }
 
 type DeploymentRevisionPin struct {
@@ -3740,6 +3785,13 @@ type DeploymentSidecarSecretReloadSignal struct {
 	DeploymentID pgtype.UUID
 	SidecarName  string
 	Signal       string
+}
+
+type DeploymentSubmissionReceipt struct {
+	AppID        pgtype.UUID
+	AttemptID    string
+	DeploymentID pgtype.UUID
+	AcceptedAt   pgtype.Timestamptz
 }
 
 type DevBridgeSession struct {
@@ -3970,6 +4022,12 @@ type EnvironmentBindingRetirementReceipt struct {
 	Policies      []byte
 	ValidUntil    pgtype.Timestamptz
 	RecordedAt    pgtype.Timestamptz
+}
+
+type EnvironmentBuildArtifactPin struct {
+	SourceID    pgtype.UUID
+	CandidateID pgtype.UUID
+	ArtifactID  pgtype.UUID
 }
 
 type EnvironmentDesiredRevision struct {
@@ -4244,6 +4302,68 @@ type EnvironmentQualificationSnapshotReceipt struct {
 	Snapshot   []byte
 	Inputs     []byte
 	RecordedAt pgtype.Timestamptz
+}
+
+type EnvironmentRecoveryCandidate struct {
+	SourceID        pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	EnvironmentSlug string
+	MaxReleases     int32
+	Seconds         int32
+	MaxBytes        int64
+	ReleaseSetID    pgtype.UUID
+	ServedAt        interface{}
+	GraphID         pgtype.UUID
+	GraphCount      int64
+	SupersededAt    interface{}
+	Bytes           interface{}
+	Available       pgtype.Bool
+	ProtectedUntil  int32
+	Position        int64
+	ChargedBytes    int64
+}
+
+type EnvironmentRecoveryRetainedDeployment struct {
+	SourceID     pgtype.UUID
+	AccountID    pgtype.UUID
+	ReleaseSetID pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type EnvironmentRecoveryRetainedKey struct {
+	AccountID    pgtype.UUID
+	ReleaseSetID pgtype.UUID
+	StorageKey   string
+}
+
+type EnvironmentRecoveryRetainedRelease struct {
+	SourceID        pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	EnvironmentSlug string
+	MaxReleases     int32
+	Seconds         int32
+	MaxBytes        int64
+	ReleaseSetID    pgtype.UUID
+	ServedAt        interface{}
+	GraphID         pgtype.UUID
+	GraphCount      int64
+	SupersededAt    interface{}
+	Bytes           interface{}
+	Available       pgtype.Bool
+	ProtectedUntil  int32
+	Position        int64
+	ChargedBytes    int64
+}
+
+type EnvironmentRecoveryServingHistory struct {
+	GraphID      pgtype.UUID
+	SourceID     pgtype.UUID
+	ReleaseSetID pgtype.UUID
+	ServedAt     pgtype.Timestamptz
 }
 
 type EnvironmentRouteBudgetReceipt struct {
@@ -11772,6 +11892,12 @@ type ProjectEnvironmentPromotion struct {
 	SourceQualificationID        pgtype.UUID
 }
 
+type ProjectEnvironmentPromotionControl struct {
+	PromotionID pgtype.UUID
+	RequestID   string
+	Payload     []byte
+}
+
 type ProjectEnvironmentPromotionFeatureFlag struct {
 	PromotionID            pgtype.UUID
 	SourceSnapshot         []byte
@@ -11780,6 +11906,42 @@ type ProjectEnvironmentPromotionFeatureFlag struct {
 	PreviousTargetHash     string
 	TargetVersion          int64
 	RollbackVersion        int64
+}
+
+type ProjectEnvironmentPromotionHealth struct {
+	PromotionID   pgtype.UUID
+	Generation    int64
+	Phase         string
+	Payload       []byte
+	LeaseToken    pgtype.UUID
+	LeaseUntil    pgtype.Timestamptz
+	NextCheckAt   pgtype.Timestamptz
+	LastClaimedAt pgtype.Timestamptz
+}
+
+type ProjectEnvironmentPromotionMigration struct {
+	PromotionID        pgtype.UUID
+	TaskID             pgtype.UUID
+	RuntimeFingerprint string
+	PreparedLeaseToken pgtype.UUID
+	RuntimeNodeID      pgtype.UUID
+	RuntimeInstanceID  pgtype.UUID
+	RuntimeLeaseToken  pgtype.UUID
+	DestroyedAt        pgtype.Timestamptz
+}
+
+type ProjectEnvironmentPromotionMigrationRecovery struct {
+	PromotionID pgtype.UUID
+	RequestID   string
+	RequestHash string
+	Status      string
+	Payload     []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ProjectEnvironmentPromotionReleaseConfig struct {
+	PromotionID pgtype.UUID
+	Payload     []byte
 }
 
 type ProjectEnvironmentPromotionWorkload struct {
@@ -11897,10 +12059,135 @@ type ProjectMigration struct {
 	Snapshot    []byte
 }
 
+type ProjectMigrationContract struct {
+	AccountID            pgtype.UUID
+	ProjectID            pgtype.UUID
+	AttemptID            string
+	AppID                pgtype.UUID
+	WorkloadAttemptID    string
+	ExpansionTaskID      pgtype.UUID
+	PreparedLeaseToken   pgtype.UUID
+	RuntimeFingerprint   pgtype.Text
+	Command              []string
+	CommandHash          string
+	TaskID               pgtype.UUID
+	RequestID            pgtype.Text
+	Generation           pgtype.Int8
+	ReleaseID            pgtype.UUID
+	ConfigVersion        pgtype.Int8
+	ConfigHash           pgtype.Text
+	RetiredDeploymentIds []pgtype.UUID
+	CreatedAt            pgtype.Timestamptz
+}
+
+type ProjectMigrationPendingContract struct {
+	AccountID            pgtype.UUID
+	ProjectID            pgtype.UUID
+	AttemptID            string
+	AppID                pgtype.UUID
+	WorkloadAttemptID    string
+	ExpansionTaskID      pgtype.UUID
+	PreparedLeaseToken   pgtype.UUID
+	RuntimeFingerprint   pgtype.Text
+	Command              []string
+	CommandHash          string
+	TaskID               pgtype.UUID
+	RequestID            pgtype.Text
+	Generation           pgtype.Int8
+	ReleaseID            pgtype.UUID
+	ConfigVersion        pgtype.Int8
+	ConfigHash           pgtype.Text
+	RetiredDeploymentIds []pgtype.UUID
+	CreatedAt            pgtype.Timestamptz
+}
+
+type ProjectMigrationRecovery struct {
+	AccountID            pgtype.UUID
+	AttemptID            string
+	ProjectID            pgtype.UUID
+	RequestID            string
+	RequestHash          string
+	TaskID               pgtype.UUID
+	Generation           int64
+	ReplacementAttemptID string
+	ReplacementReleaseID pgtype.UUID
+	ConfigVersion        int64
+	ConfigHash           string
+	RuntimeFingerprints  []byte
+	EvidenceHash         string
+	ResolvedAt           pgtype.Timestamptz
+}
+
+type ProjectMigrationRetiredDeployment struct {
+	DeploymentID interface{}
+}
+
+type ProjectMigrationTaskAdmission struct {
+	ID pgtype.UUID
+}
+
+type ProjectPromotionHealthWork struct {
+	PromotionID   pgtype.UUID
+	AccountID     pgtype.UUID
+	ProjectSlug   string
+	ToEnvironment string
+	NextCheckAt   pgtype.Timestamptz
+	LastClaimedAt pgtype.Timestamptz
+	LeaseUntil    pgtype.Timestamptz
+	Urgent        pgtype.Bool
+}
+
+type ProjectPromotionMigrationResolvedTask struct {
+	TaskID pgtype.UUID
+}
+
+type ProjectPromotionWorkerTarget struct {
+	PromotionID  pgtype.UUID
+	ProjectID    pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type ProjectReleaseAddition struct {
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	AttemptID   string
+	Fingerprint string
+	Dormant     bool
+}
+
+type ProjectReleaseCanary struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	AttemptID   string
+	Policy      []byte
+	Status      string
+	WorkerAppID pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ProjectReleaseConfigIntent struct {
+	AccountID pgtype.UUID
+	AttemptID string
+	Payload   []byte
+}
+
 type ProjectReleaseMember struct {
 	ReleaseID    pgtype.UUID
 	AppID        pgtype.UUID
 	DeploymentID pgtype.UUID
+}
+
+type ProjectReleaseSecretBundle struct {
+	AccountID    pgtype.UUID
+	ProjectID    pgtype.UUID
+	RequestID    string
+	RequestHash  string
+	ValuesJson   []byte
+	ResponseJson []byte
+	CreatedAt    pgtype.Timestamptz
 }
 
 type ProjectReleaseSet struct {
@@ -11927,6 +12214,52 @@ type ProjectReleaseStage struct {
 	CreatedAt       pgtype.Timestamptz
 	ExpiresAt       pgtype.Timestamptz
 	Cancelled       bool
+}
+
+type ProjectReleaseWorkerDrain struct {
+	InstanceID  pgtype.UUID
+	RequestedAt pgtype.Timestamptz
+}
+
+type ProjectSubmission struct {
+	AccountID   pgtype.UUID
+	AttemptID   string
+	Fingerprint string
+	Payload     []byte
+	Status      string
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type ProjectWorkerCanaryTarget struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type ProjectWorkerJobEvidence struct {
+	InvocationID     pgtype.UUID
+	ReplayGeneration int64
+	Attempt          int32
+	AppID            pgtype.UUID
+	BindingID        pgtype.UUID
+	DeploymentID     pgtype.UUID
+	StartedAt        pgtype.Timestamptz
+	FinishedAt       pgtype.Timestamptz
+	Outcome          string
+	QueueDelayMs     int64
+}
+
+type ProjectWorkerPinnedTarget struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type ProjectWorkerReleasePin struct {
+	RootInvocationID pgtype.UUID
+	AppID            pgtype.UUID
+	BindingID        pgtype.UUID
+	ReleaseID        pgtype.UUID
+	DeploymentID     pgtype.UUID
+	CreatedAt        pgtype.Timestamptz
 }
 
 type ProvisionedStaticEgressIp struct {
@@ -12032,6 +12365,22 @@ type ReleaseFreeze struct {
 	CreatedAt             pgtype.Timestamptz
 	LiftedAt              pgtype.Timestamptz
 	LiftedBy              pgtype.Text
+}
+
+type ReleaseSecretKeyRetirement struct {
+	Kid       string
+	RetiredAt pgtype.Timestamptz
+}
+
+type ReleaseSecretKeyRetirementFence struct {
+	Singleton  bool
+	Generation int64
+}
+
+type ReleaseSecretRekeyDocument struct {
+	Kind    string
+	ID      interface{}
+	Payload []byte
 }
 
 type RequestAuditEvent struct {
@@ -13425,6 +13774,25 @@ type UsageMinute struct {
 	JobID             pgtype.UUID
 	JobRunID          pgtype.UUID
 	JobExecutionClass pgtype.Text
+}
+
+type UsageMonthTotal struct {
+	AccountID     pgtype.UUID
+	Month         pgtype.Timestamptz
+	SubjectID     pgtype.UUID
+	MinuteRows    int64
+	MbSeconds     int64
+	CpuUsec       int64
+	Requests      int64
+	TxBytes       int64
+	NetTxBytes    int64
+	NetRxBytes    int64
+	ColdBootCount int64
+}
+
+type UsageMonthTotalsTracking struct {
+	Singleton   bool
+	TrackedFrom pgtype.Timestamptz
 }
 
 type UsageMonthly struct {

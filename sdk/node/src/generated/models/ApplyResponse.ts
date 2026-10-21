@@ -9,10 +9,13 @@ import type { PlanCron } from './PlanCron.js';
 import type { PlanDetectionWarning } from './PlanDetectionWarning.js';
 import type { PlanManaged } from './PlanManaged.js';
 import type { PlanWorkload } from './PlanWorkload.js';
+import type { ProjectSafeRelease } from './ProjectSafeRelease.js';
 /**
  * Apply response. Carries the inserted project_id and per-app IDs.
  */
 export type ApplyResponse = {
+  safe_release?: ProjectSafeRelease;
+  submission_attempt_id?: string;
   project_slug: string;
   repo_full_name?: string;
   scan_source: string;

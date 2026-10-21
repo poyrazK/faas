@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.environment_workload_progress import EnvironmentWorkloadProgress
+
 
 T = TypeVar("T", bound="EnvironmentWorkloadActivationEvidence")
 
@@ -42,6 +46,10 @@ class EnvironmentWorkloadActivationEvidence:
     activated: bool
     serving: bool
     blocking_reasons: list[str]
+    commit_sha: str | Unset = UNSET
+    """Approved revision commit verified in the same current graph snapshot. Independent source-ref observations
+    never supply this identity. Older servers may omit this field."""
+    workloads: list[EnvironmentWorkloadProgress] | Unset = UNSET
     graph_error_code: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -90,6 +98,15 @@ class EnvironmentWorkloadActivationEvidence:
 
         blocking_reasons = self.blocking_reasons
 
+        commit_sha = self.commit_sha
+
+        workloads: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.workloads, Unset):
+            workloads = []
+            for workloads_item_data in self.workloads:
+                workloads_item = workloads_item_data.to_dict()
+                workloads.append(workloads_item)
+
         graph_error_code = self.graph_error_code
 
         field_dict: dict[str, Any] = {}
@@ -120,6 +137,10 @@ class EnvironmentWorkloadActivationEvidence:
                 "blocking_reasons": blocking_reasons,
             }
         )
+        if commit_sha is not UNSET:
+            field_dict["commit_sha"] = commit_sha
+        if workloads is not UNSET:
+            field_dict["workloads"] = workloads
         if graph_error_code is not UNSET:
             field_dict["graph_error_code"] = graph_error_code
 
@@ -127,6 +148,8 @@ class EnvironmentWorkloadActivationEvidence:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.environment_workload_progress import EnvironmentWorkloadProgress
+
         d = dict(src_dict)
         graph_id = UUID(d.pop("graph_id"))
 
@@ -172,6 +195,17 @@ class EnvironmentWorkloadActivationEvidence:
 
         blocking_reasons = cast(list[str], d.pop("blocking_reasons"))
 
+        commit_sha = d.pop("commit_sha", UNSET)
+
+        _workloads = d.pop("workloads", UNSET)
+        workloads: list[EnvironmentWorkloadProgress] | Unset = UNSET
+        if _workloads is not UNSET:
+            workloads = []
+            for workloads_item_data in _workloads:
+                workloads_item = EnvironmentWorkloadProgress.from_dict(workloads_item_data)
+
+                workloads.append(workloads_item)
+
         graph_error_code = d.pop("graph_error_code", UNSET)
 
         environment_workload_activation_evidence = cls(
@@ -197,6 +231,8 @@ class EnvironmentWorkloadActivationEvidence:
             activated=activated,
             serving=serving,
             blocking_reasons=blocking_reasons,
+            commit_sha=commit_sha,
+            workloads=workloads,
             graph_error_code=graph_error_code,
         )
 

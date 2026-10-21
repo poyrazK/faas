@@ -223,6 +223,72 @@ class AnalyzeTest(unittest.TestCase):
             au.analyze([], extra, CONFIG, EXISTS)
 
 
+def measured(status, code="h", base="b"):
+    """A measure_code entry: status against base and the two code digests."""
+    return {"code": status, "code_digest": code * 64, "base_code_digest": base * 64 if base else None}
+
+
+class CodeSelectionTest(unittest.TestCase):
+    """analyze() with code measurements (measure_code)."""
+
+    STATE = [("c1", ["pkg/state/store.go"])]
+
+    def test_closure_binary_with_unchanged_code_is_carried_not_changed(self):
+        code = {"apid": measured("same", "a", "a"), "meterd": measured("changed"),
+                "gatewayd-internal": measured("lines", "g", "g")}
+        rep = au.analyze(self.STATE, CLOSURES, CONFIG, EXISTS, code=code)
+        apid = rep["binaries"]["apid"]
+        self.assertEqual((apid["closure"], apid["changed"], apid["code"]), (True, False, "same"))
+        self.assertEqual(apid["version"], "unit-c1")
+        self.assertEqual(apid["code_digest"], apid["base_code_digest"])
+        self.assertTrue(rep["binaries"]["meterd"]["changed"])
+        self.assertFalse(rep["binaries"]["gatewayd-internal"]["changed"])
+        self.assertEqual(rep["lanes"]["control-plane"]["changed"], ["meterd"])
+        self.assertEqual(rep["lanes"]["control-plane"]["carried"], ["apid", "meterd"])
+        # Every closure binary of an eligible lane ships in the tarball, so a
+        # host on an earlier unit release can get back to base's code.
+        self.assertEqual(rep["deployable"], ["apid", "gatewayd-internal", "meterd"])
+        self.assertTrue(rep["lanes"]["edge"]["eligible"])
+        self.assertEqual(rep["lanes"]["edge"]["changed"], [])
+
+    def test_unmeasured_binaries_keep_the_closure(self):
+        rep = au.analyze(self.STATE, CLOSURES, CONFIG, EXISTS, code={"apid": measured("same")})
+        self.assertTrue(rep["binaries"]["schedd"]["changed"])
+        self.assertIsNone(rep["binaries"]["schedd"]["code"])
+        self.assertEqual(rep["pending"]["shared"], ["schedd"])
+        self.assertTrue(rep["binaries"]["meterd"]["changed"])
+
+    def test_added_binary_is_changed(self):
+        rep = au.analyze(self.STATE, CLOSURES, CONFIG, EXISTS, code={"apid": measured("added", base=None)})
+        self.assertTrue(rep["binaries"]["apid"]["changed"])
+        self.assertIsNone(rep["binaries"]["apid"]["base_code_digest"])
+
+    def test_measurement_of_a_binary_outside_the_closure_is_ignored(self):
+        rep = au.analyze([("c1", ["pkg/apid/server.go"])], CLOSURES, CONFIG, EXISTS,
+                         code={"meterd": measured("changed")})
+        self.assertFalse(rep["binaries"]["meterd"]["changed"])
+        self.assertIsNone(rep["binaries"]["meterd"]["code"])
+
+    def test_candidates_skip_blocked_lanes_and_lanes_that_never_deploy(self):
+        rep = au.analyze([("c1", ["pkg/state/store.go", "deploy/ansible/roles/vmmd_service/tasks/main.yml"])],
+                         CLOSURES, CONFIG, EXISTS, host=HOST)
+        self.assertEqual(au.code_candidates(rep), ["apid", "meterd"])
+        rep = au.analyze([("c1", ["pkg/state/store.go", "migrations/00002_add.sql"])], CLOSURES, CONFIG, EXISTS)
+        self.assertEqual(au.code_candidates(rep), [])
+
+    def test_code_cache_round_trip_and_mismatch(self):
+        path = os.path.join(tempfile.mkdtemp(), "cache.json")
+        self.addCleanup(shutil.rmtree, os.path.dirname(path))
+        self.assertEqual(au.load_code_cache(path, "b" * 40, "go1.26.9"), {})
+        au.write_code_cache(path, "b" * 40, "go1.26.9", {"apid": ("f" * 64, "c" * 64)})
+        self.assertEqual(au.load_code_cache(path, "b" * 40, "go1.26.9"), {"apid": ("f" * 64, "c" * 64)})
+        self.assertEqual(au.load_code_cache(path, "a" * 40, "go1.26.9"), {}, "another base")
+        self.assertEqual(au.load_code_cache(path, "b" * 40, "go1.27.0"), {}, "another toolchain")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("{not json")
+        self.assertEqual(au.load_code_cache(path, "b" * 40, "go1.26.9"), {})
+
+
 class HostConfigTest(unittest.TestCase):
     """A change to a control-plane host role rides the control-plane lane,
     which converges the role before it restarts anything
@@ -685,6 +751,148 @@ class EndToEndTest(unittest.TestCase):
         self.run_git("checkout", "-q", self.base)
         with self.assertRaisesRegex(RuntimeError, "not --head"):
             au.report(self.base, head, self.config, root=self.root)
+
+
+def lib(a="1", b="2", above_b=""):
+    """pkg/lib with two functions the linker keeps out of line, so their
+    code and line-table rows stay their own."""
+    return (f"package lib\n\n//go:noinline\nfunc A() int {{ return {a} }}\n\n"
+            f"{above_b}//go:noinline\nfunc B() int {{ return {b} }}\n")
+
+
+@unittest.skipUnless(shutil.which(os.environ.get("GO", "go")), "go toolchain not available")
+class CodeEndToEndTest(unittest.TestCase):
+    """report(code=True) on a throwaway module: real builds at base and head."""
+
+    def run_git(self, *args):
+        subprocess.run([*GIT, *args], cwd=self.root, check=True, capture_output=True)
+
+    def write(self, path, body):
+        full = os.path.join(self.root, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as fh:
+            fh.write(body)
+
+    def commit(self, message):
+        self.run_git("add", "-A")
+        self.run_git("commit", "-q", "-m", message)
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.root, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        os.environ.setdefault("GOTOOLCHAIN", "local")
+        os.environ.setdefault("GOFLAGS", "")
+        self.run_git("init", "-q", "-b", "main")
+        self.run_git("config", "user.email", "t@example.com")
+        self.run_git("config", "user.name", "t")
+        self.write("go.mod", "module example.com/m\n\ngo 1.21\n")
+        self.write("Makefile", "LDFLAGS := -X example.com/m/pkg/wire.Version=$(VERSION)\n"
+                               "GO_BUILD_FLAGS := -trimpath -buildvcs=false\n"
+                               "DAEMONS := apid meterd\nCLIS := gregalectl\n\n"
+                               "build-release-unit:\n\tgo build $(GO_BUILD_FLAGS)\n")
+        self.write("pkg/wire/wire.go", 'package wire\n\nvar Version = "dev"\n')
+        # apid calls lib.A and meterd lib.B: both import pkg/lib, and the
+        # linker keeps only the function each one reaches.
+        self.write("cmd/apid/main.go",
+                   'package main\n\nimport (\n\t"example.com/m/pkg/lib"\n\t"example.com/m/pkg/wire"\n)\n\n'
+                   'func main() { println(lib.A(), wire.Version) }\n')
+        self.write("cmd/meterd/main.go",
+                   'package main\n\nimport "example.com/m/pkg/lib"\n\nfunc main() { println(lib.B()) }\n')
+        self.write("cmd/gregalectl/main.go", "package main\n\nfunc main() {}\n")
+        self.write("pkg/lib/lib.go", lib())
+        self.config = os.path.join(self.root, "lanes.json")
+        with open(self.config, "w", encoding="utf-8") as fh:
+            json.dump({"binaries": {"apid": {"lane": "control-plane", "services": [{"name": "apid"}]},
+                                    "meterd": {"lane": "control-plane", "services": [{"name": "meterd"}]},
+                                    "gregalectl": {"lane": "tool"}},
+                       "global_inputs": ["go.mod", "go.sum"],
+                       "blocking_paths": {"migrations": ["migrations/"]}}, fh)
+        self.base = self.commit("base")
+
+    def report(self, **kw):
+        return au.report(self.base, "HEAD", self.config, root=self.root, code=True, workdir=self.root, **kw)
+
+    def test_code_narrows_what_restarts_but_the_lane_carries_the_closure(self):
+        # Same line count, so apid's line table does not move either.
+        self.write("pkg/lib/lib.go", lib(b="3"))
+        head = self.commit("change B")
+        rep = self.report()
+        self.assertEqual(rep["code_selection"]["measured"], ["apid", "meterd"])
+        apid, meterd = rep["binaries"]["apid"], rep["binaries"]["meterd"]
+        self.assertEqual((apid["code"], apid["changed"]), ("same", False))
+        self.assertEqual(apid["code_digest"], apid["base_code_digest"])
+        self.assertEqual((meterd["code"], meterd["changed"]), ("changed", True))
+        self.assertNotEqual(meterd["code_digest"], meterd["base_code_digest"])
+        self.assertEqual((apid["version"], meterd["version"]), (f"unit-{head}", f"unit-{head}"))
+        self.assertEqual(rep["lanes"]["control-plane"]["changed"], ["meterd"])
+        self.assertEqual(rep["deployable"], ["apid", "meterd"])
+
+    def test_a_line_shift_is_not_a_code_change(self):
+        self.write("pkg/lib/lib.go", lib(above_b="// B moved down a line.\n"))
+        self.commit("comment above B")
+        rep = self.report()
+        self.assertEqual(rep["binaries"]["meterd"]["code"], "lines")
+        self.assertEqual(rep["binaries"]["apid"]["code"], "same")
+        self.assertEqual(rep["lanes"]["control-plane"]["changed"], [])
+        self.assertTrue(rep["eligible"])
+
+    def test_base_digests_come_from_the_cache_on_later_runs(self):
+        cache = os.path.join(self.root, "base-code.json")
+        self.write("pkg/lib/lib.go", lib(a="4"))
+        self.commit("change A")
+        first = self.report(code_cache=cache)
+        self.assertEqual(first["code_selection"]["base_cached"], [])
+        self.assertEqual(first["code_selection"]["base_built"], ["apid", "meterd"])
+        with open(cache, encoding="utf-8") as fh:
+            self.assertEqual(sorted(json.load(fh)["digests"]), ["apid", "meterd"])
+        second = self.report(code_cache=cache)
+        self.assertEqual(second["code_selection"]["base_cached"], ["apid", "meterd"])
+        self.assertEqual(second["code_selection"]["base_built"], [], "nothing new to cache")
+        self.assertEqual(second["binaries"], first["binaries"])
+        self.assertEqual(second["binaries"]["apid"]["code"], "changed")
+
+    def test_a_failed_code_build_falls_back_to_the_closure(self):
+        self.write("pkg/lib/lib.go", lib(a=""))
+        self.base = self.commit("broken base")
+        self.write("pkg/lib/lib.go", lib(a="8"))
+        self.commit("fixed")
+        rep = self.report()
+        self.assertIn("go build at", rep["code_selection"]["error"])
+        self.assertEqual(rep["code_selection"]["measured"], [])
+        self.assertTrue(rep["binaries"]["apid"]["changed"] and rep["binaries"]["meterd"]["changed"])
+        self.assertNotIn("code_digest", rep["binaries"]["apid"])
+
+    def test_a_partial_clone_fetches_the_base_files_in_one_request(self):
+        self.write("pkg/lib/lib.go", lib(b="9"))
+        self.commit("change B")
+        self.run_git("config", "uploadpack.allowFilter", "true")
+        clone = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, clone)
+        subprocess.run([*GIT, "clone", "-q", "--filter=blob:none", f"file://{self.root}", clone],
+                       check=True, capture_output=True)
+
+        def missing():
+            out = subprocess.run([*GIT, "rev-list", "--objects", "--missing=print", self.base], cwd=clone,
+                                 check=True, capture_output=True, text=True).stdout
+            return [line for line in out.splitlines() if line.startswith("?")]
+
+        self.assertEqual(len(missing()), 1, "base's pkg/lib/lib.go is not in the checkout")
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone, check=True, capture_output=True,
+                              text=True).stdout.strip()
+        self.assertEqual(au.binary_code.prefetch_tree(self.base, head, clone), 1)
+        self.assertEqual(missing(), [])
+        self.assertEqual(au.binary_code.prefetch_tree(self.base, head, self.root), 0, "not a partial clone")
+
+    def test_a_blocked_range_builds_nothing(self):
+        self.write("pkg/lib/lib.go", lib(b="5"))
+        self.write("migrations/00002_x.sql", "select 1;\n")
+        self.commit("meterd + migration")
+        rep = self.report()
+        self.assertEqual(rep["code_selection"]["measured"], [])
+        self.assertTrue(rep["binaries"]["apid"]["changed"], "unmeasured binaries keep the closure")
+        self.assertFalse(rep["eligible"])
 
 
 if __name__ == "__main__":

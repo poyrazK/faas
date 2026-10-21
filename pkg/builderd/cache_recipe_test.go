@@ -116,6 +116,7 @@ func TestBuildRecipeCachePartitionsInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	changes := map[string]func(*BuildCacheRecipe){
+		"scope":      func(r *BuildCacheRecipe) { r.GitOpsReuseScope = "another-app-or-recipe" },
 		"workspace":  func(r *BuildCacheRecipe) { r.SourceRoot = "apps/web" },
 		"dockerfile": func(r *BuildCacheRecipe) { r.DockerfilePath = "deploy/Dockerfile.production" },
 		"source":     func(r *BuildCacheRecipe) { r.SourceSHA256 = "source-b" },
@@ -249,5 +250,81 @@ func TestBuildRecipeRejectsLegacyEntries(t *testing.T) {
 				t.Fatal("fresh recipe entry must hit")
 			}
 		})
+	}
+}
+
+func TestBuildRecipeGitOpsOriginReplacementPreservesLeasedBytes(t *testing.T) {
+	cache := NewCache(t.TempDir())
+	recipe := testBuildCacheRecipe("source", FrameworkNode, api.PlanPro, "base")
+	recipe.GitOpsReuseScope = "reviewed-app-and-recipe"
+	artifact := filepath.Join(t.TempDir(), "image.tar")
+	if err := os.WriteFile(artifact, []byte("original"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.StoreBuildWithToolchain(recipe, artifact, 8, CacheToolchain{OriginDeploymentID: "first", OriginBuildID: "first-build"}); err != nil {
+		t.Fatal(err)
+	}
+	leased, ok, err := cache.LeaseBuild(recipe, "target-lease")
+	if err != nil || !ok {
+		t.Fatal("lease", err)
+	}
+	if err := os.WriteFile(artifact, []byte("replacement"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.StoreBuildWithToolchain(recipe, artifact, 11, CacheToolchain{OriginDeploymentID: "second", OriginBuildID: "second-build"}); err != nil {
+		t.Fatal(err)
+	}
+	current, ok := cache.LookupBuild(recipe)
+	if !ok || current.Toolchain.OriginDeploymentID != "second" || current.Bytes != 11 {
+		t.Fatal("stale origin was retained", current)
+	}
+	original, err := os.ReadFile(leased.Path)
+	if err != nil || string(original) != "original" {
+		t.Fatal("replacement modified in-flight leased bytes", err)
+	}
+	// A reuse that leased the replaced bytes cannot rewrite the new origin.
+	if err := cache.UpdateBuildOrigins(recipe, leased.Path, CacheToolchain{OriginDeploymentID: "first", NextOriginDeploymentID: "target"}); err != nil {
+		t.Fatal(err)
+	}
+	if current, ok := cache.LookupBuild(recipe); !ok || current.Toolchain.OriginDeploymentID != "second" || current.Toolchain.NextOriginDeploymentID != "" {
+		t.Fatal("stale lease rewrote replacement origin", current)
+	}
+}
+
+func TestBuildRecipeGitOpsFallbackOriginKeepsBytesAndOrigin(t *testing.T) {
+	cache := NewCache(t.TempDir())
+	recipe := testBuildCacheRecipe("source", FrameworkNode, api.PlanPro, "base")
+	recipe.GitOpsReuseScope = "reviewed-app-and-recipe"
+	artifact := filepath.Join(t.TempDir(), "image.tar")
+	if err := os.WriteFile(artifact, []byte("original"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.StoreBuildWithToolchain(recipe, artifact, 8, CacheToolchain{OriginDeploymentID: "origin", OriginBuildID: "origin-build", BuildkitVer: "kit"}); err != nil {
+		t.Fatal(err)
+	}
+	before, ok := cache.LookupBuild(recipe)
+	if !ok {
+		t.Fatal("entry")
+	}
+	leased, ok, err := cache.LeaseBuild(recipe, "target-lease")
+	if err != nil || !ok {
+		t.Fatal("lease", err)
+	}
+	metadata := leased.Toolchain
+	metadata.NextOriginDeploymentID, metadata.NextOriginBuildID = "target", "target-build"
+	if err := cache.UpdateBuildOrigins(recipe, leased.Path, metadata); err != nil {
+		t.Fatal(err)
+	}
+	after, ok := cache.LookupBuild(recipe)
+	if !ok || after.Toolchain.OriginDeploymentID != "origin" || after.Toolchain.NextOriginDeploymentID != "target" || after.Toolchain.NextOriginBuildID != "target-build" || after.Toolchain.BuildkitVer != "kit" {
+		t.Fatal("fallback origin not recorded beside the verified origin", after.Toolchain)
+	}
+	beforeInfo, err := os.Stat(before.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterInfo, err := os.Stat(after.Path)
+	if err != nil || !os.SameFile(beforeInfo, afterInfo) {
+		t.Fatal("metadata update copied the cached bytes", err)
 	}
 }

@@ -312,6 +312,24 @@ func TestCmdDeployTarball_ProjectBuildFailuresSetExitCode(t *testing.T) {
 	}
 }
 
+func TestRenderProjectApplyConfiguration(t *testing.T) {
+	config := api.NewDeploymentConfigurationStatus("conflict", "cron_changed")
+	apply := api.ApplyResponse{ProjectID: "demo", Builds: []api.AppliedBuild{{Slug: "back", AppID: "app", DeploymentID: "dep", BuildID: "build", Configuration: &config}}}
+	var out bytes.Buffer
+	if code := main.RenderProjectApplyResult(&out, api.PlanResponse{}, apply); code != 1 {
+		t.Fatalf("configuration conflict exit=%d, want 1", code)
+	}
+	for _, want := range []string{"crons=conflicted", config.Crons.Message, config.Crons.Hint} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("receipt missing %q: %s", want, out.String())
+		}
+	}
+	data, err := json.Marshal(apply)
+	if err != nil || !strings.Contains(string(data), `"configuration"`) {
+		t.Fatalf("JSON=%s err=%v", data, err)
+	}
+}
+
 // H10-88: Apps is the whole project membership while Builds holds only what
 // the apply enqueued. Editing one service of a two-service project printed
 // "applied with failures" and exited 1 because the untouched service counted

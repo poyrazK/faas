@@ -68,6 +68,9 @@ func (m *MemStore) runtimeAppValueOwnerLocked(accountID, appID, deploymentID str
 }
 
 func (m *MemStore) runtimeAppEnvRowsLocked(owner RuntimeAppEnvSnapshot) []AppEnv {
+	if values, pinned := m.releaseEnvironmentPins[owner.DeploymentID]; pinned {
+		return append([]AppEnv{}, values...)
+	}
 	values := []AppEnv{}
 	for _, value := range m.envs {
 		if value.AccountID == owner.AccountID && value.AppID == owner.AppID && value.Scope == owner.Scope {

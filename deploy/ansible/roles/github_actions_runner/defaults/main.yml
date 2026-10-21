@@ -32,3 +32,7 @@ faas_runner_registration_token: "{{ lookup('ansible.builtin.env', 'FAAS_RUNNER_R
 # {address: <IPv4>, names: [<host>, ...]}. Addresses are deployment-specific:
 # pass them with -e at bootstrap, never commit them.
 faas_runner_private_hosts: []
+
+# cgroup CPU weight of the runner unit (systemd default 100). Low so deploy
+# jobs yield to PostgreSQL and the control-plane daemons under contention.
+faas_runner_cpu_weight: 20

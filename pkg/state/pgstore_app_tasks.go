@@ -781,6 +781,9 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 	if err := lockAppTaskExclusiveOwner(ctx, tx, current); err != nil {
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
+	if err := guardMigrationTaskRuntimeDB(ctx, tx, current); err != nil {
+		return AppTask{}, ErrAppTaskLeaseLost
+	}
 	row, err := sqlc.New().MarkUnfencedAppTaskRunning(ctx, tx, sqlc.MarkUnfencedAppTaskRunningParams{
 		ID: taskID, Token: leaseToken, StartedAt: pgtype.Timestamptz{Time: startedAt, Valid: true},
 	})
