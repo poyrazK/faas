@@ -38,7 +38,7 @@ Realtimed has no database pool. Rather than give it one, apid decides the realti
 - A realtime node keeps its environment switch as a capability, so a preview is on only when the node enables it and the decision allows it.
 - Upgrade realtime nodes before writing these flags.
 
-**Pending, with the product-area gates:** `FAAS_OPERATION_CONCURRENCY_ACCOUNTS` (ADR-20261018210500). It is enforced inside the state layer's queue admission as well as in apid, so a flag needs a release check injected into the store rather than a handler change.
+**Pending, with the product-area gates:** `FAAS_OPERATION_CONCURRENCY_ACCOUNTS` (ADR-20261018210500) and `FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS` (ADR-20261019001500). Both are enforced inside the state layer as well as in apid, so a flag needs a release check injected into the store rather than a handler change.
 
 **Not migrated:**
 

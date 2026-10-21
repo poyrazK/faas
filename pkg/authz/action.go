@@ -112,6 +112,7 @@ const (
 	OrgActionConfigureProject                  OrgAction = "org.configure_project"
 	OrgActionDeployProject                     OrgAction = "org.deploy_project"
 	OrgActionManageProjectSecurity             OrgAction = "org.manage_project_security"
+	OrgActionManageProjectSecrets              OrgAction = "org.manage_project_secrets" // ADR-1139
 	OrgActionApproveProjectEnvironment         OrgAction = "org.approve_project_environment"
 	OrgActionDeleteProject                     OrgAction = "org.delete_project"
 	OrgActionViewApplicationStandards          OrgAction = "org.view_application_standards"
@@ -161,6 +162,7 @@ var AllOrgActions = []OrgAction{
 	OrgActionConfigureProject,
 	OrgActionDeployProject,
 	OrgActionManageProjectSecurity,
+	OrgActionManageProjectSecrets,
 	OrgActionApproveProjectEnvironment,
 	OrgActionDeleteProject,
 	OrgActionViewApplicationStandards,

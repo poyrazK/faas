@@ -43,6 +43,9 @@ type OperationConcurrencyStore interface {
 	// ReleaseQueuedOperations starts queued Operations up to each customer's
 	// free slots and returns how many it started.
 	ReleaseQueuedOperations(ctx context.Context, now time.Time) (int, error)
+	// OperationQueueStats reports the fleet's queued Operations and when the
+	// oldest was queued (nil when none is).
+	OperationQueueStats(ctx context.Context) (int64, *time.Time, error)
 }
 
 func validateOperationConcurrencyRequest(req api.OperationConcurrencyPolicyRequest) (scope string, err error) {
@@ -63,9 +66,9 @@ func validateOperationConcurrencyRequest(req api.OperationConcurrencyPolicyReque
 }
 
 // operationConcurrencyApplies reports whether a definition's Operations can
-// be queued. A job run has no hold, so job definitions are never queued.
+// be queued: every execution kind can, for accounts in the rollout.
 func operationConcurrencyApplies(def OperationDefinition) bool {
-	return def.Spec.Job == "" && api.OperationConcurrencyEnabled(def.AccountID)
+	return api.OperationConcurrencyEnabled(def.AccountID)
 }
 
 // operationConcurrencyHold reports whether a new Operation must queue: the

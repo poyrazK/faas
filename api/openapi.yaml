@@ -35848,6 +35848,123 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/secrets:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the listed secrets.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secrets are addressed.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    get:
+      tags: [projects]
+      operationId: listProjectEnvironmentSecrets
+      summary: List the secrets shared by every service of a project environment.
+      description: |
+        Metadata only (ADR-1139): key, version, sealing key id and value
+        fingerprint. Values are write-only and never returned.
+      responses:
+        '200':
+          description: The environment's shared secrets and the plan's limit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecretsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/secrets/{key}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the secret.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secret is addressed.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/SecretKey'
+    put:
+      tags: [projects]
+      operationId: setProjectEnvironmentSecret
+      summary: Set a secret shared by every service of a project environment.
+      description: |
+        Seals the value for the fleet and stores it once for the environment
+        (ADR-1139). Each service receives it at its next boot unless it sets
+        the same key itself; services' snapshots in the environment are
+        invalidated. Platform identity keys are rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetProjectEnvironmentSharedSecretRequest' }
+      responses:
+        '200':
+          description: The stored secret's metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecretResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanLimitProjectSecrets' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/SecretValueTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [projects]
+      operationId: deleteProjectEnvironmentSecret
+      summary: Delete a secret shared by a project environment.
+      description: Services stop receiving it at their next boot.
+      responses:
+        '204': { description: The shared secret was removed. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the rotated secret.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secret is rotated.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/SecretKey'
+    post:
+      tags: [projects]
+      operationId: rotateProjectEnvironmentSecret
+      summary: Replace the value of an existing shared secret.
+      description: Like PUT, but an unknown key is 404 instead of being created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetProjectEnvironmentSharedSecretRequest' }
+      responses:
+        '200':
+          description: The rotated secret's metadata, with its new version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecretResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/SecretValueTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/releases:
     parameters:
       - name: slug
@@ -101233,6 +101350,46 @@ components:
           additionalProperties: true
         updated_at: { type: string, format: date-time }
 
+    ProjectEnvironmentSharedSecret:
+      description: Metadata of one secret shared by every service of a project environment (ADR-1139). The value is write-only.
+      type: object
+      required: [key, version, kid, value_hash, created_at, updated_at]
+      properties:
+        key: { type: string }
+        version: { type: integer, format: int64, minimum: 1, description: "Increases on every value change." }
+        kid: { type: string, description: "Recipient of the fleet key that sealed the value." }
+        value_hash: { type: string, description: "HMAC fingerprint of the value, for comparing values without revealing them." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProjectEnvironmentSharedSecretsResponse:
+      description: The secrets a project environment shares with its services.
+      type: object
+      required: [project_slug, environment, secrets, limit]
+      properties:
+        project_slug: { type: string }
+        environment: { type: string }
+        secrets:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecret' }
+        limit: { type: integer, description: "The plan's ProjectSecretCountMax for one environment." }
+
+    SetProjectEnvironmentSharedSecretRequest:
+      description: The plaintext value to seal. Never returned.
+      type: object
+      required: [value]
+      properties:
+        value: { type: string, minLength: 1 }
+
+    ProjectEnvironmentSharedSecretResponse:
+      description: A shared secret's metadata after a write.
+      type: object
+      required: [project_slug, environment, secret]
+      properties:
+        project_slug: { type: string }
+        environment: { type: string }
+        secret: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecret' }
+
     ProjectEnvironmentConfigChange:
       description: One key-level change between two environment configuration snapshots.
       type: object
@@ -127165,6 +127322,12 @@ components:
 
     PlanLimitSecrets:
       description: 'code: plan_limit_secrets'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanLimitProjectSecrets:
+      description: 'code: plan_limit_project_secrets'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

@@ -83,6 +83,8 @@ func newCustomerJobFixture(t *testing.T) *customerJobFixture {
 	mustCustomerJob(t, err)
 	identityPath := filepath.Join(t.TempDir(), "host.age")
 	mustCustomerJob(t, secretbox.WriteHostKeyAtPath(identityPath, identity))
+	// imaged and apid load fleet.age beside host.age; the same key serves both.
+	mustCustomerJob(t, secretbox.WriteHostKeyAtPath(filepath.Join(filepath.Dir(identityPath), "fleet.age"), identity))
 	recipientPath := filepath.Join(t.TempDir(), "host.age.pub")
 	mustCustomerJob(t, os.WriteFile(recipientPath, []byte(identity.Recipient().String()), 0444))
 	receiver := f.webhookReceiver(t)

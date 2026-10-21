@@ -63,6 +63,8 @@ import type { ProjectEnvironmentQueueBindingsResponse } from '../models/ProjectE
 import type { ProjectEnvironmentReleaseListResponse } from '../models/ProjectEnvironmentReleaseListResponse.js';
 import type { ProjectEnvironmentResponse } from '../models/ProjectEnvironmentResponse.js';
 import type { ProjectEnvironmentRoutePolicyResponse } from '../models/ProjectEnvironmentRoutePolicyResponse.js';
+import type { ProjectEnvironmentSharedSecretResponse } from '../models/ProjectEnvironmentSharedSecretResponse.js';
+import type { ProjectEnvironmentSharedSecretsResponse } from '../models/ProjectEnvironmentSharedSecretsResponse.js';
 import type { ProjectEnvironmentStateResponse } from '../models/ProjectEnvironmentStateResponse.js';
 import type { ProjectMigration } from '../models/ProjectMigration.js';
 import type { ProjectMigrationList } from '../models/ProjectMigrationList.js';
@@ -89,6 +91,7 @@ import type { RemoveEnvironmentGitOpsOverrideRequest } from '../models/RemoveEnv
 import type { ReplaceProjectEnvironmentQueueBindingsRequest } from '../models/ReplaceProjectEnvironmentQueueBindingsRequest.js';
 import type { ResumeProjectMigrationRequest } from '../models/ResumeProjectMigrationRequest.js';
 import type { ReviewProjectBindingVerificationRequest } from '../models/ReviewProjectBindingVerificationRequest.js';
+import type { SetProjectEnvironmentSharedSecretRequest } from '../models/SetProjectEnvironmentSharedSecretRequest.js';
 import type { StageProjectReleaseRequest } from '../models/StageProjectReleaseRequest.js';
 import type { UpdateProjectEnvironmentConfigRequest } from '../models/UpdateProjectEnvironmentConfigRequest.js';
 import type { UpdateProjectEnvironmentEdgePolicyRequest } from '../models/UpdateProjectEnvironmentEdgePolicyRequest.js';
@@ -2035,6 +2038,194 @@ export class ProjectsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the secrets shared by every service of a project environment.
+   * Metadata only (ADR-1139): key, version, sealing key id and value
+   * fingerprint. Values are write-only and never returned.
+   *
+   * @returns ProjectEnvironmentSharedSecretsResponse The environment's shared secrets and the plan's limit.
+   * @throws ApiError
+   */
+  public static listProjectEnvironmentSecrets({
+    slug,
+    environment,
+  }: {
+    /**
+     * Project slug whose environment shares the listed secrets.
+     */
+    slug: string,
+    /**
+     * Environment whose shared secrets are addressed.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentSharedSecretsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/secrets',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Set a secret shared by every service of a project environment.
+   * Seals the value for the fleet and stores it once for the environment
+   * (ADR-1139). Each service receives it at its next boot unless it sets
+   * the same key itself; services' snapshots in the environment are
+   * invalidated. Platform identity keys are rejected.
+   *
+   * @returns ProjectEnvironmentSharedSecretResponse The stored secret's metadata.
+   * @throws ApiError
+   */
+  public static setProjectEnvironmentSecret({
+    slug,
+    environment,
+    key,
+    requestBody,
+  }: {
+    /**
+     * Project slug whose environment shares the secret.
+     */
+    slug: string,
+    /**
+     * Environment whose shared secret is addressed.
+     */
+    environment: string,
+    /**
+     * Secret key. Must start with a letter; A-Z, 0-9, underscore.
+     */
+    key: string,
+    requestBody: SetProjectEnvironmentSharedSecretRequest,
+  }): CancelablePromise<ProjectEnvironmentSharedSecretResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/projects/{slug}/environments/{environment}/secrets/{key}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: plan_limit_project_secrets`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        413: `code: secret_value_too_large`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a secret shared by a project environment.
+   * Services stop receiving it at their next boot.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteProjectEnvironmentSecret({
+    slug,
+    environment,
+    key,
+  }: {
+    /**
+     * Project slug whose environment shares the secret.
+     */
+    slug: string,
+    /**
+     * Environment whose shared secret is addressed.
+     */
+    environment: string,
+    /**
+     * Secret key. Must start with a letter; A-Z, 0-9, underscore.
+     */
+    key: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/projects/{slug}/environments/{environment}/secrets/{key}',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace the value of an existing shared secret.
+   * Like PUT, but an unknown key is 404 instead of being created.
+   * @returns ProjectEnvironmentSharedSecretResponse The rotated secret's metadata, with its new version.
+   * @throws ApiError
+   */
+  public static rotateProjectEnvironmentSecret({
+    slug,
+    environment,
+    key,
+    requestBody,
+  }: {
+    /**
+     * Project slug whose environment shares the rotated secret.
+     */
+    slug: string,
+    /**
+     * Environment whose shared secret is rotated.
+     */
+    environment: string,
+    /**
+     * Secret key. Must start with a letter; A-Z, 0-9, underscore.
+     */
+    key: string,
+    requestBody: SetProjectEnvironmentSharedSecretRequest,
+  }): CancelablePromise<ProjectEnvironmentSharedSecretResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        413: `code: secret_value_too_large`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

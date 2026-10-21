@@ -791,6 +791,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.operation.RunOperationArtifactCleanup(ctx)
 		go srv.operation.RunScheduleFirer(ctx)
 		go srv.operation.RunOperationQueueReleaser(ctx)
+		go srv.operation.RunChildSettlementSignals(ctx)
 		go srv.object.RunObjectStorageRecovery(ctx)
 		go srv.object.RunObjectStorageAccounting(ctx)
 		go srv.runManagedPostgresReconciler(ctx)
