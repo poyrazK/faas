@@ -3,21 +3,25 @@
 package e2e_test
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -46,12 +50,11 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	}
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
-	// Keep the fixture independent of external DNS while exercising the
-	// production fallback for a validated, already-published local base.
-	e2etest.PointDeployBaseAtUnreachable(t, registry.Host()+"/acceptance-base:unreachable")
 	storageRoot := filepath.Join(t.TempDir(), "storage")
 	t.Setenv("FAAS_STORAGE_ROOT", storageRoot)
-	stageNativeAcceptanceBase(t, storageRoot)
+	// Keep the fixture independent of external DNS: imaged reuses the staged
+	// base through its producer record and never pulls the unreachable ref.
+	e2etest.PointDeployBaseAtUnreachable(t, stageNativeAcceptanceBase(t, pool, storageRoot, registry.Host()))
 	builderImage, _ := e2etest.ImageOnlyBuilderBaseImage("onebox-faas/builder-base")
 	e2etest.OverrideBuilderBase(t, registry.AddImage("onebox-faas/builder-base", builderImage))
 	image, _ := e2etest.HelloGitOpsRequestImage("library/gitops-hello", helloBody)
@@ -176,7 +179,12 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 // accepted host base through the production copy-and-verify path so the
 // private image contains the exact guest-init binary used by this test.
 // Never mutate the host's shared /srv/fc tree during acceptance.
-func stageNativeAcceptanceBase(t *testing.T, storageRoot string) {
+//
+// imaged stages runtime bases through the verified producer path (ADR-435),
+// which reuses a staged base only through its producer record and a current
+// scan. The returned digest-pinned reference names that producer; nothing
+// serves it, so imaged must reuse the staged bytes rather than pull.
+func stageNativeAcceptanceBase(t *testing.T, pool *pgxpool.Pool, storageRoot, registryHost string) string {
 	t.Helper()
 	source := strings.TrimSpace(os.Getenv("FAAS_TEST_MINIMAL_BASE_PATH"))
 	if source == "" {
@@ -245,26 +253,55 @@ func stageNativeAcceptanceBase(t *testing.T, storageRoot string) {
 	if err := os.WriteFile(dest+".content", content, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// This locally patched base is a lifecycle fixture, not Grype evidence.
-	// Model the admission sidecar explicitly so the VM can exercise the
-	// reviewed workload's native boot and qualification path. The image
-	// identity must match vmmd's configured test-only base generation.
-	baseRef := os.Getenv("FAAS_TEST_DEPLOY_BASE_REF")
-	if baseRef == "" {
-		t.Fatal("native acceptance base has no configured generation")
-	}
-	scan, err := json.Marshal(struct {
-		Image                string         `json:"image"`
-		Findings             map[string]int `json:"findings"`
-		FixAvailableFindings map[string]int `json:"fix_available_findings"`
-	}{
-		Image:    baseRef,
-		Findings: map[string]int{"CRITICAL": 0}, FixAvailableFindings: map[string]int{"CRITICAL": 0},
-	})
+	return publishNativeAcceptanceBaseProducer(t, pool, dest, key, guestDigest, registryHost)
+}
+
+// publishNativeAcceptanceBaseProducer records the staged bytes as the current
+// producer for key, with a synthetic one-layer image chain under an
+// unreachable digest-pinned reference, and a clean scan. This locally patched
+// base is a lifecycle fixture, not Grype evidence: the scan models admission
+// explicitly so the VM can exercise the reviewed workload's native boot and
+// qualification path. imaged republishes the scan sidecar from this record and
+// marks the cache generation with the returned reference.
+func publishNativeAcceptanceBaseProducer(t *testing.T, pool *pgxpool.Pool, path, key, guestDigest, registryHost string) string {
+	t.Helper()
+	staged, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := backend.Put(t.Context(), wire.ScanKeyForBaseKey(key), bytes.NewReader(scan)); err != nil {
-		t.Fatalf("publish private base admission fixture: %v", err)
+	identity, readErr := rootfs.ReadArtifactIdentity(t.Context(), staged)
+	if err := errors.Join(readErr, staged.Close()); err != nil {
+		t.Fatalf("identify private native acceptance base: %v", err)
 	}
+	descriptor, consumption := stagedBaseLayer(t, []byte("native acceptance base layer"))
+	config, err := json.Marshal(map[string]any{"os": "linux", "architecture": "amd64", "rootfs": map[string]any{"type": "layers", "diff_ids": []string{consumption.DiffID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := json.Marshal(map[string]any{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+		"config": imagechain.Descriptor{Digest: imagechain.Digest(config), Size: int64(len(config))}, "layers": []imagechain.Descriptor{descriptor}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := imagechain.Digest(manifest)
+	ref := registryHost + "/acceptance-base@" + digest
+	store := state.NewPgStore(pool)
+	artifact := imagechain.BaseArtifact{StorageKey: key, Digest: identity.Digest, Bytes: identity.Bytes}
+	producer, err := store.PublishBaseImageProducer(t.Context(), state.BaseImageProducerInput{
+		ID: uuid.NewString(), Artifact: artifact, SourceReference: ref, SourceDigest: digest, SelectedDigest: digest,
+		ImageChain:    &imagechain.Evidence{SourceManifest: manifest, Config: config},
+		LayoutVersion: imagechain.BaseLayoutVersion, GuestInitDigest: "sha256:" + guestDigest, Layers: []imagechain.LayerConsumption{consumption},
+	})
+	if err != nil {
+		t.Fatalf("publish native acceptance base producer: %v", err)
+	}
+	if _, err := store.PublishBaseImageScan(t.Context(), state.BaseImageScanInput{
+		ID: uuid.NewString(), BaseProducerID: producer.ID, BaseInputHash: producer.InputHash, Artifact: artifact, SourceReference: ref,
+		Status: "complete", ScannerName: "grype", Report: &api.ScanResult{ImageDigest: ref, ArtifactDigest: artifact.Digest,
+			ScannerVersion: "native-acceptance-fixture", ScannerDBStatus: "valid", ScannerDBVersion: "native-acceptance-fixture",
+			ScannerDBBuiltAt: time.Now().UTC().Format(time.RFC3339Nano), Vulnerabilities: []api.Vulnerability{}},
+	}); err != nil {
+		t.Fatalf("publish native acceptance base scan: %v", err)
+	}
+	return ref
 }

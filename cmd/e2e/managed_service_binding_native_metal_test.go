@@ -354,7 +354,9 @@ func newServiceNativeJourney(t *testing.T, pool *pgxpool.Pool) *serviceNativeJou
 	storageRoot := filepath.Join(t.TempDir(), "storage")
 	t.Setenv("FAAS_STORAGE_ROOT", storageRoot)
 	t.Setenv("FAAS_STORAGE_BACKEND", "local")
-	stageNativeAcceptanceBase(t, storageRoot)
+	// The staged producer's unreachable reference is deliberately unused: the
+	// production reference supersedes it when imaged stages the runtime base.
+	stageNativeAcceptanceBase(t, pool, storageRoot, registry.Host())
 	builder, _ := e2etest.ImageOnlyBuilderBaseImage("onebox-faas/builder-base")
 	e2etest.OverrideBuilderBase(t, registry.AddImage("onebox-faas/builder-base", builder))
 	callerImage, _ := e2etest.HelloGitOpsRequestImage("library/service-caller", "isolated caller")
