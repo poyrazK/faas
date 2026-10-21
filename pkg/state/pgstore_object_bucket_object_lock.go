@@ -110,7 +110,7 @@ func (s *PgStore) mutateObjectBucketObjectLock(ctx context.Context, account, app
 	return cloneObjectBucketObjectLock(j), mapErr(tx.Commit(ctx))
 }
 
-func (s *PgStore) GetObjectBucketObjectLock(ctx context.Context, account, app, bucket string) (ObjectBucketObjectLock, error) {
+func (s *pgCore) GetObjectBucketObjectLock(ctx context.Context, account, app, bucket string) (ObjectBucketObjectLock, error) {
 	b, err := s.GetObjectBucket(ctx, account, app, bucket)
 	if err != nil {
 		return ObjectBucketObjectLock{}, err

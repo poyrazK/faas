@@ -10,7 +10,7 @@ import (
 
 var _ ObjectStorageProviderUsageStore = (*PgStore)(nil)
 
-func (s *PgStore) RecordObjectStorageProviderRequest(ctx context.Context, bucketID string, at time.Time) error {
+func (s *pgCore) RecordObjectStorageProviderRequest(ctx context.Context, bucketID string, at time.Time) error {
 	if bucketID == "" || at.IsZero() || at.After(time.Now().UTC().Add(time.Minute)) {
 		return ErrConflict
 	}
@@ -19,7 +19,7 @@ func (s *PgStore) RecordObjectStorageProviderRequest(ctx context.Context, bucket
 	})
 }
 
-func (s *PgStore) RecordObjectStorageProviderEgress(ctx context.Context, bucketID string, bytes int64, at time.Time) error {
+func (s *pgCore) RecordObjectStorageProviderEgress(ctx context.Context, bucketID string, bytes int64, at time.Time) error {
 	if bucketID == "" || bytes < 0 || bytes > api.MaxObjectStoragePolicyValue || at.IsZero() || at.After(time.Now().UTC().Add(time.Minute)) {
 		return ErrConflict
 	}

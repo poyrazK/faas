@@ -91,10 +91,10 @@ func objectReportFromSQL(r sqlc.ObjectStorageUsageReport) api.ObjectStorageUsage
 	return api.ObjectStorageUsageReport{AccountID: pgUUIDString(r.AccountID), BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint, Source: r.Source, PeriodStart: r.PeriodStart.Time, ObservedAt: r.ObservedAt.Time, StoredByteHours: r.StoredByteHours, RequestCount: r.RequestCount, EgressBytes: r.EgressBytes, CostMillicents: r.CostMillicents}
 }
 
-func (s *PgStore) AdmitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy) error {
+func (s *pgCore) AdmitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy) error {
 	return s.admitObjectURL(ctx, account, bucket, key, size, put, p, "")
 }
-func (s *PgStore) admitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string) error {
+func (s *pgCore) admitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err

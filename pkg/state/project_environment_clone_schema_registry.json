@@ -13967,6 +13967,22 @@
     "kind": "configuration"
   },
   {
+    "table": "project_environment_secrets",
+    "columns": [
+      "account_id",
+      "ciphertext",
+      "created_at",
+      "environment_slug",
+      "key",
+      "kid",
+      "project_id",
+      "secret_version",
+      "updated_at",
+      "value_hash"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "project_environment_edge_policies",
     "columns": [
       "account_id",

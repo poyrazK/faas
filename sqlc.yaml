@@ -283,6 +283,7 @@ sql:
       - "pkg/state/product_work_history_queries.sql"
       - "pkg/state/product_workspace_activity_queries.sql"
       - "pkg/state/profile_gate_queries.sql"
+      - "pkg/state/project_environment_secret_queries.sql"
       - "pkg/state/profile_investigation_queries.sql"
       - "pkg/state/profile_periodic_queries.sql"
       - "pkg/state/project_binding_verification_run_queries.sql"
