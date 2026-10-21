@@ -244,6 +244,119 @@ func TestEventRecipientBatchClaimRelease(t *testing.T) {
 	})
 }
 
+// adr: 614 — a batch adoption claim takes the receipts back-to-back adoption
+// claims would take, in their order: one per eligible account per round.
+func TestEventAdoptionBatchClaimMatchesSingleClaimOrder(t *testing.T) {
+	forRecipientBatchStores(t, func(t *testing.T, newStore func() recipientClaimTestStore) {
+		single := adoptionOrderScenario(t, newStore(), func(store recipientClaimTestStore, now time.Time) []*state.PublishedEventWork {
+			var works []*state.PublishedEventWork
+			for {
+				work, err := store.ClaimDuePublishedEventForRecipientAdoption(context.Background(), now)
+				if errors.Is(err, state.ErrNotFound) {
+					return works
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				works = append(works, work)
+			}
+		})
+		batched := adoptionOrderScenario(t, newStore(), func(store recipientClaimTestStore, now time.Time) []*state.PublishedEventWork {
+			var works []*state.PublishedEventWork
+			for _, limit := range []int{2, 10, 10} {
+				batch, err := store.ClaimDuePublishedEventsForRecipientAdoption(context.Background(), now, limit)
+				if err != nil {
+					t.Fatal(err)
+				}
+				works = append(works, batch...)
+			}
+			return works
+		})
+		if !slices.Equal(single, batched) || len(single) != 5 {
+			t.Fatalf("batch adoption order %v, single-claim order %v", batched, single)
+		}
+		if !slices.Equal(single, []string{"a0", "b3", "a1", "b4", "a2"}) {
+			t.Fatalf("adoption order %v does not alternate accounts oldest first", single)
+		}
+	})
+}
+
+// adoptionOrderScenario publishes three events for one account and two for
+// another, claims them for adoption with claim and returns their event IDs.
+func adoptionOrderScenario(t *testing.T, store recipientClaimTestStore, claim func(recipientClaimTestStore, time.Time) []*state.PublishedEventWork) []string {
+	t.Helper()
+	ctx := context.Background()
+	accounts := map[string]string{}
+	for _, name := range []string{"a", "b"} {
+		account, err := store.CreateAccount(ctx, "adoption-order-"+name+"-"+uuid.NewString()+"@example.test", api.PlanPro)
+		if err != nil {
+			t.Fatal(err)
+		}
+		app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: account.ID, Slug: "adoption-order-" + name,
+			Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := store.UpsertEventSubscription(ctx, account.ID, app.ID, "orders", "order.created", nil); err != nil {
+			t.Fatal(err)
+		}
+		accounts[name] = account.ID
+	}
+	for i, name := range []string{"a", "a", "a", "b", "b"} {
+		publishRecipientEvent(t, store, accounts[name], "order.created", name+string(rune('0'+i)), `{"n":1}`)
+	}
+	var ids []string
+	for _, work := range claim(store, time.Now().UTC()) {
+		ids = append(ids, receiptEventID(t, work))
+	}
+	return ids
+}
+
+// adr: 614 — a released adoption claim returns as if never claimed: due
+// again with its attempt unspent, and its old token cannot adopt it.
+func TestEventAdoptionBatchClaimRelease(t *testing.T) {
+	forRecipientBatchStores(t, func(t *testing.T, newStore func() recipientClaimTestStore) {
+		store := newStore()
+		ctx := context.Background()
+		account, err := store.CreateAccount(ctx, "adoption-release-"+uuid.NewString()+"@example.test", api.PlanPro)
+		if err != nil {
+			t.Fatal(err)
+		}
+		app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: account.ID, Slug: "adoption-release",
+			Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := store.UpsertEventSubscription(ctx, account.ID, app.ID, "orders", "order.created", nil); err != nil {
+			t.Fatal(err)
+		}
+		publishRecipientEvent(t, store, account.ID, "order.created", "release-0", `{"n":1}`)
+		publishRecipientEvent(t, store, account.ID, "order.created", "release-1", `{"n":1}`)
+		now := time.Now().UTC()
+		batch, err := store.ClaimDuePublishedEventsForRecipientAdoption(ctx, now, 2)
+		if err != nil || len(batch) != 2 {
+			t.Fatalf("batch = %+v, %v", batch, err)
+		}
+		released := batch[1]
+		if err := store.ReleasePublishedEventAdoptionClaim(ctx, released); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.ReleasePublishedEventAdoptionClaim(ctx, released); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("second release = %v, want ErrConflict", err)
+		}
+		if err := store.InitializePublishedEventRecipients(ctx, released, now); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("adopt after release = %v, want ErrConflict", err)
+		}
+		if err := store.InitializePublishedEventRecipients(ctx, batch[0], now); err != nil {
+			t.Fatal(err)
+		}
+		again, err := store.ClaimDuePublishedEventsForRecipientAdoption(ctx, now, 10)
+		if err != nil || len(again) != 1 || again[0].ID != released.ID || again[0].Attempts != released.Attempts {
+			t.Fatalf("reclaimed = %+v, %v; want the released receipt on the same attempt", again, err)
+		}
+	})
+}
+
 func forRecipientBatchStores(t *testing.T, test func(*testing.T, func() recipientClaimTestStore)) {
 	t.Helper()
 	t.Run("memory", func(t *testing.T) {

@@ -379,6 +379,78 @@ WITH candidate AS (
 )
 SELECT c.* FROM claimed c WHERE EXISTS (SELECT 1 FROM fairness f WHERE f.account_id=c.account_id);
 
+-- name: EventRoutingClaimReceiptsForAdoption :many
+-- One scan claims up to batch_limit receipts for recipient adoption, as
+-- repeated EventRoutingClaimReceipt adoption claims would: each round takes
+-- one receipt from every eligible account in service order. Within an
+-- account, receipts keep the consumer order they had before the batch.
+WITH eligible AS MATERIALIZED (
+ SELECT o.id, o.account_id,
+   coalesce(fa.last_claimed_at,'epoch'::timestamptz) AS account_served,
+   coalesce(cf.last_claimed_at,fa.last_claimed_at,'epoch'::timestamptz) AS consumer_served
+ FROM event_fanout_outbox o
+ LEFT JOIN event_routing_fairness fa ON fa.account_id=o.account_id AND fa.subscription_id=''
+ LEFT JOIN LATERAL (
+   SELECT min(coalesce(fc.last_claimed_at,'epoch'::timestamptz)) AS last_claimed_at
+   FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) r
+   LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r->>'id'
+   WHERE coalesce(o.recipient_progress->(r->>'id')->>'state','pending') NOT IN ('enqueued','filtered','failed')
+     AND coalesce((o.recipient_progress->(r->>'id')->>'next_attempt_at')::timestamptz,'epoch'::timestamptz)<=sqlc.arg(now_at)::timestamptz
+ ) cf ON true
+ WHERE NOT o.recipient_claims AND ((o.state='pending' AND o.available_at<=sqlc.arg(now_at)::timestamptz)
+   OR (o.state='processing' AND o.lease_until<=sqlc.arg(now_at)::timestamptz))
+), rounds AS (
+ SELECT e.*, row_number() OVER (PARTITION BY e.account_id ORDER BY e.consumer_served, e.id) AS account_round
+ FROM eligible e
+), account_firsts AS (
+ -- Later rounds visit accounts in the order their first claims took.
+ SELECT r.*, first_value(r.consumer_served) OVER account_order AS first_consumer_served,
+   first_value(r.id) OVER account_order AS first_id
+ FROM rounds r
+ WINDOW account_order AS (PARTITION BY r.account_id ORDER BY r.account_round)
+), ordered AS (
+ SELECT f.id, row_number() OVER (ORDER BY f.account_round, f.account_served, f.first_consumer_served, f.first_id) AS position
+ FROM account_firsts f
+), candidate AS (
+ -- Repeating the due test here re-checks a receipt another worker claimed
+ -- after this statement's snapshot, before SKIP LOCKED could skip it.
+ SELECT o.id, k.position FROM event_fanout_outbox o JOIN ordered k ON k.id=o.id
+ WHERE NOT o.recipient_claims AND ((o.state='pending' AND o.available_at<=sqlc.arg(now_at)::timestamptz)
+   OR (o.state='processing' AND o.lease_until<=sqlc.arg(now_at)::timestamptz))
+ ORDER BY k.position
+ FOR UPDATE OF o SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
+), claimed AS (
+ UPDATE event_fanout_outbox o SET state='processing',claim_token=gen_random_uuid(),
+ lease_until=sqlc.arg(now_at)::timestamptz+interval '5 minutes',attempts=o.attempts+1
+ FROM candidate c WHERE o.id=c.id RETURNING o.*, c.position
+), stamp AS MATERIALIZED (
+ SELECT clock_timestamp() AS at
+), served AS (
+ -- Each account and consumer is stamped at its last claim in the batch.
+ SELECT c.account_id, ''::text AS subscription_id, max(c.position) AS position
+ FROM claimed c GROUP BY c.account_id
+ UNION ALL
+ SELECT c.account_id, r->>'id', max(c.position)
+ FROM claimed c CROSS JOIN LATERAL jsonb_array_elements(coalesce(c.recipient_snapshot,'[]'::jsonb)) r
+ WHERE coalesce(c.recipient_progress->(r->>'id')->>'state','pending') NOT IN ('enqueued','filtered','failed')
+   AND coalesce((c.recipient_progress->(r->>'id')->>'next_attempt_at')::timestamptz,'epoch'::timestamptz)<=sqlc.arg(now_at)::timestamptz
+ GROUP BY c.account_id, r->>'id'
+), fairness AS (
+ -- Rows are written in key order, the lock order every claim uses.
+ INSERT INTO event_routing_fairness
+ SELECT s.account_id, s.subscription_id, t.at + s.position * interval '1 microsecond' FROM served s CROSS JOIN stamp t
+ ORDER BY s.account_id, s.subscription_id
+ ON CONFLICT (account_id,subscription_id) DO UPDATE SET last_claimed_at=excluded.last_claimed_at RETURNING account_id
+)
+SELECT c.id, c.claim_token, c.attempts, c.lease_until, c.created_at, c.payload, c.recipient_snapshot, c.recipient_progress
+FROM claimed c ORDER BY c.position;
+
+-- name: EventRoutingReleaseAdoptionClaim :execrows
+-- Returns an unprocessed adoption claim as if it had not been made.
+UPDATE event_fanout_outbox SET state='pending', claim_token=NULL, lease_until=NULL, attempts=attempts-1
+WHERE id=sqlc.arg(id)::bigint AND claim_token=sqlc.arg(claim_token)::uuid
+  AND state='processing' AND NOT recipient_claims;
+
 -- name: EventDeliveryReplayAccount :one
 SELECT s.account_id,a.plan FROM event_delivery_slots s JOIN accounts a ON a.id=s.account_id
 WHERE s.invocation_id=sqlc.arg(invocation_id)::uuid;

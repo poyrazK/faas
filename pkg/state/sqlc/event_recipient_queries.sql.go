@@ -1390,6 +1390,118 @@ func (q *Queries) EventRoutingClaimReceipt(ctx context.Context, db DBTX, arg Eve
 	return i, err
 }
 
+const eventRoutingClaimReceiptsForAdoption = `-- name: EventRoutingClaimReceiptsForAdoption :many
+WITH eligible AS MATERIALIZED (
+ SELECT o.id, o.account_id,
+   coalesce(fa.last_claimed_at,'epoch'::timestamptz) AS account_served,
+   coalesce(cf.last_claimed_at,fa.last_claimed_at,'epoch'::timestamptz) AS consumer_served
+ FROM event_fanout_outbox o
+ LEFT JOIN event_routing_fairness fa ON fa.account_id=o.account_id AND fa.subscription_id=''
+ LEFT JOIN LATERAL (
+   SELECT min(coalesce(fc.last_claimed_at,'epoch'::timestamptz)) AS last_claimed_at
+   FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) r
+   LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r->>'id'
+   WHERE coalesce(o.recipient_progress->(r->>'id')->>'state','pending') NOT IN ('enqueued','filtered','failed')
+     AND coalesce((o.recipient_progress->(r->>'id')->>'next_attempt_at')::timestamptz,'epoch'::timestamptz)<=$1::timestamptz
+ ) cf ON true
+ WHERE NOT o.recipient_claims AND ((o.state='pending' AND o.available_at<=$1::timestamptz)
+   OR (o.state='processing' AND o.lease_until<=$1::timestamptz))
+), rounds AS (
+ SELECT e.id, e.account_id, e.account_served, e.consumer_served, row_number() OVER (PARTITION BY e.account_id ORDER BY e.consumer_served, e.id) AS account_round
+ FROM eligible e
+), account_firsts AS (
+ -- Later rounds visit accounts in the order their first claims took.
+ SELECT r.id, r.account_id, r.account_served, r.consumer_served, r.account_round, first_value(r.consumer_served) OVER account_order AS first_consumer_served,
+   first_value(r.id) OVER account_order AS first_id
+ FROM rounds r
+ WINDOW account_order AS (PARTITION BY r.account_id ORDER BY r.account_round)
+), ordered AS (
+ SELECT f.id, row_number() OVER (ORDER BY f.account_round, f.account_served, f.first_consumer_served, f.first_id) AS position
+ FROM account_firsts f
+), candidate AS (
+ -- Repeating the due test here re-checks a receipt another worker claimed
+ -- after this statement's snapshot, before SKIP LOCKED could skip it.
+ SELECT o.id, k.position FROM event_fanout_outbox o JOIN ordered k ON k.id=o.id
+ WHERE NOT o.recipient_claims AND ((o.state='pending' AND o.available_at<=$1::timestamptz)
+   OR (o.state='processing' AND o.lease_until<=$1::timestamptz))
+ ORDER BY k.position
+ FOR UPDATE OF o SKIP LOCKED LIMIT $2::integer
+), claimed AS (
+ UPDATE event_fanout_outbox o SET state='processing',claim_token=gen_random_uuid(),
+ lease_until=$1::timestamptz+interval '5 minutes',attempts=o.attempts+1
+ FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.source, o.event_id, o.event_type, o.schema_version, o.event_data, o.payload, o.state, o.attempts, o.available_at, o.lease_until, o.claim_token, o.last_error, o.created_at, o.delivered_at, o.recipient_snapshot, o.recipient_progress, o.recipient_claims, o.customer_storage_bytes, c.position
+), stamp AS MATERIALIZED (
+ SELECT clock_timestamp() AS at
+), served AS (
+ -- Each account and consumer is stamped at its last claim in the batch.
+ SELECT c.account_id, ''::text AS subscription_id, max(c.position) AS position
+ FROM claimed c GROUP BY c.account_id
+ UNION ALL
+ SELECT c.account_id, r->>'id', max(c.position)
+ FROM claimed c CROSS JOIN LATERAL jsonb_array_elements(coalesce(c.recipient_snapshot,'[]'::jsonb)) r
+ WHERE coalesce(c.recipient_progress->(r->>'id')->>'state','pending') NOT IN ('enqueued','filtered','failed')
+   AND coalesce((c.recipient_progress->(r->>'id')->>'next_attempt_at')::timestamptz,'epoch'::timestamptz)<=$1::timestamptz
+ GROUP BY c.account_id, r->>'id'
+), fairness AS (
+ -- Rows are written in key order, the lock order every claim uses.
+ INSERT INTO event_routing_fairness
+ SELECT s.account_id, s.subscription_id, t.at + s.position * interval '1 microsecond' FROM served s CROSS JOIN stamp t
+ ORDER BY s.account_id, s.subscription_id
+ ON CONFLICT (account_id,subscription_id) DO UPDATE SET last_claimed_at=excluded.last_claimed_at RETURNING account_id
+)
+SELECT c.id, c.claim_token, c.attempts, c.lease_until, c.created_at, c.payload, c.recipient_snapshot, c.recipient_progress
+FROM claimed c ORDER BY c.position
+`
+
+type EventRoutingClaimReceiptsForAdoptionParams struct {
+	NowAt      pgtype.Timestamptz
+	BatchLimit int32
+}
+
+type EventRoutingClaimReceiptsForAdoptionRow struct {
+	ID                int64
+	ClaimToken        pgtype.UUID
+	Attempts          int32
+	LeaseUntil        pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	Payload           []byte
+	RecipientSnapshot []byte
+	RecipientProgress []byte
+}
+
+// One scan claims up to batch_limit receipts for recipient adoption, as
+// repeated EventRoutingClaimReceipt adoption claims would: each round takes
+// one receipt from every eligible account in service order. Within an
+// account, receipts keep the consumer order they had before the batch.
+func (q *Queries) EventRoutingClaimReceiptsForAdoption(ctx context.Context, db DBTX, arg EventRoutingClaimReceiptsForAdoptionParams) ([]EventRoutingClaimReceiptsForAdoptionRow, error) {
+	rows, err := db.Query(ctx, eventRoutingClaimReceiptsForAdoption, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventRoutingClaimReceiptsForAdoptionRow{}
+	for rows.Next() {
+		var i EventRoutingClaimReceiptsForAdoptionRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ClaimToken,
+			&i.Attempts,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.Payload,
+			&i.RecipientSnapshot,
+			&i.RecipientProgress,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eventRoutingClaimValid = `-- name: EventRoutingClaimValid :one
 SELECT CASE WHEN o.recipient_claims THEN EXISTS (
     SELECT 1 FROM event_fanout_recipients r WHERE r.outbox_id=o.id
@@ -1611,6 +1723,26 @@ func (q *Queries) EventRoutingRecordProgress(ctx context.Context, db DBTX, arg E
 	var app_id string
 	err := row.Scan(&app_id)
 	return app_id, err
+}
+
+const eventRoutingReleaseAdoptionClaim = `-- name: EventRoutingReleaseAdoptionClaim :execrows
+UPDATE event_fanout_outbox SET state='pending', claim_token=NULL, lease_until=NULL, attempts=attempts-1
+WHERE id=$1::bigint AND claim_token=$2::uuid
+  AND state='processing' AND NOT recipient_claims
+`
+
+type EventRoutingReleaseAdoptionClaimParams struct {
+	ID         int64
+	ClaimToken pgtype.UUID
+}
+
+// Returns an unprocessed adoption claim as if it had not been made.
+func (q *Queries) EventRoutingReleaseAdoptionClaim(ctx context.Context, db DBTX, arg EventRoutingReleaseAdoptionClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, eventRoutingReleaseAdoptionClaim, arg.ID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const eventRoutingSettleSnapshot = `-- name: EventRoutingSettleSnapshot :one

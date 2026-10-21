@@ -23,11 +23,11 @@ const eventFanoutRecoveryBatch = 100
 const eventFanoutSubscriptionBatch = 256
 const eventFanoutRecipientMaxAttempts = api.EventRoutingRetryDefaultAttempts
 
-// eventRecipientClaimBatch bounds one claim scan. Each claim in a batch holds
+// eventFanoutClaimBatch bounds one claim scan. Each claim in a batch holds
 // its lease until the sweep routes it, and a stopping sweep releases the rest
-// within eventRecipientReleaseTimeout.
-const eventRecipientClaimBatch = 20
-const eventRecipientReleaseTimeout = 5 * time.Second
+// within eventFanoutReleaseTimeout.
+const eventFanoutClaimBatch = 20
+const eventFanoutReleaseTimeout = 5 * time.Second
 
 // eventFanoutSafetyTick re-runs the fanout sweep when no event_published
 // wake arrives; a wake that lands while a sweep runs is coalesced away.
@@ -506,22 +506,28 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	}
 	l.runEventRecoveryExecutionNotifications(ctx, now)
 	l.runEventReplayBackfillSweep(ctx, now)
-	for i := 0; i < eventFanoutRecoveryBatch; i++ {
-		now := time.Now().UTC()
-		if l.now != nil {
-			now = l.now().UTC()
-		}
-		var work *state.PublishedEventWork
+	_, recipientSupported := store.(state.PublishedEventRecipientWorkStore)
+	_, workflowSupported := store.(state.EventWorkflowRecipientAdmissionStore)
+	adoption, adopting := store.(state.PublishedEventRecipientAdoptionClaimStore)
+	adopting = adopting && l.eventRecipientClaims && recipientSupported && workflowSupported
+	batches, batched := store.(state.PublishedEventAdoptionBatchClaimStore)
+	for claimed := 0; claimed < eventFanoutRecoveryBatch; {
+		var works []*state.PublishedEventWork
 		var err error
-		_, recipientSupported := store.(state.PublishedEventRecipientWorkStore)
-		_, workflowSupported := store.(state.EventWorkflowRecipientAdmissionStore)
-		if adoption, ok := store.(state.PublishedEventRecipientAdoptionClaimStore); ok && l.eventRecipientClaims && recipientSupported && workflowSupported {
-			work, err = adoption.ClaimDuePublishedEventForRecipientAdoption(ctx, now)
+		if adopting && batched {
+			works, err = batches.ClaimDuePublishedEventsForRecipientAdoption(ctx, l.eventFanoutNow(), min(eventFanoutClaimBatch, eventFanoutRecoveryBatch-claimed))
 		} else {
-			work, err = store.ClaimDuePublishedEvent(ctx, now)
-		}
-		if errors.Is(err, state.ErrNotFound) {
-			return
+			var work *state.PublishedEventWork
+			if adopting {
+				work, err = adoption.ClaimDuePublishedEventForRecipientAdoption(ctx, l.eventFanoutNow())
+			} else {
+				work, err = store.ClaimDuePublishedEvent(ctx, l.eventFanoutNow())
+			}
+			if err == nil {
+				works = append(works, work)
+			} else if errors.Is(err, state.ErrNotFound) {
+				err = nil
+			}
 		}
 		if err != nil {
 			if l.log != nil {
@@ -529,29 +535,60 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			}
 			return
 		}
-		var routeErr error
-		if recipients, ok := l.engine.store.(state.PublishedEventRecipientWorkStore); ok && l.eventRecipientClaims && work.SnapshotCaptured && l.eventRecipientAdoptionSupported(work) {
-			routeErr = recipients.InitializePublishedEventRecipients(ctx, work, now)
-			if routeErr == nil {
-				continue
+		if len(works) == 0 {
+			return
+		}
+		for i, work := range works {
+			if ctx.Err() != nil {
+				l.releaseEventAdoptionClaims(ctx, batches, works[i:])
+				return
 			}
-		} else if work.SnapshotCaptured {
-			routeErr = l.routePublishedEventSnapshot(ctx, work)
-		} else if _, ok := l.engine.store.(state.EventSubscriptionMatcherStore); ok {
-			// Receipts accepted before the snapshot migration retain their
-			// existing current-subscription routing behavior.
-			routeErr = l.routePublishedEventAt(ctx, string(work.Payload), work.CreatedAt)
-		} else {
-			routeErr = errors.New("sched: legacy event receipt requires subscription matcher")
+			l.routeClaimedEventReceipt(ctx, store, work, l.eventFanoutNow())
 		}
-		if routeErr != nil && !eventFanoutCapacityWait(routeErr) && l.log != nil {
-			l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "err", routeErr)
+		claimed += len(works)
+	}
+}
+
+// routeClaimedEventReceipt adopts a claimed receipt's recipients for
+// independent routing or, where that is unavailable, routes it whole.
+func (l *Loop) routeClaimedEventReceipt(ctx context.Context, store state.PublishedEventWorkStore, work *state.PublishedEventWork, now time.Time) {
+	var routeErr error
+	if recipients, ok := l.engine.store.(state.PublishedEventRecipientWorkStore); ok && l.eventRecipientClaims && work.SnapshotCaptured && l.eventRecipientAdoptionSupported(work) {
+		routeErr = recipients.InitializePublishedEventRecipients(ctx, work, now)
+		if routeErr == nil {
+			return
 		}
-		if work.Delivered {
-			continue
-		}
-		if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, routeErr); err != nil && l.log != nil {
-			l.log.Warn("sched: finish event fanout failed", "outbox_id", work.ID, "err", err)
+	} else if work.SnapshotCaptured {
+		routeErr = l.routePublishedEventSnapshot(ctx, work)
+	} else if _, ok := l.engine.store.(state.EventSubscriptionMatcherStore); ok {
+		// Receipts accepted before the snapshot migration retain their
+		// existing current-subscription routing behavior.
+		routeErr = l.routePublishedEventAt(ctx, string(work.Payload), work.CreatedAt)
+	} else {
+		routeErr = errors.New("sched: legacy event receipt requires subscription matcher")
+	}
+	if routeErr != nil && !eventFanoutCapacityWait(routeErr) && l.log != nil {
+		l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "err", routeErr)
+	}
+	if work.Delivered {
+		return
+	}
+	if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, routeErr); err != nil && l.log != nil {
+		l.log.Warn("sched: finish event fanout failed", "outbox_id", work.ID, "err", err)
+	}
+}
+
+// releaseEventAdoptionClaims hands back a batch's unadopted receipts when the
+// sweep stops early, so a restart does not leave them waiting out their lease.
+func (l *Loop) releaseEventAdoptionClaims(ctx context.Context, store state.PublishedEventAdoptionBatchClaimStore, works []*state.PublishedEventWork) {
+	if store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), eventFanoutReleaseTimeout)
+	defer cancel()
+	for _, work := range works {
+		if err := store.ReleasePublishedEventAdoptionClaim(ctx, work); err != nil && l.log != nil {
+			l.log.Warn("sched: release event adoption claim failed", "outbox_id", work.ID, "err", err)
 		}
 	}
 }
@@ -592,7 +629,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		var works []*state.PublishedEventRecipientWork
 		var err error
 		if batched {
-			works, err = batches.ClaimDuePublishedEventRecipients(ctx, l.eventFanoutNow(), min(eventRecipientClaimBatch, eventFanoutRecoveryBatch-routed), l.workflowsDispatched)
+			works, err = batches.ClaimDuePublishedEventRecipients(ctx, l.eventFanoutNow(), min(eventFanoutClaimBatch, eventFanoutRecoveryBatch-routed), l.workflowsDispatched)
 		} else {
 			var work *state.PublishedEventRecipientWork
 			if work, err = store.ClaimDuePublishedEventRecipient(ctx, l.eventFanoutNow(), l.workflowsDispatched); err == nil {
@@ -634,7 +671,7 @@ func (l *Loop) releaseEventRecipientClaims(ctx context.Context, store state.Publ
 	if store == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), eventRecipientReleaseTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), eventFanoutReleaseTimeout)
 	defer cancel()
 	for _, work := range works {
 		if err := store.ReleasePublishedEventRecipientClaim(ctx, work); err != nil && l.log != nil {

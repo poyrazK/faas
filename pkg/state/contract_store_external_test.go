@@ -127,6 +127,7 @@ type contractTestStore interface {
 	state.ProjectReconcileStore
 	state.ProjectReleaseSetReader
 	state.ProjectReleaseSetStore
+	state.PublishedEventAdoptionBatchClaimStore
 	state.PublishedEventRecipientAdmissionStore
 	state.PublishedEventRecipientAdoptionClaimStore
 	state.PublishedEventRecipientBatchClaimStore
