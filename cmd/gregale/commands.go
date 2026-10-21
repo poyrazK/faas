@@ -233,16 +233,14 @@ func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID strin
 	PrintOK(osStdout, "Logged in as %s (%s plan)", acct.Email, acct.Plan)
 
 	// First-run quickstart (UX §8, issue #65 D4). If the account has
-	// no apps yet, drop a 3-line pointer to the two deploy paths.
-	// A failing ListApps is silent — login must not be blocked by
-	// transient API issues.
+	// no apps yet, name the one next step: the guided start, which
+	// handles an existing project or offers a starter. A failing
+	// ListApps is silent — login must not be blocked by transient API
+	// issues.
 	if apps, err := NewClient(c.BaseURL(), plaintext).ListApps(ctx); err == nil && len(apps) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "")
 		_, _ = fmt.Fprintln(osStdout, "You're in. Next step — deploy your first app:")
-		_, _ = fmt.Fprintln(osStdout, "  gregale start                           # guided launch, test request and next steps")
-		_, _ = fmt.Fprintln(osStdout, "  cd my-project && gregale deploy         # auto-detect & ship the current directory")
-		_, _ = fmt.Fprintln(osStdout, "  gregale deploy --template hello-node    # or start from an embedded template")
-		_, _ = fmt.Fprintln(osStdout, "  gregale deploy --tarball <path.tar.gz>  # or ship a prebuilt archive")
+		_, _ = fmt.Fprintf(osStdout, "  %s start\n", recoveryCLI())
 	}
 	return 0
 }
@@ -334,8 +332,9 @@ func cmdApps() int {
 		return jsonOut(writeNDJSON(apps))
 	}
 	if len(apps) == 0 {
-		_, _ = fmt.Fprintf(osStdout, "No apps yet. No apps returned for the selected account (connection profile=%s).\n", oneLine(currentProfile()))
-		_, _ = fmt.Fprintf(osStdout, "Deploy from source (POSIX shells):\n  %s deploy --template hello-node --help\n", recoveryCLI())
+		// One line and one next action, as in the app picker. recoveryCLI
+		// names a non-default profile, which is the account this listed.
+		_, _ = fmt.Fprintf(osStdout, "No apps yet. Create one with %s start\n", recoveryCLI())
 		return 0
 	}
 	// Header row + data rows. Deployment availability is separate from app
@@ -441,6 +440,18 @@ func sanitizeSlug(s string) string {
 	return strings.Trim(out, "-")
 }
 
+// withoutRepeatedTitle drops a detail's opening restatement of the title,
+// so "Not logged in" over "not logged in — Run gregale login, then retry."
+// renders the next action once.
+func withoutRepeatedTitle(title, detail string) string {
+	for _, sep := range []string{" — ", ": "} {
+		if head, rest, ok := strings.Cut(detail, sep); ok && rest != "" && strings.EqualFold(head, title) {
+			return rest
+		}
+	}
+	return detail
+}
+
 // printErr renders an error in the CLI's shape and returns the exit code (UX §3).
 // Under --json (issue #64 D1), it dumps the raw RFC 7807 Problem body to
 // stderr instead of the three-line render so scripts can `jq .code`.
@@ -537,7 +548,7 @@ func printErr(title string, err error) int {
 		return exitCodeForStatus(ae.Problem.Status)
 	}
 	if hasExit {
-		PrintFail(osStderr, "%s\n  %s", redactErrorText(title), redactErrorText(ec.msg))
+		PrintFail(osStderr, "%s\n  %s", redactErrorText(title), redactErrorText(withoutRepeatedTitle(title, ec.msg)))
 		if hasHint {
 			PrintWarn(osStderr, "%s", redactErrorText(hintErr.Hint))
 		}
