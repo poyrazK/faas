@@ -733,9 +733,11 @@ current signing key, so it verifies like a user's token everywhere:
     org_id, org_slug, org_role, org_permissions   scope (when narrowed)
 
 There is no refresh token and no session: a backend asks again when its token
-expires. Requests for tokens are limited per service account
-(`AuthServiceAccountTokensPerMinute`), since this path bypasses GoTrue's rate
-limits.
+expires. This path bypasses GoTrue's rate limits, so it keeps two of its own,
+both `AuthServiceAccountTokensPerMinute`: failed requests per client address,
+checked before the database is asked, and tokens per service account, counted
+only once the secret matched, so knowing an account's ID (which is not secret)
+is not enough to exhaust its budget.
 
 The SQL helpers know the new principal. `has_permission()`, and through it
 `authorize()` in row-level security, storage and the front, grants a token
@@ -912,3 +914,17 @@ join with real TXT resolution (25, plus 5 under autoconfirm), Web3 (10),
 self-deletion, email templates and session limits (6). That run found the
 account page listing sessions GoTrue had revoked under one session per user;
 the list now keeps only the live one.
+
+On 2026-10-21 the image built from the service-accounts branch ran against
+GoTrue v2.197.0 and PostgreSQL 16 on the same host (31 checks with
+`AUTH_SERVICE_ACCOUNTS` on, 3 with it off): an owner made an account, the
+token endpoint issued and narrowed tokens that the SDK verified against the
+published keys, `authorize()` granted the role from the front and from an
+unprivileged database role (which could not read the accounts table), the
+token reached no other route, other grants still reached GoTrue, discovery
+listed the grant, revoking or disabling ended tokens at once, the operator
+managed accounts with an admin key, the audit log recorded the changes, and
+both rate limits held. With it off the grant and routes did not exist.
+Review between the first and second runs found that failed requests counted
+against an account's budget, so anyone knowing its ID could block it;
+failures now count per client address.

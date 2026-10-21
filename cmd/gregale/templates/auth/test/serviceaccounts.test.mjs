@@ -82,18 +82,22 @@ test('the authenticator checks service accounts here and everyone else with GoTr
   assert.deepEqual(people, ['a.b.c'])
 })
 
-test('token requests are limited per account per minute', () => {
+test('the limiter counts per key per minute and can look without counting', () => {
   let now = 60_000 * 1000
   const limiter = createRateLimiter(3, () => now, 2)
-  assert.deepEqual([limiter('a'), limiter('a'), limiter('a')], [0, 0, 0])
-  assert.equal(limiter('a'), 60)
-  assert.equal(limiter('b'), 0)
+  assert.equal(limiter.check('a'), 0)
+  assert.deepEqual([limiter.take('a'), limiter.take('a'), limiter.take('a')], [0, 0, 0])
+  assert.equal(limiter.check('a'), 60)
+  assert.equal(limiter.take('a'), 60)
+  assert.equal(limiter.take('b'), 0)
   now += 30_000
-  assert.equal(limiter('a'), 30)
+  assert.equal(limiter.check('a'), 30)
   now += 30_000
-  assert.equal(limiter('a'), 0)
+  assert.equal(limiter.check('a'), 0)
+  assert.equal(limiter.take('a'), 0)
   // A full map starts over rather than growing.
-  assert.equal(limiter('c'), 0)
+  assert.equal(limiter.take('c'), 0)
+  assert.equal(limiter.check('a'), 0)
 })
 
 test('issueToken checks the secret against every live one and the scope against the role', async () => {
@@ -105,7 +109,8 @@ test('issueToken checks the secret against every live one and the scope against 
   const row = (secret, permissions = ['docs:read', 'docs:write']) => ({ secret_id: randomUUID(), secret_hash: secret.hash, org_id: randomUUID(), org_slug: 'acme', role: 'deployer', permissions })
   let rows = [row(current), row(next)]
   const pool = { query: async (sql, args) => { queries.push([sql, args]); return { rows: sql.includes('service_account_credentials') ? rows : [] } } }
-  const issue = (secret, scope = null) => issueToken({ pool, signer, issuer, limiter: () => 0 }, { clientId: id, secret, scope, challenge: {} })
+  const open = { take: () => 0, check: () => 0 }
+  const issue = (secret, scope = null, limits = { limiter: open, failures: open }) => issueToken({ pool, signer, issuer, ...limits }, { clientId: id, secret, scope, challenge: {}, address: '203.0.113.7' })
   const answer = await issue(next.secret)
   assert.deepEqual({ ...answer, access_token: undefined }, { access_token: undefined, token_type: 'Bearer', expires_in: limits.accessTokenSeconds })
   assert.equal(payload(answer.access_token).secret_id, rows[1].secret_id)
@@ -118,8 +123,22 @@ test('issueToken checks the secret against every live one and the scope against 
   assert.equal((await issue(current.secret, ['billing:read'])).scope, 'billing:read')
   rows = []
   await assert.rejects(issue(current.secret), { error: 'invalid_client' })
-  await assert.rejects(issueToken({ pool, signer, issuer, limiter: () => 12 }, { clientId: id, secret: current.secret, scope: null, challenge: {} }),
-    err => err.error === 'slow_down' && err.status === 429 && err.headers['Retry-After'] === '12')
+  // Failures count against the client address, and an address over its
+  // budget is refused before the database is asked.
+  rows = [row(current)]
+  const failures = createRateLimiter(2, () => 0)
+  const perAccount = createRateLimiter(1, () => 0)
+  const before = queries.length
+  await assert.rejects(issue(next.secret, null, { limiter: perAccount, failures }), { error: 'invalid_client' })
+  await assert.rejects(issue(next.secret, null, { limiter: perAccount, failures }), { error: 'invalid_client' })
+  await assert.rejects(issue(current.secret, null, { limiter: perAccount, failures }), err => err.error === 'slow_down' && err.headers['Retry-After'] === '60')
+  assert.equal(queries.length, before + 2)
+  // Only requests with the secret count against the account.
+  assert.equal(failures.check('203.0.113.7') > 0, true)
+  const fresh = createRateLimiter(2, () => 0)
+  assert.equal((await issue(current.secret, null, { limiter: perAccount, failures: fresh })).token_type, 'Bearer')
+  await assert.rejects(issue(current.secret, null, { limiter: perAccount, failures: fresh }), { error: 'slow_down', status: 429 })
+  assert.equal(fresh.check('203.0.113.7'), 0)
   assert.equal(secretHash(current.secret).length, 32)
 })
 

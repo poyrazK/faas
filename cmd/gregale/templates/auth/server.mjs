@@ -169,7 +169,8 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
           delete headers['content-length']
           return upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, oauth).end(body)
         }
-        serviceAccounts.issue(request).then(payload => tokenReply(res, 200, payload), err => {
+        // The public gateway replaces X-Real-IP with the verified client address.
+        serviceAccounts.issue({ ...request, address: String(req.headers['x-real-ip'] ?? req.socket.remoteAddress) }).then(payload => tokenReply(res, 200, payload), err => {
           if (err instanceof OAuthError) return tokenReply(res, err.status, { error: err.error }, err.headers)
           console.error(JSON.stringify({ level: 'error', event: 'service_account_token_failed', sqlstate: err?.code ?? null }))
           tokenReply(res, 503, { error: 'temporarily_unavailable' })
@@ -289,7 +290,8 @@ export function start(env = process.env) {
   // Service accounts' tokens are signed and checked here, with the app's keys.
   const jwtKeys = config.gotrueEnv.GOTRUE_JWT_KEYS
   const authenticate = config.serviceAccounts ? createAuthenticator(goTrueAuthenticator(), token => verifyToken(token, { keys: verificationKeys(jwtKeys), issuer: config.api })) : goTrueAuthenticator()
-  const serviceAccounts = config.serviceAccounts ? { issue: (limiter => request => issueToken({ pool, signer: signingKey(jwtKeys), issuer: config.api, limiter }, request))(createRateLimiter()) } : null
+  const tokenLimits = { limiter: createRateLimiter(), failures: createRateLimiter() }
+  const serviceAccounts = config.serviceAccounts ? { issue: request => issueToken({ pool, signer: signingKey(jwtKeys), issuer: config.api, ...tokenLimits }, request) } : null
   const authz = createAuthzHandler({ pool, authenticate, origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO, orgDomains: config.orgDomains, teamEnabled: config.productControlTeamEnabled, emailEnabled: config.productControlEmailEnabled, deleteAccount, orgClaims: config.orgClaims, sessions: config.sessions, serviceAccounts: config.serviceAccounts })
   const realtime = createRealtimeAuthorizer({ pool, tokens: callbackTokens(env) })
   // The dashboard is served from the Gregale API origin.

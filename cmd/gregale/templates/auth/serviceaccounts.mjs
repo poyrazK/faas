@@ -136,34 +136,47 @@ export function createAuthenticator(people, verifier) {
   }
 }
 
-// createRateLimiter allows perMinute token requests per service account in
-// each minute. The token path bypasses GoTrue's own limits; the map is
-// bounded so made-up client IDs cannot grow it without end.
+// createRateLimiter counts requests per key in each minute: take counts
+// one and check only looks; both return the seconds to wait, or 0. The map
+// is bounded so made-up keys cannot grow it without end.
 export function createRateLimiter(perMinute = limits.serviceAccountTokensPerMinute, now = Date.now, size = 10000) {
   const windows = new Map()
-  return id => {
+  const entry = id => {
     const minute = Math.floor(now() / 60000)
-    let entry = windows.get(id)
-    if (!entry || entry.minute !== minute) {
-      if (!entry && windows.size >= size) windows.clear()
-      entry = { minute, count: 0 }
-      windows.set(id, entry)
+    let current = windows.get(id)
+    if (!current || current.minute !== minute) {
+      if (!current && windows.size >= size) windows.clear()
+      current = { minute, count: 0 }
+      windows.set(id, current)
     }
-    entry.count++
-    return entry.count <= perMinute ? 0 : 60 - Math.floor(now() / 1000) % 60
+    return current
+  }
+  const wait = count => count < perMinute ? 0 : 60 - Math.floor(now() / 1000) % 60
+  return {
+    take: id => { const current = entry(id); current.count++; return wait(current.count - 1) },
+    check: id => wait(windows.get(id)?.minute === Math.floor(now() / 60000) ? windows.get(id).count : 0),
   }
 }
 
 // issueToken answers a client-credentials request. A wrong ID or secret,
-// or a disabled account, is invalid_client either way.
-export async function issueToken({ pool, signer, issuer, limiter }, request) {
-  const wait = limiter(request.clientId)
-  if (wait > 0) throw new OAuthError(429, 'slow_down', { 'Retry-After': String(wait) })
+// or a disabled account, is invalid_client either way. The token path
+// bypasses GoTrue's rate limits, so it keeps two of its own: failed
+// requests per client address, checked before the database is asked, and
+// tokens per account, counted only once the secret matched, so knowing an
+// account's ID is not enough to exhaust its budget.
+export async function issueToken({ pool, signer, issuer, limiter, failures }, request) {
+  const blocked = failures.check(request.address)
+  if (blocked > 0) throw new OAuthError(429, 'slow_down', { 'Retry-After': String(blocked) })
   const presented = secretHash(request.secret)
   const { rows } = await pool.query('SELECT secret_id, secret_hash, org_id, org_slug, role, permissions FROM gregale_auth.service_account_credentials($1)', [request.clientId])
   // Compare with every live secret so timing does not tell which matched.
   const match = rows.reduce((found, row) => timingSafeEqual(row.secret_hash, presented) ? row : found, null)
-  if (!match) throw new OAuthError(401, 'invalid_client', request.challenge)
+  if (!match) {
+    failures.take(request.address)
+    throw new OAuthError(401, 'invalid_client', request.challenge)
+  }
+  const wait = limiter.take(request.clientId)
+  if (wait > 0) throw new OAuthError(429, 'slow_down', { 'Retry-After': String(wait) })
   if (request.scope && !match.permissions.includes('*') && !request.scope.every(item => match.permissions.includes(item))) throw new OAuthError(400, 'invalid_scope')
   await pool.query(`UPDATE gregale_auth.service_account_secrets SET last_used_at = now()
     WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')`, [match.secret_id])

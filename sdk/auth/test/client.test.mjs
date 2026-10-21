@@ -209,6 +209,29 @@ test('organization, member and invitation calls use encoded paths', async () => 
   assert.deepEqual(await auth.invitations.accept('tok'), { org_id: 'o1', role: 'member' })
 })
 
+test('service account calls manage an organization\'s machine principals', async () => {
+  const secret = { client_id: 'sa1', client_secret: 'gasa_x', secret: { id: 'k1', hint: 'abcd', expires_at: null } }
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'GET /authz/v1/orgs/o1/service-accounts': () => [200, { service_accounts: [{ id: 'sa1', name: 'CI', role: 'deployer', disabled: false, created_at: 'now', secrets: [] }] }],
+    'POST /authz/v1/orgs/o1/service-accounts': () => [201, { id: 'sa1', org_id: 'o1', name: 'CI', role: 'deployer', created_at: 'now', ...secret }],
+    'PATCH /authz/v1/orgs/o1/service-accounts/sa1': call => [200, { id: 'sa1', name: 'CI', role: 'deployer', ...call.body }],
+    'POST /authz/v1/orgs/o1/service-accounts/sa1/secrets': () => [201, secret],
+    'DELETE /authz/v1/orgs/o1/service-accounts/sa1/secrets/k1': () => [204],
+    'DELETE /authz/v1/orgs/o1/service-accounts/sa1': () => [204],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal((await auth.serviceAccounts.list('o1'))[0].role, 'deployer')
+  assert.equal((await auth.serviceAccounts.create('o1', { name: 'CI', role: 'deployer', expiresInDays: 90 })).client_secret, 'gasa_x')
+  assert.deepEqual(api.calls.at(-1).body, { name: 'CI', role: 'deployer', expires_in_days: 90 })
+  assert.equal((await auth.serviceAccounts.update('o1', 'sa1', { disabled: true })).disabled, true)
+  assert.equal((await auth.serviceAccounts.addSecret('o1', 'sa1')).secret.id, 'k1')
+  assert.deepEqual(api.calls.at(-1).body, {})
+  assert.equal(await auth.serviceAccounts.revokeSecret('o1', 'sa1', 'k1'), null)
+  assert.equal(await auth.serviceAccounts.remove('o1', 'sa1'), null)
+})
+
 test('passkeys: sign in, register, list, rename and remove through WebAuthn', async () => {
   const buf = values => Uint8Array.from(values).buffer
   const api = server({

@@ -45,7 +45,8 @@ test('service accounts against PostgreSQL', { skip: !database }, async t => {
   const admin = await person('admin', org.id), member = await person('member', org.id)
   const base = `/orgs/${org.id}/service-accounts`
   const token = async (account, secret, scope = null) => {
-    const reply = await issueToken({ pool, signer: signingKey(keys), issuer, limiter: () => 0 }, { clientId: account, secret, scope, challenge: {} })
+    const open = { take: () => 0, check: () => 0 }
+    const reply = await issueToken({ pool, signer: signingKey(keys), issuer, limiter: open, failures: open }, { clientId: account, secret, scope, challenge: {}, address: '203.0.113.7' })
     return verifyToken(reply.access_token, { keys: verificationKeys(keys), issuer })
   }
   const allowed = async (claims, action, resource) => (await call(claims, 'POST', '/authorize', { action, resource }))[1].allowed
