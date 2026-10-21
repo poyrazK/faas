@@ -1381,6 +1381,10 @@ type Querier interface {
 	FinancialComputeAppLeases(ctx context.Context, db DBTX, arg FinancialComputeAppLeasesParams) ([][]byte, error)
 	FinancialComputeAppManaged(ctx context.Context, db DBTX, arg FinancialComputeAppManagedParams) (pgtype.Bool, error)
 	FinancialComputeAppOwned(ctx context.Context, db DBTX, arg FinancialComputeAppOwnedParams) (bool, error)
+	// The scopes an app attempt funds: its current project, and the environment
+	// of its deployment. The instance's recorded deployment wins over the
+	// request's; an app outside any project has neither.
+	FinancialComputeAppScopes(ctx context.Context, db DBTX, arg FinancialComputeAppScopesParams) (FinancialComputeAppScopesRow, error)
 	// Positive retained charges seed admission conservatively. Corrections cannot
 	// grant execution authority, and missing contracts must fail activation.
 	FinancialComputeBaseline(ctx context.Context, db DBTX, arg FinancialComputeBaselineParams) (FinancialComputeBaselineRow, error)
@@ -1390,6 +1394,21 @@ type Querier interface {
 	FinancialComputeBookGet(ctx context.Context, db DBTX, arg FinancialComputeBookGetParams) ([]byte, error)
 	FinancialComputeBookPut(ctx context.Context, db DBTX, arg FinancialComputeBookPutParams) error
 	FinancialComputeClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	FinancialComputeDeploymentEnvironment(ctx context.Context, db DBTX, arg FinancialComputeDeploymentEnvironmentParams) (string, error)
+	// A quiet environment: no running instance, task, unsettled attempt or open
+	// billing interval of a deployment in it, nor of a project app instance whose
+	// deployment is unknown.
+	FinancialComputeEnvironmentActivationSafe(ctx context.Context, db DBTX, arg FinancialComputeEnvironmentActivationSafeParams) (pgtype.Bool, error)
+	// Charges recorded in the environment, or of a deployment now in it, seed
+	// the environment book. Synthetic capacity floors carry no deployment.
+	FinancialComputeEnvironmentBaseline(ctx context.Context, db DBTX, arg FinancialComputeEnvironmentBaselineParams) (FinancialComputeEnvironmentBaselineRow, error)
+	// An unsettled app attempt belongs to an environment's book when it funds
+	// it, or when its deployment now runs in the environment. Attempts acquired
+	// before deployments were recorded resolve through their instance.
+	FinancialComputeEnvironmentLeases(ctx context.Context, db DBTX, arg FinancialComputeEnvironmentLeasesParams) ([][]byte, error)
+	// Sampling must be complete from the earliest of the environment's and its
+	// project apps' creation, or from the month start.
+	FinancialComputeEnvironmentSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeEnvironmentSamplingReadyParams) (pgtype.Bool, error)
 	FinancialComputeHoldPut(ctx context.Context, db DBTX, arg FinancialComputeHoldPutParams) error
 	FinancialComputeHolds(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]FinancialComputeHoldsRow, error)
 	FinancialComputeJobActivationSafe(ctx context.Context, db DBTX, arg FinancialComputeJobActivationSafeParams) (pgtype.Bool, error)
@@ -1412,8 +1431,25 @@ type Querier interface {
 	FinancialComputeOwnerPut(ctx context.Context, db DBTX, arg FinancialComputeOwnerPutParams) error
 	FinancialComputeOwnerValid(ctx context.Context, db DBTX, arg FinancialComputeOwnerValidParams) (bool, error)
 	FinancialComputeOwnersReady(ctx context.Context, db DBTX, maxAgeSeconds float64) (pgtype.Bool, error)
+	FinancialComputeProjectActivationSafe(ctx context.Context, db DBTX, arg FinancialComputeProjectActivationSafeParams) (pgtype.Bool, error)
+	// Positive retained charges of the project's apps seed the project book,
+	// exactly as FinancialComputeBaseline seeds one app's.
+	FinancialComputeProjectBaseline(ctx context.Context, db DBTX, arg FinancialComputeProjectBaselineParams) (FinancialComputeProjectBaselineRow, error)
+	FinancialComputeProjectEnvironments(ctx context.Context, db DBTX, arg FinancialComputeProjectEnvironmentsParams) ([]string, error)
+	// An unsettled attempt belongs to a project's book when it funds it, or
+	// when its app is now in the project.
+	FinancialComputeProjectLeases(ctx context.Context, db DBTX, arg FinancialComputeProjectLeasesParams) ([][]byte, error)
+	// An app is managed while its project, or an environment of its project,
+	// has a strict book: the meter then bills its residency through funding.
+	// Floor waivers are FinancialComputeFloorCovered's, which ignores
+	// environments since a floor has none.
+	FinancialComputeProjectManaged(ctx context.Context, db DBTX, arg FinancialComputeProjectManagedParams) (bool, error)
+	FinancialComputeProjectSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeProjectSamplingReadyParams) (pgtype.Bool, error)
 	FinancialComputeRetired(ctx context.Context, db DBTX, arg FinancialComputeRetiredParams) (bool, error)
 	FinancialComputeSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeSamplingReadyParams) (pgtype.Bool, error)
+	// ADR-1750, amendments 1 and 2: strict project and environment caps.
+	FinancialComputeScopeBookGet(ctx context.Context, db DBTX, arg FinancialComputeScopeBookGetParams) ([]byte, error)
+	FinancialComputeScopeBookPut(ctx context.Context, db DBTX, arg FinancialComputeScopeBookPutParams) error
 	FinancialEgressBaseline(ctx context.Context, db DBTX, arg FinancialEgressBaselineParams) (FinancialEgressBaselineRow, error)
 	FinancialEgressOwnerValid(ctx context.Context, db DBTX, arg FinancialEgressOwnerValidParams) (bool, error)
 	FinancialEgressOwnersReady(ctx context.Context, db DBTX, maxAgeSeconds float64) (bool, error)

@@ -577,6 +577,23 @@ This implementation is local; native KVM acceptance and release review remain
 required. Strict budgets are released per account through the `strict_budgets`
 platform flag. Until it includes your account, creating or enabling one returns
 422 `financial_budget_activation_unavailable` ("Strict budgets not released").
+
+A project can be capped the same way with `scope={kind:project,id:PROJECT_ID}`:
+one limit shared by every app in the project, and when it is reached every app
+in the project is held. Jobs are not part of a project, so they need their own
+job caps. Activation needs every app in the project to be idle
+([ADR-1750, amendment 1](adr/1750-strict-app-compute-reservations.md#amendment-1-2026-10-20-strict-project-caps)).
+
+An environment can be capped with `scope={kind:environment,id:ENVIRONMENT_ID}`:
+one limit shared by every deployment that runs in the environment, across the
+project's apps. When it is reached, only that environment's deployments are
+held; the same apps keep serving other environments. A deployment without a
+recorded environment counts toward the project's environment of the same name.
+Capacity floors are app-wide, so an environment cap neither counts nor waives
+them; use an app or project cap to bound them. Activation needs every
+deployment in the environment to be idle
+([ADR-1750, amendment 2](adr/1750-strict-app-compute-reservations.md#amendment-2-2026-10-21-strict-environment-caps)).
+
 Configure `scope={kind:app,id:APP_ID}`, `mode=strict`,
 `basis=gross_usage`, `meters=[compute]`, `action=suspend_workloads`,
 `drain_seconds=0`, and `notify_millicents=[]`. A separate monitored policy can

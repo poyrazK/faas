@@ -12298,8 +12298,26 @@ CREATE FUNCTION public.financial_app_command_held(target_app uuid, target_deploy
  JOIN financial_compute_holds h ON h.account_id=p.account_id AND h.policy_id=p.id AND h.revision=p.revision
  WHERE a.id=target_app AND p.deleted_at IS NULL AND p.spec->>'enabled'='true'
   AND p.spec->>'mode'='strict' AND (p.spec->'scope'->>'kind'='account'
-    OR p.spec->'scope'->>'kind'='app' AND p.spec->'scope'->>'id'=a.id::text)
+    OR p.spec->'scope'->>'kind'='app' AND p.spec->'scope'->>'id'=a.id::text
+    OR p.spec->'scope'->>'kind'='project' AND p.spec->'scope'->>'id'=a.project_id::text
+    OR p.spec->'scope'->>'kind'='environment' AND p.spec->'scope'->>'id'=financial_compute_deployment_environment(target_deployment)::text)
   AND (p.spec->>'resume_rule'='manual' OR h.period_start=date_trunc('month',observed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))
+$$;
+
+
+--
+-- Name: financial_compute_deployment_environment(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_compute_deployment_environment(target_deployment uuid) RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT COALESCE(owner.environment_id, named.id)
+ FROM deployments d JOIN apps a ON a.id=d.app_id
+ LEFT JOIN deployment_runtime_environment_owners owner ON owner.deployment_id=d.id
+ LEFT JOIN project_environments named ON owner.deployment_id IS NULL AND named.project_id=a.project_id
+  AND named.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
+ WHERE d.id=target_deployment
 $$;
 
 
@@ -36268,10 +36286,29 @@ CREATE TABLE public.financial_compute_owners (
     account_compute_incarnation uuid,
     job_compute_incarnation uuid,
     egress_budget_incarnation uuid,
+    scope_compute_incarnation uuid,
     CONSTRAINT financial_compute_job_owner_incarnation CHECK (((job_compute_incarnation IS NULL) OR (job_compute_incarnation = incarnation))),
     CONSTRAINT financial_compute_owner_account_incarnation_check CHECK (((account_compute_incarnation IS NULL) OR (account_compute_incarnation = incarnation))),
     CONSTRAINT financial_compute_owners_protocol_check CHECK ((protocol = 1)),
     CONSTRAINT financial_egress_owner_incarnation CHECK (((egress_budget_incarnation IS NULL) OR (egress_budget_incarnation = incarnation)))
+);
+
+
+--
+-- Name: financial_compute_scope_books; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_scope_books (
+    account_id uuid NOT NULL,
+    scope_kind text NOT NULL,
+    scope_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT financial_compute_scope_books_check CHECK ((period_end > period_start)),
+    CONSTRAINT financial_compute_scope_books_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_compute_scope_books_payload_check1 CHECK (COALESCE(((((payload ->> 'committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'committed'::text))::numeric + ((payload ->> 'reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric)), false)),
+    CONSTRAINT financial_compute_scope_books_scope_kind_check CHECK ((scope_kind = ANY (ARRAY['project'::text, 'environment'::text])))
 );
 
 
@@ -57177,6 +57214,22 @@ ALTER TABLE ONLY public.financial_compute_leases
 
 ALTER TABLE ONLY public.financial_compute_owners
     ADD CONSTRAINT financial_compute_owners_pkey PRIMARY KEY (node_id);
+
+
+--
+-- Name: financial_compute_scope_books financial_compute_scope_books_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_scope_books
+    ADD CONSTRAINT financial_compute_scope_books_pkey PRIMARY KEY (account_id, scope_kind, scope_id, period_start);
+
+
+--
+-- Name: financial_compute_owners financial_compute_scope_owner_incarnation; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.financial_compute_owners
+    ADD CONSTRAINT financial_compute_scope_owner_incarnation CHECK (((scope_compute_incarnation IS NULL) OR (scope_compute_incarnation = incarnation))) NOT VALID;
 
 
 --
@@ -86207,6 +86260,14 @@ ALTER TABLE ONLY public.financial_compute_leases
 
 ALTER TABLE ONLY public.financial_compute_owners
     ADD CONSTRAINT financial_compute_owners_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_compute_scope_books financial_compute_scope_books_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_scope_books
+    ADD CONSTRAINT financial_compute_scope_books_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

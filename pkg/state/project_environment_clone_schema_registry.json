@@ -175,6 +175,18 @@
     "kind": "account_identity"
   },
   {
+    "table": "financial_compute_scope_books",
+    "columns": [
+      "account_id",
+      "payload",
+      "period_end",
+      "period_start",
+      "scope_id",
+      "scope_kind"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "financial_compute_holds",
     "columns": [
       "account_id",
@@ -241,7 +253,8 @@
       "job_compute_incarnation",
       "node_id",
       "observed_at",
-      "protocol"
+      "protocol",
+      "scope_compute_incarnation"
     ],
     "kind": "operational"
   },
