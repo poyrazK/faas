@@ -18,8 +18,8 @@ import (
 // as far as the owner allows, and the owner's webhook hears about the
 // sign-up, the plan change and the close.
 func TestConsumerSelfService(t *testing.T) {
-	withBillingKeys(t)
 	e := setupWebhookTest(t, api.PlanPro)
+	withBillingKeys(t) // after the webhook recipient, so the Stripe key opens with the identity that sealed it
 	stripe := &signupStripe{complete: true}
 	srv := httptest.NewServer(stripe)
 	defer srv.Close()
