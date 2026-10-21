@@ -5017,6 +5017,11 @@ from .route_health_window_evidence_latency_status import RouteHealthWindowEviden
 from .route_health_window_evidence_status import RouteHealthWindowEvidenceStatus
 from .route_insight import RouteInsight
 from .route_insight_evidence import RouteInsightEvidence
+from .route_insight_fix import RouteInsightFix
+from .route_insight_fix_action import RouteInsightFixAction
+from .route_insight_fix_request import RouteInsightFixRequest
+from .route_insight_fix_response import RouteInsightFixResponse
+from .route_insight_fix_response_cache_purge import RouteInsightFixResponseCachePurge
 from .route_insight_kind import RouteInsightKind
 from .route_insight_state import RouteInsightState
 from .route_insights_response import RouteInsightsResponse
@@ -10680,6 +10685,11 @@ __all__ = (
     "RouteHealthWindowEvidenceStatus",
     "RouteInsight",
     "RouteInsightEvidence",
+    "RouteInsightFix",
+    "RouteInsightFixAction",
+    "RouteInsightFixRequest",
+    "RouteInsightFixResponse",
+    "RouteInsightFixResponseCachePurge",
     "RouteInsightKind",
     "RouteInsightsResponse",
     "RouteInsightState",

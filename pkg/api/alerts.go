@@ -108,6 +108,7 @@ func TruncateRunes(s string, maxRunes int) string {
 // for min=0 worker apps, the dedicated observer heartbeat.
 var AllowedAlertRuleMetrics = []string{
 	MetricMCPProtocolErrorRate, MetricMCPProtocolP95,
+	AlertMetricRouteInsightsDetected,
 	"event_recovery_notification_admission_overdue_jobs",
 	"event_recovery_notification_admission_dead_jobs",
 	"event_recovery_notification_admission_unknown_jobs",
@@ -327,7 +328,7 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 	if IsEventRetentionAlertMetric(metric) || IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || IsEdgeSecurityAlertMetric(metric) ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" ||
-		metric == AlertRuleMetricCustomMetric || IsEdgeRuleAlertMetric(metric) {
+		metric == AlertRuleMetricCustomMetric || IsEdgeRuleAlertMetric(metric) || metric == AlertMetricRouteInsightsDetected {
 		return action == "" || action == "webhook"
 	}
 	if metric == MetricMCPReadinessUnhealthy || IsMCPProtocolMetric(metric) || IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
@@ -598,6 +599,34 @@ const (
 	// switched from log mode to enforce (ADR-1192 amendment).
 	AlertMetricEdgeRuleActivity = "edge_rule_activity"
 )
+
+// AlertMetricRouteInsightsDetected counts an app's route insights that
+// became active within the rule's window (ADR-20261020161310).
+const AlertMetricRouteInsightsDetected = "route_insights_detected"
+
+// RouteInsightAlertWindowSpecs are the windows route insight alerts accept:
+// insights are evaluated every six hours, so a shorter window can miss one.
+var RouteInsightAlertWindowSpecs = []string{"6h", "24h", "7d"}
+
+// RouteInsightAlertNotes caps how many insight messages one notification
+// carries.
+const RouteInsightAlertNotes = 5
+
+// ValidateRouteInsightAlert checks a route_insights_detected rule: an app
+// scope and a window the six-hourly evaluation can answer. Mirrors the
+// alert_rules_route_insights_chk constraint.
+func ValidateRouteInsightAlert(metric, windowSpec, appID string) *Problem {
+	if metric != AlertMetricRouteInsightsDetected {
+		return nil
+	}
+	if appID == "" {
+		return ErrAlertRuleInvalid("route insight alerts require an app")
+	}
+	if !containsString(RouteInsightAlertWindowSpecs, windowSpec) {
+		return ErrAlertRuleInvalid("route insight alerts use window_spec " + strings.Join(RouteInsightAlertWindowSpecs, ", ") + " (insights are evaluated every 6h)")
+	}
+	return nil
+}
 
 // EdgeRuleAlertWindowSpecs are the windows edge-rule activity alerts
 // accept: hit counts are kept in hourly buckets for 14 days (ADR-960), so
