@@ -219,6 +219,21 @@ the old generation still serves, so a migration must stay compatible with
 the previous release for up to the drain bound — already required of compute
 nodes during a rolling deploy.
 
+### Pre-traffic checks
+
+Since ADR 20261020214632, apid and gatewayd-public check their successor
+before it takes traffic. They send readyz and one request without
+credentials over a socket pair per check. The successor's ready gate on the
+matching listener serves these before step 4 opens it. The successor
+reports `checks` instead of `ready` and waits for `go`. A failed check stops
+the successor. It also reports `STATUS=hand-off failed at …: rejected by
+pre-traffic check …`, and deployctl fails the deploy rather than restarting
+onto that binary. The checks are the old generation's, so they apply from
+the release after the one that adds them. A successor that predates checks
+is handed off unchecked. `/run/faas/handoff-checks.skip` makes a hand-off
+skip its checks: the break-glass for a check that wrongly rejects every
+successor.
+
 ### Rollback
 
 - A deploy back to a release without hand-off restarts: the older binary

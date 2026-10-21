@@ -47,6 +47,11 @@ func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string)
 			ManagedCredentialGeneration: row.ManagedCredentialGeneration, ManagedObjectStorageCredentialID: row.ManagedObjectStorageCredentialID,
 		})
 	}
+	if rows, pinned := m.releaseSecretPins[deploymentID]; pinned {
+		if err := applyReleaseSecretSnapshot(&result, rows); err != nil {
+			return RuntimeAppValuesSnapshot{}, err
+		}
+	}
 	sort.Slice(result.Secrets, func(i, j int) bool { return result.Secrets[i].Key < result.Secrets[j].Key })
 	runtimeApp, err := AppForDeploymentRuntime(m.apps[appID], d)
 	if err != nil {

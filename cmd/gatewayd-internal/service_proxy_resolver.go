@@ -109,11 +109,13 @@ func serviceTargetFromApp(app state.App, isPreview bool) gateway.ServiceTarget {
 
 func newServiceProxyEnvironmentBindingResolver(store state.Store) gateway.ServiceProxyEnvironmentBindingResolver {
 	return func(ctx context.Context, callerAppID, callerDeploymentID, service string) (gateway.ServiceProxyEnvironmentBinding, bool, bool, error) {
-		bindingStore, ok := store.(state.EnvironmentGitOpsServiceBindingStore)
-		if !ok {
-			return gateway.ServiceProxyEnvironmentBinding{}, false, false, nil
+		route, managed, found, err := resolveFrozenProjectBinding(ctx, store, callerAppID, callerDeploymentID, service)
+		frozen := managed
+		if err == nil && !managed {
+			if bindingStore, ok := store.(state.EnvironmentGitOpsServiceBindingStore); ok {
+				route, managed, found, err = bindingStore.ResolveEnvironmentGitOpsServiceBinding(ctx, callerAppID, callerDeploymentID, service)
+			}
 		}
-		route, managed, found, err := bindingStore.ResolveEnvironmentGitOpsServiceBinding(ctx, callerAppID, callerDeploymentID, service)
 		if err != nil {
 			if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrInvalidArgument) {
 				return gateway.ServiceProxyEnvironmentBinding{}, managed, false, gateway.ErrServiceProxyBindingDenied
@@ -130,8 +132,13 @@ func newServiceProxyEnvironmentBindingResolver(store state.Store) gateway.Servic
 		if target.ID != route.TargetAppID || target.Status == state.AppDeleted || target.AccountID != route.AccountID {
 			return gateway.ServiceProxyEnvironmentBinding{}, true, false, gateway.ErrServiceProxyBindingDenied
 		}
+		resolvedTarget := serviceTargetFromApp(target, false)
+		if frozen {
+			resolvedTarget.AppProtocol, resolvedTarget.WebSocketEnabled = route.AppProtocol, route.WebSocketEnabled
+		}
 		return gateway.ServiceProxyEnvironmentBinding{
-			Target:             serviceTargetFromApp(target, false),
+			FrozenPolicy:       frozen,
+			Target:             resolvedTarget,
 			TargetDeploymentID: route.TargetDeploymentID,
 			ReleaseSetID:       route.ReleaseSetID,
 			AccountID:          route.AccountID,

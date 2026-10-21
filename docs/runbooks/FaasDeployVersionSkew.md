@@ -34,7 +34,11 @@ Per-unit control-plane releases report `unit-<commit>` versions and are
 excluded from this alert: they deliberately run beside their base full
 release until the next one (docs/adr/1650-per-unit-control-plane-releases.md).
 `readlink -f /opt/faas/current` on the control plane and its
-`unit-versions.json` show which daemons a unit release replaced.
+`unit-versions.json` show which daemons a unit release replaced. A host
+restarts a daemon only when its code changed, so one unit release can leave
+different `unit-*` versions on different hosts, or an older one beside a
+newer release: each names the commit the running binary was built from, and
+`unit_code` records its code digest.
 
 Use `daemon_build_info{daemon,instance,version,git_sha,build_time}` to map the
 skew to a host and exact commit. A deployment that is actively rolling out

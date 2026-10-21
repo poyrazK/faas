@@ -18,12 +18,46 @@ from faas_sdk.models import (
     ApproveEnvironmentGitRevisionRequest,
     ApproveEnvironmentGitRevisionResponse,
     CreateEnvironmentGitSourceRequest,
+    EnvironmentGitOpsExplanation,
     EnvironmentGitOpsStatusResponse,
+    EnvironmentWorkloadActivationEvidence,
     PreviewEnvironmentGitRevisionRequest,
     PreviewEnvironmentGitRevisionResponse,
     RemoveEnvironmentGitOpsOverrideRequest,
 )
 from faas_sdk.models.service_binding_transport import ServiceBindingTransport
+
+
+def test_gitops_evidence_commit_is_optional_and_independent_of_ref() -> None:
+    body = {
+        "graph_id": "11111111-2222-4333-8444-555555555555",
+        "source_id": "11111111-2222-4333-8444-555555555555",
+        "environment_id": "11111111-2222-4333-8444-555555555555",
+        "revision_id": "11111111-2222-4333-8444-555555555555",
+        "definition_digest": "a" * 64,
+        "generation": 2,
+        "intent_version": 3,
+        "plan_hash": "b" * 64,
+        "graph_phase": "prepared",
+        "artifacts_prepared": True,
+        "candidates": 1,
+        "retained_workloads_recorded": 0,
+        "captures_recorded": 1,
+        "guest_config_acknowledgements_recorded": 1,
+        "restores_recorded": 1,
+        "smokes_recorded": 1,
+        "job_smokes_recorded": 0,
+        "framework_ready_acknowledgements_recorded": 1,
+        "qualified": True,
+        "activated": True,
+        "serving": True,
+        "blocking_reasons": [],
+    }
+    assert "commit_sha" not in EnvironmentWorkloadActivationEvidence.from_dict(body).to_dict()
+    body["commit_sha"] = "c" * 40
+    evidence = EnvironmentWorkloadActivationEvidence.from_dict(body)
+    assert evidence.commit_sha == "c" * 40
+    assert evidence.to_dict() == body
 
 
 @pytest.mark.parametrize("transport", ["http", "https"])
@@ -54,6 +88,47 @@ def test_gitlab_source_request_round_trip() -> None:
     )
     assert request.to_dict()["provider"] == "gitlab"
     assert request.to_dict()["repository"] == "team/subgroup/service"
+
+
+def test_gitops_explanation_preserves_unknown_serving_and_scoped_actions() -> None:
+    body = {
+        "read_only": True,
+        "assessed_at": "2026-10-16T12:00:00+00:00",
+        "status": "blocked",
+        "summary": "Waiting for current serving proof.",
+        "source_id": "source",
+        "generation": 3,
+        "intent_version": 5,
+        "source_freshness": "stale",
+        "approved_revision_id": "approved",
+        "applied_revision_id": "historical",
+        "workloads": [
+            {
+                "resource": "workload/report",
+                "app_id": "app",
+                "execution_mode": "job",
+                "preparation": "complete",
+                "qualification": "complete",
+                "activation": "complete",
+                "serving": "unknown",
+                "blocking_reasons": ["environment_serving_evidence_missing"],
+            }
+        ],
+        "issues": [
+            {
+                "resource": "workload/report",
+                "stage": "serving",
+                "code": "scheduled_occurrence_unproven",
+                "message": "No current serving proof.",
+                "actor": "customer",
+                "action": "Inspect current scheduled task logs.",
+            }
+        ],
+    }
+    explanation = EnvironmentGitOpsExplanation.from_dict(body)
+    assert explanation.to_dict() == body
+    assert "serving_revision_id" not in explanation.to_dict()
+    assert explanation.workloads[0].serving == "unknown"
 
 
 def test_reviewed_authority_and_override_identity() -> None:
@@ -241,3 +316,96 @@ def test_reviewed_authority_and_override_identity() -> None:
         assert calls[1].headers.get("Idempotency-Key")
     finally:
         client.close()
+
+
+def test_gitlab_review_policy_has_no_github_installation_identity():
+    from faas_sdk.models.environment_git_protected_branch_evidence import EnvironmentGitProtectedBranchEvidence
+
+    body = {
+        "qualified": True,
+        "profile": "gitlab_reviewed_branch/v1",
+        "repository_id": 41,
+        "repository": "team/subgroup/shop",
+        "branch": "main",
+        "commit_sha": "a" * 40,
+        "policy_digest": "b" * 64,
+        "required_review_count": 1,
+        "checked_at": "2026-10-15T16:00:00Z",
+    }
+    evidence = EnvironmentGitProtectedBranchEvidence.from_dict(body)
+    assert evidence.repository_id == 41
+    assert "installation_id" not in evidence.to_dict()
+
+
+def test_unchanged_build_context_and_cache_progress_round_trip() -> None:
+    from faas_sdk.models import EnvironmentWorkloadProgress, EnvironmentWorkloadSource
+
+    source = {
+        "kind": "source",
+        "directory": "workspace/apps/api",
+        "reuse_unchanged_build": True,
+        "build_context": "workspace",
+    }
+    assert EnvironmentWorkloadSource.from_dict(source).to_dict() == source
+    progress = {
+        "resource": "workload/api",
+        "app_id": "app",
+        "execution_mode": "http",
+        "build_status": "succeeded",
+        "build_cache_status": "hit",
+        "build_cache_key_sha256": "a" * 64,
+        "preparation": "complete",
+        "qualification": "pending",
+        "activation": "pending",
+        "serving": "unknown",
+        "blocking_reasons": [],
+    }
+    assert EnvironmentWorkloadProgress.from_dict(progress).to_dict() == progress
+
+
+def test_rollout_notification_preserves_exact_approval_and_diagnostics() -> None:
+    from faas_sdk.models import EnvironmentGitOpsChangedWebhookPayload
+
+    for status in ("serving", "failed", "superseded"):
+        body = {
+            "version": 1,
+            "transition_id": "5fd00a70-e0ce-41ea-94f5-613b34c65923",
+            "source_id": "dcda57d8-569c-4d2b-b901-cb4f09f00b31",
+            "project": "shop",
+            "environment": "production",
+            "axis": "rollout",
+            "previous_status": "progressing",
+            "status": status,
+            "generation": 3,
+            "observed_version": 7,
+            "approved_revision_id": "93d593fb-37b4-45bc-a81a-7f86f183b7b2",
+            "commit_sha": "a" * 40,
+            "definition_digest": "b" * 64,
+            "graph_id": "3bb2f69c-8479-4d3e-b5f0-68e77bf25240",
+            "plan_hash": "c" * 64,
+            "observed_at": "2026-10-17T12:00:00Z",
+            "dashboard_path": "/dashboard/projects/shop/environments/production/gitops",
+            "changes": [],
+            "blocking_reasons": ["environment_workload_build_failed"],
+            "details_truncated": False,
+            "diagnostics": [
+                {
+                    "resource": "workload/api",
+                    "stage": "preparation",
+                    "code": "environment_workload_build_failed",
+                    "actor": "customer",
+                    "message": "The candidate build failed.",
+                    "action": "Inspect build diagnostics.",
+                }
+            ],
+        }
+        parsed = EnvironmentGitOpsChangedWebhookPayload.from_dict(body)
+        assert parsed.axis == "rollout"
+        assert parsed.status == status
+        assert parsed.definition_digest == "b" * 64
+        assert parsed.diagnostics[0].resource == "workload/api"
+        assert parsed.diagnostics[0].code == "environment_workload_build_failed"
+        encoded = parsed.to_dict()
+        # Datetime serialization normalizes Z to an explicit UTC offset.
+        encoded["observed_at"] = body["observed_at"]
+        assert encoded == body

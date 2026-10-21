@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
+- [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
 - [Compose build arguments and target stage for Dockerfile builds](20261019142544-compose-build-args-and-target.md)
 
@@ -72,6 +74,9 @@
 - [Durable Node acknowledgment intents](20261017105545-node-durable-acknowledgment-intents.md)
 
 - [Node deferred event acknowledgment worker](20261017-node-event-acknowledgment-worker.md)
+- [ADR-20261019120046: Preserve configuration when deployment acceptance is uncertain](20261019120046-deploy-submission-outcomes.md) — explicit submission outcomes and commit uncertainty across processes
+
+- [ADR-20261019120045: Deploy upload recovery across CLI processes](20261019120045-deploy-upload-recovery.md) — content and intent checkpoints, interruption recovery, and expired-session replacement keys
 
 ADR-001 through ADR-010 are **accepted and locked for v1**; they live inline in
 [`../faas_implementation_spec.md`](../faas_implementation_spec.md) §3, not as
@@ -293,6 +298,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 996 | [AI gateway phase 6: Responses API routes, forced tool choice on current Claude models, hard-cap gaps and opt-in content capture](996-ai-gateway-responses-api-hard-cap-gaps-content-capture.md) | accepted | openai routes accept the stateless Responses API (passthrough to OpenAI/Azure, translated replies and stream events for other targets); forced `tool_choice` becomes `auto` plus an instruction on Claude models that reject it; billable calls with unreadable usage settle at their reservation; new end users past the day's 10,000 are refused while per-user limits are set; opt-in capture of the first 32 KiB of logged calls' bodies (1,000 per day, 3 days) |
 | 997 | [AI gateway phase 7: media metering, content guardrails and replay](997-ai-gateway-media-metering-content-guardrails-replay.md) | accepted | Image, Imagen, transcription and speech calls are billable and reserved per image, audio second or character (5 new media prices, 106 catalog models); usage read from the tail of large JSON responses; per-integration content policy (email, payment card, IBAN, secret: off/redact/block, blocked terms) enforced before forwarding; captures always redacted; replay of a captured call on up to 5 targets through outboundd's worker with usage, cost, latency and output text |
 | 998 | [AI gateway preview: plan entitlement, staged account rollout and qualification](998-ai-gateway-preview-rollout.md) | accepted | AI gateway moves to preview on Hobby, Pro and Scale; plan entitlement enforced in apid (402) and outboundd (403); `ai_gateway_accounts` / `FAAS_AI_GATEWAY_ACCOUNTS` limits the gate to listed accounts during the preview; settlement timeout 2 s -> 15 s after the soak dropped usage; acceptance test, failure drills, opt-in soak, alerts, dashboard panels, runbook and customer page |
+| 20261020161811 | [AI gateway: metered Gemini and Vertex Live sessions](20261020161811-ai-gateway-gemini-live-sessions.md) | accepted | Amends ADR 20261019072722 after a measured Vertex session: Live usageMetadata is per turn with the turn's context as input, so each model turn is admitted at its first output and settled from its usage; the model comes from the caller's setup message, and messages are read from binary frames too |
 | 20261019132139 | [AI gateway: prompt prefixes shared across outboundd replicas](20261019132139-ai-gateway-shared-prompt-prefixes.md) | accepted | Automatic prompt caching marks a prefix once any outboundd has seen it within the cache lifetime: a process that has not asks Postgres, which keeps prefix hashes only, and falls back to its own memory on failure |
 | 20261019123822 | [AI gateway prices, limits and costs in US dollars](20261019123822-ai-gateway-usd.md) | accepted | Amends ADR-1430: the AI gateway catalog takes LiteLLM US-dollar prices with no exchange rate, and price lists, cost limits and costs are read in the billing currency; the catalog response gains currency and deprecates usd_per_eur and fx_source |
 | 20261019072722 | [AI gateway phase 18: metered realtime sessions](20261019072722-ai-gateway-realtime-sessions.md) | accepted | OpenAI and Azure OpenAI Realtime WebSocket sessions pass through outboundd transparently; each provider response is admitted against the caps and settled from its usage, audio tokens are priced at audio prices, and Gemini and Vertex Live stay unmetered |
@@ -1358,6 +1364,33 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-869: Reconnectable durable entity sessions](869-reconnectable-durable-entity-sessions.md)
 - [ADR-870: Durable session recovery and lifecycle](870-durable-session-recovery-and-lifecycle.md)
 
+- [ADR-977: Decompose cmd/apid into pkg/apid domain packages](977-apid-package-decomposition.md)
+
+- [ADR-20261019120044: Deploy acceptance and secret ordering](20261019120044-deploy-acceptance-and-secret-ordering.md)
+
+- [ADR-20261019120048: Saved deploy sessions](20261019120048-saved-deploy-sessions.md)
+
+- [ADR-20261019120047: Atomic deploy settings recovery](20261019120047-atomic-deploy-settings-recovery.md)
+
+- [ADR-20261019120049: Durable deployment submission receipts](20261019120049-deployment-submission-receipts.md)
+
+- [ADR-20261019120050: Durable pre-submission profiling and tracing recovery](20261019120050-durable-deploy-policy-staging.md)
+
+- [ADR-20261019120051: Durable manifest cron staging and recovery](20261019120051-durable-deploy-cron-staging.md)
+
+- [ADR-20261019120010: Progressive project canary policy](20261019120010-project-progressive-canary-policy.md)
+
+- [ADR-20261019120011: Durable project worker release pins](20261019120011-durable-project-worker-release-pins.md)
+
+- [ADR-20261019120012: Retained project worker pools for pinned jobs](20261019120012-retained-project-worker-pools.md)
+
+- [ADR-20261019120013: Staged project canary publication and transactional promotion](20261019120013-staged-project-canary-publication.md)
+
+- [ADR-20261019120022: Snapshot-aware HTTP environment promotion](20261019120022-snapshot-aware-environment-promotion.md)
+
+- [ADR-20261019120023: Health-gated HTTP environment promotion](20261019120023-health-gated-environment-promotion.md)
+
+- [ADR-20261019120024: Destination-aware HTTP service graph promotion](20261019120024-destination-aware-service-graph-promotion.md)
 
 - [ADR-1237: Local management MCP server](1237-local-management-mcp.md)
 - [ADR-1238: Reviewed management MCP releases and delegated OAuth](1238-management-mcp-releases-and-oauth.md)
@@ -1562,6 +1595,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1132: Wake-ahead evidence survives gateway restarts](1132-wake-ahead-evidence-survives-restarts.md)
 
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
+- [ADR-20261017190801: Provider-bound GitLab review and workload provenance](20261017190801-gitlab-reviewed-gitops.md)
 
 - [ADR-1520: Rate-limit token leasing](1520-rate-limit-token-leasing.md)
 - [ADR-1522: Recoverable operator restart execution](1522-recoverable-operator-restart-execution.md)
@@ -1664,6 +1698,30 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR-1591: Managed Postgres data pipelines](1591-managed-postgres-data-pipelines.md)
 
+- [ADR-20261017190802: Reviewed source-backed scheduled Jobs](20261017190802-gitops-source-scheduled-jobs.md)
+
+- [ADR-20261017190803: Read-only GitOps promotion proposals](20261017190803-gitops-promotion-proposals.md)
+
+- [ADR-20261017190804: Reuse signed build artifacts across GitOps environments](20261017190804-gitops-built-artifact-reuse.md)
+
+- [ADR-20261017190805: Reviewed GitOps rollback proposals](20261017190805-gitops-reviewed-rollback-proposals.md)
+
+- [ADR-20261017190806: GitOps recovery catalog](20261017190806-gitops-recovery-catalog.md)
+
+- [ADR-20261017190807: Bounded GitOps recovery artifact retention](20261017190807-gitops-bounded-recovery-retention.md)
+
+- [ADR-20261017190808: Signed artifact promotion and rollback for scheduled Jobs](20261017190808-gitops-scheduled-job-artifact-promotion-and-rollback.md)
+
+- [ADR-20261017190809: Reuse signed builds for unchanged isolated GitOps contexts](20261017190809-gitops-unchanged-build-context-reuse.md)
+
+- [ADR-20261017190810: Reviewed GitOps promotion pull and merge requests](20261017190810-gitops-promotion-review-requests.md)
+
+- [ADR-20261017190811: Reviewed GitOps recovery pull and merge requests](20261017190811-gitops-rollback-review-requests.md)
+
+- [ADR-20261017190812: Wait for a GitOps commit's recorded serving evidence](20261017190812-gitops-wait-for-serving-commit.md)
+
+- [ADR-20261017190813: Durable GitOps rollout outcome notifications](20261017190813-gitops-rollout-outcome-notifications.md)
+
 - [ADR-20261017191501: Browser and Task migration parity for Go/Python MCP starters](20261017191501-mcp-go-python-starter-parity.md)
 - [ADR-20261017191502: Bounded starter protocol observations](20261017191502-mcp-starter-protocol-telemetry.md)
 - [ADR-20261017191503: Read-only MCP operations dashboard](20261017191503-read-only-mcp-operations-dashboard.md)
@@ -1720,5 +1778,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1136: Project environment configuration reaches every service as environment variables](1136-project-environment-config-as-environment-variables.md)
 - [ADR-1137: Declared dependencies seed opt-in wake-ahead](1137-declared-dependencies-seed-wake-ahead.md) — an opted-in app wakes its declared dependencies until 20 wakes of evidence decide (amends ADR-977)
+- [ADR-1138: Service calls join the caller's trace when it serves one request](1138-service-calls-join-the-callers-trace.md) — a call without traceparent from an instance serving exactly one request continues that request's trace, marked trace_inferred
 
 - [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)

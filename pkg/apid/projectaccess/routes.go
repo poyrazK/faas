@@ -46,6 +46,12 @@ var routeActions = map[string]authz.OrgAction{
 	"DELETE /v1/projects/{slug}/environments/{environment}":                            authz.OrgActionDeleteProject,
 }
 
+// preCreationRoutes may name a personal project that its first deploy will
+// create. They create nothing and are reviewed like collection requests.
+var preCreationRoutes = map[string]bool{
+	"POST /v1/projects/{slug}/deployment-readiness": true,
+}
+
 func Action(pattern string) (authz.OrgAction, bool) {
 	switch pattern {
 	case "POST /dashboard/projects/{slug}/update":

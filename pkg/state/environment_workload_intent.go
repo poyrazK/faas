@@ -188,7 +188,7 @@ func validateWorkloadIntent(row EnvironmentWorkloadIntent, app App, environment 
 	if err := validateEnvironmentServiceBindings(row.AppID, row.ServiceBindings); err != nil {
 		return row, err
 	}
-	if row.SourceRevision != "" && (!environmentCommitRE.MatchString(row.SourceRevision) || row.Source == nil || row.Source.Kind == "image") {
+	if row.SourceRevision != "" && (!environmentCommitRE.MatchString(row.SourceRevision) || row.Source == nil || row.Source.Kind == "image" || row.Source.BuildArtifactID != "") {
 		return row, ErrInvalidArgument
 	}
 	raw, _ := json.Marshal(row.Runtime)

@@ -43,7 +43,7 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume, workflows bool) {
 	secrets := map[string]string{}
 	created, patched, minted := 0, 0, 0
 	var bindingAccess string
-	app := map[string]any{"id": "app", "slug": "shop-auth", "type": "app", "url": "https://shop-auth.gregale.app", "require_authn": true, "public_auth": map[string]string{"mode": "bearer"}}
+	app := map[string]any{"id": "a1", "slug": "shop-auth", "type": "app", "url": "https://shop-auth.gregale.app", "require_authn": true, "public_auth": map[string]string{"mode": "bearer"}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/v1/postgres/databases":

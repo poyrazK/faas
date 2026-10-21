@@ -300,7 +300,15 @@ func TestRealtimeUpgradesTheGatewayCannotMeterAreRefused(t *testing.T) {
 		{api.OutboundAIProviderOpenAI, "/v1/realtime/calls", false},
 		{api.OutboundAIProviderAzureOpenAI, "/openai/v1/realtime", true},
 		{api.OutboundAIProviderAzureOpenAI, "/openai/realtime", true},
-		{api.OutboundAIProviderGemini, "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent", false},
+		// adr: 20261020161811 — Live sessions are metered, its ephemeral-token
+		// variant is not.
+		{api.OutboundAIProviderGemini, "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent", true},
+		{api.OutboundAIProviderGemini, "/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent", true},
+		{api.OutboundAIProviderGemini, "/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained", false},
+		{api.OutboundAIProviderVertex, "/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent", true},
+		{api.OutboundAIProviderVertex, "/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent", true},
+		{api.OutboundAIProviderVertex, "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent", false},
+		{api.OutboundAIProviderOpenAI, "/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent", false},
 	} {
 		if got := realtimePath(tc.provider, tc.path); got != tc.want {
 			t.Errorf("realtimePath(%s, %s) = %v", tc.provider, tc.path, got)

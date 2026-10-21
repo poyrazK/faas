@@ -6501,7 +6501,14 @@ haveApp:
 					return
 				}
 				var releaseErr error
-				projectReleaseID, projectReleaseDeploymentID, releaseErr = resolver.ResolveProjectRelease(r.Context(), app.ID, projectReleaseScope, requested)
+				canary, supportsCanary := h.backend.(interface {
+					ResolveProjectCanary(context.Context, string, string, string) (string, string, error)
+				})
+				if requested == "" && supportsCanary {
+					projectReleaseID, projectReleaseDeploymentID, releaseErr = canary.ResolveProjectCanary(r.Context(), app.ID, projectReleaseScope, uuid.NewString())
+				} else {
+					projectReleaseID, projectReleaseDeploymentID, releaseErr = resolver.ResolveProjectRelease(r.Context(), app.ID, projectReleaseScope, requested)
+				}
 				if releaseErr != nil {
 					status := http.StatusServiceUnavailable
 					if errors.Is(releaseErr, ErrReleaseGone) {
@@ -6839,7 +6846,7 @@ haveApp:
 	}
 	if routeProbe {
 		exactDeploymentID = probeDeploymentID
-		exactDeploymentScope = app.Scope
+		exactDeploymentScope = h.routeProbeScope(app, probeDeploymentID, probeToken)
 		exactDeploymentTrigger = sched.TriggerGateway
 		exactUnavailableTitle = "Route probe unavailable"
 		exactUnavailableDetail = "the probed deployment has no routable target"

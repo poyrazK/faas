@@ -16,10 +16,17 @@ type devSourceSyncState struct {
 	unsupported bool
 }
 
-func deployDeveloperSource(client *Client, ctx context.Context, slug, fullPath, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations, state *devSourceSyncState) (api.DeploymentResponse, error) {
+func deployDeveloperSource(client *Client, ctx context.Context, slug, fullPath, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations, state *devSourceSyncState) (dep api.DeploymentResponse, err error) {
 	if state.unsupported {
 		return DeployTarballWithSourceRoot(client, ctx, slug, fullPath, runtime, handler, dockerfile, sourceRoot, ann)
 	}
+	// Inspection and delta creation happen before any submission request.
+	submitting := false
+	defer func() {
+		if err != nil && !submitting {
+			err = submissionError(deploySubmissionRejected, err)
+		}
+	}()
 	limits := sourcedelta.Limits{MaxEntries: api.SourceArchiveMaxEntries}
 	fullFile, err := openCustomerFile(fullPath)
 	if err != nil {
@@ -59,7 +66,8 @@ func deployDeveloperSource(client *Client, ctx context.Context, slug, fullPath, 
 		}
 	}
 
-	dep, err := DeployDevSourceTarball(client, ctx, slug, sourcePath, runtime, handler, dockerfile, sourceRoot, ann, baseRevision, current.Revision, deleted)
+	submitting = true
+	dep, err = DeployDevSourceTarball(client, ctx, slug, sourcePath, runtime, handler, dockerfile, sourceRoot, ann, baseRevision, current.Revision, deleted)
 	if isDevSourceBaseMissing(err) {
 		if !jsonOutput {
 			PrintProgress(osStderr, "source cache missed; sending complete snapshot")
@@ -81,7 +89,7 @@ func deployDeveloperSource(client *Client, ctx context.Context, slug, fullPath, 
 		deleted = nil
 	}
 	if err != nil {
-		return api.DeploymentResponse{}, err
+		return dep, err
 	}
 	state.manifest = current
 	state.hasManifest = true

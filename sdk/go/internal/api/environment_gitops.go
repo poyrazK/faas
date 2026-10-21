@@ -44,9 +44,10 @@ type ApproveEnvironmentGitRevisionResponse struct {
 }
 
 type EnvironmentGitOpsStatusResponse struct {
-	WorkloadRetirements []EnvironmentWorkloadRetirement `json:"workload_retirements,omitempty"`
-	Source              EnvironmentGitSource            `json:"source"`
-	Runs                []EnvironmentGitOpsRun          `json:"runs"`
+	WorkloadEvidence    *EnvironmentWorkloadActivationEvidence `json:"workload_evidence,omitempty"`
+	WorkloadRetirements []EnvironmentWorkloadRetirement        `json:"workload_retirements,omitempty"`
+	Source              EnvironmentGitSource                   `json:"source"`
+	Runs                []EnvironmentGitOpsRun                 `json:"runs"`
 }
 
 type AdoptEnvironmentGitOpsRequest struct {
@@ -186,9 +187,6 @@ func (s EnvironmentGitSourceSpec) Validate() error {
 	}
 	if s.Mode != "report" && s.Mode != "enforce" || s.ApprovalPolicy != "manual" && s.ApprovalPolicy != "protected_branch" {
 		return fmt.Errorf("Git source needs report/enforce mode and manual/protected_branch approval_policy")
-	}
-	if provider == "gitlab" && (s.Mode != "report" || s.ApprovalPolicy != "manual" || s.Prune) {
-		return fmt.Errorf("GitLab source currently supports report mode, manual approval, and retained resources")
 	}
 	return nil
 }

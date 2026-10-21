@@ -67,6 +67,10 @@ func (p Proxy) SetAvailable(available bool) {
 }
 
 func OpenProxy(t *testing.T, cluster *pgxpool.Pool, listenIP string, port uint16) Proxy {
+	return OpenProxyWithDeadline(t, cluster, listenIP, port, 30*time.Second)
+}
+
+func OpenProxyWithDeadline(t *testing.T, cluster *pgxpool.Pool, listenIP string, port uint16, deadline time.Duration) Proxy {
 	t.Helper()
 	listener, err := net.Listen("tcp4", net.JoinHostPort(listenIP, strconv.Itoa(int(port))))
 	if err != nil {

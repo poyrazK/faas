@@ -45,7 +45,14 @@ func (m *MemStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams
 	defer m.mu.Unlock()
 	return m.createAppTaskLocked(resolved)
 }
+
 func (m *MemStore) createAppTaskLocked(resolved CreateAppTaskParams) (AppTask, error) {
+	if !m.promotionMigrationTaskAllowedLocked(resolved) {
+		return AppTask{}, ErrConflict
+	}
+	if m.migrationDeploymentRetiredLocked(resolved.DeploymentID) {
+		return AppTask{}, ErrAppTaskDeploymentUnavailable
+	}
 	m.ensureAppTasksLocked()
 	if err := m.admitRehearsalCommandLocked(resolved); err != nil {
 		return AppTask{}, err
@@ -764,6 +771,9 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 			m.syncAppTaskOccurrenceLocked(candidate, claimedAt)
 			continue
 		}
+		if !m.migrationTaskAllowedLocked(candidate) {
+			continue
+		}
 		priority := candidate.CreatedAt
 		if candidate.RetryAt != nil {
 			priority = *candidate.RetryAt
@@ -811,7 +821,10 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	if !ok || task.Status != AppTaskRestoring || task.LeaseToken == nil ||
 		m.financialPreviewCommandHeldLocked(task, startedAt) ||
 		*task.LeaseToken != leaseToken || task.CancelRequested != nil || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(startedAt) ||
-		!m.appTaskExclusiveCurrentLocked(task, startedAt) {
+		!m.appTaskExclusiveCurrentLocked(task, startedAt) || !m.migrationTaskAllowedLocked(task) {
+		return AppTask{}, ErrAppTaskLeaseLost
+	}
+	if !m.migrationRuntimeCurrentLocked(task) || !m.promotionMigrationDispatchCurrentLocked(task) {
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
 	if startedAt.Before(task.CreatedAt) {

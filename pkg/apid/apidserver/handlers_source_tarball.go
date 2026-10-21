@@ -261,7 +261,10 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	if !s.admitCanaryDeployment(w, r, rollout) {
 		return
 	}
-	stagedManifest, manifestProblem = s.applySourceRefManifest(r.Context(), acct, app, manifest, rollout.Scope, !sidecar.NoTriggers)
+	stagedManifest, manifestProblem = s.stageSourceDeploymentManifest(r, acct, app, manifest, rollout, !sidecar.NoTriggers)
+	if stagedManifest.cronIntent != nil {
+		r = r.WithContext(state.ContextWithDeploymentSubmission(r.Context(), stagedManifest.cronIntent.SessionID))
+	}
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return
@@ -328,7 +331,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 
 	s.auditLocalTarballDeploy(r, acct, app, res, sidecar, spoolBytes, ann)
 
-	d, err := s.store.LatestDeployment(r.Context(), app.ID)
+	d, err := s.store.DeploymentByID(r.Context(), res.DeploymentID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 		return

@@ -228,14 +228,35 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if !ok {
 		return inv, InvocationVersion{}, ErrConflict
 	}
-	if revision != "" {
+	jobPinned := false
+	if !ingress && projectApp && scope == "production" && inv.QueueBindingID != "" && inv.Attempts > 0 && app.Manifest.ExecutionMode == api.ExecutionModeWorker && (inv.Source == InvocationQueue || inv.Source == InvocationReplay || inv.Source == InvocationSource("esm")) {
+		if pins, supported := store.(projectWorkerReleasePinStore); supported {
+			claimed := inv
+			claimed.AccountID = app.AccountID
+			version, jobPinned, err = pins.ResolveProjectWorkerJobRelease(ctx, claimed, revision, release)
+			if err != nil {
+				return inv, InvocationVersion{}, err
+			}
+		}
+	}
+	if jobPinned {
+		// Durable lineage authority has already resolved and validated the graph.
+	} else if revision != "" {
 		dep, err := resolver.ResolveRevisionPin(ctx, app.ID, scope, revision)
 		if err != nil {
 			return inv, InvocationVersion{}, err
 		}
 		version.DeploymentID = dep.ID
 	} else {
-		version.ReleaseID, version.DeploymentID, err = resolver.ResolveProjectRelease(ctx, app.ID, scope, release)
+		if ingress && release == "" && projectApp && app.Manifest.ExecutionMode != api.ExecutionModeWorker {
+			if canary, ok := store.(ProjectCanaryStore); ok {
+				version.ReleaseID, version.DeploymentID, err = canary.ResolveProjectCanary(ctx, app.ID, scope, uuid.NewString())
+			} else {
+				version.ReleaseID, version.DeploymentID, err = resolver.ResolveProjectRelease(ctx, app.ID, scope, release)
+			}
+		} else {
+			version.ReleaseID, version.DeploymentID, err = resolver.ResolveProjectRelease(ctx, app.ID, scope, release)
+		}
 		if err != nil {
 			return inv, InvocationVersion{}, err
 		}
