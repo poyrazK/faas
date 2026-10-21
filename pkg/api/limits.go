@@ -5961,6 +5961,12 @@ const (
 	// The host receiver stays open longer than this window so a no-bind
 	// worker can use the entire observation budget before reporting.
 	CharacterizationDeadline = 10 * time.Second
+	// ProvenWorkerCharacterizationWindow replaces CharacterizationDeadline for
+	// a declared worker whose deployment already passed the full window on
+	// the same node (ADR-20261018101500). The full window still validates a deployment's
+	// first boot there; a later boot only shows its process started and
+	// stayed up, so a pool scales out without waiting ten seconds per worker.
+	ProvenWorkerCharacterizationWindow = time.Second
 	// CharacterizationPreferredPortGrace is how long waitForBind waits for
 	// the app's expected port once it sees another listener first: an app
 	// may open a private TCP (ADR-576), metrics or admin port before its
@@ -13023,6 +13029,23 @@ const OperationWorkflowPlaybookReviewsMax = 32
 const (
 	MaxNotificationChannelsPerAccount = 20
 	MaxChannelsPerAlertRule           = 5
+)
+
+// Object storage in budgets (ADR-20261020160000): apid records each billing
+// account's live estimate every FinancialObjectStorageEstimateInterval; the
+// cost report treats an estimate older than FinancialObjectStorageEstimateFreshness
+// as stale.
+const (
+	FinancialObjectStorageEstimateInterval  = 5 * time.Minute
+	FinancialObjectStorageEstimateFreshness = 15 * time.Minute
+)
+
+// Budget alert channels (ADR-20261019193500). A delivery that keeps failing is
+// abandoned after FinancialBudgetChannelAttemptsMax claims; the account email
+// alert (ADR-566) is unaffected.
+const (
+	MaxChannelsPerFinancialBudget     = 5
+	FinancialBudgetChannelAttemptsMax = 12
 )
 
 // Change timeline bounds (ADR-751). Each source is read with the event cap so

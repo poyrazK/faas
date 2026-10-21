@@ -117,6 +117,8 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	environment := []string{
 		"FAAS_HOST_HMAC_KEY_PATH=" + hmacPath,
 		"FAAS_RELEASE_PHASE_ENABLED=1",
+		// apid gates the public app task API separately from schedd dispatch.
+		"FAAS_APP_TASK_API_ENABLED=1",
 		"FAAS_APP_TASK_DISPATCH=1",
 		"FAAS_HOST_KEY_PATH=" + filepath.Join(keys, "host.age"),
 		"FAAS_HOST_AGE_IDENTITY_PATH=" + filepath.Join(keys, "host.age"),
@@ -210,7 +212,13 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	// literal endpoint. This isolated proxy uses only one benchmark IP.
 	proxyCIDR := netip.PrefixFrom(netip.MustParseAddr(proxy.Host), 32).String()
 	destinations := []string{proxyCIDR}
-	if status := statusOnly(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{EgressPorts: &ports, EgressAllowlist: &destinations}); status != http.StatusOK {
+	// Pro apps default to public_auth_mode=bearer (ADR-080) as well as
+	// require_authn; the SQL probe requests are anonymous, so open both gates.
+	openAuth := &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
+	// The starters' /healthz reads the database after a restore; while parked
+	// the gateway answers the health path itself unless it may wake (Pro+).
+	healthWakes := true
+	if status := statusOnly(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{EgressPorts: &ports, EgressAllowlist: &destinations, PublicAuth: openAuth, HealthPathWakes: &healthWakes}); status != http.StatusOK {
 		t.Fatalf("declare SQL destination and TCP port through app policy: status=%d", status)
 	}
 	app, err := store.AppByID(t.Context(), appID)
@@ -464,7 +472,20 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
 			t.Fatalf("park SQL app: status=%d", status)
 		}
-		initialSnapshot = waitAfterRestoreSnapshot(t, store, deploymentID, initialSnapshot)
+		// pooled_disconnect_recovery captured the post-rotation snapshot. Parking
+		// the guest restored from it keeps that healthy init capture instead of
+		// uploading another one (sched reusableSnapshot), so accept either it or
+		// a newer capture, but never a stale one.
+		ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+		defer cancel()
+		if _, err := e2etest.WaitForAppParked(ctx, t, pool, appID, 45*time.Second); err != nil {
+			t.Fatal("rotated SQL guest did not park")
+		}
+		snapshot, err := store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
+		if err != nil || snapshot.Stale {
+			t.Fatal("rotated SQL guest has no usable init snapshot")
+		}
+		initialSnapshot = snapshot.ID
 		last = probe(t, bindings[mp.CredentialReadWrite], "restore")
 	})
 	phase("parked_rotation_scheduler_recovery", func(t *testing.T) {

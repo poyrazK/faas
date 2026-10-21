@@ -1954,8 +1954,10 @@ from .financial_app_costs_response_currency import FinancialAppCostsResponseCurr
 from .financial_app_meter_costs import FinancialAppMeterCosts
 from .financial_attribution import FinancialAttribution
 from .financial_budget_alert import FinancialBudgetAlert
+from .financial_budget_alert_kind import FinancialBudgetAlertKind
 from .financial_budget_alert_last_error import FinancialBudgetAlertLastError
 from .financial_budget_alert_state import FinancialBudgetAlertState
+from .financial_budget_channels_response import FinancialBudgetChannelsResponse
 from .financial_budget_evaluation import FinancialBudgetEvaluation
 from .financial_budget_history_response import FinancialBudgetHistoryResponse
 from .financial_budget_list_response import FinancialBudgetListResponse
@@ -5395,6 +5397,7 @@ from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsRequest
 from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
+from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
 from .set_mcp_readiness_fallback_request_provider import SetMCPReadinessFallbackRequestProvider
@@ -7879,8 +7882,10 @@ __all__ = (
     "FinancialAppMeterCosts",
     "FinancialAttribution",
     "FinancialBudgetAlert",
+    "FinancialBudgetAlertKind",
     "FinancialBudgetAlertLastError",
     "FinancialBudgetAlertState",
+    "FinancialBudgetChannelsResponse",
     "FinancialBudgetEvaluation",
     "FinancialBudgetHistoryResponse",
     "FinancialBudgetListResponse",
@@ -11072,6 +11077,7 @@ __all__ = (
     "SetDeploymentAliasRequest",
     "SetEnvironmentRouteBudgetsRequest",
     "SetEnvironmentRouteBudgetsScope",
+    "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
     "SetMCPReadinessFallbackRequest",
     "SetMCPReadinessFallbackRequestProvider",

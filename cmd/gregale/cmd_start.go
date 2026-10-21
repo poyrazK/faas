@@ -150,7 +150,7 @@ func (r *startRunner) authenticate() int {
 		}
 		PrintWarn(osStdout, "Your saved login has expired.")
 	}
-	ok, err := r.prompt.confirm(r.ctx, "Open your browser to sign in")
+	ok, err := r.prompt.confirmYes(r.ctx, "Open your browser to sign in")
 	if err != nil {
 		// Login is required: declining/EOF must stop the entire flow.
 		if errors.Is(err, context.Canceled) {

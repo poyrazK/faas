@@ -1667,6 +1667,10 @@ func (s *PgStore) JobTaskClaimBatch(ctx context.Context, limit int) ([]JobTask, 
 		        and (failed.work_decision->>'action' = 'fail_partition' OR
  ((failed.work_decision is null or failed.work_decision->>'action' = 'retry') and failed.attempt > coalesce(r.retry_max, j.retry_max)))))
 		    and (job_tasks.next_attempt_at is null or job_tasks.next_attempt_at <= now())
+		    and not exists (
+		      -- ADR-20261018210500: a queued customer Operation waits for apid's releaser.
+		      select 1 from customer_operations o join customer_operation_queue q on q.operation_id = o.id
+		      where o.job_run_id = job_tasks.run_id)
 			and (r.execution_class = 'standard' or
 			         (r.eligible_at <= now() and r.latest_start_at > now()))
 		    and (r.start_deadline_at is null or r.start_deadline_at >= now() or exists (
