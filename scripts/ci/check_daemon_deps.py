@@ -10,11 +10,15 @@ drifting back. scripts/ci/daemon_deps.json lists the rules:
 
   {"rules": [{"package": "pkg/sched", "binaries": ["imaged"], "reason": "..."}]}
 
-A package without a dot in its first path element is relative to the
-module (pkg/sched); any other is an import path (golang.org/x/net/trace).
-"binaries": "DAEMONS" names every daemon in the Makefile. A rule's package
-matches itself only, not its subpackages (pkg/sched/flowcount is a separate
-leaf). Closures are loaded like affected_units.py loads them: `go list
+A package with a dot in its first path element is an import path
+(golang.org/x/net/trace); one without is a standard library package when
+the binary loads one of that name and the module has none (text/template),
+and otherwise relative to the module (pkg/sched).
+"binaries": "DAEMONS" names every daemon in the Makefile, less the rule's
+"except" list. "allow_importers" names packages that may import the rule's
+package (a library that only parses a template, say): the binary violates
+the rule only when another package imports it. A rule's package matches
+itself only, not its subpackages (pkg/sched/flowcount is a separate leaf). Closures are loaded like affected_units.py loads them: `go list
 -deps` under the release build configuration (linux/amd64, CGO off, the
 Makefile's DAEMON_TAGS for daemons). A violation prints the import chain
 that pulls the package in.
@@ -45,8 +49,9 @@ def load_rules(path):
     return rules
 
 
-def import_chain(graph, main, target):
-    """The shortest import path from main to target, or None."""
+def import_chain(graph, main, target, allowed_importers=frozenset()):
+    """The shortest import path from main to target, or None. An import of
+    target by one of allowed_importers does not count."""
     prev, queue = {main: None}, deque([main])
     while queue:
         pkg = queue.popleft()
@@ -57,15 +62,29 @@ def import_chain(graph, main, target):
                 pkg = prev[pkg]
             return chain[::-1]
         for imp in sorted((graph.get(pkg) or {}).get("imports", ())):
+            if imp == target and pkg in allowed_importers:
+                continue
             if imp in graph and imp not in prev:
                 prev[imp] = pkg
                 queue.append(imp)
     return None
 
 
-def import_path(package, module):
-    """A rule's package as an import path."""
-    return package if "." in package.split("/")[0] else f"{module}/{package}"
+def import_path(package, module, graph=None):
+    """A rule's package as an import path, in the binary whose package
+    graph is graph (see the module docstring)."""
+    if "." in package.split("/")[0]:
+        return package
+    if graph is not None and package in graph and f"{module}/{package}" not in graph:
+        return package
+    return f"{module}/{package}"
+
+
+def rule_binaries(rule, daemons=()):
+    """The binaries a rule covers."""
+    if rule["binaries"] == "DAEMONS":
+        return [d for d in daemons if d not in set(rule.get("except", ()))]
+    return list(rule["binaries"])
 
 
 def violations(rules, graphs, module, daemons=()):
@@ -74,12 +93,13 @@ def violations(rules, graphs, module, daemons=()):
     from ({import path: {"imports": set}})."""
     out = []
     for rule in rules:
-        target = import_path(rule["package"], module)
-        binaries = list(daemons) if rule["binaries"] == "DAEMONS" else rule["binaries"]
-        for name in binaries:
+        for name in rule_binaries(rule, daemons):
             if name not in graphs:
                 raise ValueError(f"rule for {rule['package']} names {name}, which is not a release binary")
-            chain = import_chain(graphs[name], f"{module}/cmd/{name}", target)
+            graph = graphs[name]
+            target = import_path(rule["package"], module, graph)
+            allowed = frozenset(import_path(p, module, graph) for p in rule.get("allow_importers", ()))
+            chain = import_chain(graph, f"{module}/cmd/{name}", target, allowed)
             if chain:
                 out.append((rule, name, [p.removeprefix(module + "/") for p in chain]))
     return out
@@ -121,7 +141,7 @@ def main():
         print(f"{name} links {rule['package']}: {' -> '.join(chain)}\n  {rule['reason']}", file=sys.stderr)
     if found:
         return 1
-    pairs = sum(len(daemons) if r["binaries"] == "DAEMONS" else len(r["binaries"]) for r in rules)
+    pairs = sum(len(rule_binaries(r, daemons)) for r in rules)
     print(f"daemon deps: {pairs} binary/package rules hold")
     return 0
 

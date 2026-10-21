@@ -112,6 +112,18 @@
               <button type="submit">Add in log mode</button>
             </form>
           {{end}}
+          {{with .Alternative}}
+            {{if .Blocked}}
+              <p class="muted">Or {{.Title}}: {{.Blocked}}</p>
+            {{else}}
+              <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/recipes">
+                <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
+                <input type="hidden" name="recipe" value="{{.Recipe}}">
+                {{range .Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+                <button type="submit">Or: {{.Title}} (log mode)</button>
+              </form>
+            {{end}}
+          {{end}}
         </div>
       {{end}}
     </section>
@@ -247,6 +259,9 @@
             {{if or .Warned .Blocked .InlineSkipped}}<p>WAF in-path checks (headers and URL): <strong>{{.Blocked}}</strong> blocked, <strong>{{.Warned}}</strong> warned, <strong>{{.InlineSkipped}}</strong> passed unchecked (budget).</p>{{end}}
             {{if .Categories}}<p>Detections by category: {{range $i, $c := .Categories}}{{if $i}}, {{end}}{{$c.Name}} <strong>{{$c.Count}}</strong>{{end}}.</p>{{end}}
             {{if .TopRules}}<p>Top CRS rules: {{range $i, $c := .TopRules}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong>{{end}}. Exclude a false positive with <code>exclude_rule_ids</code>.</p>{{end}}
+          {{end}}{{end}}
+          {{with .Challenge}}{{if or .Issued .Solved .Rejected .Passed .Bypassed .Invalid}}
+            <p>Challenges: <strong>{{.Issued}}</strong> pages served, <strong>{{.Solved}}</strong> solved, <strong>{{.Rejected}}</strong> non-browser requests refused, <strong>{{.Passed}}</strong> let through on an earlier solve, <strong>{{.Bypassed}}</strong> verified API clients, <strong>{{.Invalid}}</strong> invalid solutions.</p>
           {{end}}{{end}}
           <p class="muted">Get alerted on bursts with the <code>pre_auth_pressure</code>, <code>edge_validation_failures</code>, <code>edge_rejection_pressure</code>, and <code>edge_waf_detections</code> alert presets. CLI: <code>gregale edge-rules summary --app {{$.Data.App.Slug}} --range 24h</code>.</p>
         {{end}}

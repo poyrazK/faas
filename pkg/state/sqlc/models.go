@@ -1893,23 +1893,24 @@ type BillingResourceAccount struct {
 
 // Month-end billing runs (ADR-1301): one ended UTC month billed for every customer with billable usage; worker-leased.
 type BillingRun struct {
-	ID             pgtype.UUID
-	AccountID      pgtype.UUID
-	PeriodStart    pgtype.Timestamptz
-	PeriodEnd      pgtype.Timestamptz
-	Sources        []string
-	Finalize       bool
-	ExportProvider string
-	HoldOnGaps     bool
-	Trigger        string
-	Status         string
-	DiscoveredAt   pgtype.Timestamptz
-	LeaseOwner     pgtype.Text
-	LeaseUntil     pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
-	StartedAt      pgtype.Timestamptz
-	CompletedAt    pgtype.Timestamptz
-	NotifiedAt     pgtype.Timestamptz
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	PeriodEnd           pgtype.Timestamptz
+	Sources             []string
+	Finalize            bool
+	ExportProvider      string
+	HoldOnGaps          bool
+	Trigger             string
+	Status              string
+	DiscoveredAt        pgtype.Timestamptz
+	LeaseOwner          pgtype.Text
+	LeaseUntil          pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	StartedAt           pgtype.Timestamptz
+	CompletedAt         pgtype.Timestamptz
+	NotifiedAt          pgtype.Timestamptz
+	ProductDiscoveredAt pgtype.Timestamptz
 }
 
 // One customer of a billing run: the statement drafted, finalized or exported for it, or why it was held, skipped or failed.
@@ -1925,6 +1926,24 @@ type BillingRunItem struct {
 	Currency         pgtype.Text
 	AmountMillicents pgtype.Int8
 	Completeness     pgtype.Text
+	InvoiceID        pgtype.Text
+	ExportedCount    int32
+	Reason           pgtype.Text
+	Attempts         int32
+	NextAttemptAt    pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+// One Product Control customer (app and platform tenant) of a billing run (ADR-20261018212918).
+type BillingRunProductItem struct {
+	RunID            pgtype.UUID
+	AppID            pgtype.UUID
+	TenantID         pgtype.UUID
+	ExternalRef      string
+	Outcome          string
+	DocumentID       pgtype.UUID
+	Currency         pgtype.Text
+	AmountMillicents pgtype.Int8
 	InvoiceID        pgtype.Text
 	ExportedCount    int32
 	Reason           pgtype.Text
@@ -3000,6 +3019,13 @@ type CustomerWorkflowReadinessSubscription struct {
 	NextEvaluationAt pgtype.Timestamptz
 	LeaseToken       pgtype.UUID
 	LeaseUntil       pgtype.Timestamptz
+}
+
+// ADR-20261016151947 Data API access settings last reported by the runtime, applied to anonymous and server-key live reads.
+type DataApiAccessConfig struct {
+	AppID      pgtype.UUID
+	Config     []byte
+	ReportedAt pgtype.Timestamptz
 }
 
 type DataApiRuntimeConnectionObservation struct {
@@ -10686,6 +10712,26 @@ type ProductControlOnboarding struct {
 	Receipt            []byte
 	CreatedAt          pgtype.Timestamptz
 	AccessVerifiedAt   pgtype.Timestamptz
+}
+
+// Product Control customers whose new starts are refused because of an overdue invoice; recomputed by apid (ADR-20261018212918).
+type ProductControlOverdueHold struct {
+	AppID      pgtype.UUID
+	TenantID   pgtype.UUID
+	AccountID  pgtype.UUID
+	DocumentID pgtype.UUID
+	ExportID   pgtype.UUID
+	DueAt      pgtype.Timestamptz
+	Since      pgtype.Timestamptz
+}
+
+// Per-app rule refusing new Product Control starts from customers whose exported statement is unpaid that many days after its due date (ADR-20261018212918).
+type ProductControlOverduePolicy struct {
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	BlockOverdueAfterDays int32
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 type ProductControlPlanChange struct {

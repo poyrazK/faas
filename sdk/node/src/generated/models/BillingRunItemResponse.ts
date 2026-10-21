@@ -3,10 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * What a billing run did for one app consumer or platform tenant.
+ * What a billing run did for one app consumer, platform tenant or Product Control customer. A product_control item names its app in app_id and its customer in platform_tenant_id; its statement_id is the Product Control statement document.
  */
 export type BillingRunItemResponse = {
-  source_kind: 'app_consumer' | 'platform_tenant';
+  source_kind: 'app_consumer' | 'platform_tenant' | 'product_control';
   app_id?: string;
   consumer_id?: string;
   platform_tenant_id?: string;
@@ -15,7 +15,7 @@ export type BillingRunItemResponse = {
    */
   external_ref: string;
   /**
-   * up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage or a completeness gap. skipped: billed through a platform tenant, or already invoiced through the other path.
+   * up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage, a completeness gap, or Product Control runs with no recorded outcome. skipped: billed through a platform tenant, or already invoiced through the other path or by hand.
    */
   outcome: 'pending' | 'drafted' | 'finalized' | 'exported' | 'up_to_date' | 'held' | 'skipped' | 'failed';
   statement_id?: string;

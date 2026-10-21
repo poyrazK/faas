@@ -134,3 +134,35 @@ func TestScannerSuggestionKeepsServedSoftware(t *testing.T) {
 		t.Fatalf("build: %+v %v", req.Match, prob)
 	}
 }
+
+// adr: 831 — amendment 7: sign-in and /admin suggestions offer challenging
+// browsers as a softer alternative, unless a challenge rule already covers
+// the path.
+func TestEdgeRuleRecipeSuggestionAlternatives(t *testing.T) {
+	routes := []EdgeRuleRecipeSuggestionRoute{{Method: "POST", Path: "/login", Requests: 900}, {Path: "/admin", Requests: 40}}
+	got := SuggestEdgeRuleRecipes(EdgeRuleRecipeSuggestionSignals{Days: 7, Routes: routes})
+	alts := map[string]string{}
+	for _, sg := range got {
+		if sg.Alternative == nil {
+			t.Fatalf("%s has no alternative", sg.Recipe)
+		}
+		if sg.Alternative.Recipe != EdgeRuleRecipeChallengePath || sg.Alternative.Title == "" {
+			t.Fatalf("alternative = %+v", sg.Alternative)
+		}
+		alts[sg.Recipe] = sg.Alternative.Params["path"]
+		if _, prob := BuildEdgeRuleRecipe(sg.Alternative.Recipe, EdgeRuleAppHosts, sg.Alternative.Params, false); prob != nil {
+			t.Fatalf("alternative does not build: %v", prob.Detail)
+		}
+	}
+	if alts[EdgeRuleRecipeRateLimitPath] != "/login" || alts[EdgeRuleRecipeAllowIPsOnly] != "/admin/**" {
+		t.Fatalf("alternative paths = %v", alts)
+	}
+	covered := SuggestEdgeRuleRecipes(EdgeRuleRecipeSuggestionSignals{Days: 7, Routes: routes, Rules: []EdgeRuleRecipeSuggestionRule{
+		{Kind: "challenge", MatchPath: "/**", Description: EdgeRuleRecipeDescription(EdgeRuleRecipeChallengePath), Enabled: true},
+	}})
+	for _, sg := range covered {
+		if sg.Alternative != nil {
+			t.Fatalf("%s offers a challenge the app already has: %+v", sg.Recipe, sg.Alternative)
+		}
+	}
+}

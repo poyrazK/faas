@@ -3,7 +3,7 @@
   const node = (tag, text = '') => { const value = document.createElement(tag); value.textContent = text; return value; };
   const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(value) && value !== '00000000-0000-0000-0000-000000000000';
   const hex = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
-  const labels = permissions => [['view_work', 'View work'], ['run_work', 'Run work'], ['view_billing', 'View billing'], ['manage_plan', 'Manage plan'], ['manage_team', 'Manage team']].filter(([key]) => permissions?.[key] === true).map(([, label]) => label).join(', ') || 'No product access';
+  const labels = permissions => [['view_work', 'View work'], ['run_work', 'Run work'], ['view_billing', 'View billing'], ['manage_plan', 'Manage plan'], ['manage_team', 'Manage team'], ['manage_billing', 'Manage billing details']].filter(([key]) => permissions?.[key] === true).map(([, label]) => label).join(', ') || 'No product access';
   globalThis.GregaleProductTeam = class {
     constructor(host) {
       this.host = host; this.reset();

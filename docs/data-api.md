@@ -1257,6 +1257,49 @@ they hear about it. `data-api diagnostics` counts requests refused by caps.
 Cap values are stored as app secrets and are not shown again; set them again
 to change them.
 
+## Live reads
+
+A live read keeps a Data API read current: the client receives the rows, then
+each change as writes commit. Row-level security decides every row with the
+same claims a REST read gets.
+
+```sh
+gregale data-api live enable shop-data
+gregale data-api live status shop-data   # the same report, changing nothing
+```
+
+`enable` sets up only what is missing:
+
+- live queries on the Data API's database;
+- usage reporting, which also tells realtime how this Data API verifies user
+  tokens, which relations are public and the hashes of its server keys (never
+  the keys). The API restarts to report them;
+- a realtime endpoint on the Data API app. Its connections carry live reads
+  only and never call the app.
+
+It prints the WebSocket URL and the database ID that clients use with
+[`@gregale/data/live`](../sdk/data/README.md#live-reads):
+
+```ts
+const connection = new LiveConnection({ connect: liveSocket(LIVE_URL) })
+const feed = connection.query({ database: DATABASE_ID, token: () => session.accessToken,
+  ...liveRead(db.from('messages').select('id,body').eq('channel_id', 7)) })
+```
+
+Each read brings its own credential, checked like a REST request:
+
+- **A signed-in user's token** is verified with the Data API's issuer, JWKS
+  and audience.
+- **`anonymous: true`** reads only relations in the
+  [public-read allowlist](#public-reads), embedded relations included.
+- **A server key** stays within its [permissions](#restrict-what-a-server-key-can-do)
+  and is refused on connections opened from a browser.
+
+Open reads check their credential again every hour, so a revoked key or a
+narrowed allowlist reaches them within the hour. Live connections count
+against your realtime connection limits. If live queries are not yet
+available to your account, `enable` says so and changes nothing.
+
 ## Aggregates
 
 Aggregate queries are off by default. Turn them on with:

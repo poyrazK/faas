@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EdgeRuleRecipeSuggestionAlternative } from './EdgeRuleRecipeSuggestionAlternative.js';
 /**
  * One suggested protection recipe and why (ADR-20261020105000).
  */
@@ -22,5 +23,6 @@ export type EdgeRuleRecipeSuggestion = {
    * Recipe parameters to add it with; required parameters not listed must be supplied.
    */
   params?: Record<string, string>;
+  alternative?: EdgeRuleRecipeSuggestionAlternative;
 };
 
