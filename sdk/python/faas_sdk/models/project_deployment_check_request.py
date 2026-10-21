@@ -26,6 +26,7 @@ class ProjectDeploymentCheckRequest:
     expected_state_hash: str | Unset = UNSET
     atomic: bool | Unset = UNSET
     add_services: bool | Unset = UNSET
+    remove_services: bool | Unset = UNSET
     verify: bool | Unset = UNSET
     workers: bool | Unset = UNSET
     worker_health: bool | Unset = UNSET
@@ -49,6 +50,8 @@ class ProjectDeploymentCheckRequest:
         atomic = self.atomic
 
         add_services = self.add_services
+
+        remove_services = self.remove_services
 
         verify = self.verify
 
@@ -94,6 +97,8 @@ class ProjectDeploymentCheckRequest:
             field_dict["atomic"] = atomic
         if add_services is not UNSET:
             field_dict["add_services"] = add_services
+        if remove_services is not UNSET:
+            field_dict["remove_services"] = remove_services
         if verify is not UNSET:
             field_dict["verify"] = verify
         if workers is not UNSET:
@@ -131,6 +136,8 @@ class ProjectDeploymentCheckRequest:
         atomic = d.pop("atomic", UNSET)
 
         add_services = d.pop("add_services", UNSET)
+
+        remove_services = d.pop("remove_services", UNSET)
 
         verify = d.pop("verify", UNSET)
 
@@ -170,6 +177,7 @@ class ProjectDeploymentCheckRequest:
             expected_state_hash=expected_state_hash,
             atomic=atomic,
             add_services=add_services,
+            remove_services=remove_services,
             verify=verify,
             workers=workers,
             worker_health=worker_health,

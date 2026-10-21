@@ -102,6 +102,11 @@ func (m *MemStore) publishProjectReleaseWithIDLocked(ctx context.Context, accoun
 				return ProjectReleaseSet{}, ErrConflict
 			}
 		}
+		for _, removal := range change.Safe.Removals {
+			if app := m.apps[removal.AppID]; app.ProjectID != projectID || ProjectReleaseAdditionFingerprint(app) != removal.Fingerprint {
+				return ProjectReleaseSet{}, ErrConflict
+			}
+		}
 	}
 	omitted, err := allowedReleaseAdditionOmissions(records, byApp, change)
 	if err != nil {
@@ -203,6 +208,11 @@ func (m *MemStore) publishProjectReleaseWithIDLocked(ctx context.Context, accoun
 			record := m.projectReleaseAdditions[addition.AppID]
 			record.Dormant = change.Rollback
 			m.projectReleaseAdditions[addition.AppID] = record
+		}
+		for _, removal := range change.Safe.Removals {
+			record := m.projectReleaseAdditions[removal.AppID]
+			record.Dormant = !change.Rollback
+			m.projectReleaseAdditions[removal.AppID] = record
 		}
 	}
 	return release, nil

@@ -17,6 +17,9 @@ from ...models.scan_project_project_progressive import (
 from ...models.scan_project_project_release_mode import (
     ScanProjectProjectReleaseMode,
 )
+from ...models.scan_project_project_remove_services import (
+    ScanProjectProjectRemoveServices,
+)
 from ...models.scan_project_project_stabilization import (
     ScanProjectProjectStabilization,
 )
@@ -30,6 +33,7 @@ def _get_kwargs(
     *,
     body: ProjectScanRequest,
     project_add_services: ScanProjectProjectAddServices | Unset = UNSET,
+    project_remove_services: ScanProjectProjectRemoveServices | Unset = UNSET,
     project_stabilization: ScanProjectProjectStabilization | Unset = UNSET,
     project_progressive: ScanProjectProjectProgressive | Unset = UNSET,
     project_worker_health: ScanProjectProjectWorkerHealth | Unset = UNSET,
@@ -38,6 +42,9 @@ def _get_kwargs(
     headers: dict[str, Any] = {}
     if not isinstance(project_add_services, Unset):
         headers["Project-Add-Services"] = str(project_add_services)
+
+    if not isinstance(project_remove_services, Unset):
+        headers["Project-Remove-Services"] = str(project_remove_services)
 
     if not isinstance(project_stabilization, Unset):
         headers["Project-Stabilization"] = str(project_stabilization)
@@ -122,6 +129,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: ProjectScanRequest,
     project_add_services: ScanProjectProjectAddServices | Unset = UNSET,
+    project_remove_services: ScanProjectProjectRemoveServices | Unset = UNSET,
     project_stabilization: ScanProjectProjectStabilization | Unset = UNSET,
     project_progressive: ScanProjectProjectProgressive | Unset = UNSET,
     project_worker_health: ScanProjectProjectWorkerHealth | Unset = UNSET,
@@ -142,6 +150,7 @@ def sync_detailed(
 
     Args:
         project_add_services (ScanProjectProjectAddServices | Unset):
+        project_remove_services (ScanProjectProjectRemoveServices | Unset):
         project_stabilization (ScanProjectProjectStabilization | Unset):
         project_progressive (ScanProjectProjectProgressive | Unset):
         project_worker_health (ScanProjectProjectWorkerHealth | Unset):
@@ -159,6 +168,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         body=body,
         project_add_services=project_add_services,
+        project_remove_services=project_remove_services,
         project_stabilization=project_stabilization,
         project_progressive=project_progressive,
         project_worker_health=project_worker_health,
@@ -177,6 +187,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: ProjectScanRequest,
     project_add_services: ScanProjectProjectAddServices | Unset = UNSET,
+    project_remove_services: ScanProjectProjectRemoveServices | Unset = UNSET,
     project_stabilization: ScanProjectProjectStabilization | Unset = UNSET,
     project_progressive: ScanProjectProjectProgressive | Unset = UNSET,
     project_worker_health: ScanProjectProjectWorkerHealth | Unset = UNSET,
@@ -197,6 +208,7 @@ def sync(
 
     Args:
         project_add_services (ScanProjectProjectAddServices | Unset):
+        project_remove_services (ScanProjectProjectRemoveServices | Unset):
         project_stabilization (ScanProjectProjectStabilization | Unset):
         project_progressive (ScanProjectProjectProgressive | Unset):
         project_worker_health (ScanProjectProjectWorkerHealth | Unset):
@@ -215,6 +227,7 @@ def sync(
         client=client,
         body=body,
         project_add_services=project_add_services,
+        project_remove_services=project_remove_services,
         project_stabilization=project_stabilization,
         project_progressive=project_progressive,
         project_worker_health=project_worker_health,
@@ -227,6 +240,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: ProjectScanRequest,
     project_add_services: ScanProjectProjectAddServices | Unset = UNSET,
+    project_remove_services: ScanProjectProjectRemoveServices | Unset = UNSET,
     project_stabilization: ScanProjectProjectStabilization | Unset = UNSET,
     project_progressive: ScanProjectProjectProgressive | Unset = UNSET,
     project_worker_health: ScanProjectProjectWorkerHealth | Unset = UNSET,
@@ -247,6 +261,7 @@ async def asyncio_detailed(
 
     Args:
         project_add_services (ScanProjectProjectAddServices | Unset):
+        project_remove_services (ScanProjectProjectRemoveServices | Unset):
         project_stabilization (ScanProjectProjectStabilization | Unset):
         project_progressive (ScanProjectProjectProgressive | Unset):
         project_worker_health (ScanProjectProjectWorkerHealth | Unset):
@@ -264,6 +279,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         body=body,
         project_add_services=project_add_services,
+        project_remove_services=project_remove_services,
         project_stabilization=project_stabilization,
         project_progressive=project_progressive,
         project_worker_health=project_worker_health,
@@ -280,6 +296,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: ProjectScanRequest,
     project_add_services: ScanProjectProjectAddServices | Unset = UNSET,
+    project_remove_services: ScanProjectProjectRemoveServices | Unset = UNSET,
     project_stabilization: ScanProjectProjectStabilization | Unset = UNSET,
     project_progressive: ScanProjectProjectProgressive | Unset = UNSET,
     project_worker_health: ScanProjectProjectWorkerHealth | Unset = UNSET,
@@ -300,6 +317,7 @@ async def asyncio(
 
     Args:
         project_add_services (ScanProjectProjectAddServices | Unset):
+        project_remove_services (ScanProjectProjectRemoveServices | Unset):
         project_stabilization (ScanProjectProjectStabilization | Unset):
         project_progressive (ScanProjectProjectProgressive | Unset):
         project_worker_health (ScanProjectProjectWorkerHealth | Unset):
@@ -319,6 +337,7 @@ async def asyncio(
             client=client,
             body=body,
             project_add_services=project_add_services,
+            project_remove_services=project_remove_services,
             project_stabilization=project_stabilization,
             project_progressive=project_progressive,
             project_worker_health=project_worker_health,

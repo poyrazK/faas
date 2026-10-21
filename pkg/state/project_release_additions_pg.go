@@ -161,6 +161,15 @@ func guardReleaseAdditionsDB(ctx context.Context, tx pgx.Tx, accountID, projectI
 				return nil, ErrConflict
 			}
 		}
+		for _, removal := range change.Safe.Removals {
+			app, err := releaseAdditionAppDB(ctx, tx, removal.AppID)
+			if err != nil {
+				return nil, err
+			}
+			if app.ProjectID != projectID || ProjectReleaseAdditionFingerprint(app) != removal.Fingerprint {
+				return nil, ErrConflict
+			}
+		}
 	}
 	return allowedReleaseAdditionOmissions(records, members, change)
 }
@@ -186,6 +195,11 @@ func applyReleaseAdditionsDB(ctx context.Context, tx pgx.Tx) error {
 			return err
 		}
 	}
+	for _, removal := range change.Safe.Removals {
+		if err := sqlc.New().SetProjectReleaseAdditionDormant(ctx, tx, sqlc.SetProjectReleaseAdditionDormantParams{AppID: removal.AppID, Dormant: !change.Rollback}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -195,7 +209,7 @@ func (m *MemStore) publishSafeProjectReleaseLocked(ctx context.Context, accountI
 		expected = safe.ReleaseID
 	}
 	var change *releaseAdditionChange
-	if safe.AddServices {
+	if safe.AddServices || safe.RemoveServices {
 		change = &releaseAdditionChange{attemptID, safe, rollback}
 	}
 	return m.publishProjectReleaseWithIDLocked(ctx, accountID, projectID, "production", &expected, nil, safe.TTLSeconds, members, "", change)

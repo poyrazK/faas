@@ -201,16 +201,19 @@ func guardReleaseAdditionDeployment(d Deployment, record projectReleaseAdditionR
 type releaseAdditionChangeKey struct{}
 
 func withReleaseAdditionChange(ctx context.Context, attemptID string, safe *api.ProjectSafeRelease, rollback bool) context.Context {
-	if safe == nil || !safe.AddServices {
+	if safe == nil || !safe.AddServices && !safe.RemoveServices {
 		return ctx
 	}
 	return context.WithValue(ctx, releaseAdditionChangeKey{}, &releaseAdditionChange{attemptID, safe, rollback})
 }
 
-// Only the captured additions may cross the serving-membership boundary.
+// Only the captured additions and retirements may cross the serving-membership
+// boundary: an addition joins as its record leaves dormancy, a retirement
+// (ADR-20261021120000) leaves as its record enters it, and rollback reverses both.
 func allowedReleaseAdditionOmissions(records map[string]projectReleaseAdditionRecord, members map[string]string, change *releaseAdditionChange) (map[string]bool, error) {
 	allowed := map[string]bool{}
 	changes := map[string]bool{}
+	removing := map[string]bool{}
 	if change != nil {
 		for _, addition := range change.Safe.Additions {
 			record, ok := records[addition.AppID]
@@ -223,17 +226,28 @@ func allowedReleaseAdditionOmissions(records map[string]projectReleaseAdditionRe
 			}
 			changes[addition.AppID] = true
 		}
+		for _, removal := range change.Safe.Removals {
+			record, ok := records[removal.AppID]
+			if !ok || record.AttemptID != change.AttemptID || record.Fingerprint != removal.Fingerprint || changes[removal.AppID] || removing[removal.AppID] {
+				return nil, ErrConflict
+			}
+			_, included := members[removal.AppID]
+			if included != change.Rollback || record.Dormant != change.Rollback {
+				return nil, ErrConflict
+			}
+			removing[removal.AppID] = true
+		}
 	}
 	for id, record := range records {
 		_, included := members[id]
 		if record.Dormant {
-			if included && !changes[id] {
+			if included && !changes[id] && !removing[id] {
 				return nil, ErrConflict
 			}
 			if !included {
 				allowed[id] = true
 			}
-		} else if change != nil && change.Rollback && changes[id] {
+		} else if change != nil && (change.Rollback && changes[id] || !change.Rollback && removing[id]) {
 			allowed[id] = true
 		}
 	}
@@ -254,6 +268,14 @@ func guardReleaseAdditionMembership(change *releaseAdditionChange, baseline []Pr
 		}
 		if !change.Rollback {
 			expected[addition.AppID] = true
+		}
+	}
+	for _, removal := range change.Safe.Removals {
+		if !expected[removal.AppID] {
+			return ErrConflict
+		}
+		if !change.Rollback {
+			delete(expected, removal.AppID)
 		}
 	}
 	if len(expected) != len(members) {

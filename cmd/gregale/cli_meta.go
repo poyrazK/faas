@@ -2633,6 +2633,7 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "atomic", Group: "Projects", Short: "publish an existing HTTP project only after all zero-traffic candidates are ready; requires --project", Bool: true},
 			{Name: "add-services", Group: "Projects", Short: "reserve new HTTP services and publish them with the atomic project release", Bool: true},
+			{Name: "remove-services", Group: "Projects", Short: "retire serving HTTP services the source no longer declares with the atomic project release", Bool: true},
 			{Name: "verify", Group: "Projects", Short: "verify critical probe routes after atomic cutover and automatically restore the previous project on regression; requires --atomic", Bool: true},
 			{Name: "workers", Group: "Projects", Short: "include one push-queue worker in a verified atomic project release", Bool: true},
 			{Name: "stabilize", Group: "Projects", Short: "monitor health for ten minutes after progressive rollout succeeds", Bool: true},

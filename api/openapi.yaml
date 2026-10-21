@@ -34498,6 +34498,11 @@ paths:
           required: false
           description: Require planned HTTP source service additions; disabled until native qualification. No removals or configuration changes.
           schema: { type: string, enum: [required] }
+        - name: Project-Remove-Services
+          in: header
+          required: false
+          description: Plan retiring serving HTTP services the source no longer declares; disabled until native qualification. Cannot combine with additions.
+          schema: { type: string, enum: [required] }
         - name: Project-Stabilization
           in: header
           required: false
@@ -34676,6 +34681,11 @@ paths:
           in: header
           required: false
           description: Apply the scanned independent HTTP service additions after native qualification; preserve existing membership and configuration.
+          schema: { type: string, enum: [required] }
+        - name: Project-Remove-Services
+          in: header
+          required: false
+          description: Retire serving HTTP services the source no longer declares at cutover; they stay retained for rollback until deleted. Disabled until native qualification.
           schema: { type: string, enum: [required] }
         - name: Project-Stabilization
           in: header
@@ -61290,6 +61300,11 @@ paths:
           in: header
           required: false
           description: "Company project: apply the scanned independent HTTP service additions after native qualification; preserve existing membership and configuration."
+          schema: { type: string, enum: [required] }
+        - name: Project-Remove-Services
+          in: header
+          required: false
+          description: "Company project: retire serving HTTP services the source no longer declares at cutover; disabled until native qualification."
           schema: { type: string, enum: [required] }
         - name: Project-Stabilization
           in: header
@@ -101299,6 +101314,7 @@ components:
         expected_state_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         atomic: { type: boolean }
         add_services: { type: boolean }
+        remove_services: { type: boolean }
         verify: { type: boolean }
         workers: { type: boolean }
         worker_health: { type: boolean }
@@ -103113,6 +103129,10 @@ components:
         additions:
           type: array
           items: { $ref: '#/components/schemas/ProjectReleaseAddition' }
+        remove_services: { type: boolean, description: Explicit opt-in to retire serving HTTP services the source no longer declares. }
+        removals:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectReleaseRemoval' }
         status: { type: string, enum: [building, activated, failed, conflicted, verifying, succeeded, rolling_back, rolled_back, rollback_failed] }
         previous_release_id: { type: string }
         release_id: { type: string }
@@ -103129,6 +103149,16 @@ components:
       type: object
       description: Source-owned settings bound by the plan. app_id is assigned during durable reservation.
       required: [slug, root_dir, fingerprint]
+      properties:
+        app_id: { type: string }
+        slug: { type: string }
+        root_dir: { type: string }
+        fingerprint: { type: string, pattern: '^[a-f0-9]{64}$' }
+
+    ProjectReleaseRemoval:
+      type: object
+      description: A serving service retired at cutover (ADR-20261021120000). The fingerprint binds its settings at planning.
+      required: [app_id, slug, root_dir, fingerprint]
       properties:
         app_id: { type: string }
         slug: { type: string }

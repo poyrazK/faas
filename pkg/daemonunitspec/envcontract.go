@@ -147,6 +147,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_ARTIFACT_SYNC_TARGET", Owners: []string{"imaged"}, Source: EnvSourceScript, Note: "consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env"},
 	{Name: "FAAS_ARTIFACT_SYNC_USER", Owners: []string{"imaged"}, Source: EnvSourceScript, Note: "consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env"},
 	{Name: "FAAS_ATOMIC_SERVICE_ADDITIONS_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "disabled by default pending dedicated native service-addition qualification; operator opt-in only"},
+	{Name: "FAAS_ATOMIC_SERVICE_REMOVALS_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "disabled by default pending dedicated native service-retirement qualification (ADR-20261021120000); operator opt-in only"},
 	{Name: "FAAS_ATOMIC_WORKER_RELEASES_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "disabled by default pending dedicated native release qualification; operator opt-in only"},
 	{Name: "FAAS_AUDIT_HMAC_KEY", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`)"},
 	{Name: "FAAS_AUDIT_HMAC_KEY_FILE", Owners: []string{"apid"}, Source: EnvSourceDefault},

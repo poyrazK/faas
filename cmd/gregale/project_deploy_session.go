@@ -243,6 +243,9 @@ func (s *savedDeploySession) rememberProjectApply(apply api.ApplyResponse) error
 	if p.SafeRelease != nil && apply.SafeRelease != nil && (p.SafeRelease.AddServices != apply.SafeRelease.AddServices || api.ProjectReleaseAdditionsPolicyID(p.SafeRelease.Additions) != api.ProjectReleaseAdditionsPolicyID(apply.SafeRelease.Additions)) {
 		return errors.New("project service additions changed from the saved plan")
 	}
+	if p.SafeRelease != nil && apply.SafeRelease != nil && (p.SafeRelease.RemoveServices != apply.SafeRelease.RemoveServices || api.ProjectReleaseRemovalsPolicyID(p.SafeRelease.Removals) != api.ProjectReleaseRemovalsPolicyID(apply.SafeRelease.Removals)) {
+		return errors.New("project service removals changed from the saved plan")
+	}
 	if p.SafeRelease != nil && apply.SafeRelease != nil {
 		for i, addition := range p.SafeRelease.Additions {
 			if addition.AppID != "" && addition.AppID != apply.SafeRelease.Additions[i].AppID {

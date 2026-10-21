@@ -13,6 +13,7 @@ export type ProjectDeploymentCheckRequest = {
   expected_state_hash?: string;
   atomic?: boolean;
   add_services?: boolean;
+  remove_services?: boolean;
   verify?: boolean;
   workers?: boolean;
   worker_health?: boolean;

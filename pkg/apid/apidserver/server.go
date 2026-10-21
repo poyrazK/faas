@@ -511,6 +511,7 @@ type server struct {
 	projectCanariesEnabled           bool
 	projectReleaseSecretsEnabled     bool
 	atomicServiceAdditionsEnabled    bool
+	atomicServiceRemovalsEnabled     bool
 	appTaskAPIEnabled                bool
 	// ADR-435: keep standards intent/exception mutations disabled until
 	// consumer convergence, rollout recovery and native acceptance pass.

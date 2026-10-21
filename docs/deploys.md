@@ -10,9 +10,19 @@ New services pass startup readiness before the graph switches; `--verify` checks
 existing critical routes and restores the original membership on regression.
 New services have no baseline probe history. Failed or withdrawn additions keep
 their app IDs and consume quota but have no default route. An identical retry
-can reuse them after the earlier attempt finishes. Removal, dependencies, declared
+can reuse them after the earlier attempt finishes. Combining additions with removals, dependencies, declared
 environment keys, schedules, workers, images, migration commands, configuration
 snapshots and progressive rollout are unsupported in this first version.
+
+`gregale deploy --project --atomic --remove-services --yes` retires serving HTTP
+services that the source no longer declares, in the same cutover as the rest of
+the project; check it first with `gregale deploy check --project --atomic
+--remove-services`. A retired service stops receiving environment traffic but
+keeps its app ID, quota slot and deployments for rollback until you delete it.
+Services with enabled schedules, queue bindings or custom domains, or that
+another service depends on, cannot be retired this way; removals cannot be
+combined with additions. Admission is disabled by default until
+[native qualification](adr/20261021120000-atomic-http-service-removals.md) passes.
 
 Atomic project deploys (`--project --atomic`) accept backing services declared
 beside the workloads, such as a compose `db` service using a `postgres` image.
@@ -1058,6 +1068,9 @@ post-cutover delivery health is tracked independently. A healthy subset cannot
 complete the release. A qualified regression restores the entire application after
 all retained workers are ready. Existing jobs keep their original version pins.
 Multiple consumers per worker, pull/job workers and sidecars remain unsupported.
+A worker with work policies (per-key ordering lanes) can be promoted when the
+source and destination define the same policies; the destination keeps its own
+records ([ADR-20261021130000](adr/20261021130000-worker-work-policies-in-promotion.md)).
 Multiple-worker promotion additionally requires the signed `worker_set` capability
 and its native qualification receipts; production enablement remains pending.
 See [ADR-20261019120040](adr/20261019120040-multiple-worker-environment-promotion.md).

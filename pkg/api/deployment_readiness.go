@@ -17,6 +17,7 @@ type ProjectDeploymentCheckRequest struct {
 	ExpectedStateHash string                           `json:"expected_state_hash,omitempty"`
 	Atomic            bool                             `json:"atomic,omitempty"`
 	AddServices       bool                             `json:"add_services,omitempty"`
+	RemoveServices    bool                             `json:"remove_services,omitempty"`
 	Verify            bool                             `json:"verify,omitempty"`
 	Workers           bool                             `json:"workers,omitempty"`
 	WorkerHealth      bool                             `json:"worker_health,omitempty"`

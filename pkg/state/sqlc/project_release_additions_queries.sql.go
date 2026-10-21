@@ -212,3 +212,35 @@ func (q *Queries) SetProjectReleaseAdditionDormant(ctx context.Context, db DBTX,
 	_, err := db.Exec(ctx, setProjectReleaseAdditionDormant, arg.Dormant, arg.AppID)
 	return err
 }
+
+const stageProjectReleaseRemoval = `-- name: StageProjectReleaseRemoval :execrows
+INSERT INTO project_release_additions(app_id, account_id, project_id, attempt_id, fingerprint, dormant)
+VALUES($1::text::uuid, $2::text::uuid, $3::text::uuid,
+       $4::text, $5::text, false)
+ON CONFLICT(app_id) DO UPDATE SET attempt_id = EXCLUDED.attempt_id, fingerprint = EXCLUDED.fingerprint
+WHERE NOT project_release_additions.dormant
+`
+
+type StageProjectReleaseRemovalParams struct {
+	AppID       string
+	AccountID   string
+	ProjectID   string
+	AttemptID   string
+	Fingerprint string
+}
+
+// A retirement takes over a serving record (ADR-20261021120000); a dormant
+// reservation or retirement is never re-staged.
+func (q *Queries) StageProjectReleaseRemoval(ctx context.Context, db DBTX, arg StageProjectReleaseRemovalParams) (int64, error) {
+	result, err := db.Exec(ctx, stageProjectReleaseRemoval,
+		arg.AppID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.AttemptID,
+		arg.Fingerprint,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

@@ -18,6 +18,9 @@ from ...models.safe_apply_org_project_project_progressive import (
 from ...models.safe_apply_org_project_project_release_mode import (
     SafeApplyOrgProjectProjectReleaseMode,
 )
+from ...models.safe_apply_org_project_project_remove_services import (
+    SafeApplyOrgProjectProjectRemoveServices,
+)
 from ...models.safe_apply_org_project_project_stabilization import (
     SafeApplyOrgProjectProjectStabilization,
 )
@@ -34,6 +37,7 @@ def _get_kwargs(
     body: ProjectApplyRequest,
     plan_token: str | Unset = UNSET,
     project_add_services: SafeApplyOrgProjectProjectAddServices | Unset = UNSET,
+    project_remove_services: SafeApplyOrgProjectProjectRemoveServices | Unset = UNSET,
     project_stabilization: SafeApplyOrgProjectProjectStabilization | Unset = UNSET,
     project_progressive: SafeApplyOrgProjectProjectProgressive | Unset = UNSET,
     project_worker_health: SafeApplyOrgProjectProjectWorkerHealth | Unset = UNSET,
@@ -43,6 +47,9 @@ def _get_kwargs(
     headers: dict[str, Any] = {}
     if not isinstance(project_add_services, Unset):
         headers["Project-Add-Services"] = str(project_add_services)
+
+    if not isinstance(project_remove_services, Unset):
+        headers["Project-Remove-Services"] = str(project_remove_services)
 
     if not isinstance(project_stabilization, Unset):
         headers["Project-Stabilization"] = str(project_stabilization)
@@ -144,6 +151,7 @@ def sync_detailed(
     body: ProjectApplyRequest,
     plan_token: str | Unset = UNSET,
     project_add_services: SafeApplyOrgProjectProjectAddServices | Unset = UNSET,
+    project_remove_services: SafeApplyOrgProjectProjectRemoveServices | Unset = UNSET,
     project_stabilization: SafeApplyOrgProjectProjectStabilization | Unset = UNSET,
     project_progressive: SafeApplyOrgProjectProjectProgressive | Unset = UNSET,
     project_worker_health: SafeApplyOrgProjectProjectWorkerHealth | Unset = UNSET,
@@ -161,6 +169,7 @@ def sync_detailed(
         slug (str):
         plan_token (str | Unset):
         project_add_services (SafeApplyOrgProjectProjectAddServices | Unset):
+        project_remove_services (SafeApplyOrgProjectProjectRemoveServices | Unset):
         project_stabilization (SafeApplyOrgProjectProjectStabilization | Unset):
         project_progressive (SafeApplyOrgProjectProjectProgressive | Unset):
         project_worker_health (SafeApplyOrgProjectProjectWorkerHealth | Unset):
@@ -184,6 +193,7 @@ def sync_detailed(
         body=body,
         plan_token=plan_token,
         project_add_services=project_add_services,
+        project_remove_services=project_remove_services,
         project_stabilization=project_stabilization,
         project_progressive=project_progressive,
         project_worker_health=project_worker_health,
@@ -206,6 +216,7 @@ def sync(
     body: ProjectApplyRequest,
     plan_token: str | Unset = UNSET,
     project_add_services: SafeApplyOrgProjectProjectAddServices | Unset = UNSET,
+    project_remove_services: SafeApplyOrgProjectProjectRemoveServices | Unset = UNSET,
     project_stabilization: SafeApplyOrgProjectProjectStabilization | Unset = UNSET,
     project_progressive: SafeApplyOrgProjectProjectProgressive | Unset = UNSET,
     project_worker_health: SafeApplyOrgProjectProjectWorkerHealth | Unset = UNSET,
@@ -223,6 +234,7 @@ def sync(
         slug (str):
         plan_token (str | Unset):
         project_add_services (SafeApplyOrgProjectProjectAddServices | Unset):
+        project_remove_services (SafeApplyOrgProjectProjectRemoveServices | Unset):
         project_stabilization (SafeApplyOrgProjectProjectStabilization | Unset):
         project_progressive (SafeApplyOrgProjectProjectProgressive | Unset):
         project_worker_health (SafeApplyOrgProjectProjectWorkerHealth | Unset):
@@ -247,6 +259,7 @@ def sync(
         body=body,
         plan_token=plan_token,
         project_add_services=project_add_services,
+        project_remove_services=project_remove_services,
         project_stabilization=project_stabilization,
         project_progressive=project_progressive,
         project_worker_health=project_worker_health,
@@ -263,6 +276,7 @@ async def asyncio_detailed(
     body: ProjectApplyRequest,
     plan_token: str | Unset = UNSET,
     project_add_services: SafeApplyOrgProjectProjectAddServices | Unset = UNSET,
+    project_remove_services: SafeApplyOrgProjectProjectRemoveServices | Unset = UNSET,
     project_stabilization: SafeApplyOrgProjectProjectStabilization | Unset = UNSET,
     project_progressive: SafeApplyOrgProjectProjectProgressive | Unset = UNSET,
     project_worker_health: SafeApplyOrgProjectProjectWorkerHealth | Unset = UNSET,
@@ -280,6 +294,7 @@ async def asyncio_detailed(
         slug (str):
         plan_token (str | Unset):
         project_add_services (SafeApplyOrgProjectProjectAddServices | Unset):
+        project_remove_services (SafeApplyOrgProjectProjectRemoveServices | Unset):
         project_stabilization (SafeApplyOrgProjectProjectStabilization | Unset):
         project_progressive (SafeApplyOrgProjectProjectProgressive | Unset):
         project_worker_health (SafeApplyOrgProjectProjectWorkerHealth | Unset):
@@ -303,6 +318,7 @@ async def asyncio_detailed(
         body=body,
         plan_token=plan_token,
         project_add_services=project_add_services,
+        project_remove_services=project_remove_services,
         project_stabilization=project_stabilization,
         project_progressive=project_progressive,
         project_worker_health=project_worker_health,
@@ -323,6 +339,7 @@ async def asyncio(
     body: ProjectApplyRequest,
     plan_token: str | Unset = UNSET,
     project_add_services: SafeApplyOrgProjectProjectAddServices | Unset = UNSET,
+    project_remove_services: SafeApplyOrgProjectProjectRemoveServices | Unset = UNSET,
     project_stabilization: SafeApplyOrgProjectProjectStabilization | Unset = UNSET,
     project_progressive: SafeApplyOrgProjectProjectProgressive | Unset = UNSET,
     project_worker_health: SafeApplyOrgProjectProjectWorkerHealth | Unset = UNSET,
@@ -340,6 +357,7 @@ async def asyncio(
         slug (str):
         plan_token (str | Unset):
         project_add_services (SafeApplyOrgProjectProjectAddServices | Unset):
+        project_remove_services (SafeApplyOrgProjectProjectRemoveServices | Unset):
         project_stabilization (SafeApplyOrgProjectProjectStabilization | Unset):
         project_progressive (SafeApplyOrgProjectProjectProgressive | Unset):
         project_worker_health (SafeApplyOrgProjectProjectWorkerHealth | Unset):
@@ -365,6 +383,7 @@ async def asyncio(
             body=body,
             plan_token=plan_token,
             project_add_services=project_add_services,
+            project_remove_services=project_remove_services,
             project_stabilization=project_stabilization,
             project_progressive=project_progressive,
             project_worker_health=project_worker_health,

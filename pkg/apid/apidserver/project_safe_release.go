@@ -79,6 +79,7 @@ func (s *server) prepareSafeProjectRelease(r *http.Request, acct state.Account, 
 	}
 	req.SafeRelease = &api.ProjectSafeRelease{Status: "building", PreviousReleaseID: release.ID, TTLSeconds: release.TTLSeconds, Deadline: time.Now().UTC().Add(api.ProjectSafeReleaseGracePeriod + time.Duration(len(release.Members)*api.BuildTimeoutSeconds)*time.Second)}
 	req.SafeRelease.AddServices = r.Header.Get(api.ProjectAddServicesHeader) == "required"
+	req.SafeRelease.RemoveServices = r.Header.Get(api.ProjectRemoveServicesHeader) == "required"
 	if mode != "atomic" {
 		verification, problem := s.prepareProjectReleaseVerification(r.Context(), acct.ID, release)
 		if problem != nil {
@@ -108,6 +109,9 @@ func (s *server) prepareSafeProjectRelease(r *http.Request, acct state.Account, 
 		req.SafeRelease.Configuration = configuration
 		if req.SafeRelease.AddServices && configuration != nil {
 			return api.ErrValidation("service additions cannot change or inherit pinned release configuration yet")
+		}
+		if req.SafeRelease.RemoveServices && configuration != nil {
+			return api.ErrValidation("service removals cannot change or inherit pinned release configuration yet")
 		}
 	} else if configMode {
 		return api.ErrCapacity("paired release configuration is unavailable")

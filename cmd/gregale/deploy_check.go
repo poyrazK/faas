@@ -28,6 +28,7 @@ func cmdDeployCheck(args []string) int {
 	fs.StringVar(&request.ExpectedStateHash, "expected-state", "", "compare the state hash from a previous check")
 	fs.BoolVar(&request.Atomic, "atomic", false, "check atomic source release prerequisites")
 	fs.BoolVar(&request.AddServices, "add-services", false, "check HTTP service addition prerequisites")
+	fs.BoolVar(&request.RemoveServices, "remove-services", false, "check HTTP service removal prerequisites")
 	fs.BoolVar(&request.Verify, "verify", false, "check critical health verification prerequisites")
 	fs.BoolVar(&request.Workers, "workers", false, "check push worker release prerequisites")
 	fs.BoolVar(&request.WorkerHealth, "worker-health", false, "require worker delivery health during deployment")
@@ -210,6 +211,7 @@ func deploymentCheckCommand() cliSub {
 		{Name: "expected-state", Short: "compare a previous check's state hash", Value: "SHA256"},
 		{Name: "atomic", Short: "check atomic source release prerequisites", Bool: true},
 		{Name: "add-services", Short: "check HTTP service addition prerequisites", Bool: true},
+		{Name: "remove-services", Short: "check HTTP service removal prerequisites", Bool: true},
 		{Name: "verify", Short: "check critical health verification prerequisites", Bool: true},
 		{Name: "workers", Short: "check push worker release prerequisites", Bool: true},
 		{Name: "worker-health", Short: "require worker delivery health during deployment", Bool: true},

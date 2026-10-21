@@ -13,6 +13,8 @@ const ProjectSafeReleaseHeader = "Project-Release-Mode"
 type ProjectSafeRelease struct {
 	AddServices       bool                         `json:"add_services,omitempty"`
 	Additions         []ProjectReleaseAddition     `json:"additions,omitempty"`
+	RemoveServices    bool                         `json:"remove_services,omitempty"`
+	Removals          []ProjectReleaseRemoval      `json:"removals,omitempty"`
 	Worker            *ProjectReleaseWorker        `json:"worker,omitempty"`
 	ReleaseCommand    *ProjectReleaseCommand       `json:"release_command,omitempty"`
 	Status            string                       `json:"status"`

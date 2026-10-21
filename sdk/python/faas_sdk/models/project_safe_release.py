@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.project_release_addition import ProjectReleaseAddition
     from ..models.project_release_command import ProjectReleaseCommand
     from ..models.project_release_configuration import ProjectReleaseConfiguration
+    from ..models.project_release_removal import ProjectReleaseRemoval
     from ..models.project_release_verification import ProjectReleaseVerification
     from ..models.project_release_worker import ProjectReleaseWorker
 
@@ -35,6 +36,9 @@ class ProjectSafeRelease:
     add_services: bool | Unset = UNSET
     """Explicit opt-in to reserve new HTTP source services."""
     additions: list[ProjectReleaseAddition] | Unset = UNSET
+    remove_services: bool | Unset = UNSET
+    """Explicit opt-in to retire serving HTTP services the source no longer declares."""
+    removals: list[ProjectReleaseRemoval] | Unset = UNSET
     release_id: str | Unset = UNSET
     message: str | Unset = UNSET
     verification: ProjectReleaseVerification | Unset = UNSET
@@ -67,6 +71,15 @@ class ProjectSafeRelease:
             for additions_item_data in self.additions:
                 additions_item = additions_item_data.to_dict()
                 additions.append(additions_item)
+
+        remove_services = self.remove_services
+
+        removals: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.removals, Unset):
+            removals = []
+            for removals_item_data in self.removals:
+                removals_item = removals_item_data.to_dict()
+                removals.append(removals_item)
 
         release_id = self.release_id
 
@@ -104,6 +117,10 @@ class ProjectSafeRelease:
             field_dict["add_services"] = add_services
         if additions is not UNSET:
             field_dict["additions"] = additions
+        if remove_services is not UNSET:
+            field_dict["remove_services"] = remove_services
+        if removals is not UNSET:
+            field_dict["removals"] = removals
         if release_id is not UNSET:
             field_dict["release_id"] = release_id
         if message is not UNSET:
@@ -126,6 +143,7 @@ class ProjectSafeRelease:
         from ..models.project_release_addition import ProjectReleaseAddition
         from ..models.project_release_command import ProjectReleaseCommand
         from ..models.project_release_configuration import ProjectReleaseConfiguration
+        from ..models.project_release_removal import ProjectReleaseRemoval
         from ..models.project_release_verification import ProjectReleaseVerification
         from ..models.project_release_worker import ProjectReleaseWorker
 
@@ -148,6 +166,17 @@ class ProjectSafeRelease:
                 additions_item = ProjectReleaseAddition.from_dict(additions_item_data)
 
                 additions.append(additions_item)
+
+        remove_services = d.pop("remove_services", UNSET)
+
+        _removals = d.pop("removals", UNSET)
+        removals: list[ProjectReleaseRemoval] | Unset = UNSET
+        if _removals is not UNSET:
+            removals = []
+            for removals_item_data in _removals:
+                removals_item = ProjectReleaseRemoval.from_dict(removals_item_data)
+
+                removals.append(removals_item)
 
         release_id = d.pop("release_id", UNSET)
 
@@ -190,6 +219,8 @@ class ProjectSafeRelease:
             deadline=deadline,
             add_services=add_services,
             additions=additions,
+            remove_services=remove_services,
+            removals=removals,
             release_id=release_id,
             message=message,
             verification=verification,

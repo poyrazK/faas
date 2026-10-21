@@ -1431,7 +1431,9 @@ func (s *server) scanService(
 				"plan_token does not match uploaded source",
 				"re-run scan and apply in one flow")
 		}
-		if req.SafeRelease == nil || !req.SafeRelease.AddServices {
+		// Membership changes are identified only after planning; the
+		// post-planning check below binds them.
+		if req.SafeRelease == nil || !req.SafeRelease.AddServices && !req.SafeRelease.RemoveServices {
 			if pt.SafeReleaseID != safeProjectReleaseID(req.SafeRelease) {
 				return nil, state.Project{}, nil, nil, nil, nil, api.ErrValidation("safe release baseline changed after scan")
 			}

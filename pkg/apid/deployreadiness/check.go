@@ -26,6 +26,7 @@ type Reader interface {
 
 type Config struct {
 	ServiceAdditionsEnabled  bool
+	ServiceRemovalsEnabled   bool
 	WorkerReleasesEnabled    bool
 	ProgressiveEnabled       bool
 	SecretsEnabled           bool

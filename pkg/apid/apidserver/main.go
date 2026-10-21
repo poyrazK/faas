@@ -1532,6 +1532,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithPromotionWorkersEnabled(deps.getenv("FAAS_PROMOTION_WORKERS_ENABLED") == "1").
 		WithProjectReleaseSecretsEnabled(deps.getenv("FAAS_PROJECT_RELEASE_SECRETS_ENABLED") == "1").
 		WithAtomicServiceAdditionsEnabled(deps.getenv("FAAS_ATOMIC_SERVICE_ADDITIONS_ENABLED") == "1").
+		WithAtomicServiceRemovalsEnabled(deps.getenv("FAAS_ATOMIC_SERVICE_REMOVALS_ENABLED") == "1").
 		WithProjectMigrationContractsEnabled(deps.getenv("FAAS_PROJECT_MIGRATION_CONTRACTS_ENABLED") == "1").
 		WithInteractiveAppTasksEnabled(apptaskattach.EnabledFromEnv(deps.getenv)).
 		WithImageRunsEnabled(imagerun.EnabledFromEnv(deps.getenv)).

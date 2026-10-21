@@ -16,6 +16,7 @@ func checkMode(r *report, req api.ProjectDeploymentCheckRequest, config Config) 
 	valid := (!req.Verify || req.Atomic) && (!req.Workers || req.Atomic && req.Verify) && (!req.WorkerHealth || req.Workers) && (!req.Migrate || req.Atomic && req.Verify) && (!req.Progressive || req.Atomic && req.Verify && len(req.ReleaseConfig) > 0 && (!req.Workers || req.WorkerHealth)) && (!req.Stabilize || req.Progressive)
 	valid = valid && (!req.Atomic || req.Environment == "production") && (len(req.ReleaseConfig) == 0 || req.Atomic && req.Verify) && !req.SyncConfig
 	valid = valid && (!req.AddServices || req.Atomic && !req.Workers && !req.Migrate && !req.Progressive && len(req.ReleaseConfig) == 0 && req.FromEnvironment == "")
+	valid = valid && (!req.RemoveServices || req.Atomic && !req.AddServices && !req.Workers && !req.Migrate && !req.Progressive && len(req.ReleaseConfig) == 0 && req.FromEnvironment == "")
 	if !valid {
 		r.add("release_mode_invalid", "blocked", "", "The requested release options are incompatible.", "Use atomic verification for workers/migrations; progressive rollout also requires paired configuration and worker health; stabilization requires progressive rollout.")
 	} else {
@@ -26,6 +27,9 @@ func checkMode(r *report, req api.ProjectDeploymentCheckRequest, config Config) 
 	}
 	if req.AddServices && !config.ServiceAdditionsEnabled {
 		r.add("service_additions_unqualified", "blocked", "", "Atomic service additions are disabled pending native qualification.", "Use a server qualified for atomic HTTP service additions.")
+	}
+	if req.RemoveServices && !config.ServiceRemovalsEnabled {
+		r.add("service_removals_unqualified", "blocked", "", "Atomic service removals are disabled pending native qualification.", "Use a server qualified for atomic HTTP service removals.")
 	}
 	if req.Progressive && !config.ProgressiveEnabled {
 		r.add("progressive_release_unqualified", "blocked", "", "Progressive release admission is disabled pending native qualification.", "Use a server qualified for progressive project releases.")
@@ -46,6 +50,10 @@ func checkRelease(ctx context.Context, r *report, store Reader, account state.Ac
 		safe := &api.ProjectSafeRelease{AddServices: true, PreviousReleaseID: baseline.ID, TTLSeconds: baseline.TTLSeconds}
 		_, sourceErr = serviceadditions.Plan(ctx, store, account, project, safe, apps, scan)
 		r.identities["service_additions"] = api.ProjectReleaseAdditionsPolicyID(safe.Additions)
+	} else if req.RemoveServices {
+		safe := &api.ProjectSafeRelease{RemoveServices: true, PreviousReleaseID: baseline.ID, TTLSeconds: baseline.TTLSeconds}
+		_, sourceErr = serviceadditions.Plan(ctx, store, account, project, safe, apps, scan)
+		r.identities["service_removals"] = api.ProjectReleaseRemovalsPolicyID(safe.Removals)
 	} else {
 		var serving []state.App
 		dormant := map[string]bool{}
@@ -126,7 +134,7 @@ func checkRelease(ctx context.Context, r *report, store Reader, account state.Ac
 			r.add("worker_consumer_compatible", "passed", worker.Slug, "Production push worker consumer intent is compatible.", "")
 		}
 	}
-	if len(req.ReleaseConfig) > 0 || req.AddServices {
+	if len(req.ReleaseConfig) > 0 || req.AddServices || req.RemoveServices {
 		reader, ok := store.(state.ProjectReleaseConfigurationStore)
 		if !ok {
 			r.add("release_config_unavailable", "unknown", "", "Paired release configuration cannot be inspected.", "Use a server with paired configuration support.")
@@ -140,6 +148,9 @@ func checkRelease(ctx context.Context, r *report, store Reader, account state.Ac
 			r.identities["release_config"] = capture
 			if req.AddServices && capture != nil {
 				r.add("service_addition_config_unsupported", "blocked", "", "Service additions cannot inherit pinned release configuration yet.", "Use an HTTP project without release configuration snapshots for this first version.")
+			}
+			if req.RemoveServices && capture != nil {
+				r.add("service_removal_config_unsupported", "blocked", "", "Service removals cannot inherit pinned release configuration yet.", "Use an HTTP project without release configuration snapshots for this first version.")
 			}
 			if capture != nil && capture.Secrets != nil && (!config.SecretsEnabled || req.Workers || req.Migrate) {
 				r.add("secret_release_unqualified", "blocked", "", "Secret snapshots require qualified HTTP-only verified release admission.", "Use the qualified HTTP-only secret release mode.")

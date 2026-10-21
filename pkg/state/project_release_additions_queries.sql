@@ -44,3 +44,12 @@ SELECT id::text AS id, account_id::text AS account_id, project_id::text AS proje
        slug, root_dir, workload_name, workload_class, coalesce(start_command, '')::text AS start_command,
        manifest, require_authn, public_auth_mode, platform_tenant_required
 FROM apps WHERE id = sqlc.arg(app_id)::text::uuid AND status <> 'deleted' FOR UPDATE;
+
+-- name: StageProjectReleaseRemoval :execrows
+-- A retirement takes over a serving record (ADR-20261021120000); a dormant
+-- reservation or retirement is never re-staged.
+INSERT INTO project_release_additions(app_id, account_id, project_id, attempt_id, fingerprint, dormant)
+VALUES(sqlc.arg(app_id)::text::uuid, sqlc.arg(account_id)::text::uuid, sqlc.arg(project_id)::text::uuid,
+       sqlc.arg(attempt_id)::text, sqlc.arg(fingerprint)::text, false)
+ON CONFLICT(app_id) DO UPDATE SET attempt_id = EXCLUDED.attempt_id, fingerprint = EXCLUDED.fingerprint
+WHERE NOT project_release_additions.dormant;

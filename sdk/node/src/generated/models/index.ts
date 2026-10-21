@@ -2287,6 +2287,7 @@ export type { ProjectReleaseControlRequest } from './ProjectReleaseControlReques
 export type { ProjectReleaseDeactivationReceipt } from './ProjectReleaseDeactivationReceipt.js';
 export type { ProjectReleaseProbe } from './ProjectReleaseProbe.js';
 export type { ProjectReleaseProbeEvidence } from './ProjectReleaseProbeEvidence.js';
+export type { ProjectReleaseRemoval } from './ProjectReleaseRemoval.js';
 export type { ProjectReleaseSecretConfiguration } from './ProjectReleaseSecretConfiguration.js';
 export type { ProjectReleaseSecretStageRequest } from './ProjectReleaseSecretStageRequest.js';
 export type { ProjectReleaseSecretStageResponse } from './ProjectReleaseSecretStageResponse.js';

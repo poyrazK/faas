@@ -1816,6 +1816,9 @@ func (c *Client) ScanProjectWithBindingEnvironment(
 		if projectServiceAdditionsRequested(ctx) {
 			req.Header.Set(ProjectAddServicesHeader, "required")
 		}
+		if projectServiceRemovalsRequested(ctx) {
+			req.Header.Set(ProjectRemoveServicesHeader, "required")
+		}
 		if projectStabilizationRequested(ctx) {
 			req.Header.Set(ProjectStabilizationHeader, "required")
 		}
@@ -2003,6 +2006,9 @@ func (c *Client) applyProjectPlanTo(
 		req.Header.Set(ProjectSafeReleaseHeader, projectSafeReleaseMode(ctx))
 		if projectServiceAdditionsRequested(ctx) {
 			req.Header.Set(ProjectAddServicesHeader, "required")
+		}
+		if projectServiceRemovalsRequested(ctx) {
+			req.Header.Set(ProjectRemoveServicesHeader, "required")
 		}
 		if projectStabilizationRequested(ctx) {
 			req.Header.Set(ProjectStabilizationHeader, "required")

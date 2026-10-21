@@ -809,6 +809,7 @@ var CmdDeliver = cmdDeliver
 var CmdDeployGithubSnippet = cmdDeployGithubSnippet
 var CmdDeployRepoSourceRef = cmdDeployRepoSourceRef
 var CmdDeployTarball = cmdDeployTarball
+var DeployReliabilityCLI = deployReliabilityCLI
 var CmdDeployTarballToExisting = cmdDeployTarballToExisting
 var CmdDeployment = cmdDeployment
 var CmdDeploymentAliasDelete = cmdDeploymentAliasDelete

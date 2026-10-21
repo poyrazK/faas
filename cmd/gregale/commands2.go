@@ -2008,6 +2008,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	releaseConfigFile := fs.String("config-file", "", "non-secret workload env JSON to activate with code; requires --atomic --verify")
 	verifyProjectDeploy := fs.Bool("verify", false, "verify an atomic project release with configured route probes and automatically roll back regressions")
 	addProjectServices := fs.Bool("add-services", false, "reserve new HTTP services and publish them with the atomic project release")
+	removeProjectServices := fs.Bool("remove-services", false, "retire serving HTTP services the source no longer declares with the atomic project release")
 	safeProjectDeploy := fs.Bool("atomic", false, "build an existing HTTP project at zero traffic, then atomically publish its ready release")
 	projectDeploy := fs.Bool("project", false, "deploy all detected workloads as one project (slug defaults from --name or source)")
 	projectSlug := fs.String("project-slug", "", "kebab slug for the project (triggers one-key provision)")
@@ -2192,6 +2193,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *addProjectServices && (!*safeProjectDeploy || !*projectDeploy || *releaseConfigFile != "" || *releaseSecretsFile != "" || *migrateProjectDeploy || *workersProjectDeploy || *progressiveProjectDeploy) {
 		return printErr("Invalid service addition", errors.New("--add-services requires --project --atomic without configuration, secret, migration, worker or progressive changes"))
 	}
+	if *removeProjectServices && (!*safeProjectDeploy || !*projectDeploy || *addProjectServices || *releaseConfigFile != "" || *releaseSecretsFile != "" || *migrateProjectDeploy || *workersProjectDeploy || *progressiveProjectDeploy) {
+		return printErr("Invalid service removal", errors.New("--remove-services requires --project --atomic without --add-services, configuration, secret, migration, worker or progressive changes"))
+	}
 	if *workerHealthProjectDeploy && !*workersProjectDeploy {
 		return printErr("Invalid worker health verification", errors.New("--worker-health requires --workers --atomic --verify --project"))
 	}
@@ -2227,6 +2231,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		ctx = api.ContextWithProjectSafeRelease(ctx)
 		if *addProjectServices {
 			ctx = api.ContextWithProjectServiceAdditions(ctx)
+		}
+		if *removeProjectServices {
+			ctx = api.ContextWithProjectServiceRemovals(ctx)
 		}
 		if *verifyProjectDeploy {
 			ctx = api.ContextWithProjectReleaseVerification(ctx)
@@ -3689,6 +3696,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		if *addProjectServices && (plan.SafeRelease == nil || !plan.SafeRelease.AddServices || len(plan.SafeRelease.Additions) == 0) {
 			return printErr("Service additions unavailable", errors.New("server did not acknowledge the service addition plan; no project apply was submitted"))
+		}
+		if *removeProjectServices && (plan.SafeRelease == nil || !plan.SafeRelease.RemoveServices || len(plan.SafeRelease.Removals) == 0) {
+			return printErr("Service removals unavailable", errors.New("server did not acknowledge the service removal plan; no project apply was submitted"))
+		}
+		if !jsonOutput && *removeProjectServices {
+			for _, removal := range plan.SafeRelease.Removals {
+				PrintProgress(osStdout, "Retired at cutover: %s (%s); it stays retained for rollback until you delete it", removal.Slug, removal.RootDir)
+			}
 		}
 		if !jsonOutput && *addProjectServices {
 			for _, addition := range plan.SafeRelease.Additions {

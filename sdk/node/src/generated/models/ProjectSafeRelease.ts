@@ -5,6 +5,7 @@
 import type { ProjectReleaseAddition } from './ProjectReleaseAddition.js';
 import type { ProjectReleaseCommand } from './ProjectReleaseCommand.js';
 import type { ProjectReleaseConfiguration } from './ProjectReleaseConfiguration.js';
+import type { ProjectReleaseRemoval } from './ProjectReleaseRemoval.js';
 import type { ProjectReleaseVerification } from './ProjectReleaseVerification.js';
 import type { ProjectReleaseWorker } from './ProjectReleaseWorker.js';
 /**
@@ -16,6 +17,11 @@ export type ProjectSafeRelease = {
    */
   add_services?: boolean;
   additions?: Array<ProjectReleaseAddition>;
+  /**
+   * Explicit opt-in to retire serving HTTP services the source no longer declares.
+   */
+  remove_services?: boolean;
+  removals?: Array<ProjectReleaseRemoval>;
   status: 'building' | 'activated' | 'failed' | 'conflicted' | 'verifying' | 'succeeded' | 'rolling_back' | 'rolled_back' | 'rollback_failed';
   previous_release_id: string;
   release_id?: string;

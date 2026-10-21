@@ -240,6 +240,7 @@ export class ProjectsService {
   public static scanProject({
     formData,
     projectAddServices,
+    projectRemoveServices,
     projectStabilization,
     projectProgressive,
     projectWorkerHealth,
@@ -250,6 +251,10 @@ export class ProjectsService {
      * Require planned HTTP source service additions; disabled until native qualification. No removals or configuration changes.
      */
     projectAddServices?: 'required',
+    /**
+     * Plan retiring serving HTTP services the source no longer declares; disabled until native qualification. Cannot combine with additions.
+     */
+    projectRemoveServices?: 'required',
     /**
      * Plan a progressive release with ten minutes of monitoring after rollout success.
      */
@@ -272,6 +277,7 @@ export class ProjectsService {
       url: '/v1/projects/scan',
       headers: {
         'Project-Add-Services': projectAddServices,
+        'Project-Remove-Services': projectRemoveServices,
         'Project-Stabilization': projectStabilization,
         'Project-Progressive': projectProgressive,
         'Project-Worker-Health': projectWorkerHealth,
@@ -429,6 +435,7 @@ export class ProjectsService {
     deploymentAttemptId,
     formData,
     projectAddServices,
+    projectRemoveServices,
     projectStabilization,
     projectProgressive,
     projectWorkerHealth,
@@ -444,6 +451,10 @@ export class ProjectsService {
      * Apply the scanned independent HTTP service additions after native qualification; preserve existing membership and configuration.
      */
     projectAddServices?: 'required',
+    /**
+     * Retire serving HTTP services the source no longer declares at cutover; they stay retained for rollback until deleted. Disabled until native qualification.
+     */
+    projectRemoveServices?: 'required',
     /**
      * Require ten minutes of guarded health monitoring after progressive rollout success.
      */
@@ -470,6 +481,7 @@ export class ProjectsService {
       url: '/v1/projects/safe-deploy',
       headers: {
         'Project-Add-Services': projectAddServices,
+        'Project-Remove-Services': projectRemoveServices,
         'Project-Stabilization': projectStabilization,
         'Project-Progressive': projectProgressive,
         'Project-Worker-Health': projectWorkerHealth,
@@ -5791,6 +5803,7 @@ export class ProjectsService {
     deploymentAttemptId,
     formData,
     projectAddServices,
+    projectRemoveServices,
     projectStabilization,
     projectProgressive,
     projectWorkerHealth,
@@ -5814,6 +5827,10 @@ export class ProjectsService {
      * Company project: apply the scanned independent HTTP service additions after native qualification; preserve existing membership and configuration.
      */
     projectAddServices?: 'required',
+    /**
+     * Company project: retire serving HTTP services the source no longer declares at cutover; disabled until native qualification.
+     */
+    projectRemoveServices?: 'required',
     /**
      * Company project: require ten minutes of guarded health monitoring after progressive rollout success.
      */
@@ -5844,6 +5861,7 @@ export class ProjectsService {
       },
       headers: {
         'Project-Add-Services': projectAddServices,
+        'Project-Remove-Services': projectRemoveServices,
         'Project-Stabilization': projectStabilization,
         'Project-Progressive': projectProgressive,
         'Project-Worker-Health': projectWorkerHealth,

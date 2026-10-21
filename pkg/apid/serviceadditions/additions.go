@@ -27,6 +27,9 @@ func Plan(ctx context.Context, store any, account state.Account, project state.P
 			return nil, err
 		}
 	}
+	if safe.RemoveServices {
+		return planRemovals(ctx, store, account, project, safe, apps, dormant, scan)
+	}
 	if !safe.AddServices {
 		var serving []state.App
 		for _, app := range apps {
@@ -138,6 +141,18 @@ func ValidateHeader(header string, values int, mode string, configuration bool, 
 	}
 	if header != "required" || values != 1 || mode != "atomic" && mode != "atomic-verify" || configuration || workers || progressive {
 		return fmt.Errorf("service additions require atomic HTTP source deployment without configuration, secret, migration, worker or progressive changes")
+	}
+	return nil
+}
+
+// ValidateRemovalHeader mirrors ValidateHeader for retirements, which cannot be
+// combined with additions in this version (ADR-20261021120000).
+func ValidateRemovalHeader(header string, values int, mode string, configuration, workers, progressive, additions bool) error {
+	if header == "" {
+		return nil
+	}
+	if header != "required" || values != 1 || mode != "atomic" && mode != "atomic-verify" || configuration || workers || progressive || additions {
+		return fmt.Errorf("service removals require atomic HTTP deployment without additions, configuration, secret, migration, worker or progressive changes")
 	}
 	return nil
 }

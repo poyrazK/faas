@@ -36,6 +36,9 @@ func ProjectSafeReleasePolicyID(safe *ProjectSafeRelease) string {
 	if safe.AddServices {
 		identity += ":add-services:" + ProjectReleaseAdditionsPolicyID(safe.Additions)
 	}
+	if safe.RemoveServices {
+		identity += ":remove-services:" + ProjectReleaseRemovalsPolicyID(safe.Removals)
+	}
 	if safe.Verification != nil {
 		identity += ":" + ProjectReleaseVerificationPolicyID(safe.Verification)
 	}

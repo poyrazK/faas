@@ -4480,6 +4480,7 @@ from .project_release_control_status import ProjectReleaseControlStatus
 from .project_release_deactivation_receipt import ProjectReleaseDeactivationReceipt
 from .project_release_probe import ProjectReleaseProbe
 from .project_release_probe_evidence import ProjectReleaseProbeEvidence
+from .project_release_removal import ProjectReleaseRemoval
 from .project_release_secret_configuration import ProjectReleaseSecretConfiguration
 from .project_release_secret_stage_request import ProjectReleaseSecretStageRequest
 from .project_release_secret_stage_request_workloads import ProjectReleaseSecretStageRequestWorkloads
@@ -5151,11 +5152,13 @@ from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewR
 from .safe_apply_org_project_project_add_services import SafeApplyOrgProjectProjectAddServices
 from .safe_apply_org_project_project_progressive import SafeApplyOrgProjectProjectProgressive
 from .safe_apply_org_project_project_release_mode import SafeApplyOrgProjectProjectReleaseMode
+from .safe_apply_org_project_project_remove_services import SafeApplyOrgProjectProjectRemoveServices
 from .safe_apply_org_project_project_stabilization import SafeApplyOrgProjectProjectStabilization
 from .safe_apply_org_project_project_worker_health import SafeApplyOrgProjectProjectWorkerHealth
 from .safe_apply_project_project_add_services import SafeApplyProjectProjectAddServices
 from .safe_apply_project_project_progressive import SafeApplyProjectProjectProgressive
 from .safe_apply_project_project_release_mode import SafeApplyProjectProjectReleaseMode
+from .safe_apply_project_project_remove_services import SafeApplyProjectProjectRemoveServices
 from .safe_apply_project_project_stabilization import SafeApplyProjectProjectStabilization
 from .safe_apply_project_project_worker_health import SafeApplyProjectProjectWorkerHealth
 from .save_automation_draft_request import SaveAutomationDraftRequest
@@ -5173,6 +5176,7 @@ from .scaling_target_metric import ScalingTargetMetric
 from .scan_project_project_add_services import ScanProjectProjectAddServices
 from .scan_project_project_progressive import ScanProjectProjectProgressive
 from .scan_project_project_release_mode import ScanProjectProjectReleaseMode
+from .scan_project_project_remove_services import ScanProjectProjectRemoveServices
 from .scan_project_project_stabilization import ScanProjectProjectStabilization
 from .scan_project_project_worker_health import ScanProjectProjectWorkerHealth
 from .scan_result import ScanResult
@@ -10152,6 +10156,7 @@ __all__ = (
     "ProjectReleaseDeactivationReceipt",
     "ProjectReleaseProbe",
     "ProjectReleaseProbeEvidence",
+    "ProjectReleaseRemoval",
     "ProjectReleaseSecretConfiguration",
     "ProjectReleaseSecretStageRequest",
     "ProjectReleaseSecretStageRequestWorkloads",
@@ -10809,11 +10814,13 @@ __all__ = (
     "SafeApplyOrgProjectProjectAddServices",
     "SafeApplyOrgProjectProjectProgressive",
     "SafeApplyOrgProjectProjectReleaseMode",
+    "SafeApplyOrgProjectProjectRemoveServices",
     "SafeApplyOrgProjectProjectStabilization",
     "SafeApplyOrgProjectProjectWorkerHealth",
     "SafeApplyProjectProjectAddServices",
     "SafeApplyProjectProjectProgressive",
     "SafeApplyProjectProjectReleaseMode",
+    "SafeApplyProjectProjectRemoveServices",
     "SafeApplyProjectProjectStabilization",
     "SafeApplyProjectProjectWorkerHealth",
     "SaveAutomationDraftRequest",
@@ -10831,6 +10838,7 @@ __all__ = (
     "ScanProjectProjectAddServices",
     "ScanProjectProjectProgressive",
     "ScanProjectProjectReleaseMode",
+    "ScanProjectProjectRemoveServices",
     "ScanProjectProjectStabilization",
     "ScanProjectProjectWorkerHealth",
     "ScanResult",
