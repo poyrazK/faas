@@ -147,6 +147,28 @@ func (r resourceJournalRecord) validateAssets() error {
 	return nil
 }
 
+// outlivesReboot reports whether an asset's effect survives a host reboot,
+// which decides whether a journal write naming it must be durable
+// (ADR-20261021120000). Files on disk do: layer clones, materialised
+// snapshot copies and jail directories (kept durable even though production
+// jails are on tmpfs). So does a bind whose read permission vmmd widens on its
+// source file, because the widened mode stays on disk until the last owner
+// restores it. Mounts, network namespaces and links do not.
+func (a resourceAsset) outlivesReboot() bool {
+	switch a.Kind {
+	case "clone", "materialised", "jail":
+		return true
+	case "bind":
+		widened := os.FileMode(0o006)
+		if a.ReadOnly {
+			widened = 0o044
+		}
+		return os.FileMode(a.OriginalMode)&widened != widened
+	default:
+		return false
+	}
+}
+
 func (j *ResourceJournal) checkpointBindTarget(instance, path string, file resourceFileIdentity) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -170,7 +192,7 @@ func (j *ResourceJournal) checkpointBindTarget(instance, path string, file resou
 		if err := r.validate(); err != nil {
 			return err
 		}
-		return j.persist(r)
+		return j.persist(r, false)
 	}
 	return errors.New("bind target checkpoint requires asset intent")
 }
@@ -198,7 +220,7 @@ func (j *ResourceJournal) addAsset(instance string, a resourceAsset) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
-	return j.persist(r)
+	return j.persist(r, a.outlivesReboot())
 }
 
 func (j *ResourceJournal) checkpointAsset(instance, path string, file resourceFileIdentity, mount *resourceMountIdentity) error {
@@ -223,7 +245,9 @@ func (j *ResourceJournal) checkpointAsset(instance, path string, file resourceFi
 		if err := r.validate(); err != nil {
 			return err
 		}
-		return j.persist(r)
+		// A bind's or namespace's checkpoint records a mount, which a reboot
+		// removes; a file's identity is what lets cleanup delete it later.
+		return j.persist(r, r.Assets[i].Kind != "bind" && r.Assets[i].outlivesReboot())
 	}
 	return errors.New("resource checkpoint requires asset intent")
 }
@@ -242,10 +266,10 @@ func (j *ResourceJournal) retireAsset(instance, path string) error {
 	for i, a := range r.Assets {
 		if a.Path == path {
 			r.Assets = append(r.Assets[:i], r.Assets[i+1:]...)
-			return j.persist(r)
+			return j.persist(r, true)
 		}
 	}
-	return j.directorySync()
+	return j.commitSync(true)
 }
 
 func resourceFileID(info os.FileInfo) (resourceFileIdentity, error) {

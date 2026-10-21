@@ -113,7 +113,7 @@ func (j *ResourceJournal) transferPrepared(source, target string) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
-	return j.persist(r)
+	return j.persist(r, false)
 }
 
 func preparedRecordAssets(r resourceJournalRecord) (resourceAsset, resourceAsset, error) {
@@ -156,7 +156,7 @@ func (j *ResourceJournal) adoptPrepared(l Lease, ns, link resourceAsset) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
-	return j.persist(r)
+	return j.persist(r, false)
 }
 
 func pendingPreparedLeaseMatches(r resourceJournalRecord, l Lease) bool {

@@ -2,7 +2,7 @@
 
 Date: 2026-10-02
 
-Status: Accepted; native lifecycle acceptance pending, customer cutover disabled
+Status: Accepted; native lifecycle acceptance pending, customer cutover disabled. Write protocol amended by [ADR 20261021120000](20261021120000-resource-journal-volatile-commits.md) (proposed): the directory fsync runs only for writes that name a reboot-surviving asset.
 
 ## Context
 
