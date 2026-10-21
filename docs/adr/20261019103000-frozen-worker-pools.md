@@ -76,3 +76,9 @@
   worker: on n2 a pool reconcile ran between Prime publishing the prime
   RUNNING and apid marking the deployment live, saw the prime as a retired
   generation and stopped it (a race on main, not changed here).
+  On n2 (2026-10-21, revision 7eec5ca845) the test's first worker stopped
+  at scale-in as above, the second froze, and three thaws took 685, 714
+  and 815 ms from the send to the worker's RUNNING row and 792–850 ms to
+  the message's lease, against about 4 s for a cold boot. vmmd's thaw took
+  2–4 ms and schedd's thaw 29–39 ms; the rest passes before schedd starts
+  the thaw and is not broken down here.
