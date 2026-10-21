@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 
 export type { APIConsumerBillingPolicyResponse } from './APIConsumerBillingPolicyResponse.js';
+export type { APIConsumerClosedWebhookPayload } from './APIConsumerClosedWebhookPayload.js';
 export type { APIConsumerCreditBalance } from './APIConsumerCreditBalance.js';
 export type { APIConsumerCreditListResponse } from './APIConsumerCreditListResponse.js';
 export type { APIConsumerCreditResponse } from './APIConsumerCreditResponse.js';
@@ -10,12 +11,14 @@ export type { APIConsumerOverdueHoldListResponse } from './APIConsumerOverdueHol
 export type { APIConsumerOverdueHoldResponse } from './APIConsumerOverdueHoldResponse.js';
 export type { APIConsumerPlanAssignmentListResponse } from './APIConsumerPlanAssignmentListResponse.js';
 export type { APIConsumerPlanAssignmentResponse } from './APIConsumerPlanAssignmentResponse.js';
+export type { APIConsumerPlanChangedWebhookPayload } from './APIConsumerPlanChangedWebhookPayload.js';
 export type { APIConsumerPlanListResponse } from './APIConsumerPlanListResponse.js';
 export type { APIConsumerPlanResponse } from './APIConsumerPlanResponse.js';
 export type { APIConsumerRateCardListResponse } from './APIConsumerRateCardListResponse.js';
 export type { APIConsumerRateCardResponse } from './APIConsumerRateCardResponse.js';
 export type { APIConsumerRateCardTier } from './APIConsumerRateCardTier.js';
 export type { APIConsumerResponse } from './APIConsumerResponse.js';
+export type { APIConsumerSignedUpWebhookPayload } from './APIConsumerSignedUpWebhookPayload.js';
 export type { APIConsumerSpendCapResponse } from './APIConsumerSpendCapResponse.js';
 export type { APIConsumerStatementFeeResponse } from './APIConsumerStatementFeeResponse.js';
 export type { APIConsumerTrialResponse } from './APIConsumerTrialResponse.js';
@@ -349,6 +352,7 @@ export type { CancelPendingWorkRequest } from './CancelPendingWorkRequest.js';
 export type { CancelPendingWorkResponse } from './CancelPendingWorkResponse.js';
 export type { CapabilitiesResponse } from './CapabilitiesResponse.js';
 export type { CapabilityStatus } from './CapabilityStatus.js';
+export type { ChangeConsumerBillingPlanRequest } from './ChangeConsumerBillingPlanRequest.js';
 export type { ChangeManagedPostgresComputePolicyRequest } from './ChangeManagedPostgresComputePolicyRequest.js';
 export type { ChangeMemberRoleRequest } from './ChangeMemberRoleRequest.js';
 export type { ChangePlanRequest } from './ChangePlanRequest.js';
@@ -392,9 +396,13 @@ export type { ConnectionBudgetInventory } from './ConnectionBudgetInventory.js';
 export type { ConnectionBudgetRuntimeObservations } from './ConnectionBudgetRuntimeObservations.js';
 export type { ConsumeInvoiceResponse } from './ConsumeInvoiceResponse.js';
 export type { ConsumedCreditRow } from './ConsumedCreditRow.js';
+export type { ConsumerBillingCloseResponse } from './ConsumerBillingCloseResponse.js';
 export type { ConsumerBillingDay } from './ConsumerBillingDay.js';
 export type { ConsumerBillingInvoice } from './ConsumerBillingInvoice.js';
 export type { ConsumerBillingPlan } from './ConsumerBillingPlan.js';
+export type { ConsumerBillingPlanChangeResponse } from './ConsumerBillingPlanChangeResponse.js';
+export type { ConsumerBillingPlansResponse } from './ConsumerBillingPlansResponse.js';
+export type { ConsumerBillingPortalResponse } from './ConsumerBillingPortalResponse.js';
 export type { ConsumerBillingSpendCap } from './ConsumerBillingSpendCap.js';
 export type { ConsumerBillingStatement } from './ConsumerBillingStatement.js';
 export type { ConsumerBillingStatementsResponse } from './ConsumerBillingStatementsResponse.js';
@@ -433,6 +441,7 @@ export type { CreateApplicationStandardVersionRequest } from './CreateApplicatio
 export type { CreateBillingRunRequest } from './CreateBillingRunRequest.js';
 export type { CreateBindingVerificationRunRequest } from './CreateBindingVerificationRunRequest.js';
 export type { CreateCommitSourceRequest } from './CreateCommitSourceRequest.js';
+export type { CreateConsumerBillingPortalRequest } from './CreateConsumerBillingPortalRequest.js';
 export type { CreateConsumerKeyRequest } from './CreateConsumerKeyRequest.js';
 export type { CreateConsumerSignupRequest } from './CreateConsumerSignupRequest.js';
 export type { CreateConsumerSignupResponse } from './CreateConsumerSignupResponse.js';

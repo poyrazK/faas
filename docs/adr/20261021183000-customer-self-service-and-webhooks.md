@@ -22,7 +22,12 @@
   - **Closing cannot be undone by the customer.** The owner can create a new consumer; the Stripe customer and card remain.
   - **Stripe portal setup.** Live-mode portal sessions need the owner to save the portal settings in Stripe once.
   - **Hidden with monetization.** The events and their payload schemas are hidden with the rest of API monetization until released (ADR-20261018090210).
-  - **Migration.** Two boolean columns on `api_consumer_signup_settings`, added to its not-yet-released migration.
+  - **Migrations.**
+    - Two boolean columns on `api_consumer_signup_settings`, added to its not-yet-released migration.
+    - The outbox's event check (`app_webhook_event_outbox_event_chk`) never allowed `consumer.usage_threshold`. On Postgres, a usage alert for an app with a webhook subscribed to it failed to record. The check is widened to that event and the three new ones, online in three migrations:
+      1. add the wider check `NOT VALID` under a new name;
+      2. validate it;
+      3. drop the old check and rename the new one to the old name (contract), so later migrations that widen the check by name keep working.
 - **Rejected alternatives:**
   - **A hosted page for self-service.** It would need the customer to paste their API key into a web page. Owners build this on their own site with the API instead.
   - **Emailing the owner on each sign-up.** Webhooks reach the owner's systems; the audit log already records each sign-up.

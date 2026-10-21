@@ -20,6 +20,8 @@ export type ConsumerSignupSettingsResponse = {
    * The hosted sign-up page to link customers to.
    */
   page_url: string;
+  customer_plan_changes: boolean;
+  customer_closing: boolean;
   created_at: string;
   updated_at: string;
 };

@@ -24,9 +24,14 @@ import type { APIConsumerUsageStatementHandoffResponse } from '../models/APICons
 import type { APIConsumerUsageStatementListResponse } from '../models/APIConsumerUsageStatementListResponse.js';
 import type { APIConsumerUsageStatementResponse } from '../models/APIConsumerUsageStatementResponse.js';
 import type { AssignAPIConsumerPlanRequest } from '../models/AssignAPIConsumerPlanRequest.js';
+import type { ChangeConsumerBillingPlanRequest } from '../models/ChangeConsumerBillingPlanRequest.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
 import type { CompleteConsumerSignupRequest } from '../models/CompleteConsumerSignupRequest.js';
 import type { CompleteConsumerSignupResponse } from '../models/CompleteConsumerSignupResponse.js';
+import type { ConsumerBillingCloseResponse } from '../models/ConsumerBillingCloseResponse.js';
+import type { ConsumerBillingPlanChangeResponse } from '../models/ConsumerBillingPlanChangeResponse.js';
+import type { ConsumerBillingPlansResponse } from '../models/ConsumerBillingPlansResponse.js';
+import type { ConsumerBillingPortalResponse } from '../models/ConsumerBillingPortalResponse.js';
 import type { ConsumerBillingStatementsResponse } from '../models/ConsumerBillingStatementsResponse.js';
 import type { ConsumerBillingSummaryResponse } from '../models/ConsumerBillingSummaryResponse.js';
 import type { ConsumerBillingUsageResponse } from '../models/ConsumerBillingUsageResponse.js';
@@ -40,6 +45,7 @@ import type { CreateAPIConsumerPlanRequest } from '../models/CreateAPIConsumerPl
 import type { CreateAPIConsumerRateCardRequest } from '../models/CreateAPIConsumerRateCardRequest.js';
 import type { CreateAPIConsumerRequest } from '../models/CreateAPIConsumerRequest.js';
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
+import type { CreateConsumerBillingPortalRequest } from '../models/CreateConsumerBillingPortalRequest.js';
 import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyRequest.js';
 import type { CreateConsumerSignupRequest } from '../models/CreateConsumerSignupRequest.js';
 import type { CreateConsumerSignupResponse } from '../models/CreateConsumerSignupResponse.js';
@@ -148,6 +154,137 @@ export class ConsumersService {
         401: `code: unauthorized`,
         403: `A consumer key without the billing scope cannot list statements.`,
         429: `Statement reads for this key are rate limited.`,
+      },
+    });
+  }
+  /**
+   * List the plans you can switch to with your consumer key (ADR-20261021183000).
+   * @returns ConsumerBillingPlansResponse Your current plan, the offered plans and what you may do on your own.
+   * @throws ApiError
+   */
+  public static listConsumerBillingPlans({
+    slug,
+  }: {
+    /**
+     * The app whose plans the consumer reads.
+     */
+    slug: string,
+  }): CancelablePromise<ConsumerBillingPlansResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-billing/{slug}/plans',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `The consumer key lacks the billing scope to list plans.`,
+        429: `Plan reads for this key are rate limited.`,
+      },
+    });
+  }
+  /**
+   * Switch to another offered plan from the next minute with your consumer key.
+   * Only when the app owner lets customers change plans. The app owner
+   * gets a consumer.plan_changed webhook.
+   *
+   * @returns ConsumerBillingPlanChangeResponse The scheduled plan change.
+   * @throws ApiError
+   */
+  public static changeConsumerBillingPlan({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * The app whose plan the consumer changes.
+     */
+    slug: string,
+    requestBody: ChangeConsumerBillingPlanRequest,
+  }): CancelablePromise<ConsumerBillingPlanChangeResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/consumer-billing/{slug}/plan',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `The consumer key lacks the billing scope to change plans.`,
+        409: `Plan changes are not offered (\`consumer_self_service_unavailable\`), you are already on the plan, or a change is pending.`,
+        422: `The plan is not one of the offered plans.`,
+        429: `Plan changes for this key are rate limited.`,
+      },
+    });
+  }
+  /**
+   * Open Stripe's customer portal to update your card and see invoices.
+   * For consumers billed through the app owner's Stripe (external_ref
+   * cus_...). The URL is short-lived; return_url defaults to the app's
+   * sign-up return URL.
+   *
+   * @returns ConsumerBillingPortalResponse The portal URL to send the customer to.
+   * @throws ApiError
+   */
+  public static createConsumerBillingPortalSession({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * The app whose billing portal the consumer opens.
+     */
+    slug: string,
+    requestBody?: CreateConsumerBillingPortalRequest,
+  }): CancelablePromise<ConsumerBillingPortalResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/consumer-billing/{slug}/portal',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `The consumer key lacks the billing scope to open the portal.`,
+        409: `The account is not billed through Stripe, or the owner's Stripe portal is not set up (\`consumer_self_service_unavailable\`).`,
+        422: `return_url is not an https URL.`,
+        429: `Portal sessions for this key are rate limited.`,
+        502: `Stripe could not be reached for the portal (\`billing_provider_unavailable\`).`,
+      },
+    });
+  }
+  /**
+   * Close your account with your consumer key.
+   * Only when the app owner lets customers close their account. Your
+   * keys stop working at once; usage until then is still billed. The app
+   * owner gets a consumer.closed webhook.
+   *
+   * @returns ConsumerBillingCloseResponse The closed account.
+   * @throws ApiError
+   */
+  public static closeConsumerBillingAccount({
+    slug,
+  }: {
+    /**
+     * The app whose account the consumer closes.
+     */
+    slug: string,
+  }): CancelablePromise<ConsumerBillingCloseResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/consumer-billing/{slug}/close',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `The consumer key lacks the billing scope to close the account.`,
+        409: `Closing is not offered (\`consumer_self_service_unavailable\`).`,
+        429: `Account closing for this key is rate limited.`,
       },
     });
   }

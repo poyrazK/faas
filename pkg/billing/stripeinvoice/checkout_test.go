@@ -29,6 +29,8 @@ func TestSetupCheckoutRequests(t *testing.T) {
 			gotQuery = r.URL.RawQuery
 			_, _ = fmt.Fprint(w, `{"id":"cs_test_1","status":"complete","customer":"cus_1","livemode":false,
 				"setup_intent":{"id":"seti_1","status":"succeeded","payment_method":"pm_1"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/billing_portal/sessions":
+			_, _ = fmt.Fprint(w, `{"id":"bps_1","url":"https://billing.stripe.com/p/session/bps_1"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/customers/cus_1":
 			_, _ = fmt.Fprint(w, `{"id":"cus_1"}`)
 		default:
@@ -72,5 +74,12 @@ func TestSetupCheckoutRequests(t *testing.T) {
 	}
 	if f := forms["POST /v1/customers/cus_1"]; f["invoice_settings[default_payment_method]"] != "pm_1" {
 		t.Fatalf("default payment method form = %v", f)
+	}
+	portal, err := c.CreatePortalSession(ctx, "rk_test_k", "cus_1", "https://example.com/account")
+	if err != nil || portal != "https://billing.stripe.com/p/session/bps_1" {
+		t.Fatalf("CreatePortalSession = %q, %v", portal, err)
+	}
+	if f := forms["POST /v1/billing_portal/sessions"]; f["customer"] != "cus_1" || f["return_url"] != "https://example.com/account" {
+		t.Fatalf("portal form = %v", f)
 	}
 }

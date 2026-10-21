@@ -36,5 +36,13 @@ export type PutConsumerSignupRequest = {
    * Sign-ups per UTC day (default 100).
    */
   daily_limit?: number;
+  /**
+   * Let customers switch between plan_ids with their own key (ADR-20261021183000).
+   */
+  customer_plan_changes?: boolean;
+  /**
+   * Let customers close their account with their own key (ADR-20261021183000).
+   */
+  customer_closing?: boolean;
 };
 
