@@ -928,10 +928,15 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DevWatchCommand: watch.Command,
 		DevWatchHost:    watch.Host,
 	}
+	reuseScope, reuseOptedIn := gitOpsReuseScope(app, dep)
+	recipe.GitOpsReuseScope = reuseScope
 	if sourceMaps != nil {
 		recipe.IssueSourceMapsDirectory = sourceMaps.Directory
 	}
 	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
+	if reuseOptedIn && (reuseScope == "" || b.buildPublisher == nil) {
+		cacheAvailable = false
+	}
 	if cacheAvailable {
 		recipe.BuilderBaseIdentity = buildEnvironment.BuilderBaseIdentity
 		recipe.TargetPlatform = buildEnvironment.TargetPlatform
@@ -941,6 +946,16 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		cacheKeySHA256 = ""
 	}
 	cached, cacheOutcome, cacheHit := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable, dep.ID)
+	if cacheHit && reuseOptedIn {
+		trusted, ok := b.trustedGitOpsCacheEntry(ctx, app, dep, recipe, buildEnvironment, cached)
+		if !ok || !b.buildEnvironmentStillCurrent(buildEnvironment) {
+			b.cache.ReleaseLease(cached.Path)
+			cached, cacheOutcome, cacheHit = CacheEntry{}, cacheOutcomeInvalidated, false
+			b.emitBuildLog(ctx, build.ID, "[gitops] unchanged build reuse unavailable: origin is not a current same-app signed retained producer with matching inputs; building afresh\n")
+		} else {
+			cached.Toolchain = trusted
+		}
+	}
 	b.observeCacheOutcome(ctx, build.ID, cacheOutcome, cacheKeySHA256)
 	if cacheHit {
 		if b.stopIfBuildCancelled(ctx, build) {
@@ -954,6 +969,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// (PR-B review finding M-3).
 		b.ops.ObserveBuildQueueWait(time.Since(build.EnqueuedAt))
 		buildStart = time.Now()
+		if reuseOptedIn {
+			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[gitops] unchanged isolated context and recipe verified; reusing signed origin deployment %s build %s; target qualification remains required\n", cached.Toolchain.OriginDeploymentID, cached.Toolchain.OriginBuildID))
+		}
 		b.emitBuildLog(ctx, build.ID, "build started (cache hit)\n")
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[build] cache hit (sha256:%s) — skipping vm spawn\n", cacheKeySHA256))
 		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
@@ -964,6 +982,17 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 				IssueSourceMaps: cached.Toolchain.IssueSourceMaps, IssueSourceMapsImageSHA256: cached.Toolchain.IssueSourceMapsImageSHA256}, buildStart)
 		if completeErr != nil || completed.BuildID == "" {
 			b.cache.ReleaseLease(cached.Path)
+		} else if reuseOptedIn && b.buildEnvironmentStillCurrent(buildEnvironment) {
+			// Keep the verified origin. After its own signed completion this
+			// target becomes the fallback origin, used only once the current
+			// one stops being a live signed producer; a target that never
+			// goes live therefore cannot stall reuse. Bytes are unchanged, so
+			// only the metadata is rewritten.
+			metadata := cached.Toolchain
+			metadata.NextOriginDeploymentID, metadata.NextOriginBuildID = dep.ID, build.ID
+			if err := b.cache.UpdateBuildOrigins(recipe, cached.Path, metadata); err != nil {
+				b.log.Warn("builderd: record GitOps cache fallback origin (continuing)", "err", err)
+			}
 		}
 		return completed, completeErr
 
@@ -1339,6 +1368,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// the successful deployment intact but deliberately skips cache publication.
 	if cacheAvailable && b.buildEnvironmentStillCurrent(buildEnvironment) {
 		if err := b.cache.StoreBuildWithToolchain(recipe, out.OCIImage, artifactBytes, CacheToolchain{
+			OriginDeploymentID: dep.ID, OriginBuildID: build.ID,
 			BuildkitVer:                result.BuildkitVer,
 			RailpackVer:                result.RailpackVer,
 			DevPatch:                   result.DevPatch,

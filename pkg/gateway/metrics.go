@@ -242,6 +242,7 @@ type Metrics struct {
 	wafRuleMatches        *prometheus.CounterVec
 	wafInline             *prometheus.CounterVec
 	wafInlineSeconds      prometheus.Histogram
+	edgeChallenge         *prometheus.CounterVec
 	wafInspectionSeconds  prometheus.Histogram
 	preAuthPolicyShadow   *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
@@ -1389,6 +1390,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_waf_inline_checks_total",
 			Help: "In-path header/URI checks for kind=waf warn and block rules (ADR-831 amendment 4), by app and outcome (clean|warned|blocked|skipped|error). skipped means the app's inline budget or the node's check slots were exhausted and the request passed unchecked.",
 		}, []string{"app", "outcome"}),
+		edgeChallenge: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_challenge_total",
+			Help: "kind=challenge decisions (ADR-831 amendment 7), by app and outcome: passed (valid pass), bypassed (verified credential), issued (challenge page served), rejected (403 challenge_required), solved (pass set), invalid (bad solution), expired (solution after the token expired).",
+		}, []string{"app", "outcome"}),
 		wafInlineSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_waf_inline_seconds",
 			Help:    "Time to check one request's headers and URI in-path for a kind=waf warn or block rule; added to that request's latency.",
@@ -1868,7 +1873,7 @@ func NewMetrics() *Metrics {
 	// closed set guarantees the §12 dashboard panel "edge rule
 	// match rate" surfaces every (kind, outcome) tuple from
 	// first scrape.
-	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "ip", "validate", "limit", "maintenance", "geo", "throttle", "async", "waf", "ingress_ip"} {
+	for _, kind := range []string{"route", "rewrite", "redirect", "headers", "cors", "ip", "validate", "limit", "maintenance", "geo", "throttle", "async", "waf", "challenge", "ingress_ip"} {
 		for _, outcome := range []string{"match", "miss", "blocked", "failed"} {
 			m.edgeRuleMatch.WithLabelValues(kind, outcome)
 		}
@@ -2083,7 +2088,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
-	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSeconds)
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSeconds, m.edgeChallenge)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
 	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
@@ -2691,6 +2696,14 @@ func (m *Metrics) ObserveWAFInline(appID, outcome string, seconds float64) {
 	if seconds > 0 {
 		m.wafInlineSeconds.Observe(seconds)
 	}
+}
+
+// ObserveEdgeChallenge counts one kind=challenge decision.
+func (m *Metrics) ObserveEdgeChallenge(appID, outcome string) {
+	if m == nil || m.edgeChallenge == nil {
+		return
+	}
+	m.edgeChallenge.WithLabelValues(appID, outcome).Inc()
 }
 
 // ObserveWAFRuleMatch counts one CRS rule that scored in a detection.

@@ -640,6 +640,11 @@ const (
 	// CodeUnauthorized so a customer can tell "I need to log in" from
 	// "my key does not have permission for this endpoint".
 	CodeForbidden = "insufficient_scope"
+	// CodeChallengeRequired is returned by gatewayd for a request on a
+	// kind=challenge route that carries no valid pass and is not a browser
+	// navigation (ADR-831 amendment 7). A browser earns the pass by loading
+	// a page on the route; other clients need a verified credential.
+	CodeChallengeRequired = "challenge_required"
 	// CodePreviewProductionDependencyDenied is returned by the internal
 	// service proxy when a project preview tries to call a production
 	// dependency while its preview_service_policy is deny. The rejection
@@ -2044,7 +2049,7 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeUnauthorized, CodeConsumerKeyRequired, CodeConsumerKeyInvalid, CodeConsumerKeyInactive:
 		return http.StatusUnauthorized
-	case CodeConsumerScopeMissing, CodePlatformTenantRequired:
+	case CodeConsumerScopeMissing, CodePlatformTenantRequired, CodeChallengeRequired:
 		return http.StatusForbidden
 	case CodeSessionExpired, CodeSessionInvalid:
 		return http.StatusUnauthorized

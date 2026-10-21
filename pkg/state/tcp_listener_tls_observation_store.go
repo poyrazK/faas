@@ -19,7 +19,7 @@ type TCPListenerTLSObservationStore interface {
 	PruneTCPListenerTLSObservations(context.Context, time.Time) (int64, error)
 }
 
-func (s *PgStore) PutTCPListenerTLSObservation(ctx context.Context, observation TCPListenerTLSObservation) error {
+func (s *pgCore) PutTCPListenerTLSObservation(ctx context.Context, observation TCPListenerTLSObservation) error {
 	if err := observation.Validate(); err != nil {
 		return err
 	}
@@ -61,7 +61,7 @@ func (s *PgStore) ListTCPListenerTLSObservations(ctx context.Context, listenerID
 	return out, nil
 }
 
-func (s *PgStore) PruneTCPListenerTLSObservations(ctx context.Context, before time.Time) (int64, error) {
+func (s *pgCore) PruneTCPListenerTLSObservations(ctx context.Context, before time.Time) (int64, error) {
 	if before.IsZero() {
 		return 0, ErrInvalidTCPListenerTLSObservation
 	}

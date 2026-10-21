@@ -38,8 +38,9 @@ func OldGenerationDrain(stopping context.Context, grace time.Duration, endStream
 }
 
 // WatchHandoffs starts a successor on each SIGUSR2 until one serves, then
-// calls handedOff. A failed hand-off leaves this generation serving.
-func WatchHandoffs(ctx context.Context, daemon string, log *slog.Logger, handedOff func()) {
+// calls handedOff. A failed hand-off leaves this generation serving. checks
+// run against each successor before it takes traffic (handoff_check.go).
+func WatchHandoffs(ctx context.Context, daemon string, log *slog.Logger, handedOff func(), checks ...HandoffCheck) {
 	requests := HandoffRequests(ctx)
 	go func() {
 		for {
@@ -47,7 +48,7 @@ func WatchHandoffs(ctx context.Context, daemon string, log *slog.Logger, handedO
 			case <-ctx.Done():
 				return
 			case <-requests:
-				if _, err := Handoff(ctx, HandoffOptions{Log: log}); err != nil {
+				if _, err := Handoff(ctx, HandoffOptions{Log: log, Checks: checks}); err != nil {
 					log.Warn(daemon+": hand-off failed; this generation keeps serving", "err", err)
 					continue
 				}

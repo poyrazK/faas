@@ -20,6 +20,7 @@ type dispatchKey struct {
 type instanceState struct {
 	dispatches map[dispatchKey]int
 	inflight   int64
+	executions int64
 	lastAt     time.Time
 	// total is the monotonic number of ForwardHTTP requests observed
 	// for this instance since the tracker was created. Keeping this
@@ -110,7 +111,7 @@ func (a *ActivityTracker) end(instanceID, invocation string, attempt int) {
 	}
 	if s.inflight > 0 {
 		s.inflight--
-		if s.inflight == 0 {
+		if s.inflight == 0 && s.executions == 0 {
 			s.quietAt = a.now()
 		}
 	}
@@ -128,7 +129,7 @@ func (a *ActivityTracker) Quiet(instanceID string) (inflight int64, since time.T
 	if !ok {
 		return 0, time.Time{}, false
 	}
-	return s.inflight, s.quietAt, true
+	return max(s.inflight, s.executions), s.quietAt, true
 }
 
 // Inflight returns the current in-flight count and a
@@ -141,7 +142,36 @@ func (a *ActivityTracker) Inflight(instanceID string) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
-	return s.inflight, true
+	return max(s.inflight, s.executions), true
+}
+
+// BeginExecution pins execution independently of its HTTP transport. Every
+// qualified function request owns a lease, so max(forwards, executions) avoids
+// double-counting foreground overlap while retaining post-response activity.
+// It never increments the HTTP request counter used by scaling.
+func (a *ActivityTracker) BeginExecution(instance string) {
+	if instance == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	s := a.state[instance]
+	if s == nil {
+		s = &instanceState{}
+		a.state[instance] = s
+	}
+	s.executions++
+}
+
+func (a *ActivityTracker) EndExecution(instance string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if s := a.state[instance]; s != nil && s.executions > 0 {
+		s.executions--
+		if s.executions == 0 && s.inflight == 0 {
+			s.quietAt = a.now()
+		}
+	}
 }
 
 // LastAt returns the most-recent Begin moment and a
@@ -206,11 +236,12 @@ func (a *ActivityTracker) EndDispatch(instance, invocation string, attempt int) 
 	a.end(instance, invocation, attempt)
 }
 
-// OnlyDispatch refuses missing, duplicate or concurrent forwards. Ordinary
+// OnlyDispatch refuses missing, duplicate or concurrent forwards and execution
+// ownership whose dispatch cannot be proven. Ordinary
 // Freeze continues to use the full inflight count, without this exception.
 func (a *ActivityTracker) OnlyDispatch(instance, invocation string, attempt int) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	s := a.state[instance]
-	return invocation != "" && attempt > 0 && s != nil && s.inflight == 1 && len(s.dispatches) == 1 && s.dispatches[dispatchKey{invocation, attempt}] == 1
+	return invocation != "" && attempt > 0 && s != nil && s.executions == 0 && s.inflight == 1 && len(s.dispatches) == 1 && s.dispatches[dispatchKey{invocation, attempt}] == 1
 }

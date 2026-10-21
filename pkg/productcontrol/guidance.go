@@ -41,6 +41,18 @@ func UsageGuidance(account, app string, customer api.ProductCustomer, catalog, h
 	return out, nil
 }
 
+// HoldGuidance marks guidance for a customer held for an overdue invoice
+// (ADR-20261018212918). A suspended workspace or a role that cannot run keeps
+// its own state; every other feature waits for the invoice to be paid.
+func HoldGuidance(g *api.ProductUsageGuidance) {
+	g.InvoiceOverdue = true
+	for i := range g.Features {
+		if state := g.Features[i].State; state != "access_paused" && state != "permission_required" {
+			g.Features[i].State = "invoice_overdue"
+		}
+	}
+}
+
 func guidanceAllowanceState(starts, limit int64) string {
 	switch {
 	case limit == 0:

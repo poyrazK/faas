@@ -43,7 +43,7 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume, workflows bool) {
 	secrets := map[string]string{}
 	created, patched, minted := 0, 0, 0
 	var bindingAccess string
-	app := map[string]any{"id": "app", "slug": "shop-auth", "type": "app", "url": "https://shop-auth.gregale.app", "require_authn": true, "public_auth": map[string]string{"mode": "bearer"}}
+	app := map[string]any{"id": "a1", "slug": "shop-auth", "type": "app", "url": "https://shop-auth.gregale.app", "require_authn": true, "public_auth": map[string]string{"mode": "bearer"}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/v1/postgres/databases":
@@ -241,7 +241,8 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"auditPruneBatches": api.AuthAuditPruneBatches, "auditPruneIntervalSeconds": api.AuthAuditPruneIntervalSeconds,
 		"eventBatch": api.AuthEventBatch, "eventLeaseSeconds": api.AuthEventLeaseSeconds, "eventMaxBackoffSeconds": api.AuthEventMaxBackoffSeconds, "eventRetentionSeconds": api.AuthEventRetentionSeconds, "smsCodeSeconds": api.AuthSMSCodeSeconds,
 		"ssoMetadataBytes": api.AuthSSOMetadataBytes, "ssoDomains": api.AuthSSOMaxDomains, "smsCountries": api.AuthSMSMaxCountries,
-		"scimPageSize": api.AuthSCIMPageSize, "scimBodyBytes": api.AuthSCIMBodyBytes, "oauthClients": api.AuthOAuthMaxClients, "anonymousRetentionMaxDays": api.AuthAnonymousRetentionMaxDays} {
+		"scimPageSize": api.AuthSCIMPageSize, "scimBodyBytes": api.AuthSCIMBodyBytes, "oauthClients": api.AuthOAuthMaxClients, "anonymousRetentionMaxDays": api.AuthAnonymousRetentionMaxDays,
+		"serviceAccountsPerOrg": api.AuthServiceAccountsPerOrg, "serviceAccountSecrets": api.AuthServiceAccountSecrets, "serviceAccountSecretMaxDays": api.AuthServiceAccountSecretMaxDays, "serviceAccountTokensPerMinute": api.AuthServiceAccountTokensPerMinute} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}
@@ -253,6 +254,19 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 	templates, err := os.ReadFile("templates/auth/sql/0014_email_templates.sql")
 	if err != nil || !strings.Contains(string(templates), fmt.Sprintf("char_length(subject) BETWEEN 1 AND %d", api.AuthEmailSubjectMaxChars)) || !strings.Contains(string(templates), fmt.Sprintf("octet_length(body) BETWEEN 1 AND %d", api.AuthEmailBodyMaxBytes)) {
 		t.Fatalf("email template SQL differs from the canonical limits: %v", err)
+	}
+	accounts, err := os.ReadFile("templates/auth/sql/0021_service_accounts.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bound := range []string{
+		fmt.Sprintf("WHERE a.org_id = org) >= %d", api.AuthServiceAccountsPerOrg),
+		fmt.Sprintf("(expires_at IS NULL OR expires_at > now())) >= %d", api.AuthServiceAccountSecrets),
+		fmt.Sprintf("lifetime_days NOT BETWEEN 1 AND %d", api.AuthServiceAccountSecretMaxDays),
+	} {
+		if !strings.Contains(string(accounts), bound) {
+			t.Fatalf("service account SQL differs from canonical limit: %q", bound)
+		}
 	}
 	// 0009 replaces create_organization; both must keep the bound.
 	anonymous, err := os.ReadFile("templates/auth/sql/0009_anonymous_users.sql")
@@ -266,6 +280,21 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 	} {
 		if !strings.Contains(string(authorization), bound) {
 			t.Fatalf("authorization SQL differs from canonical limit: %q", bound)
+		}
+	}
+	// 0022 replaces invite(); it keeps the bounds above and adds the rates.
+	grants, err := os.ReadFile("templates/auth/sql/0022_role_grants_and_invitation_limits.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bound := range []string{
+		fmt.Sprintf("expires_at > now()) >= %d", api.AuthMaxPendingInvitationsPerOrg),
+		fmt.Sprintf("ttl_seconds NOT BETWEEN 300 AND %d", api.AuthMaxInvitationTTLSeconds),
+		fmt.Sprintf("created_at > now() - interval '1 hour') >= %d", api.AuthInvitationsPerInviterPerHour),
+		fmt.Sprintf("created_at > now() - interval '1 day') >= %d", api.AuthInvitationsPerAddressPerDay),
+	} {
+		if !strings.Contains(string(grants), bound) {
+			t.Fatalf("invitation SQL differs from canonical limit: %q", bound)
 		}
 	}
 }

@@ -50,6 +50,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.app_release_review import AppReleaseReview
     from ..models.build_plan import BuildPlan
+    from ..models.deployment_configuration_status import DeploymentConfigurationStatus
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
     from ..models.deployment_promotion_hold import DeploymentPromotionHold
@@ -90,6 +91,9 @@ class DeploymentResponse:
     kind: str
     status: str
     created_at: datetime.datetime
+    configuration: DeploymentConfigurationStatus | Unset = UNSET
+    """Server-managed cron activation diagnostics. CLI-owned settings are additionally reflected in CLI receipt
+    configuration_complete. Reads never create builds or modify schedules."""
     staged_review: AppReleaseReview | Unset = UNSET
     """Atomic app configuration and serving-deployment identities used to fence release admission."""
     worker_drain: DeploymentWorkerDrainStatus | Unset = UNSET
@@ -312,6 +316,10 @@ class DeploymentResponse:
         status = self.status
 
         created_at = self.created_at.isoformat()
+
+        configuration: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.configuration, Unset):
+            configuration = self.configuration.to_dict()
 
         staged_review: dict[str, Any] | Unset = UNSET
         if not isinstance(self.staged_review, Unset):
@@ -650,6 +658,8 @@ class DeploymentResponse:
                 "created_at": created_at,
             }
         )
+        if configuration is not UNSET:
+            field_dict["configuration"] = configuration
         if staged_review is not UNSET:
             field_dict["staged_review"] = staged_review
         if worker_drain is not UNSET:
@@ -785,6 +795,7 @@ class DeploymentResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_release_review import AppReleaseReview
         from ..models.build_plan import BuildPlan
+        from ..models.deployment_configuration_status import DeploymentConfigurationStatus
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
         from ..models.deployment_promotion_hold import DeploymentPromotionHold
@@ -817,6 +828,13 @@ class DeploymentResponse:
         status = d.pop("status")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _configuration = d.pop("configuration", UNSET)
+        configuration: DeploymentConfigurationStatus | Unset
+        if isinstance(_configuration, Unset):
+            configuration = UNSET
+        else:
+            configuration = DeploymentConfigurationStatus.from_dict(_configuration)
 
         _staged_review = d.pop("staged_review", UNSET)
         staged_review: AppReleaseReview | Unset
@@ -1418,6 +1436,7 @@ class DeploymentResponse:
             kind=kind,
             status=status,
             created_at=created_at,
+            configuration=configuration,
             staged_review=staged_review,
             worker_drain=worker_drain,
             promotion_hold=promotion_hold,

@@ -34,7 +34,7 @@ export type EdgeProtectionResponse = {
    * Requests answered by an edge gate, largest count first; zero counts are omitted.
    */
   rejections: Array<{
-    gate: 'jwt' | 'ip_allowlist' | 'internal_only' | 'ip' | 'geo' | 'limit' | 'body_limit' | 'throttle' | 'waf';
+    gate: 'jwt' | 'ip_allowlist' | 'internal_only' | 'ip' | 'geo' | 'limit' | 'body_limit' | 'throttle' | 'waf' | 'challenge';
     status: '401' | '403' | '413' | '429' | '503' | 'other';
     count: number;
   }>;
@@ -83,6 +83,35 @@ export type EdgeProtectionResponse = {
       name: string;
       count: number;
     }>;
+  };
+  /**
+   * kind=challenge decisions (ADR-831 amendment 7); its 403s also appear in rejections under gate challenge.
+   */
+  challenge: {
+    /**
+     * Challenge pages served to browser navigations.
+     */
+    issued: number;
+    /**
+     * Passes earned by solving the proof of work.
+     */
+    solved: number;
+    /**
+     * Non-navigation requests answered 403 challenge_required.
+     */
+    rejected: number;
+    /**
+     * Requests let through on a pass from an earlier solve.
+     */
+    passed: number;
+    /**
+     * Requests let through on a verified API key, consumer key or JWT.
+     */
+    bypassed: number;
+    /**
+     * Solutions refused: wrong work or an expired token.
+     */
+    invalid: number;
   };
 };
 

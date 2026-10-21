@@ -47,6 +47,11 @@ Verify the tokens wherever they are used:
 Sign-out and bans end refresh immediately. A token already issued stays valid
 for edge-only checks until it expires, at most 600 seconds later.
 
+A new password needs the current one (`updateUser({ password, currentPassword })`),
+except in a password reset or for a user who has no password yet, so a stolen
+access token cannot take over an account. Without it GoTrue answers
+`current_password_required` or `current_password_invalid`.
+
 ### In your backend
 
 The Go, Python and Node SDKs check a token's ES256 signature against the Auth app's
@@ -539,7 +544,7 @@ redirect URL origins.
 | `GET /authz/v1/orgs` | The caller's organizations, roles and whether each requires a second factor |
 | `PATCH /authz/v1/orgs/{org}` `{mfa_required}` | Require a second factor, or stop (needs `mfa:manage` and an `aal2` session) |
 | `GET /authz/v1/orgs/{org}/members` | Members (needs `org:read`); with `members:manage`, whether each has a second factor |
-| `PATCH /authz/v1/orgs/{org}/members/{user}` `{role}` | Change a role (needs `members:manage`; owners only for `owner`) |
+| `PATCH /authz/v1/orgs/{org}/members/{user}` `{role}` | Change a role (needs `members:manage` and every permission of both roles; owners only for `owner`) |
 | `DELETE /authz/v1/orgs/{org}/members/{user}` | Remove a member, or leave |
 | `POST /authz/v1/orgs/{org}/invitations` `{email, role, expires_in?}` | Invite; returns the token once |
 | `GET`/`DELETE /authz/v1/orgs/{org}/invitations[/{id}]` | List or revoke pending invitations |
@@ -549,9 +554,18 @@ redirect URL origins.
 | `POST /authz/v1/authorize` `{action, resource}` | `{"allowed": true or false}` |
 | `GET /authz/v1/orgs/{org}/audit-log` | The organization's audit log (needs `audit:read`) |
 
-No organization can lose its last owner. Invitations last seven days by default
-(300 seconds to 14 days); a user can create up to 100 organizations, and an
-organization can hold 500 pending invitations.
+No organization can lose its last owner. A member gives, changes or removes
+only roles whose every permission it holds, so `members:manage` never lets
+anyone raise themselves or others above their own permissions; the same holds
+for the roles of service accounts, domain joining and identity providers. To
+let admins hand out a custom role, give `admin` its permissions in the file
+(`"admin": ["members:manage", "org:read", "doc:write"]`).
+
+Invitations last seven days by default (300 seconds to 14 days); a user can
+create up to 100 organizations, and an organization can hold 500 pending
+invitations, one per address. Because invitations email any address, a member
+can send at most 50 an hour and an address receives at most 10 a day; beyond
+that the API answers 429 `invitation_rate_limited`.
 
 ### The active organization in tokens
 
@@ -757,7 +771,10 @@ changes; providers already connected keep working.
 An SSO user is a separate account from a password or OAuth account with the
 same address. Because an identity provider vouches only for its own domains,
 an SSO user can accept an organization invitation only for an address in one
-of its provider's domains.
+of its provider's domains. A provider an organization connects (or changes)
+itself may sign in only people with addresses at its verified domains, and
+your sign-up rules (invitation only, waitlist) apply to them; providers you
+register with `gregale auth sso` are trusted for any address and exempt.
 
 ### Join by email domain
 
@@ -808,6 +825,69 @@ removed comes back only by invitation. Members stay when a domain is
 removed or joining turned off. A domain can be verified by only one
 organization, so an address leads to at most one. `gregale auth orgs get`
 and the dashboard's organization panel show each domain and how people join.
+
+### Service accounts
+
+Let your customers' own scripts and servers call your API, or the Data API,
+as their organization, without a person or a browser:
+
+```sh
+gregale auth config shop-auth --service-accounts on
+```
+
+A service account belongs to one organization and holds one of its roles,
+like a member, but it is not a user: it never signs in, does not count as a
+user and is not listed among members. Members whose role grants
+`members:manage` manage their organization's accounts, for example on an
+"API keys" page in your app; only owners give one the owner role:
+
+```ts
+const created = await auth.serviceAccounts.create(org.id, { name: 'CI deploys', role: 'deployer' })
+// Show created.client_id and created.client_secret once; only a hash is kept.
+await auth.serviceAccounts.addSecret(org.id, created.client_id)          // a second secret, to rotate
+await auth.serviceAccounts.revokeSecret(org.id, created.client_id, created.secret.id)
+await auth.serviceAccounts.update(org.id, created.client_id, { disabled: true })
+```
+
+You manage any organization's accounts with an admin key:
+
+```sh
+printf '%s' "$ADMIN_KEY" | gregale auth service-accounts add shop-auth --org acme --name 'CI deploys' --role deployer --admin-key-stdin
+gregale auth service-accounts list shop-auth --org acme
+```
+
+The customer's backend trades the client ID and secret for an access token
+with the OAuth client-credentials grant at `<Auth app>/auth/v1/oauth/token`
+(HTTP Basic, or `client_id` and `client_secret` in the form body). An
+optional `scope` narrows the token to some of the role's permissions. The
+SDKs cache the token until shortly before it expires:
+
+```ts
+import { createClientCredentials } from '@gregale/auth/server'
+const machine = createClientCredentials({ url: 'https://shop-auth.gregale.app', clientId, clientSecret })
+await fetch(api, { headers: { Authorization: `Bearer ${await machine.token()}` } })
+```
+
+Go has `auth.NewClientCredentials` and Python `faas_sdk.auth.ClientCredentials`.
+
+The token verifies like a person's (same issuer, audience `authenticated`,
+600 seconds) and carries `service_account: true`, the account's ID as `sub`,
+its organization in `org_id`, `org_slug`, `org_role` and `org_permissions`,
+and `scope` when narrowed. Your API tells it from a person with the
+verifiers' `serviceAccount` (`ServiceAccount` in Go, `service_account` in
+Python). `authorize()` grants it its role's permissions in its own
+organization, in row-level security, storage and the SDKs, and stops at once
+when the account is disabled or deleted or its secret revoked; edge-only JWT
+checks honour that when the token expires. Policies written for people
+(`auth.uid() = owner_id`, `session_active()`) never match it. On the Auth
+host the token reaches only `/authz/v1/authorize` and `/authz/v1/storage/sign`.
+
+An organization holds at most 50 service accounts, each with at most two live
+secrets; a secret may expire after 1 to 3650 days. An account gets at most 60
+tokens a minute, and an address that fails 60 times in a minute is refused
+until the next. The organization's audit log records every change. Turning
+the setting off stops new tokens; those already issued last until they
+expire.
 
 ## Authorize anywhere with one function
 

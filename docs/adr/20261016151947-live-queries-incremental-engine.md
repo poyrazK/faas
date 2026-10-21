@@ -1115,6 +1115,91 @@ Phase 0 did not cover:
     realtimed.
   - The SDK's live module stays unexported and unpacked until launch.
 
+- **Anonymous and server-key reads** (2026-10-19, with ADR-20261018170742
+  and ADR-20261019102108).
+  - **Frames.** A Data API read may carry `anonymous: true` or a
+    `server_key` (with an optional `subject`) instead of a user's token.
+    `access` (`anonymous` or `server`) is set only by realtimed, like `role`
+    and `claims`; a client that sends it is refused.
+  - **Settings.** The Data API runtime reports its access settings with its
+    usage reports, after start, after a restore and hourly. They hold its
+    exposed schemas, its public-read allowlist and its server-key hashes with
+    permissions, never a key. apid stores the latest per app
+    (`data_api_access_configs`) and puts them on the app's live routes
+    (`LiveRoute.DataAPIAccess`). Deleting `DATA_API_USAGE_URL` forgets them,
+    so live reads never follow settings the runtime can no longer report.
+  - **Admission.** The live proxy in realtimed admits these reads. An
+    anonymous read may name only public relations, and embedded relations are
+    checked recursively from the parsed read. A server key must match a
+    slot's hash, compared in constant time, and stay within the key's
+    relation and subject permissions. The proxy then replaces the credential
+    with the Data API gateway's claims (`gregale_access` `anonymous`, or
+    `server` with `gregale_server_key` and `sub`), set to expire after
+    `LiveQueryKeySessionMax` (1 h). The key never reaches the hub. A renewal
+    re-runs admission against the current settings with the subscription's
+    read, so a revoked key or a narrowed allowlist takes effect within an hour.
+    A renewal that changes the access kind is a `renew_mismatch`.
+  - **The hub** accepts claims for these kinds only in exactly that shape, and
+    only from realtimed. Row-level security still decides every row.
+  - **Connections.** v2 previously required OIDC (or a ticket). An endpoint
+    without OIDC now accepts v2 when it has live routes, as a live-only
+    connection: live frames are admitted frame by frame, and channel frames
+    answer `live_only_connection`. Server keys are refused on connections
+    whose upgrade carried an `Origin` header, as the REST gateway refuses them
+    from browsers.
+  - **SDK.** `connection.query({ database, anonymous: true, ...liveRead(q) })`
+    and `{ serverKey, subject }`; exactly one credential, enforced by types.
+  - **Tests:** frame validation; admission unit tests; a proxy session
+    against a recording hub, showing the key stays in realtimed and renewals
+    re-check; realtimed's pass-through, client-set access kinds and
+    browser-origin refusal; live-only connections; and a full path on
+    PostgreSQL where a visitor without a session sees only published rows,
+    follows a new one, and is refused orders that a server key reads.
+
+- **Data API live reads for customers** (2026-10-20). This amends the
+  rollout gate above for Data API reads. Sealed queries stay an operator
+  preview.
+  - **What customers get.** `@gregale/data` exports `./live` and
+    `./live/react`, with React as an optional peer, and packs `dist/live`.
+    `liveSocket(url)` opens the realtime v2 subprotocol, carrying no
+    credential. `gregale data-api live enable|status` appears in customer
+    help and the CLI reference, and `docs/data-api.md#live-reads` documents
+    it. `gregale postgres live` stays out of customer help.
+  - **What still gates access.** The `live_queries` platform flag (ADR-1700)
+    still decides which accounts get live routes. The live API routes stay
+    out of the public OpenAPI spec and generated SDKs. Opening the flag to
+    everyone is the launch step, after testing on production. Outside it,
+    `data-api live` reports that live queries are not available and changes
+    nothing.
+  - **One command.** `data-api live enable` finds the Data API's database
+    through its `data_api` binding. It enables live queries there, discarding
+    the issued secret (Data API reads do not use it), and turns usage
+    reporting on with a fresh restart. It then creates a realtime endpoint on
+    the Data API app with auth mode `none`. Each step runs only if missing.
+  - **Token settings travel with the access settings.** The runtime adds
+    `auth` (issuer, JWKS URL, audience) to its reported access settings. apid
+    validates them like a realtime endpoint's OIDC settings, and realtimed's
+    JWKS client keeps its egress guard. realtimed verifies an RLS-mode
+    read's token with the settings of the Data API serving that database,
+    using the runtime's algorithms (RS256, ES256). It falls back to the
+    endpoint's OIDC policy only when no route reports them. A live read
+    therefore accepts exactly the tokens a REST read does, and the endpoint
+    needs no OIDC settings of its own.
+  - **No app callbacks for live-only connections.** realtimed skips the
+    connect and disconnect callbacks for live-only connections: they carry
+    no identity for the app to judge, and each frame brings its own
+    credential. A Data API runtime answers no realtime callbacks, so its
+    endpoint must use auth mode `none`. Other connections to it still ask
+    the app and are refused; `data-api live status` warns about any other
+    mode.
+  - **Tests:** access-setting validation (non-HTTPS, private JWKS, missing or
+    oversized audience); the runtime's report; realtimed verifying a user's
+    live read with the reported issuer on a live-only connection while the
+    app refuses every connection it is asked about; the CLI against a fake
+    API, where a first enable makes three writes and a second makes none,
+    the status warning and the rollout refusal; the SDK's package exports,
+    pack contents and `liveSocket`.
+
 ## Consequences
 
 - **TRUNCATE waits.** TRUNCATE and table rewrites on live tables wait for the

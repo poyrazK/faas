@@ -110,6 +110,9 @@ func (m *MemStore) nodeMigrationPendingLocked(node string) bool {
 }
 
 func (m *MemStore) nodeMigrationCapacityPendingLocked(node string) bool {
+	if m.functionMigrationNodePendingLocked(node) {
+		return true
+	}
 	for _, r := range m.migrationSources {
 		if r.SourceNodeID == node && r.Pending() {
 			return true
@@ -140,7 +143,7 @@ func (m *MemStore) migrationInstanceCostLocked(i Instance) capacityResources {
 }
 
 func (m *MemStore) migrationNodeUsedLocked(node, omit string) capacityResources {
-	var used capacityResources
+	used := m.functionMigrationNodeUsageLocked(node)
 	for _, i := range m.instances {
 		if i.ID != omit && i.NodeID == node && IsLive(i.State) {
 			c := m.migrationInstanceCostLocked(i)

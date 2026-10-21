@@ -29,6 +29,14 @@ type proxyState struct {
 	nextConnectDelay    time.Duration
 }
 
+// ConnectionCount observes live downstream sessions without decoding TLS or
+// exposing credentials. Acceptance uses it to prove checkpoint pool draining.
+func (p Proxy) ConnectionCount() int {
+	p.state.mu.Lock()
+	defer p.state.mu.Unlock()
+	return len(p.state.connections)
+}
+
 // Disconnect retires existing sessions while allowing new TLS sessions.
 func (p Proxy) Disconnect() {
 	p.state.mu.Lock()
@@ -67,6 +75,10 @@ func (p Proxy) SetAvailable(available bool) {
 }
 
 func OpenProxy(t *testing.T, cluster *pgxpool.Pool, listenIP string, port uint16) Proxy {
+	return OpenProxyWithDeadline(t, cluster, listenIP, port, 30*time.Second)
+}
+
+func OpenProxyWithDeadline(t *testing.T, cluster *pgxpool.Pool, listenIP string, port uint16, deadline time.Duration) Proxy {
 	t.Helper()
 	listener, err := net.Listen("tcp4", net.JoinHostPort(listenIP, strconv.Itoa(int(port))))
 	if err != nil {

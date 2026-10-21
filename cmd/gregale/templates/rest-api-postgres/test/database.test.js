@@ -28,6 +28,47 @@ async function fixture(options = {}) {
   return { db, pools, logs };
 }
 
+test("qualified functions register the shipped binding adapter before driver creation and retain it until retirement", async t => {
+  const key = Symbol.for("gregale.function.postgres.lifecycle.v1");
+  const resources = new Set();
+  Object.defineProperty(globalThis, key, {configurable: true, value: {version: 1, register(resource) {
+    resources.add(resource); return () => resources.delete(resource);
+  }}});
+  t.after(() => Reflect.deleteProperty(globalThis, key));
+  const {db, pools} = await fixture({shutdownTimeoutMS: 25, configurePool() {
+    assert.equal(resources.size, 1);
+  }});
+  const [resource] = resources;
+  await resource.beforeCheckpoint({});
+  assert.equal(db.diagnostics.state, "checkpointed");
+  assert.equal(pools[0].ended, 1);
+  await resource.afterRestore({});
+  assert.equal(db.generation, 1);
+  assert.equal(pools.length, 2);
+  const drained = deferred();
+  pools[1].end = () => drained.promise;
+  // A referenced timer keeps the test alive through AbortSignal.timeout.
+  const release = setTimeout(drained.resolve, 100);
+  t.after(() => { clearTimeout(release); drained.resolve(); });
+  await assert.rejects(db.close(), /database_cancelled/);
+  assert.equal(resources.size, 1);
+  drained.resolve(); await tick(); await tick();
+  assert.equal(resources.size, 0);
+});
+
+test("a full function registry refuses the shipped adapter before any driver factory effects", t => {
+  const key = Symbol.for("gregale.function.postgres.lifecycle.v1");
+  Object.defineProperty(globalThis, key, {configurable: true, value: {version: 1, register() {
+    throw new Error("private registry detail");
+  }}});
+  t.after(() => Reflect.deleteProperty(globalThis, key));
+  let created = 0;
+  assert.throws(() => createDatabase(() => { created++; }, {
+    env: {DATABASE_URL: "postgres://worker:fixture@db:5432/app?sslmode=disable"},
+  }), error => error.message === "database_unavailable");
+  assert.equal(created, 0);
+});
+
 test("idle SQL errors are handled without printing provider details", async () => {
   const { db, pools, logs } = await fixture();
   pools[0].emit("error", new Error("password=secret provider.example"));

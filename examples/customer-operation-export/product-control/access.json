@@ -1,11 +1,11 @@
 {
   "roles": {
-    "owner": ["work:read", "work:run", "billing:read"],
+    "owner": ["work:read", "work:run", "billing:read", "billing:manage"],
     "admin": ["work:read", "work:run", "billing:read"],
     "member": ["work:read"],
     "viewer": ["work:read"],
     "operator": ["work:run"],
-    "billing": ["billing:read"],
+    "billing": ["billing:read", "billing:manage"],
     "plan-manager": ["plans:manage"],
     "team-manager": ["team:manage"]
   }

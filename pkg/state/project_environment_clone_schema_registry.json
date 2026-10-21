@@ -2071,7 +2071,14 @@
       "declared_routes",
       "delete_grace_until",
       "deleted_at",
+      "deployment_cron_before",
+      "deployment_cron_fingerprint",
+      "deployment_cron_owner",
+      "deployment_cron_revision",
       "deployment_mail_revision",
+      "deployment_policy_fingerprint",
+      "deployment_policy_owner",
+      "deployment_policy_revision",
       "egress_allowlist",
       "egress_allowlist_revision",
       "egress_ports",
@@ -2361,6 +2368,26 @@
     "kind": "operational"
   },
   {
+    "table": "billing_run_product_items",
+    "columns": [
+      "amount_millicents",
+      "app_id",
+      "attempts",
+      "currency",
+      "document_id",
+      "exported_count",
+      "external_ref",
+      "invoice_id",
+      "next_attempt_at",
+      "outcome",
+      "reason",
+      "run_id",
+      "tenant_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "billing_run_schedules",
     "columns": [
       "account_id",
@@ -2393,6 +2420,7 @@
       "notified_at",
       "period_end",
       "period_start",
+      "product_discovered_at",
       "sources",
       "started_at",
       "status",
@@ -3706,6 +3734,15 @@
     "kind": "operational"
   },
   {
+    "table": "data_api_access_configs",
+    "columns": [
+      "app_id",
+      "config",
+      "reported_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "data_api_usage_hourly",
     "columns": [
       "anonymous_requests",
@@ -4054,6 +4091,32 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_cron_activations",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "fingerprint",
+      "intent",
+      "revision",
+      "session_id",
+      "status",
+      "updated_at",
+      "upload_id"
+    ]
+  },
+  {
+    "table": "deployment_cron_outcomes",
+    "kind": "operational",
+    "columns": [
+      "deployment_id",
+      "reason",
+      "revision",
+      "session_id",
+      "status",
+      "updated_at"
+    ]
+  },
+  {
     "table": "deployment_dependency_gates",
     "columns": [
       "blocker",
@@ -4191,6 +4254,16 @@
     "kind": "configuration"
   },
   {
+    "table": "deployment_project_release_workers",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "attempt_id",
+      "deployment_id",
+      "project_id"
+    ]
+  },
+  {
     "table": "deployment_public_build_urls",
     "columns": [
       "deployment_id",
@@ -4245,6 +4318,23 @@
       "workload_name"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "deployment_release_env_snapshots",
+    "kind": "configuration",
+    "columns": [
+      "deployment_id",
+      "values_json"
+    ]
+  },
+  {
+    "table": "deployment_release_secret_snapshots",
+    "kind": "configuration",
+    "columns": [
+      "created_at",
+      "deployment_id",
+      "values_json"
+    ]
   },
   {
     "table": "deployment_revision_pins",
@@ -4426,6 +4516,16 @@
       "signal"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "deployment_submission_receipts",
+    "kind": "operational",
+    "columns": [
+      "accepted_at",
+      "app_id",
+      "attempt_id",
+      "deployment_id"
+    ]
   },
   {
     "table": "deployments",
@@ -4826,6 +4926,15 @@
     "kind": "operational"
   },
   {
+    "table": "environment_build_artifact_pins",
+    "columns": [
+      "artifact_id",
+      "candidate_id",
+      "source_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_desired_revisions",
     "columns": [
       "approved_at",
@@ -5153,6 +5262,16 @@
       "instance_id",
       "recorded_at",
       "snapshot"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_recovery_serving_history",
+    "columns": [
+      "graph_id",
+      "release_set_id",
+      "served_at",
+      "source_id"
     ],
     "kind": "operational"
   },
@@ -6230,6 +6349,35 @@
       "updated_at"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "function_migration_destinations",
+    "columns": [
+      "grant_data",
+      "instance_id",
+      "lease_token",
+      "node_id",
+      "phase",
+      "receipt",
+      "token",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "function_migration_sources",
+    "columns": [
+      "capture_grant",
+      "capture_result",
+      "capture_token",
+      "instance_id",
+      "lease_token",
+      "phase",
+      "recovery_grant",
+      "source_node_id",
+      "source_wake_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "gateway_concurrency_queue_leases",
@@ -12562,6 +12710,30 @@
     "kind": "operational"
   },
   {
+    "table": "product_control_overdue_holds",
+    "columns": [
+      "account_id",
+      "app_id",
+      "document_id",
+      "due_at",
+      "export_id",
+      "since",
+      "tenant_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_overdue_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "block_overdue_after_days",
+      "created_at",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "product_control_plan_changes",
     "columns": [
       "account_id",
@@ -13832,6 +14004,22 @@
     "kind": "configuration"
   },
   {
+    "table": "project_environment_secrets",
+    "columns": [
+      "account_id",
+      "ciphertext",
+      "created_at",
+      "environment_slug",
+      "key",
+      "kid",
+      "project_id",
+      "secret_version",
+      "updated_at",
+      "value_hash"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "project_environment_edge_policies",
     "columns": [
       "account_id",
@@ -13845,6 +14033,15 @@
     "kind": "configuration"
   },
   {
+    "table": "project_environment_promotion_controls",
+    "kind": "operational",
+    "columns": [
+      "payload",
+      "promotion_id",
+      "request_id"
+    ]
+  },
+  {
     "table": "project_environment_promotion_feature_flags",
     "columns": [
       "previous_target_hash",
@@ -13856,6 +14053,54 @@
       "target_version"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "project_environment_promotion_health",
+    "kind": "operational",
+    "columns": [
+      "promotion_id",
+      "generation",
+      "phase",
+      "payload",
+      "lease_token",
+      "lease_until",
+      "last_claimed_at",
+      "next_check_at"
+    ]
+  },
+  {
+    "table": "project_environment_promotion_migration_recoveries",
+    "kind": "operational",
+    "columns": [
+      "promotion_id",
+      "request_id",
+      "request_hash",
+      "status",
+      "payload",
+      "created_at"
+    ]
+  },
+  {
+    "table": "project_environment_promotion_migrations",
+    "kind": "operational",
+    "columns": [
+      "promotion_id",
+      "task_id",
+      "runtime_fingerprint",
+      "prepared_lease_token",
+      "runtime_node_id",
+      "runtime_instance_id",
+      "runtime_lease_token",
+      "destroyed_at"
+    ]
+  },
+  {
+    "table": "project_environment_promotion_release_config",
+    "kind": "operational",
+    "columns": [
+      "promotion_id",
+      "payload"
+    ]
   },
   {
     "table": "project_environment_promotion_workload_specs",
@@ -14045,6 +14290,50 @@
     "kind": "configuration"
   },
   {
+    "table": "project_migration_contracts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempt_id",
+      "command",
+      "command_hash",
+      "config_hash",
+      "config_version",
+      "created_at",
+      "expansion_task_id",
+      "generation",
+      "prepared_lease_token",
+      "project_id",
+      "release_id",
+      "request_id",
+      "retired_deployment_ids",
+      "runtime_fingerprint",
+      "task_id",
+      "workload_attempt_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_migration_recoveries",
+    "columns": [
+      "account_id",
+      "attempt_id",
+      "config_hash",
+      "config_version",
+      "evidence_hash",
+      "generation",
+      "project_id",
+      "replacement_attempt_id",
+      "replacement_release_id",
+      "request_hash",
+      "request_id",
+      "resolved_at",
+      "runtime_fingerprints",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_migrations",
     "columns": [
       "account_id",
@@ -14058,6 +14347,40 @@
     "kind": "operational"
   },
   {
+    "table": "project_release_additions",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempt_id",
+      "dormant",
+      "fingerprint",
+      "project_id"
+    ]
+  },
+  {
+    "table": "project_release_canaries",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "attempt_id",
+      "created_at",
+      "policy",
+      "project_id",
+      "status",
+      "worker_app_id"
+    ]
+  },
+  {
+    "table": "project_release_config_intents",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "attempt_id",
+      "payload"
+    ]
+  },
+  {
     "table": "project_release_members",
     "columns": [
       "app_id",
@@ -14065,6 +14388,19 @@
       "release_id"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "project_release_secret_bundles",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "created_at",
+      "project_id",
+      "request_hash",
+      "request_id",
+      "response_json",
+      "values_json"
+    ]
   },
   {
     "table": "project_release_sets",
@@ -14097,6 +14433,54 @@
       "targets"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "project_release_worker_drains",
+    "kind": "operational",
+    "columns": [
+      "instance_id",
+      "requested_at"
+    ]
+  },
+  {
+    "table": "project_submissions",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "attempt_id",
+      "fingerprint",
+      "payload",
+      "status",
+      "updated_at"
+    ]
+  },
+  {
+    "table": "project_worker_job_evidence",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "attempt",
+      "binding_id",
+      "deployment_id",
+      "finished_at",
+      "invocation_id",
+      "outcome",
+      "queue_delay_ms",
+      "replay_generation",
+      "started_at"
+    ]
+  },
+  {
+    "table": "project_worker_release_pins",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "binding_id",
+      "created_at",
+      "deployment_id",
+      "release_id",
+      "root_invocation_id"
+    ]
   },
   {
     "table": "projects",
@@ -14247,6 +14631,22 @@
     "kind": "operational"
   },
   {
+    "table": "release_secret_key_retirement_fence",
+    "columns": [
+      "generation",
+      "singleton"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "release_secret_key_retirements",
+    "columns": [
+      "kid",
+      "retired_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "request_audit_events",
     "columns": [
       "account_id",
@@ -14317,6 +14717,7 @@
       "spans_summary",
       "status",
       "trace_id",
+      "trace_inferred",
       "ua_family",
       "wake_id"
     ],
@@ -14604,6 +15005,21 @@
       "rootfs_key"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "runtime_config_apply_receipts",
+    "columns": [
+      "config_key",
+      "daemon",
+      "error",
+      "instance",
+      "reported_at",
+      "scope",
+      "scope_id",
+      "status",
+      "version"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "runtime_config_entries",
@@ -15741,6 +16157,31 @@
     "kind": "operational"
   },
   {
+    "table": "usage_month_totals",
+    "columns": [
+      "account_id",
+      "cold_boot_count",
+      "cpu_usec",
+      "mb_seconds",
+      "minute_rows",
+      "month",
+      "net_rx_bytes",
+      "net_tx_bytes",
+      "requests",
+      "subject_id",
+      "tx_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "usage_month_totals_tracking",
+    "columns": [
+      "singleton",
+      "tracked_from"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "usage_statement_invoice_exports",
     "columns": [
       "account_id",
@@ -16369,20 +16810,5 @@
       "workflow_name"
     ],
     "kind": "operational"
-  },
-  {
-    "table": "runtime_config_apply_receipts",
-    "columns": [
-      "config_key",
-      "daemon",
-      "error",
-      "instance",
-      "reported_at",
-      "scope",
-      "scope_id",
-      "status",
-      "version"
-    ],
-    "kind": "platform_configuration"
   }
 ]

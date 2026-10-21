@@ -50,7 +50,7 @@ func TestDeployHealthcheckSourceRefCLI(t *testing.T) {
 				defer srv.Close()
 				t.Setenv("FAAS_API", srv.URL)
 				t.Setenv("FAAS_TOKEN", "fp_live_x")
-				withResetJSONOutput(t, false)
+				main.WithResetJSONOutput(t, false)
 				args := []string{"--name", "hello", "--repo", "owner/repo", "--ref", "main", "--no-wait", "--app-protocol", "grpc", "--healthcheck-grpc", "--healthcheck-grpc-service", service}
 				if code := main.CmdDeployTarball(args); code != 0 {
 					t.Fatalf("code=%d", code)
@@ -156,7 +156,7 @@ func TestDeployHealthcheckLocalCLITransports(t *testing.T) {
 			})
 			t.Setenv("FAAS_API", (*stub.Srv()).URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
-			withResetJSONOutput(t, false)
+			main.WithResetJSONOutput(t, false)
 			args := []string{"--name", "demo", "--app", "--no-wait", "--healthcheck-grpc", "--healthcheck-grpc-service", "audit.Echo"}
 			if transport == "traffic" {
 				args = append(args, "--traffic-percent", "0")

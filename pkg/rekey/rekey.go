@@ -247,6 +247,9 @@ func (r *Replayer) Run(
 	cursor string,
 	progress func(RekeyProgress),
 ) error {
+	if store, ok := r.store.(state.SecretRekeyStore); ok {
+		return r.runSecretDocuments(ctx, store, progress)
+	}
 	if progress == nil {
 		progress = func(RekeyProgress) {}
 	}

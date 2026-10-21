@@ -317,6 +317,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	respond, respondErrs := compileRespondRules(storeRules)
 	asyncRules, asyncErrs := compileAsyncRules(storeRules)
 	waf, wafErrs := compileWAFRules(storeRules)
+	challenge, challengeErrs := compileChallengeRules(storeRules)
 	retry, retryErrs := compileRetryRules(storeRules)
 	circuitBreaker, circuitBreakerErrs := compileCircuitBreakerRules(storeRules)
 	entry := &gateway.HostEntry{
@@ -338,6 +339,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		Respond:        respond,
 		Async:          asyncRules,
 		WAF:            waf,
+		Challenge:      challenge,
 		Retry:          retry,
 		CircuitBreaker: circuitBreaker,
 	}
@@ -359,6 +361,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	parseErrs = append(parseErrs, respondErrs...)
 	parseErrs = append(parseErrs, asyncErrs...)
 	parseErrs = append(parseErrs, wafErrs...)
+	parseErrs = append(parseErrs, challengeErrs...)
 	if len(parseErrs) > 0 {
 		entry.PathGlobErrs = parseErrs
 	}
@@ -417,6 +420,9 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		}
 		for range wafErrs {
 			g.metrics.ObserveEdgeRuleCompileError("waf")
+		}
+		for range challengeErrs {
+			g.metrics.ObserveEdgeRuleCompileError("challenge")
 		}
 	}
 	g.cache.PutIfGeneration(gateway.EdgeRuleCacheKey(host, appID), entry, generation)
@@ -972,6 +978,47 @@ func (g *gatewaydEdgeRules) MatchWAF(ctx context.Context, host, requestPath, met
 	enforced := gateway.PickFirstWAFMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleWAFResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 	logged := gateway.PickFirstWAFMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleWAFResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+}
+
+// challengeRules returns the host's compiled kind=challenge rules through
+// the shared per-host cache, or nil when the rules cannot be loaded.
+func (g *gatewaydEdgeRules) challengeRules(ctx context.Context, host string) []gateway.EdgeRuleChallengeResolved {
+	if g == nil || g.cache == nil {
+		return nil
+	}
+	rules, hit := g.cache.GetChallenge(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)))
+	if hit {
+		return rules
+	}
+	entry, err := g.loadHost(ctx, host)
+	if err != nil {
+		if g.log != nil {
+			g.log.Warn("edge rule loader failed; treating challenge rule as miss", "host", host, "err", err)
+		}
+		return nil
+	}
+	g.warnPathGlobErrs(host, entry.PathGlobErrs)
+	return entry.Challenge
+}
+
+// MatchChallenge returns the highest-priority kind=challenge rule matching
+// the public request (ADR-831 amendment 7).
+func (g *gatewaydEdgeRules) MatchChallenge(ctx context.Context, host, requestPath, method string) *gateway.EdgeRuleChallengeResolved {
+	rules := g.challengeRules(ctx, host)
+	if len(rules) == 0 {
+		return nil
+	}
+	account := func(r *gateway.EdgeRuleChallengeResolved) string { return r.AccountID }
+	headers := gateway.EdgeRuleRequestHeaders(ctx)
+	enforced := gateway.PickFirstChallengeMatch(gateway.ApplicableEdgeRules(ctx, rules, account, requestPath, method), requestPath, method, headers)
+	logged := gateway.PickFirstChallengeMatch(gateway.LoggedEdgeRules(ctx, rules, account, requestPath, method), requestPath, method, headers)
+	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+}
+
+// HostChallengeRule returns any enforced challenge rule the host's app
+// owns, for the solve endpoint.
+func (g *gatewaydEdgeRules) HostChallengeRule(ctx context.Context, host string) *gateway.EdgeRuleChallengeResolved {
+	return gateway.FirstEnforcedChallengeRule(ctx, g.challengeRules(ctx, host))
 }
 
 // Reset drops every cached entry. Called by the pg_notify loop in
@@ -1841,6 +1888,42 @@ func compileWAFRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleWAFResolved
 			ExcludeRuleIDs:   action.ExcludeRuleIDs,
 			InspectBodyBytes: action.InspectBodyBytes,
 			Mode:             action.Mode,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
+	return out, parseErrs
+}
+
+// compileChallengeRules compiles kind=challenge rows (ADR-831 amendment 7).
+// A row whose action is missing or fails the apid bounds (a direct-database
+// write) is dropped rather than enforced with values apid would reject.
+func compileChallengeRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleChallengeResolved, []gateway.PathGlobError) {
+	var out []gateway.EdgeRuleChallengeResolved
+	var parseErrs []gateway.PathGlobError
+	for i := range storeRules {
+		rule := &storeRules[i]
+		if !rule.Enabled || rule.Kind != state.EdgeRuleKindChallenge || rule.Action.Challenge == nil {
+			continue
+		}
+		action := api.EdgeRuleChallengeAction{
+			Difficulty:     rule.Action.Challenge.Difficulty,
+			PassTTLSeconds: rule.Action.Challenge.PassTTLSeconds,
+		}
+		if action.Validate() != nil {
+			continue
+		}
+		if errs := validatePathGlob(rule.ID, rule.MatchPath); errs != nil {
+			parseErrs = append(parseErrs, errs...)
+			continue
+		}
+		out = append(out, gateway.EdgeRuleChallengeResolved{
+			ID: rule.ID, AccountID: rule.AccountID, AppID: rule.AppID,
+			EdgeRuleCondition: compileEdgeRuleCondition(rule.ID, rule.AppID, rule.Mode, rule.Match, rule.MatchLists),
+			Priority:          rule.Priority, PathGlob: rule.MatchPath,
+			Methods:        buildMethodsMap(rule.MatchMethods),
+			MatchHeaders:   buildMatchHeadersMap(rule.MatchHeaders),
+			Difficulty:     action.Difficulty,
+			PassTTLSeconds: action.PassTTLSeconds,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

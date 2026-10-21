@@ -105,6 +105,9 @@ type ProductPortal struct {
 	Customer   ProductCustomer                   `json:"customer"`
 	Catalog    ProductCatalog                    `json:"catalog"`
 	Usage      *ProductUsage                     `json:"usage,omitempty"`
+	// OverdueHold explains why new starts are refused while an exported
+	// invoice is overdue (ADR-20261018212918); separate from Suspended.
+	OverdueHold *ProductCustomerOverdueHold `json:"overdue_hold,omitempty"`
 }
 
 // ProductOperationReceipt is immutable admission evidence persisted inside an

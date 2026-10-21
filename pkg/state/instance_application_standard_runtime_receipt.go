@@ -31,6 +31,9 @@ func (m *MemStore) standardRuntimeReceiptLocked(id string) (runtimeadmission.Rec
 	if !ok || ins.State != string(StateRunning) && ins.State != string(StateSnapshotting) && ins.State != string(StateMigrating) || m.guardNativeRuntimeReceiptLocked(ins, capture) != nil {
 		return runtimeadmission.Receipt{}, ErrApplicationStandardRuntimeStale
 	}
+	if r := m.functionDestinationReceiptLocked(ins); r != nil {
+		return r.Clone(), nil
+	}
 	boot, ok := m.instanceApplicationStandardBoots[m.instanceApplicationStandardBootTokens[id]]
 	if !ok || boot.Receipt == nil {
 		return runtimeadmission.Receipt{}, ErrApplicationStandardRuntimeStale

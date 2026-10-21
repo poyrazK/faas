@@ -431,6 +431,56 @@ Both CI tiers run these harness checks. Native execution remains pending: this
 workspace has no KVM device or designated peer credentials. Host power loss,
 partitions, automatic recovery-policy and drain qualification remain separate.
 The earlier heartbeat smoke is available separately. Nothing deployed.
+
+## Measured Node function migration destinations — 2026-10-17
+
+[ADR-20261018030615](adr/20261018030615-function-migration-destination.md) adds qualification-only
+measured destination restore, durable readiness and ownership epochs, a separate
+execution activation fence, and confirmed destination retirement before source
+recovery. Current configuration and artifact approval are rechecked at commit;
+pending destination RAM/CPU/vCPU claims survive scheduler restart in the database.
+Original native admission history remains immutable. Production activation and
+two-host Node 22/24 KVM/TLS SQL qualification remain pending. See the
+[evidence](ops/evidence/20261017-function-migration-destination/REPORT.md).
+
+## Measured Node function migration source permissions — 2026-10-17
+
+[ADR-20261018030614](adr/20261018030614-function-migration-admission.md) adds separate capture and
+recovery permissions to the qualification-only source path. Each permission
+binds the measured parent, original wake, source lease and capture files, and
+uses the existing current-input and artifact approval fences. Recovery permission
+is issued after schedd fences ownership; lease expiry cannot renew capture
+authority. Duplicate RPCs preserve a valid in-flight permission and reuse the
+single physical recovery result. RUNNING publication checks current recovery
+permission again. The Node 22/24 native SQL matrix now includes cancellation,
+expiry, failed probes and held recovery ACK timeout. Native execution is pending;
+production activation and destination adoption remain gated. See the
+[evidence](ops/evidence/20261017-function-migration-admission/REPORT.md).
+
+## Node function migration source rollback — 2026-10-17
+
+[ADR-20261018030613](adr/20261018030613-function-migration-source-rollback.md) adds a qualification-only
+source path: mandatory all-interpreter checkpoint drainage, paused publication,
+a durable scheduler rollback fence, and one acknowledged pool-recovery attempt.
+Cancellation and expired leases retain source capacity until recovery or physical
+retirement is confirmed. schedd completes RUNNING or STOPPED after that result;
+vmmd never writes the instance ownership row. ADR-20261018030614 above adds measured source
+permission; destination adoption remains refused. Native KVM/vsock, restart/private-environment
+acceptance and production activation remain pending. See the
+[evidence](ops/evidence/20261017-function-migration-source-rollback/REPORT.md).
+
+## Node function warm-snapshot recovery — 2026-10-17
+
+[ADR-20261018030612](adr/20261018030612-function-warm-snapshot-resource-recovery.md) adds qualified
+warm capture with PostgreSQL drainage, paused publication and all-worker recovery
+before the original VM admits traffic. Cancelled/failed capture also recovers;
+unconfirmed recovery seals admission and retires the original physical VM.
+Measured checkpoint authority is explicit, and schedd checks idleness again
+before terminal park or snapshot-reuse destruction. Migration remains refused.
+Portable host race and real TLS/SCRAM SQL tests pass on Node 22/24; see the
+[evidence](ops/evidence/20261017-function-warm-snapshot-recovery/REPORT.md).
+This is local implementation evidence. Native KVM/vsock and recovery
+qualification remain pending, and ordinary production builds keep activation off.
 ## Product Control customer work history — 2026-10-17
 
 [ADR-1727](adr/1727-product-control-customer-work-history.md) adds a private
@@ -1693,10 +1743,68 @@ separate these process checks from native VM qualification. Native execution is
 pending: this workspace lacks KVM. Function hooks execute in one worker; this
 does not qualify VM-wide pool draining or durable post-response `waitUntil`.
 
+## Node background completion foundation — 2026-10-16
+
+ADR-20261018005023 adds a negotiated response/execution completion protocol. Portable
+runner and generated-adapter tests cover early HTTP/1 and HTTP/2 response EOF,
+registered promises and children, rejection, central plan limits, neighbour
+isolation, deadlines/disconnect cleanup, crash recovery and recycle retention.
+Worker slots remain occupied through actual completion or cancellation cleanup;
+uncooperative workers are retired after the existing acknowledgement grace.
+Production runner mains leave activation disabled. Acknowledged VM registration,
+VM-wide checkpoint protection, Python background execution and native snapshot
+qualification remain separate work. No deployment or durable execution is
+claimed. See [ADR-20261018005023](adr/20261018005023-function-background-completion-protocol.md) and
+the [acceptance procedure](ops/function-backend-concurrency-acceptance.md).
+[Portable evidence](ops/evidence/20261016-function-background-completion/REPORT.md)
+records the disabled activation boundary and native prerequisite failures.
+
+## Node VM execution lifetime and checkpoint admission — 2026-10-16
+
+[ADR-20261018030610](adr/20261018030610-function-vm-execution-lifetime.md) adds host-acknowledged,
+incarnation-scoped execution reservations before handler dispatch. HTTP EOF
+does not release them; actual worker completion/cancellation does. Lost replies,
+late messages and runner generation changes retain ownership conservatively.
+Host Stats and idle/freeze/quiet-pause gates observe the reservations. Schedd
+establishes idle admission before snapshot reuse, and capture seals admission
+before pause. Qualified lifecycle callbacks visit every loaded Node interpreter
+and wait for all cleanup fences. Expired ownership retires the original VM
+through existing teardown and schedd notification; vmmd adds no instance-row
+writes. Portable race and TLS/SCRAM SQL evidence is recorded in the
+[report](ops/evidence/20261016-function-vm-lifetime/REPORT.md).
+
+Activation exists only in `metal,function_background_native` acceptance builds;
+normal production builds remain off. A strict native deployed-function gate is
+implemented, but this workspace lacks root/KVM and cannot qualify its execution
+or native leak checks. Native fault injection and SQL pool draining across all
+interpreters remain required before activation. Private environment-qualification
+restores, Python background execution, durable work and performance parity are
+not qualified by these portable checks. No deployment was performed.
+
+## Automatic Node function PostgreSQL lifecycle — 2026-10-17
+
+[ADR-20261018030611](adr/20261018030611-function-postgres-resource-lifecycle.md) adds automatic SDK
+pool registration before driver creation in qualified generated adapters. It
+supplies default lifecycle endpoints, preserves custom hooks, consumes their
+response cleanup before drainage and waits for every registered pool in every
+loaded interpreter. Restore/thaw rebuilds pools and probes readiness before
+customer hooks or admission. Timed-out close retains ownership until actual
+drainage. Registration is bounded to 16 pool owners per interpreter; connection
+budgets remain per driver/worker/VM. Qualified warm and migration captures fail
+closed pending a continuing-VM recovery protocol.
+
+The portable and native SQL acceptance sources independently witness session
+closure while checkpoint acknowledgement is held. The native phase additionally
+requires deployed snapshot restore, thaw and worker/runner failure recovery.
+The [evidence report](ops/evidence/20261017-function-postgres-lifecycle/REPORT.md)
+records executed checks and outstanding gates. Production activation remains
+off. Native KVM execution, native faults and leak checks remain unqualified in
+this workspace. The prior PR remains closed and unmerged; no deployment occurred.
+
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
-The [native acceptance gate](ops/managed-postgres-native-acceptance.md) now requires
-thirteen phases, including the shipped Node starter, real public API rotation,
+That revision of the [native acceptance gate](ops/managed-postgres-native-acceptance.md)
+required thirteen phases, including the shipped Node starter, real public API rotation,
 restored pools and failed-hook cold fallback. The portable public API and restricted
 TLS/SCRAM SQL tests passed locally; [evidence and limits](ops/evidence/20261012-managed-postgres-deployed-starter/REPORT.md)
 record the narrowed API build and outstanding guest execution. The internal GCE

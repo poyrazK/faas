@@ -119,7 +119,7 @@ func templateGlob(template string, escape bool) (string, bool) {
 // (MatchProtectiveEdgeRulePath) rather than exactly.
 func EdgeRuleKindUsesProtectivePathMatch(kind string) bool {
 	switch kind {
-	case "jwt", "ip", "geo", "limit", "throttle", "validate", "maintenance", "waf":
+	case "jwt", "ip", "geo", "limit", "throttle", "validate", "maintenance", "waf", "challenge":
 		return true
 	}
 	return false

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.deployment_configuration_status import DeploymentConfigurationStatus
+
 
 T = TypeVar("T", bound="AppliedBuild")
 
@@ -27,6 +31,9 @@ class AppliedBuild:
     """Terminal deployment status added by wait-aware CLI responses."""
     build_status: str | Unset = UNSET
     """Terminal build status added by wait-aware CLI responses."""
+    configuration: DeploymentConfigurationStatus | Unset = UNSET
+    """Server-managed cron activation diagnostics. CLI-owned settings are additionally reflected in CLI receipt
+    configuration_complete. Reads never create builds or modify schedules."""
     error: str | Unset = UNSET
     """Staging or enqueue error message; partial-failure rows carry this in lieu of IDs."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -43,6 +50,10 @@ class AppliedBuild:
         deployment_status = self.deployment_status
 
         build_status = self.build_status
+
+        configuration: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.configuration, Unset):
+            configuration = self.configuration.to_dict()
 
         error = self.error
 
@@ -62,6 +73,8 @@ class AppliedBuild:
             field_dict["deployment_status"] = deployment_status
         if build_status is not UNSET:
             field_dict["build_status"] = build_status
+        if configuration is not UNSET:
+            field_dict["configuration"] = configuration
         if error is not UNSET:
             field_dict["error"] = error
 
@@ -69,6 +82,8 @@ class AppliedBuild:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.deployment_configuration_status import DeploymentConfigurationStatus
+
         d = dict(src_dict)
         slug = d.pop("slug")
 
@@ -82,6 +97,13 @@ class AppliedBuild:
 
         build_status = d.pop("build_status", UNSET)
 
+        _configuration = d.pop("configuration", UNSET)
+        configuration: DeploymentConfigurationStatus | Unset
+        if isinstance(_configuration, Unset):
+            configuration = UNSET
+        else:
+            configuration = DeploymentConfigurationStatus.from_dict(_configuration)
+
         error = d.pop("error", UNSET)
 
         applied_build = cls(
@@ -91,6 +113,7 @@ class AppliedBuild:
             build_id=build_id,
             deployment_status=deployment_status,
             build_status=build_status,
+            configuration=configuration,
             error=error,
         )
 
