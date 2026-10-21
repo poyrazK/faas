@@ -400,10 +400,19 @@ jobs:
   # are opt-in: set the repository variable UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT
   # (production or production-us), or dispatch with deploy_environment. The
   # environment's protection rules still apply.
+  #
+  # A unit release that carries nothing for the control plane (no daemon,
+  # migration or host role of its lane: affected_units.py's lane verdict)
+  # skips the control-plane lane, whose plan could only be "none": that took
+  # about a minute of an edge-only deploy on 2026-10-21. The edge lane's plan
+  # still checks the control plane's unit record (the N±1 base, the units it
+  # runs) before any gateway changes.
   deploy:
     name: Deploy the control-plane lane
     needs: [build, preflight]
-    if: needs.build.outputs.eligible == 'true' && needs.preflight.outputs.go == 'true'
+    if: >-
+      needs.build.outputs.eligible == 'true' && needs.preflight.outputs.go == 'true' &&
+      needs.build.outputs.control_plane == 'true'
     uses: ./.github/workflows/cd-controlplane.yml
     with:
       deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
@@ -416,8 +425,10 @@ jobs:
 
   deploy-edge:
     name: Deploy the edge lane
-    needs: [build, deploy]
-    if: needs.build.outputs.edge == 'true'
+    needs: [build, preflight, deploy]
+    if: >-
+      !cancelled() && needs.build.outputs.edge == 'true' && needs.preflight.outputs.go == 'true' &&
+      (needs.deploy.result == 'success' || needs.deploy.result == 'skipped')
     uses: ./.github/workflows/cd-edge-units.yml
     with:
       deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
