@@ -22,7 +22,9 @@
      `frozen_tier` and `frozen_tier_workers` are on and it is eligible: it
      holds no unexpired queue lease (a frozen worker could not settle one),
      its app is active and on no private network, its RAM and runtime config
-     are current, it has no ephemeral secret and no profiling, the app has no
+     are current, its captured config proof still matches the deployment's
+     configuration (the thaw's config-fence check, made before freezing a VM
+     that could never thaw), it has no ephemeral secret and no profiling, the app has no
      enabled push binding (the push path does not thaw a frozen worker), and
      the node is below `FrozenMaxPerNode`. The freeze is ADR-1151's: RUNNING →
      FROZEN, vmmd pauses the VM in place, the ledger books only a frozen
@@ -52,6 +54,12 @@
   the thaw. A workload token minted before the freeze may have expired by
   the thaw; the SDK fetches a new one. The switch is off by default, and
   turning it off drains frozen workers through thaws and FrozenTTL.
+  An app's first pool worker usually cannot freeze: its cold boot records
+  the workload class it observed (ADR-051) after publishing that worker's
+  config proof, and the class is part of the configuration the proof
+  covers, so the worker stops at scale-in and the next one freezes. The
+  same ordering leaves that first instance's proof stale for every check of
+  it (warm-pool promotion, the ADR-1740 fast path); it is not changed here.
 - **Rejected alternatives:** *Keeping surplus workers RUNNING longer* (a
   longer scale-in stabilization window) keeps paying for an idle VM's vCPU
   and billing. *Excluding frozen workers from the account worker cap*
@@ -61,5 +69,10 @@
 - **Validation:** `pkg/sched` tests cover a surplus worker freezing, staying
   frozen through idle reconciles and thawing for demand without a cold
   boot; a surplus worker stopping with the switch off; and a frozen worker
-  giving its slot to another environment's demand. The metal test
+  giving its slot to another environment's demand; and a worker whose boot
+  changed the observed class stopping instead of freezing. The metal test
   `TestWorkerFrozenThawMetal` runs a real worker through freeze and thaw.
+  It boots its own pool worker rather than waiting on the deployment's prime
+  worker: on n2 a pool reconcile ran between Prime publishing the prime
+  RUNNING and apid marking the deployment live, saw the prime as a retired
+  generation and stopped it (a race on main, not changed here).

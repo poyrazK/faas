@@ -150,3 +150,50 @@ func TestFrozenWorkerGivesUpItsSlotToDemandElsewhere(t *testing.T) {
 		t.Fatalf("staging worker = %+v; giving up its slot must stop the frozen worker", staged)
 	}
 }
+
+// A worker whose cold boot changed the app's observed workload class
+// (ADR-051) published its config proof before the class was recorded, so a
+// thaw would refuse it as config_changed. It stops at scale-in instead of
+// freezing a VM that can never thaw; the next worker boots with the class.
+func TestWorkerPoolStopsSurplusWorkerWithAStaleConfigProof(t *testing.T) {
+	ctx := t.Context()
+	store, vmm, engine, acct, app := newFrozenWorkerEngine(t, api.PlanPro, true)
+	if _, err := store.SetAppWorkloadClass(ctx, app.ID, state.WorkloadClassHTTP, "scan_hint"); err != nil {
+		t.Fatal(err)
+	}
+	vmm.characterization = api.CharacterizationReport{ObservedClass: string(state.WorkloadClassWorker), ExitCode: -1}
+	demand := enqueueScopedDemand(t, store, acct, app, "default", "", 10)
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.AppByID(ctx, app.ID); err != nil || got.WorkloadClass != state.WorkloadClassWorker {
+		t.Fatalf("app class = %q (%v); the cold boot must record the observed class", got.WorkloadClass, err)
+	}
+	cancelDemand(t, store, demand)
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	engine.WaitWorkerStops()
+	for _, row := range workerRows(t, store, app.ID, "default") {
+		if state.State(row.State).CountsForRAM() {
+			t.Fatalf("worker %s is %s; a worker with a stale config proof must stop at scale-in", row.ID, row.State)
+		}
+	}
+	if vmm.freezes != 0 {
+		t.Fatalf("froze %d workers with a stale config proof", vmm.freezes)
+	}
+
+	// The next worker boots with the recorded class and freezes.
+	demand = enqueueScopedDemand(t, store, acct, app, "default", "", 10)
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	cancelDemand(t, store, demand)
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	engine.WaitWorkerStops()
+	if vmm.freezes != 1 {
+		t.Fatalf("froze %d workers after the class settled, want 1", vmm.freezes)
+	}
+}

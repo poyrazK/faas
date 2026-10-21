@@ -54,14 +54,24 @@ func TestWorkerFrozenThawMetal(t *testing.T) {
 	// reconcile that runs before apid marks the deployment live sees it as a
 	// retired generation and stops it. Let it settle, then boot a worker
 	// with one message; once its scale-in window passes it is surplus and
-	// freezes instead of stopping.
+	// freezes instead of stopping. The app's first pool worker records the
+	// workload class it observed (ADR-051) after its config proof, so it
+	// cannot thaw and stops instead; the next worker freezes.
 	if err := waitForIdleWorkerPool(t, rig.h, rig.appID, 4*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	frozenID := frozenWorkerOf(t, rig)
-	if frozenID == "" {
+	for attempt := 1; frozenID == "" && attempt <= 2; attempt++ {
 		booted := measureWorkerScaleFromZero(t, rig.h, rig.key, rig.slug, rig.appID, 1)
-		frozenID = waitForFrozenWorker(t, rig, booted[0].instanceID, 4*time.Minute)
+		if waitForFreezeOrStop(t, rig, booted[0].instanceID, 4*time.Minute) {
+			frozenID = booted[0].instanceID
+		} else {
+			t.Logf("worker %s stopped at scale-in (boot %d)", booted[0].instanceID, attempt)
+		}
+	}
+	if frozenID == "" {
+		logWorkerTransitions(t, rig)
+		t.Fatal("no pool worker froze in two boots; frozen_tier_workers must freeze a surplus worker")
 	}
 	var thaws []time.Duration
 	for cycle := 1; cycle <= cycles; cycle++ {
@@ -79,6 +89,28 @@ func TestWorkerFrozenThawMetal(t *testing.T) {
 		}
 	}
 	t.Logf("frozen worker summary over %d thaws: send→running %s", len(thaws), durationSpread(thaws))
+}
+
+// waitForFreezeOrStop waits until the worker is FROZEN (true) or STOPPED
+// (false).
+func waitForFreezeOrStop(t *testing.T, rig *workerPoolRig, id string, timeout time.Duration) bool {
+	t.Helper()
+	store := state.NewPgStore(rig.pool)
+	for deadline := time.Now().Add(timeout); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
+		ins, err := store.InstanceByID(context.Background(), id)
+		if err != nil {
+			t.Fatalf("read worker %s: %v", id, err)
+		}
+		switch state.State(ins.State) {
+		case state.StateFrozen:
+			return true
+		case state.StateStopped:
+			return false
+		}
+	}
+	logWorkerTransitions(t, rig)
+	t.Fatalf("worker %s neither froze nor stopped within %s", id, timeout)
+	return false
 }
 
 // frozenWorkerOf returns one of the pool's FROZEN workers, or "".
@@ -124,6 +156,44 @@ func waitForFrozenWorker(t *testing.T, rig *workerPoolRig, want string, timeout 
 	logWorkerTransitions(t, rig)
 	t.Fatalf("no frozen worker within %s; frozen_tier_workers must freeze the pool's surplus worker", timeout)
 	return ""
+}
+
+// logRuntimeConfig logs the worker's captured config proof next to the
+// deployment's current runtime config fence, which a thaw compares, and the
+// app and deployment rows the fence is computed from.
+func logRuntimeConfig(t *testing.T, rig *workerPoolRig, label, instanceID string) {
+	t.Helper()
+	ctx := context.Background()
+	store := state.NewPgStore(rig.pool)
+	ins, err := store.InstanceByID(ctx, instanceID)
+	if err != nil {
+		t.Logf("%s: runtime config: instance: %v", label, err)
+		return
+	}
+	app, err := store.AppByID(ctx, rig.appID)
+	if err != nil {
+		t.Logf("%s: runtime config: app: %v", label, err)
+		return
+	}
+	proof, proofErr := store.InstanceRuntimeConfigFence(ctx, app.AccountID, app.ID, instanceID)
+	snapshot, err := store.RuntimeAppValuesForDeployment(ctx, app.AccountID, app.ID, ins.DeploymentID)
+	if err != nil {
+		t.Logf("%s: runtime config: values: %v", label, err)
+		return
+	}
+	fence, fenceErr := state.NewRuntimeAppConfigFence(snapshot)
+	c := snapshot.Configuration
+	t.Logf("%s: worker %s proof config=%s secret=%s (err %v); current config=%s secret=%s (err %v) settings=%s guest=%s artifact=%s layers=%s values=%d secrets=%d",
+		label, instanceID, proof.Fingerprint, proof.SecretFence.Fingerprint, proofErr, fence.Fingerprint, fence.SecretFence.Fingerprint, fenceErr,
+		c.SettingsHash, c.GuestSettingsHash, c.ArtifactHash, c.LayersHash, len(snapshot.Values), len(snapshot.Secrets))
+	var appRow, depRow string
+	if err := rig.pool.QueryRow(ctx, `select to_jsonb(a)::text, to_jsonb(d)::text from apps a join deployments d on d.app_id = a.id
+		where a.id = $1 and d.id = $2`, app.ID, ins.DeploymentID).Scan(&appRow, &depRow); err != nil {
+		t.Logf("%s: runtime config rows: %v", label, err)
+		return
+	}
+	t.Logf("%s: app row %s", label, appRow)
+	t.Logf("%s: deployment row %s", label, depRow)
 }
 
 // logWorkerTransitions logs each of the app's workers with the transitions
@@ -184,6 +254,8 @@ func measureWorkerThaw(t *testing.T, rig *workerPoolRig, frozenID string) (runni
 		}
 		for _, ins := range rows {
 			if ins.Mode == string(state.InstanceModeWorker) && !slices.Contains(known, ins.ID) {
+				logWorkerTransitions(t, rig)
+				logRuntimeConfig(t, rig, "thaw refused", frozenID)
 				t.Fatalf("the pool booted worker %s instead of thawing frozen worker %s", ins.ID, frozenID)
 			}
 			if ins.ID == frozenID && state.State(ins.State) == state.StateRunning {

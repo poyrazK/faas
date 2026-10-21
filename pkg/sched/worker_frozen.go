@@ -48,6 +48,8 @@ func (e *Engine) workerFreezeRefusal(ctx context.Context, app state.App, ins sta
 		return "ineligible", "runtime_config_stale", nil
 	case app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled:
 		return "ineligible", "profiling", nil
+	case !e.workerConfigProofCurrent(ctx, app, ins):
+		return "ineligible", "config_changed", nil
 	}
 	if ephemeral, err := e.hasEphemeralSecretForInstance(ctx, ins, app); err != nil || ephemeral {
 		return "ineligible", "ephemeral_secret", err
@@ -67,6 +69,28 @@ func (e *Engine) workerFreezeRefusal(ctx context.Context, app state.App, ins sta
 		return "node_full", "node_full", nil
 	}
 	return "", "", nil
+}
+
+// workerConfigProofCurrent reports whether the worker's captured config proof
+// still matches its deployment's configuration, which a thaw requires
+// (ADR-1151). A worker whose proof is already stale would only stop at its
+// thaw. The app's first cold boot that observes a new workload class is one:
+// ADR-051 records the class after it publishes that worker's proof.
+func (e *Engine) workerConfigProofCurrent(ctx context.Context, app state.App, ins state.Instance) bool {
+	dep, err := e.store.DeploymentByID(ctx, ins.DeploymentID)
+	if err != nil {
+		return false
+	}
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
+	if err != nil {
+		return false
+	}
+	values, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
+	if err != nil {
+		return false
+	}
+	captured, err := e.store.InstanceRuntimeConfigFence(ctx, acct.ID, app.ID, ins.ID)
+	return err == nil && captured == values.ConfigFence
 }
 
 // freezeSurplusWorker freezes a worker the pool no longer needs. It reports
