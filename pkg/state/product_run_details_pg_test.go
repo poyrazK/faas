@@ -1,26 +1,27 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
 func TestProductControlRunDetailsPostgres(t *testing.T) {
-	s := newPgStore(t)
-	productRunDetailsContract(t, s, productBillingPGFixture(t, s))
+	s := state.XNewPgStore(t)
+	state.ProductRunDetailsContract(t, s, state.ProductBillingPGFixture(t, s))
 }
 
 func TestProductControlRunDetailsLivePostgres(t *testing.T) {
-	s := newPgStore(t)
-	persist := func(op Operation, settled bool) {
+	s := state.XNewPgStore(t)
+	persist := func(op state.Operation, settled bool) {
 		t.Helper()
 		record, err := json.Marshal(op)
 		if err != nil {
 			t.Fatal(err)
 		}
-		tx, err := s.pool.Begin(t.Context())
+		tx, err := (*s.Pool()).Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -29,7 +30,7 @@ func TestProductControlRunDetailsLivePostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		if settled {
-			if err = settleProductOperationTx(t.Context(), tx, op); err != nil {
+			if err = state.SettleProductOperationTx(t.Context(), tx, op); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -37,5 +38,5 @@ func TestProductControlRunDetailsLivePostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	productRunDetailsLiveContract(t, s, persist)
+	state.ProductRunDetailsLiveContract(t, s, persist)
 }

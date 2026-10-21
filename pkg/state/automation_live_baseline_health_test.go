@@ -1,5 +1,5 @@
 // adr: 1304
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/automationgate"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestBaselineHealthSeparatesHistoricalEvidenceFromRenewal(t *testing.T) {
@@ -60,7 +61,7 @@ func TestBaselineHealthSeparatesHistoricalEvidenceFromRenewal(t *testing.T) {
 			if mode == "missing-suite" {
 				selected = nil
 			}
-			result := baselineHealth(receipt, selected, now)
+			result := state.BaselineHealth(receipt, selected, now)
 			if result.EvidenceStatus != expectedEvidence || result.RenewalStatus != expectedRenewal || (reason != "" && !slices.Contains(result.Reasons, reason)) {
 				t.Fatalf("health %+v", result)
 			}

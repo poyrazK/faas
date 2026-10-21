@@ -1,5 +1,5 @@
 // adr: 20261021150000
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -9,44 +9,46 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/actioncompare"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestScenarioPlatformCaptureSealsWorkflowCallsIntoRunEvidence(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
-			f := newEffectFixture(t, backend, actionCaptureTestRun)
+			f := state.NewEffectFixture(t, backend, state.ActionCaptureTestRun)
 			ctx := t.Context()
-			capturer := f.base.(ScenarioPlatformCaptureStore)
-			ordinary, err := f.base.CreateApp(ctx, App{AccountID: f.account.ID, Slug: "ordinary-" + uuid.NewString()[:8], Type: AppTypeApp, Runtime: "node22", RAMMB: 256})
+			base, app := *f.Base(), f.App()
+			capturer := base.(state.ScenarioPlatformCaptureStore)
+			ordinary, err := base.CreateApp(ctx, state.App{AccountID: f.Account().ID, Slug: "ordinary-" + uuid.NewString()[:8], Type: state.AppTypeApp, Runtime: "node22", RAMMB: 256})
 			if err != nil {
 				t.Fatal(err)
 			}
-			start := func(slug, key, input string) (ScenarioPlatformCallResult, bool, error) {
-				return capturer.CaptureScenarioPlatformCall(ctx, f.app.ID, ScenarioPlatformCallCapture{Kind: api.ScenarioPlatformKindWorkflowRun, Address: slug,
+			start := func(slug, key, input string) (state.ScenarioPlatformCallResult, bool, error) {
+				return capturer.CaptureScenarioPlatformCall(ctx, app.ID, state.ScenarioPlatformCallCapture{Kind: api.ScenarioPlatformKindWorkflowRun, Address: slug,
 					Name: "invoice", IdempotencyKey: key, Message: json.RawMessage(`{"input":` + input + `}`)})
 			}
-			event := func(run, key, name string) (ScenarioPlatformCallResult, bool, error) {
-				return capturer.CaptureScenarioPlatformCall(ctx, f.app.ID, ScenarioPlatformCallCapture{Kind: api.ScenarioPlatformKindWorkflowEvent, Address: run,
+			event := func(run, key, name string) (state.ScenarioPlatformCallResult, bool, error) {
+				return capturer.CaptureScenarioPlatformCall(ctx, app.ID, state.ScenarioPlatformCallCapture{Kind: api.ScenarioPlatformKindWorkflowEvent, Address: run,
 					Name: name, IdempotencyKey: key, Message: json.RawMessage(`{"payload":{"by":"ops"}}`)})
 			}
-			if _, captured, err := capturer.CaptureScenarioPlatformCall(ctx, ordinary.ID, ScenarioPlatformCallCapture{Kind: api.ScenarioPlatformKindWorkflowRun,
-				Address: f.app.Slug, Name: "invoice", Message: json.RawMessage(`{}`)}); captured || err != nil {
+			if _, captured, err := capturer.CaptureScenarioPlatformCall(ctx, ordinary.ID, state.ScenarioPlatformCallCapture{Kind: api.ScenarioPlatformKindWorkflowRun,
+				Address: app.Slug, Name: "invoice", Message: json.RawMessage(`{}`)}); captured || err != nil {
 				t.Fatalf("an ordinary app's start was captured: %v %v", captured, err)
 			}
-			if _, captured, err := start("missing-"+uuid.NewString()[:8], "", `{}`); !captured || !errors.Is(err, ErrNotFound) {
+			if _, captured, err := start("missing-"+uuid.NewString()[:8], "", `{}`); !captured || !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("start of an unknown app: %v %v", captured, err)
 			}
-			first, _, err := start(f.app.Slug, "k1", `{"order":1}`)
+			first, _, err := start(app.Slug, "k1", `{"order":1}`)
 			if err != nil || uuid.Validate(first.ID) != nil || first.Replayed {
 				t.Fatalf("member start: %+v %v", first, err)
 			}
-			if replay, _, err := start(f.app.Slug, "k1", `{"order":1.0}`); err != nil || !replay.Replayed || replay.ID != first.ID {
+			if replay, _, err := start(app.Slug, "k1", `{"order":1.0}`); err != nil || !replay.Replayed || replay.ID != first.ID {
 				t.Fatalf("idempotent replay: %+v %v", replay, err)
 			}
-			if _, _, err := start(f.app.Slug, "k1", `{"order":2}`); !errors.Is(err, ErrScenarioIdempotencyConflict) {
+			if _, _, err := start(app.Slug, "k1", `{"order":2}`); !errors.Is(err, state.ErrScenarioIdempotencyConflict) {
 				t.Fatalf("reused key with other input: %v", err)
 			}
-			second, _, err := start(f.app.Slug, "", `{"order":3}`)
+			second, _, err := start(app.Slug, "", `{"order":3}`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,14 +61,14 @@ func TestScenarioPlatformCaptureSealsWorkflowCallsIntoRunEvidence(t *testing.T) 
 			if replay, _, err := event(second.ID, "e1", "approved"); err != nil || !replay.Replayed {
 				t.Fatalf("replayed event: %+v %v", replay, err)
 			}
-			if _, _, err := event(second.ID, "e1", "rejected"); !errors.Is(err, ErrScenarioIdempotencyConflict) {
+			if _, _, err := event(second.ID, "e1", "rejected"); !errors.Is(err, state.ErrScenarioIdempotencyConflict) {
 				t.Fatalf("reused event key with another name: %v", err)
 			}
-			if _, _, err := event(uuid.NewString(), "", "approved"); !errors.Is(err, ErrNotFound) {
+			if _, _, err := event(uuid.NewString(), "", "approved"); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("event to an unknown run: %v", err)
 			}
-			external := &WorkflowRun{AppID: ordinary.ID, WorkflowName: "invoice", Input: json.RawMessage(`{}`), DefinitionSnapshot: json.RawMessage(`{"name":"invoice","steps":[]}`)}
-			if err := f.base.(WorkflowStore).CreateWorkflowRun(ctx, external); err != nil {
+			external := &state.WorkflowRun{AppID: ordinary.ID, WorkflowName: "invoice", Input: json.RawMessage(`{}`), DefinitionSnapshot: json.RawMessage(`{"name":"invoice","steps":[]}`)}
+			if err := base.(state.WorkflowStore).CreateWorkflowRun(ctx, external); err != nil {
 				t.Fatal(err)
 			}
 			if _, _, err := event(external.ID, "", "approved"); err != nil {
@@ -84,10 +86,10 @@ func TestScenarioPlatformCaptureSealsWorkflowCallsIntoRunEvidence(t *testing.T) 
 				targets[call.Kind+" "+call.Target+" "+call.Name]++
 			}
 			want := map[string]int{
-				"workflow_run workload:primary invoice":                             2,
-				"workflow_run app:" + ordinary.Slug + " invoice":                    1,
-				"workflow_event run:primary/workload:primary/invoice#2 approved":    1,
-				"workflow_event run:" + canonicalMemUUID(external.ID) + " approved": 1,
+				"workflow_run workload:primary invoice":                                   2,
+				"workflow_run app:" + ordinary.Slug + " invoice":                          1,
+				"workflow_event run:primary/workload:primary/invoice#2 approved":          1,
+				"workflow_event run:" + state.CanonicalMemUUID(external.ID) + " approved": 1,
 			}
 			if len(targets) != len(want) {
 				t.Fatalf("sealed platform calls = %v, want %v", targets, want)
@@ -97,7 +99,7 @@ func TestScenarioPlatformCaptureSealsWorkflowCallsIntoRunEvidence(t *testing.T) 
 					t.Fatalf("sealed platform calls = %v, want %v", targets, want)
 				}
 			}
-			if _, _, err := start(f.app.Slug, "", `{}`); !errors.Is(err, ErrScenarioActionsSealed) {
+			if _, _, err := start(app.Slug, "", `{}`); !errors.Is(err, state.ErrScenarioActionsSealed) {
 				t.Fatalf("late start after seal: %v", err)
 			}
 		})

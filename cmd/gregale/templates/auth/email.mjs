@@ -7,7 +7,7 @@ import { limits } from './config.mjs'
 // through the customer's provider over HTTPS. Links and codes never reach
 // a log line.
 
-export const hookAddress = Object.freeze({ host: '127.0.0.1', port: 9998, path: '/send-email', accessTokenPath: '/custom-access-token' })
+export const hookAddress = Object.freeze({ host: '127.0.0.1', port: 9998, path: '/send-email', accessTokenPath: '/custom-access-token', beforeUserCreatedPath: '/before-user-created' })
 
 // A fresh secret per boot: GoTrue and the front start together, so nothing
 // needs sealing, and a snapshot restores both halves of the pair.
@@ -18,8 +18,14 @@ export function newHookSecret() {
 // The custom access token hook runs on every token GoTrue issues, so it is
 // on only when it changes tokens: with the OAuth server (client tokens,
 // oauth.mjs) or organization claims (AUTH_ORG_CLAIMS, authz.mjs).
-export function hookEnv(secret, { accessToken = false } = {}) {
+export function hookEnv(secret, { accessToken = false, beforeUserCreated = false } = {}) {
   return {
+    // Sign-up restrictions (signups.mjs), only while some are set.
+    ...(beforeUserCreated ? {
+      GOTRUE_HOOK_BEFORE_USER_CREATED_ENABLED: 'true',
+      GOTRUE_HOOK_BEFORE_USER_CREATED_URI: `http://${hookAddress.host}:${hookAddress.port}${hookAddress.beforeUserCreatedPath}`,
+      GOTRUE_HOOK_BEFORE_USER_CREATED_SECRETS: secret,
+    } : {}),
     GOTRUE_HOOK_SEND_EMAIL_ENABLED: 'true',
     GOTRUE_HOOK_SEND_EMAIL_URI: `http://${hookAddress.host}:${hookAddress.port}${hookAddress.path}`,
     GOTRUE_HOOK_SEND_EMAIL_SECRETS: secret,
@@ -62,6 +68,7 @@ export const emailTypes = Object.freeze({
   code: { placeholders: ['app', 'email', 'code'], subject: 'Your verification code', body: 'Enter this code in {{app}}. It expires soon.' },
   security_notice: { placeholders: ['app', 'email', 'event'], subject: '{{event}}', body: 'This is a security notice from {{app}}. If this was not you, reset your password.' },
   organization_invitation: { placeholders: ['app', 'email', 'org', 'link'], subject: 'Join {{org}} on {{app}}', body: 'You have been invited to join {{org}} on {{app}}.\n\nSign in or create an account with this email address to accept.' },
+  signup_approved: { placeholders: ['app', 'email', 'link'], subject: 'You can sign up for {{app}} now', body: 'Good news: {{email}} may now create an account on {{app}}.' },
 })
 
 export const placeholder = /\{\{\s*([a-z_]+)\s*\}\}/g
@@ -194,10 +201,11 @@ function hookReply(res, error) {
 
 // createHookServer serves only GoTrue on loopback. It is a separate listener
 // from the public front, so the gateway can never route to it.
-export function createHookServer({ secret, mailer, api, app, accessToken = null, templates = async () => ({}) }) {
+export function createHookServer({ secret, mailer, api, app, accessToken = null, beforeUserCreated = null, templates = async () => ({}) }) {
   return http.createServer((req, res) => {
     const tokenHook = accessToken && req.url === hookAddress.accessTokenPath
-    if (req.method !== 'POST' || (req.url !== hookAddress.path && !tokenHook)) { res.writeHead(404); return res.end() }
+    const signupHook = beforeUserCreated && req.url === hookAddress.beforeUserCreatedPath
+    if (req.method !== 'POST' || (req.url !== hookAddress.path && !tokenHook && !signupHook)) { res.writeHead(404); return res.end() }
     const chunks = []
     let size = 0
     req.on('data', chunk => {
@@ -209,6 +217,7 @@ export function createHookServer({ secret, mailer, api, app, accessToken = null,
       const body = Buffer.concat(chunks)
       if (!verifyWebhook(secret, req.headers, body)) { res.writeHead(401); return res.end() }
       if (tokenHook) return answerTokenHook(res, accessToken, body)
+      if (signupHook) return answerSignupHook(res, beforeUserCreated, body)
       try {
         if (!mailer) throw new EmailError(503, 'email_provider_unconfigured')
         // The defaults stand in when the owner's templates cannot be read.
@@ -241,6 +250,20 @@ async function answerTokenHook(res, accessToken, body) {
     const code = typeof err?.code === 'string' && /^[a-z_]+$/.test(err.code) ? err.code : 'access_token_hook_failed'
     console.error(JSON.stringify({ level: 'error', event: 'auth_token_hook_failed', code }))
     hookReply(res, { status, code })
+  }
+}
+
+// answerSignupHook replies to the before-user-created hook: {} lets GoTrue
+// create the user; an error with a stable code refuses the sign-up, and a
+// failure refuses it too rather than let a restricted sign-up through.
+async function answerSignupHook(res, beforeUserCreated, body) {
+  try {
+    const refusal = await beforeUserCreated(JSON.parse(body.toString('utf8')))
+    if (refusal) console.error(JSON.stringify({ level: 'info', event: 'auth_signup_refused', code: refusal.code }))
+    hookReply(res, refusal)
+  } catch (err) {
+    console.error(JSON.stringify({ level: 'error', event: 'auth_signup_hook_failed', sqlstate: err?.code ?? null }))
+    hookReply(res, { status: 503, code: 'signup_check_unavailable' })
   }
 }
 

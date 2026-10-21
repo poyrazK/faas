@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -25,7 +26,7 @@ func TestParkedWindowInstances(t *testing.T) {
 		{ID: "straddles-window", State: "stopped", StartedAt: at(-3 * time.Hour), LastRequestAt: at(-100 * time.Minute)},
 		{ID: "no-start", State: "parked"},
 	}
-	got := parkedWindowInstances(instances, since, now)
+	got := main.ParkedWindowInstances(instances, since, now)
 	var ids []string
 	for _, ins := range got {
 		ids = append(ids, ins.ID)
@@ -36,18 +37,18 @@ func TestParkedWindowInstances(t *testing.T) {
 
 	// Activity across UTC midnight reads both archive days.
 	midnight := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
-	cross := parkedWindowInstances([]api.InstanceResponse{{ID: "x", State: "parked", StartedAt: midnight.Add(-10 * time.Minute).Format(time.RFC3339), ParkedAt: midnight.Add(10 * time.Minute).Format(time.RFC3339)}}, midnight.Add(-time.Hour), midnight.Add(time.Hour))
+	cross := main.ParkedWindowInstances([]api.InstanceResponse{{ID: "x", State: "parked", StartedAt: midnight.Add(-10 * time.Minute).Format(time.RFC3339), ParkedAt: midnight.Add(10 * time.Minute).Format(time.RFC3339)}}, midnight.Add(-time.Hour), midnight.Add(time.Hour))
 	if len(cross) != 1 || !reflect.DeepEqual(cross[0].Days, []string{"2026-10-15", "2026-10-16"}) {
 		t.Fatalf("midnight-crossing days = %+v", cross)
 	}
 
 	var many []api.InstanceResponse
-	for i := 0; i < parkedWindowInstanceLimit+3; i++ {
+	for i := 0; i < main.ParkedWindowInstanceLimit+3; i++ {
 		many = append(many, api.InstanceResponse{ID: fmt.Sprint(i), State: "parked", StartedAt: at(time.Duration(-60+i) * time.Minute)})
 	}
-	limited := parkedWindowInstances(many, since, now)
-	if len(limited) != parkedWindowInstanceLimit || limited[len(limited)-1].ID != fmt.Sprint(parkedWindowInstanceLimit+2) {
-		t.Fatalf("limit keeps the newest %d, got %+v", parkedWindowInstanceLimit, limited)
+	limited := main.ParkedWindowInstances(many, since, now)
+	if len(limited) != main.ParkedWindowInstanceLimit || limited[len(limited)-1].ID != fmt.Sprint(main.ParkedWindowInstanceLimit+2) {
+		t.Fatalf("limit keeps the newest %d, got %+v", main.ParkedWindowInstanceLimit, limited)
 	}
 }
 
@@ -84,7 +85,7 @@ func TestPrintParkedWindowLogs(t *testing.T) {
 		archives: map[string]string{"parked/" + day: line(since.Add(-time.Minute), "before window marker") + line(start.Add(time.Minute), "h10log marker") + line(start.Add(2*time.Minute), "unrelated")},
 	}
 	var out, errOut bytes.Buffer
-	n := printParkedWindowLogs(context.Background(), client, "h9-echo", api.LogFilter{Grep: "marker", Level: "error"}, since, &out, &errOut)
+	n := main.PrintParkedWindowLogs(context.Background(), client, "h9-echo", api.LogFilter{Grep: "marker", Level: "error"}, since, &out, &errOut)
 	if n != 1 || !strings.Contains(out.String(), "h10log marker") || strings.Contains(out.String(), "before window") || strings.Contains(out.String(), "unrelated") {
 		t.Fatalf("printed %d lines:\n%s", n, out.String())
 	}

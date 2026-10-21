@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.environment_git_ops_explanation import EnvironmentGitOpsExplanation
     from ..models.environment_git_ops_run import EnvironmentGitOpsRun
     from ..models.environment_git_revision_approval import EnvironmentGitRevisionApproval
     from ..models.environment_git_source import EnvironmentGitSource
@@ -29,6 +30,9 @@ class EnvironmentGitOpsStatusResponse:
     source: EnvironmentGitSource
     """Durable environment authority with separate approved and fully applied revision pointers."""
     runs: list[EnvironmentGitOpsRun]
+    explanation: EnvironmentGitOpsExplanation | Unset = UNSET
+    """Read-only assessment of recorded source, graph and workload facts. Unknown or historical evidence never
+    grants readiness or execution authority."""
     approval: EnvironmentGitRevisionApproval | Unset = UNSET
     """Immutable reviewed-merge evidence bound to the approved definition and source generation."""
     workload_retirements: list[EnvironmentWorkloadRetirement] | Unset = UNSET
@@ -45,6 +49,10 @@ class EnvironmentGitOpsStatusResponse:
         for runs_item_data in self.runs:
             runs_item = runs_item_data.to_dict()
             runs.append(runs_item)
+
+        explanation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.explanation, Unset):
+            explanation = self.explanation.to_dict()
 
         approval: dict[str, Any] | Unset = UNSET
         if not isinstance(self.approval, Unset):
@@ -69,6 +77,8 @@ class EnvironmentGitOpsStatusResponse:
                 "runs": runs,
             }
         )
+        if explanation is not UNSET:
+            field_dict["explanation"] = explanation
         if approval is not UNSET:
             field_dict["approval"] = approval
         if workload_retirements is not UNSET:
@@ -80,6 +90,7 @@ class EnvironmentGitOpsStatusResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.environment_git_ops_explanation import EnvironmentGitOpsExplanation
         from ..models.environment_git_ops_run import EnvironmentGitOpsRun
         from ..models.environment_git_revision_approval import EnvironmentGitRevisionApproval
         from ..models.environment_git_source import EnvironmentGitSource
@@ -95,6 +106,13 @@ class EnvironmentGitOpsStatusResponse:
             runs_item = EnvironmentGitOpsRun.from_dict(runs_item_data)
 
             runs.append(runs_item)
+
+        _explanation = d.pop("explanation", UNSET)
+        explanation: EnvironmentGitOpsExplanation | Unset
+        if isinstance(_explanation, Unset):
+            explanation = UNSET
+        else:
+            explanation = EnvironmentGitOpsExplanation.from_dict(_explanation)
 
         _approval = d.pop("approval", UNSET)
         approval: EnvironmentGitRevisionApproval | Unset
@@ -122,6 +140,7 @@ class EnvironmentGitOpsStatusResponse:
         environment_git_ops_status_response = cls(
             source=source,
             runs=runs,
+            explanation=explanation,
             approval=approval,
             workload_retirements=workload_retirements,
             workload_evidence=workload_evidence,

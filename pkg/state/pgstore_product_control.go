@@ -306,6 +306,11 @@ func prepareProductOperationTx(ctx context.Context, tx pgx.Tx, op *Operation, de
 	if err != nil {
 		return err
 	}
+	if hold, err := productOverdueHoldPG(ctx, tx, op.AccountID, op.AppID, op.PlatformTenantID); err == nil {
+		return productOverdueRefusal(hold)
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
 	feature := catalog.Spec.Features[admission.ProductFeature]
 	if feature.Operation != nil {
 		current, err := productDefinitionTx(ctx, tx, op.AccountID, op.AppID, feature)

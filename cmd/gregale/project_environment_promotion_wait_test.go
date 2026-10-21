@@ -30,13 +30,17 @@ func TestProjectsEnvironmentPromoteWaitReturnsSingleJSONReceipt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/promotion-preview"):
+			if r.URL.Query().Get("verify") != "true" || r.URL.Query().Get("sync_config") != "true" {
+				t.Error("health mode missing from preview query")
+			}
 			writeJSONTest(w, api.ProjectEnvironmentPromotionPreviewResponse{
 				ProjectSlug: "shop", FromEnvironment: "staging", ToEnvironment: "production",
 				CanPromote: true, PromotionHash: "hash", PromotionToken: "token",
 			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/promote"):
+			w.WriteHeader(http.StatusAccepted)
 			writeJSONTest(w, api.ProjectEnvironmentPromotionResponse{
-				PromotionID: "prom-1", ProjectSlug: "shop", FromEnvironment: "staging",
+				Status: "running", PromotionID: "prom-1", ProjectSlug: "shop", FromEnvironment: "staging",
 				ToEnvironment: "production", PromotionHash: "hash",
 				Workloads: []api.ProjectEnvironmentPromotionWorkloadResponse{{WorkloadSlug: "api", Status: "promoted"}},
 			})
@@ -64,7 +68,7 @@ func TestProjectsEnvironmentPromoteWaitReturnsSingleJSONReceipt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	if code := cmdProjectsEnvironmentPromote([]string{"shop", "--from", "staging", "--to", "production", "--yes", "--wait", "--progress", "--timeout", "1"}); code != 0 {
+	if code := cmdProjectsEnvironmentPromote([]string{"shop", "--from", "staging", "--to", "production", "--yes", "--sync-config", "--verify", "--wait", "--progress", "--timeout", "1"}); code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%q", code, errOut.String())
 	}
 	if statusCalls != 2 {
@@ -84,6 +88,35 @@ func TestProjectsEnvironmentPromoteWaitReturnsSingleJSONReceipt(t *testing.T) {
 	}
 	if errOut.Len() != 0 {
 		t.Fatalf("JSON progress leaked to stderr: %q", errOut.String())
+	}
+}
+
+func TestProjectsEnvironmentPromoteFailedHealthReceipt(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(map[bool]string{false: "human", true: "json"}[asJSON], func(t *testing.T) {
+			resetJSONOut(t)
+			oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+			var out, errOut bytes.Buffer
+			osStdout, osStderr, jsonOutput = &out, &errOut, asJSON
+			t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/promotion-preview") {
+					writeJSONTest(w, api.ProjectEnvironmentPromotionPreviewResponse{ProjectSlug: "shop", FromEnvironment: "staging", ToEnvironment: "production", CanPromote: true, PromotionToken: "token"})
+					return
+				}
+				writeJSONTest(w, api.ProjectEnvironmentPromotionResponse{PromotionID: "failed-health", ProjectSlug: "shop", FromEnvironment: "staging", ToEnvironment: "production", Status: "failed"})
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "test-token")
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			if code := cmdProjectsEnvironmentPromote([]string{"shop", "--from", "staging", "--to", "production", "--yes", "--sync-config", "--verify"}); code != 1 {
+				t.Fatalf("failed promotion exit=%d output=%s errors=%s", code, &out, &errOut)
+			}
+			if strings.Contains(out.String(), "Promoted shop") {
+				t.Fatal("failed promotion reported success")
+			}
+		})
 	}
 }
 

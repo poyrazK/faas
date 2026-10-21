@@ -1,13 +1,14 @@
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreLatestInstanceReadiness(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	first := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	for _, event := range []struct {

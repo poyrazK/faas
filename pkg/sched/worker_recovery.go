@@ -148,13 +148,19 @@ func (e *Engine) observeWorkerRecoveryFleet(ctx context.Context, appID string, p
 	if attempt == nil {
 		return nil
 	}
-	rows, err := e.store.ListInstancesForApp(ctx, appID)
+	// Counts live worker rows only (CountsForRAM below).
+	rows, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return err
 	}
 	now := e.now().UTC()
 	observations := make([]state.WorkerRecoveryPool, 0, len(plans))
 	for _, plan := range plans {
+		// A pinned project-release generation shares its scope with the active
+		// pool; the recovery summary keeps exactly one pool per scope.
+		if plan.pinned {
+			continue
+		}
 		residents := make(map[string]bool, len(plan.workers))
 		for id := range plan.residents {
 			residents[id] = true

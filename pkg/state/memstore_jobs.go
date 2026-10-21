@@ -383,7 +383,7 @@ func (m *MemStore) JobListPendingImageMaterialization(_ context.Context, limit i
 	defer m.mu.Unlock()
 	var out []Job
 	for _, j := range m.jobs {
-		if j.Status != "deleted" && j.ImageMaterializationStatus == "pending" &&
+		if j.Status != "deleted" && !isEnvironmentGitOpsSourceJob(j.ImageRef) && j.ImageMaterializationStatus == "pending" &&
 			(j.ImageMaterializationNextAttemptAt == nil || !j.ImageMaterializationNextAttemptAt.After(time.Now())) {
 			if claim, ok := m.jobMaterializationClaims[j.ID]; ok && claim.leaseUntil.After(time.Now()) {
 				continue
@@ -419,7 +419,7 @@ func (m *MemStore) JobClaimImageMaterialization(_ context.Context, id, owner str
 	}
 	now := time.Now().UTC()
 	j, ok := m.jobs[id]
-	if !ok || j.Status == "deleted" || j.ImageMaterializationStatus != "pending" {
+	if !ok || j.Status == "deleted" || isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageMaterializationStatus != "pending" {
 		return Job{}, ErrNotFound
 	}
 	if j.ImageMaterializationNextAttemptAt != nil && j.ImageMaterializationNextAttemptAt.After(now) {
@@ -453,7 +453,7 @@ func (m *MemStore) JobClaimPendingImageMaterialization(_ context.Context, limit 
 	now := time.Now().UTC()
 	var out []Job
 	for _, j := range m.jobs {
-		if j.Status == "deleted" || j.ImageMaterializationStatus != "pending" {
+		if j.Status == "deleted" || isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageMaterializationStatus != "pending" {
 			continue
 		}
 		if j.ImageMaterializationNextAttemptAt != nil && j.ImageMaterializationNextAttemptAt.After(now) {
@@ -518,7 +518,7 @@ func (m *MemStore) JobSetImageMaterialization(_ context.Context, id, sourceRef, 
 	if !ok || j.Status == "deleted" {
 		return Job{}, ErrNotFound
 	}
-	if j.ImageRef != sourceRef {
+	if isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageRef != sourceRef {
 		return Job{}, ErrConflict
 	}
 	if status == "ready" {
@@ -561,7 +561,7 @@ func (m *MemStore) JobPublishImageMaterialization(_ context.Context, id, sourceR
 	if !ok || j.Status == "deleted" {
 		return Job{}, ErrNotFound
 	}
-	if j.ImageRef != sourceRef || j.ImageMaterializationStatus != "pending" || j.ImageMaterializationAttempts != attempt {
+	if isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageRef != sourceRef || j.ImageMaterializationStatus != "pending" || j.ImageMaterializationAttempts != attempt {
 		return Job{}, ErrConflict
 	}
 	claim, ok := m.jobMaterializationClaims[id]
@@ -606,7 +606,7 @@ func (m *MemStore) JobRecordImageMaterializationFailure(_ context.Context, id, s
 	if !ok || j.Status == "deleted" {
 		return Job{}, ErrNotFound
 	}
-	if j.ImageRef != sourceRef {
+	if isEnvironmentGitOpsSourceJob(j.ImageRef) || j.ImageRef != sourceRef {
 		return Job{}, ErrConflict
 	}
 	claim, ok := m.jobMaterializationClaims[id]
@@ -1641,6 +1641,19 @@ func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex
 	if !m.exclusiveJobRunCurrentLocked(m.jobRuns[runID]) {
 		return ErrOperationStaleAttempt
 	}
+	run := m.jobRuns[runID]
+	if ins, ok := m.instances[instanceID]; ok {
+		if err := m.recordFinancialJobClaimLocked(financialComputeJobAttempt{AccountID: run.AccountID, JobID: run.JobID, RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, NodeID: ins.NodeID, RAMMB: ins.RAMMB, LeaseToken: leaseToken}); err != nil {
+			return err
+		}
+	} else {
+		// Preserve projection-only claims used by legacy memory test adapters.
+		// Strict claims and all native funding require a real instance binding.
+		policies, _ := newMemComputeTxn(m, run.AccountID).policies("job:" + run.JobID)
+		if len(strictComputePolicies(policies, "job:"+run.JobID)) > 0 {
+			return ErrNotFound
+		}
+	}
 	t.Status = "claimed"
 	t.InstanceID = &instanceID
 	t.LeaseToken = &leaseToken
@@ -1727,6 +1740,9 @@ func (m *MemStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, jo
 		ins.WakeID = wakeID
 	} else {
 		ins.WakeID = newID()
+	}
+	if err := m.recordFinancialJobClaimLocked(financialComputeJobAttempt{AccountID: run.AccountID, JobID: jobID, RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, NodeID: computeNodeID, RAMMB: ramMB, LeaseToken: leaseToken}); err != nil {
+		return Instance{}, err
 	}
 	task.Status = "claimed"
 	task.InstanceID = &instanceID

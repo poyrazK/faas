@@ -1,10 +1,13 @@
 //go:build !no_pg
 
-package state
+package state_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestProductControlOverviewPostgres(t *testing.T) {
-	s := newPgStore(t)
-	productOverviewContract(t, s, productBillingPGFixture(t, s))
+	s := state.XNewPgStore(t)
+	productOverviewContract(t, s, state.ProductBillingPGFixture(t, s))
 }

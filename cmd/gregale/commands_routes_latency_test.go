@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 )
@@ -47,8 +48,8 @@ func cliLatencyReport(scenario string) api.RouteHealthReport {
 func TestRouteLatencyCLIReportsAndEvidenceValidation(t *testing.T) {
 	for _, scenario := range []string{"healthy", "human", "zero", "regressed", "unknown", "unavailable", "mixed_signals", "false_healthy", "missing_p95", "missing_signal", "wrong_minimum", "wrong_delta", "wrong_factor", "contradictory_error"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			report := cliLatencyReport(scenario)
 			window := &report.Routes[0].Windows[0]
 			switch scenario {
@@ -75,14 +76,14 @@ func TestRouteLatencyCLIReportsAndEvidenceValidation(t *testing.T) {
 				if r.Method != "GET" || r.URL.Path != "/v1/apps/demo/route-health/deployments/"+healthCandidateID {
 					t.Error("latency report binding")
 				}
-				writeJSONTest(w, report)
+				main.WriteJSONTest(w, report)
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			old := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"routes", "health", "report", "demo", "--deployment", healthCandidateID, "--fail-on-unhealthy"}
 			if scenario != "human" {
 				args = append(args, "--json")
@@ -91,7 +92,7 @@ func TestRouteLatencyCLIReportsAndEvidenceValidation(t *testing.T) {
 			if scenario == "healthy" || scenario == "human" || scenario == "zero" {
 				want = 0
 			}
-			if code := run(args); code != want {
+			if code := main.Run(args); code != want {
 				t.Fatalf("exit %d want %d: %s", code, want, out.String())
 			}
 			switch scenario {
@@ -120,8 +121,8 @@ func TestRouteLatencyCLIReportsAndEvidenceValidation(t *testing.T) {
 func TestRouteLatencyCLIConfiguration(t *testing.T) {
 	for _, scenario := range []string{"set", "wrong_budget", "wrong_relative_flag", "negative_budget", "oversized_budget"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			route := api.RouteHealthRoute{Method: "POST", Path: "/checkout", CheckLatency: true, MaxP95MS: 300}
 			if scenario == "negative_budget" {
 				route.MaxP95MS = -1
@@ -152,7 +153,7 @@ func TestRouteLatencyCLIConfiguration(t *testing.T) {
 				if scenario == "wrong_relative_flag" {
 					response.CheckLatency = false
 				}
-				writeJSONTest(w, api.RouteHealthGate{AppID: "11111111-1111-4111-8111-111111111111", Mode: "enforce", Revision: 1, UpdatedAt: &now, Routes: []api.RouteHealthRoute{response}})
+				main.WriteJSONTest(w, api.RouteHealthGate{AppID: "11111111-1111-4111-8111-111111111111", Mode: "enforce", Revision: 1, UpdatedAt: &now, Routes: []api.RouteHealthRoute{response}})
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
@@ -160,7 +161,7 @@ func TestRouteLatencyCLIConfiguration(t *testing.T) {
 			if scenario == "set" {
 				want = 0
 			}
-			if code := run([]string{"routes", "health", "set", "demo", "--routes", file, "--mode", "enforce", "--expected-revision", "0", "--json"}); code != want {
+			if code := main.Run([]string{"routes", "health", "set", "demo", "--routes", file, "--mode", "enforce", "--expected-revision", "0", "--json"}); code != want {
 				t.Fatalf("exit %d want %d", code, want)
 			}
 			if (scenario == "negative_budget" || scenario == "oversized_budget") && calls != 0 {

@@ -45,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -1255,6 +1256,12 @@ type PostReleaseTelemetry = rollbackOn5xxTelemetry
 func (r *server) SetPostReleaseTelemetry(t PostReleaseTelemetry) {
 	r.postReleaseTelemetry = t
 }
+
+// SetReleaseGateEvidence stands in for Postgres release gate evidence
+// (ADR-20261019071734).
+func (r *server) SetReleaseGateEvidence(e state.ReleaseGateEvidenceStore) {
+	r.releaseGateEvidence = e
+}
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
 }
@@ -1484,6 +1491,19 @@ func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string
 // WorkloadTrust exposes workload-trust setting precedence (ADR-1141).
 func WorkloadTrust(cfg Config, getenv func(string) string, pathEnv, path, issuerEnv, issuer string) (string, string) {
 	return workloadTrust(cfg, getenv, pathEnv, path, issuerEnv, issuer)
+}
+
+func (s *server) GitLabClientForTest(client gitlabsource.Client) { s.gitlab = client }
+
+var SealGitLabTokensForTest = sealGitLabTokens
+var GitOpsBuildArchiveForTest = environmentGitOpsBuildArchive
+
+func (s *server) PrepareGitOpsSourceForTest(ctx context.Context, lease state.EnvironmentGitOpsLease, request state.EnvironmentWorkloadSourceRequest) (state.EnvironmentWorkloadSourceArtifact, error) {
+	return s.prepareEnvironmentGitArchive(ctx, lease, request)
+}
+
+func (s *server) ReadGitOpsSourceForTest(ctx context.Context, source state.EnvironmentGitSource) (state.EnvironmentGitSourcePollResult, error) {
+	return (&environmentGitSourceReader{server: s}).ReadEnvironmentGitSource(ctx, source)
 }
 
 func (r *server) MountInternalMailSuspension(mux *http.ServeMux, addr string, getenv func(string) string) error {

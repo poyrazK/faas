@@ -52,7 +52,7 @@ func validateTLSHostAdmission(wildcardDomain, host string, limit int) error {
 // host takes it. A new host locks the wildcard row so concurrent admissions
 // for the same wildcard cannot overshoot the limit and a concurrent delete
 // cannot orphan the insert.
-func (s *PgStore) AdmitCustomDomainTLSHost(ctx context.Context, wildcardDomain, host string, now time.Time, window time.Duration, limit int) (bool, error) {
+func (s *pgCore) AdmitCustomDomainTLSHost(ctx context.Context, wildcardDomain, host string, now time.Time, window time.Duration, limit int) (bool, error) {
 	wildcardDomain = strings.ToLower(wildcardDomain)
 	host = strings.ToLower(host)
 	if err := validateTLSHostAdmission(wildcardDomain, host, limit); err != nil {

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // adr: 050
 
@@ -34,6 +34,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -67,7 +68,7 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/v1/projects/scan/source-ref" && r.Method == http.MethodPost:
 		s.sourceRefScanCalls++
 		_ = json.NewDecoder(r.Body).Decode(&s.sourceRefScanRequest)
-		writeJSONTestStatus(w, s.scanStatus, s.scanBody)
+		main.WriteJSONTestStatus(w, s.scanStatus, s.scanBody)
 	case r.URL.Path == "/v1/projects/scan" && r.Method == http.MethodPost:
 		s.scanCalls++
 		body, _ := io.ReadAll(r.Body)
@@ -75,7 +76,7 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.capturedScanMultipart = append([]byte(nil), body...)
 		s.scanContentType = r.Header.Get("Content-Type")
 		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
-		writeJSONTestStatus(w, s.scanStatus, s.scanBody)
+		main.WriteJSONTestStatus(w, s.scanStatus, s.scanBody)
 	case r.URL.Path == "/v1/projects" && r.Method == http.MethodPost:
 		s.applyCalls++
 		body, _ := io.ReadAll(r.Body)
@@ -83,14 +84,20 @@ func (s *decomposeSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.capturedApplyMultipart = append([]byte(nil), body...)
 		s.applyContentType = r.Header.Get("Content-Type")
 		s.projectSlug = multipartField(body, r.Header.Get("Content-Type"), "project_slug")
-		writeJSONTestStatus(w, s.applyStatus, s.applyBody)
+		main.WriteJSONTestStatus(w, s.applyStatus, s.applyBody)
 	case strings.HasPrefix(r.URL.Path, "/v1/deployments/") && r.Method == http.MethodGet:
 		// Project deploys now honor the normal wait contract. Return a
 		// terminal fixture for each golden deployment so these planner tests
 		// exercise that path without a real scheduler.
-		writeJSONTestStatus(w, http.StatusOK, api.DeploymentResponse{
-			ID: strings.TrimPrefix(r.URL.Path, "/v1/deployments/"), Status: statusLive,
-		})
+		id := strings.TrimPrefix(r.URL.Path, "/v1/deployments/")
+		var appID string
+		for _, build := range s.applyBody.Builds {
+			if build.DeploymentID == id {
+				appID = build.AppID
+				break
+			}
+		}
+		main.WriteJSONTestStatus(w, http.StatusOK, api.DeploymentResponse{ID: id, AppID: appID, Status: main.StatusLive})
 	default:
 		http.Error(w, "decomposeSink: not found: "+r.URL.Path, http.StatusNotFound)
 	}
@@ -108,7 +115,7 @@ func TestCmdScanRepoUsesConnectedAccountEndpoint(t *testing.T) {
 			t.Setenv(name, "")
 		}
 	}
-	if code := cmdScan([]string{
+	if code := main.CmdScan([]string{
 		"--repo", "onebox-faas/hello", "--ref", "main",
 		"--project-slug", "fixture", "--only", "api,worker",
 	}); code != 0 {
@@ -239,7 +246,7 @@ var goldenApply = api.ApplyResponse{
 // extracts explicit archives before handing them to the API.
 func writeTarball(t *testing.T) string {
 	t.Helper()
-	path := writeDeploySourceArchive(t, map[string]string{"fixture/README.md": "fixture"})
+	path := main.WriteDeploySourceArchive(t, map[string]string{"fixture/README.md": "fixture"})
 	fixturePath := filepath.Join(filepath.Dir(path), "fixture.tar.gz")
 	if err := os.Rename(path, fixturePath); err != nil {
 		t.Fatalf("rename tarball fixture: %v", err)
@@ -262,16 +269,16 @@ func TestCmdScan_JSONStable(t *testing.T) {
 	// cmdScan directly, so flip the flag and restore it after. The
 	// §4 gate cares about byte stability, so re-using the same flag
 	// across the two inner cmdScan calls is the load-bearing intent.
-	prev := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = prev }()
+	prev := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = prev }()
 
 	tarball := writeTarball(t)
 
 	run := func() string {
-		stdout, restore := captureStdout(t)
+		stdout, restore := main.CaptureStdout(t)
 		defer restore()
-		if code := cmdScan([]string{
+		if code := main.CmdScan([]string{
 			"--tarball", tarball,
 			"--project-slug", "fixture",
 			"--only", "api,worker,nightly",
@@ -310,9 +317,9 @@ func TestCmdScan_RendersTable(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	tarball := writeTarball(t)
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdScan([]string{"--tarball", tarball, "--project-slug", "fixture"}); code != 0 {
+	if code := main.CmdScan([]string{"--tarball", tarball, "--project-slug", "fixture"}); code != 0 {
 		t.Fatalf("cmdScan exit = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -382,9 +389,9 @@ func TestCmdScan_ExplainDetectionTrace(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	tarball := writeTarball(t)
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdScan([]string{"--tarball", tarball, "--project-slug", "fixture", "--explain"}); code != 0 {
+	if code := main.CmdScan([]string{"--tarball", tarball, "--project-slug", "fixture", "--explain"}); code != 0 {
 		t.Fatalf("cmdScan --explain exit = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -422,9 +429,9 @@ func TestCmdScan_OverQuotaApps(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	tarball := writeTarball(t)
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdScan([]string{"--tarball", tarball, "--project-slug", "fixture"}); code != 0 {
+	if code := main.CmdScan([]string{"--tarball", tarball, "--project-slug", "fixture"}); code != 0 {
 		t.Fatalf("cmdScan exit = %d, want 0 (dry-run never writes)", code)
 	}
 	if !strings.Contains(stdout.String(), "can_apply: false") {
@@ -450,9 +457,9 @@ func TestCmdScan_OverQuotaFreeCrons(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	tarball := writeTarball(t)
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdScan([]string{"--tarball", tarball, "--project-slug", "fixture"}); code != 0 {
+	if code := main.CmdScan([]string{"--tarball", tarball, "--project-slug", "fixture"}); code != 0 {
 		t.Fatalf("cmdScan exit = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "Crons unavailable on this plan") {
@@ -471,7 +478,7 @@ func TestCmdScan_OnlyFiltering(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	tarball := writeTarball(t)
 
-	if code := cmdScan([]string{
+	if code := main.CmdScan([]string{
 		"--tarball", tarball,
 		"--project-slug", "fixture",
 		"--only", "api,worker",
@@ -501,11 +508,11 @@ func TestCmdDeployTarball_RejectsOnlyWithRepo(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	stderr, restoreErr := captureStderr(t)
+	stderr, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
-	code := cmdDeployTarball([]string{
+	code := main.CmdDeployTarball([]string{
 		"--repo", "owner/name",
 		// --ref is required for the headless source-ref path
 		// (issue #739 / ADR-092). Pass a valid 40-char SHA so the
@@ -557,11 +564,11 @@ func TestCmdDeployTarball_YesFlagSkeleton(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	tarball := writeTarball(t)
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
 
 	// --yes is the documented explicit approval for non-interactive use.
-	code := cmdDeployTarball([]string{
+	code := main.CmdDeployTarball([]string{
 		"--tarball", tarball,
 		"--project-slug", "fixture",
 		"--only", "api,worker,nightly",
@@ -635,7 +642,7 @@ func TestCmdDeployProjectPathAllowsNestedOnlyWorkloads(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	t.Chdir(t.TempDir())
 
-	if code := cmdDeployTarball([]string{
+	if code := main.CmdDeployTarball([]string{
 		"--path", root, "--project", "--project-slug", "fixture",
 		"--yes", "--no-doctor", "--no-triggers",
 	}); code != 0 {
@@ -648,11 +655,11 @@ func TestCmdDeployProjectPathAllowsNestedOnlyWorkloads(t *testing.T) {
 }
 
 func TestCmdDeployProjectGitArchiveAllowsNestedOnlyWorkloads(t *testing.T) {
-	root := initTestRepo(t)
+	root := main.InitTestRepo(t)
 	writeNestedProjectFixture(t, root)
-	mustGit(t, root, "add", ".")
-	mustGit(t, root, "commit", "-q", "-m", "workspace")
-	mustGit(t, root, "remote", "add", "origin", "git@github.com:acme/workspace.git")
+	main.MustGit(t, root, "add", ".")
+	main.MustGit(t, root, "commit", "-q", "-m", "workspace")
+	main.MustGit(t, root, "remote", "add", "origin", "git@github.com:acme/workspace.git")
 
 	sink := &decomposeSink{
 		scanStatus: http.StatusOK, scanBody: goldenPlan,
@@ -664,7 +671,7 @@ func TestCmdDeployProjectGitArchiveAllowsNestedOnlyWorkloads(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	t.Chdir(t.TempDir())
 
-	if code := cmdDeployTarball([]string{
+	if code := main.CmdDeployTarball([]string{
 		"--path", root, "--project", "--project-slug", "fixture",
 		"--yes", "--no-doctor", "--no-triggers",
 	}); code != 0 {
@@ -705,21 +712,21 @@ func TestCmdDeployTarball_NonTTYRequiresExplicitApproval(t *testing.T) {
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 			// Force the exact non-TTY shape regardless of the test runner.
-			restoreTTY := withTTYForTest(false)
+			restoreTTY := main.WithTTYForTest(false)
 			defer restoreTTY()
-			prevJSON := jsonOutput
-			jsonOutput = tc.json
-			defer func() { jsonOutput = prevJSON }()
-			prevStdin := osStdin
-			osStdin = strings.NewReader("")
-			defer func() { osStdin = prevStdin }()
+			prevJSON := (*main.JsonOutput)
+			(*main.JsonOutput) = tc.json
+			defer func() { (*main.JsonOutput) = prevJSON }()
+			prevStdin := (*main.OsStdin)
+			(*main.OsStdin) = strings.NewReader("")
+			defer func() { (*main.OsStdin) = prevStdin }()
 
-			stdout, restoreStdout := captureStdout(t)
+			stdout, restoreStdout := main.CaptureStdout(t)
 			defer restoreStdout()
-			stderr, restoreStderr := captureStderr(t)
+			stderr, restoreStderr := main.CaptureStderr(t)
 			defer restoreStderr()
 
-			code := cmdDeployTarball([]string{
+			code := main.CmdDeployTarball([]string{
 				"--tarball", writeTarball(t),
 				"--project-slug", "fixture",
 			})
@@ -766,9 +773,9 @@ func TestCmdDeployTarball_ProjectFlagDefaultsSlug(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	_, restore := captureStdout(t)
+	_, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdDeployTarball([]string{
+	if code := main.CmdDeployTarball([]string{
 		"--tarball", writeTarball(t),
 		"--project",
 		"--yes",
@@ -800,13 +807,13 @@ func TestCmdDeployProjectTenantPolicy(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
-			_, restore := captureStdout(t)
+			_, restore := main.CaptureStdout(t)
 			defer restore()
 			args := []string{"--tarball", writeTarball(t), "--project", "--yes", tc.flag}
 			if tc.preview {
 				args = append(args, "--dry-run")
 			}
-			if code := cmdDeployTarball(args); code != 0 {
+			if code := main.CmdDeployTarball(args); code != 0 {
 				t.Fatalf("exit=%d", code)
 			}
 			if got := multipartField(sink.capturedScanMultipart, sink.scanContentType, "platform_tenant_required"); got != tc.want {
@@ -827,7 +834,7 @@ func TestPrintProjectTenantPolicy(t *testing.T) {
 	for _, required := range []bool{false, true} {
 		var out bytes.Buffer
 		plan := api.PlanResponse{CanApply: true, Workloads: []api.PlanWorkload{{Name: "customer-api", PlatformTenantRequired: &required}}}
-		printPlanText(&out, plan, nil, false)
+		main.PrintPlanText(&out, plan, nil, false)
 		want := "platform_tenant_required=" + map[bool]string{false: "false", true: "true"}[required]
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("preview missing %q: %s", want, out.String())
@@ -861,13 +868,13 @@ func TestCmdDeployTarball_ProjectScopeFlagsRouteToPlanner(t *testing.T) {
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-			_, restore := captureStdout(t)
+			_, restore := main.CaptureStdout(t)
 			defer restore()
 			args := []string{"--tarball", writeTarball(t), "--yes", tc.flag}
 			if tc.arg != "" {
 				args = append(args, tc.arg)
 			}
-			if code := cmdDeployTarball(args); code != 0 {
+			if code := main.CmdDeployTarball(args); code != 0 {
 				t.Fatalf("implicit project %s exit = %d", tc.name, code)
 			}
 			if sink.scanCalls != 1 || sink.applyCalls != 1 {
@@ -901,15 +908,15 @@ func TestCmdDeployTarball_JSONFlag(t *testing.T) {
 	// restore it via the helper the package exposes for tests
 	// (json_flag.go::resetJSONOutput). Saving/restoring the prior
 	// value keeps the test from leaking into siblings.
-	prev := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = prev }()
+	prev := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = prev }()
 
 	tarball := writeTarball(t)
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
 
-	if code := cmdDeployTarball([]string{
+	if code := main.CmdDeployTarball([]string{
 		"--tarball", tarball,
 		"--project-slug", "fixture",
 		"--only", "api,worker,nightly",
@@ -941,7 +948,7 @@ func TestCmdDeployTarball_ProjectNoTriggersReachesScanAndApply(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_no_triggers")
 
-	if code := cmdDeployTarball([]string{
+	if code := main.CmdDeployTarball([]string{
 		"--tarball", writeTarball(t),
 		"--project-slug", "fixture",
 		"--no-triggers",
@@ -978,13 +985,13 @@ func TestCmdDeployTarball_ProjectDryRunUsesScan(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	prev := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = prev }()
+	prev := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = prev }()
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdDeployTarball([]string{
+	if code := main.CmdDeployTarball([]string{
 		"--tarball", writeTarball(t),
 		"--project-slug", "fixture",
 		"--only", "api,worker",
@@ -1016,13 +1023,13 @@ func TestCmdDeployTarball_ProjectDryRunHumanRendersPlan(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	prev := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = prev }()
+	prev := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = prev }()
 
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	if code := cmdDeployTarball([]string{
+	if code := main.CmdDeployTarball([]string{
 		"--tarball", writeTarball(t),
 		"--project-slug", "fixture",
 		"--dry-run",
@@ -1084,17 +1091,17 @@ func TestCmdDeployTarball_ProjectPreviewStrictGate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			sink := &decomposeSink{scanStatus: http.StatusOK, scanBody: overQuota}
 			srv := httptest.NewServer(sink)
 			t.Cleanup(srv.Close)
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-			stdout, restore := captureStdout(t)
+			stdout, restore := main.CaptureStdout(t)
 			defer restore()
 			args := append([]string{"--tarball", writeTarball(t), "--project-slug", "fixture"}, tc.flags...)
-			if code := cmdDeployTarball(args); code != tc.wantCode {
+			if code := main.CmdDeployTarball(args); code != tc.wantCode {
 				t.Fatalf("project preview exit = %d, want %d; output=%s", code, tc.wantCode, stdout.String())
 			}
 			if sink.applyCalls != 0 {
@@ -1138,7 +1145,7 @@ func TestCmdDeployTarball_OverQuotaCreatesNothing(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	tarball := writeTarball(t)
-	if code := cmdDeployTarball([]string{
+	if code := main.CmdDeployTarball([]string{
 		"--tarball", tarball,
 		"--project-slug", "fixture",
 		"--only", "api,worker,nightly",
@@ -1186,7 +1193,7 @@ func TestPlanProblem_Mapping(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			p := planProblem(c.plan)
+			p := main.PlanProblem(c.plan)
 			if p.Status != c.wantStat {
 				t.Errorf("status: got %d, want %d", p.Status, c.wantStat)
 			}
@@ -1206,7 +1213,7 @@ func TestPlanTextShowsAsyncRoutesWithAffectedView(t *testing.T) {
 			MatchHost: "reports.example.com", MatchPath: "/reports", MatchMethods: []string{"POST"},
 		}},
 	}
-	if code := printPlanTextWithExplain(&out, plan, nil, true, false); code != 0 {
+	if code := main.PrintPlanTextWithExplain(&out, plan, nil, true, false); code != 0 {
 		t.Fatalf("print plan exit = %d", code)
 	}
 	if got := out.String(); !strings.Contains(got, "Async routes:") || !strings.Contains(got, "reports/create-report [create] POST reports.example.com/reports") {
@@ -1227,7 +1234,7 @@ func TestDefaultProjectSlug(t *testing.T) {
 		{"./fixture", "fixture"},
 	}
 	for _, c := range cases {
-		if got := defaultProjectSlug(c.in); got != c.want {
+		if got := main.DefaultProjectSlug(c.in); got != c.want {
 			t.Errorf("defaultProjectSlug(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
@@ -1243,7 +1250,7 @@ func TestResolveScanPathKeepsStableProjectIdentity(t *testing.T) {
 	}
 	var slugs []string
 	for range 2 {
-		archivePath, sourceName, cleanup, err := resolveScanSource("", root, "", "main", 0)
+		archivePath, sourceName, cleanup, err := main.ResolveScanSource("", root, "", "main", 0)
 		if err != nil {
 			t.Fatalf("resolveScanSource: %v", err)
 		}
@@ -1251,7 +1258,7 @@ func TestResolveScanPathKeepsStableProjectIdentity(t *testing.T) {
 			cleanup()
 			t.Fatal("resolveScanSource returned an empty archive path")
 		}
-		slugs = append(slugs, defaultProjectSlug(sourceName))
+		slugs = append(slugs, main.DefaultProjectSlug(sourceName))
 		cleanup()
 	}
 	if slugs[0] != "my-service" || slugs[1] != slugs[0] {
@@ -1267,9 +1274,9 @@ func TestResolveScanPathDotUsesSelectedDirectoryIdentity(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module hello-go\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	withCwd(t, root)
+	main.WithCwd(t, root)
 
-	archivePath, sourceName, cleanup, err := resolveScanSource("", ".", "", "main", 0)
+	archivePath, sourceName, cleanup, err := main.ResolveScanSource("", ".", "", "main", 0)
 	if err != nil {
 		t.Fatalf("resolveScanSource: %v", err)
 	}
@@ -1280,7 +1287,7 @@ func TestResolveScanPathDotUsesSelectedDirectoryIdentity(t *testing.T) {
 	if sourceName != "hello-go.tar.gz" {
 		t.Fatalf("source name = %q, want hello-go.tar.gz", sourceName)
 	}
-	if got := defaultProjectSlug(sourceName); got != "hello-go" {
+	if got := main.DefaultProjectSlug(sourceName); got != "hello-go" {
 		t.Fatalf("default project slug = %q, want hello-go", got)
 	}
 }
@@ -1293,7 +1300,7 @@ func TestCmdScanRejectsExplicitInvalidProjectSlugsBeforeSourceOrNetwork(t *testi
 	t.Setenv("FAAS_TOKEN", "fp_live_project_slug_guard")
 
 	for _, slug := range []string{"", "Bad_Slug", "-bad", "bad-", strings.Repeat("a", 64)} {
-		if code := cmdScan([]string{"--tarball", "missing.tar.gz", "--project-slug", slug}); code == 0 {
+		if code := main.CmdScan([]string{"--tarball", "missing.tar.gz", "--project-slug", slug}); code == 0 {
 			t.Errorf("explicit project slug %q was accepted", slug)
 		}
 	}
@@ -1317,7 +1324,7 @@ func TestSplitCSVEdgeCases(t *testing.T) {
 		{"  ", nil},
 	}
 	for _, c := range cases {
-		got := splitCSV(c.in)
+		got := main.SplitCSV(c.in)
 		if len(got) != len(c.want) {
 			t.Errorf("splitCSV(%q) = %v, want %v", c.in, got, c.want)
 			continue
@@ -1348,14 +1355,14 @@ func TestCmdDeployTarball_DoctorStrict_FailsFast(t *testing.T) {
 	dir := t.TempDir()
 	// Keep the caller directory clean: the error must come from the archive,
 	// not from an accidental cwd scan.
-	prev := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = prev }()
+	prev := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = prev }()
 
 	var stderr bytes.Buffer
-	oldErr := osStderr
-	osStderr = &stderr
-	defer func() { osStderr = oldErr }()
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	defer func() { (*main.OsStderr) = oldErr }()
 
 	sink := &decomposeSink{
 		scanStatus:  http.StatusOK,
@@ -1372,9 +1379,9 @@ func TestCmdDeployTarball_DoctorStrict_FailsFast(t *testing.T) {
 	// auto-restores on test exit.
 	t.Chdir(dir)
 
-	if code := cmdDeployTarball([]string{
+	if code := main.CmdDeployTarball([]string{
 		"--doctor-strict",
-		"--tarball", writeDeploySourceArchive(t, map[string]string{
+		"--tarball", main.WriteDeploySourceArchive(t, map[string]string{
 			"fixture/data/marker.txt": "archive-only",
 		}),
 		"--project-slug", "fixture",
@@ -1419,14 +1426,14 @@ func TestCmdDeployTarball_DoctorStrict_AllGreenContinues(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "server.js"), []byte("app.listen(process.env.PORT);\n"), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
-	prev := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = prev }()
+	prev := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = prev }()
 
 	var stderr bytes.Buffer
-	oldErr := osStderr
-	osStderr = &stderr
-	defer func() { osStderr = oldErr }()
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	defer func() { (*main.OsStderr) = oldErr }()
 
 	sink := &decomposeSink{
 		scanStatus:  http.StatusOK,
@@ -1441,7 +1448,7 @@ func TestCmdDeployTarball_DoctorStrict_AllGreenContinues(t *testing.T) {
 
 	t.Chdir(dir)
 
-	if code := cmdDeployTarball([]string{
+	if code := main.CmdDeployTarball([]string{
 		"--doctor-strict",
 		"--tarball", writeTarball(t),
 		"--project-slug", "fixture",
@@ -1472,14 +1479,14 @@ func TestCmdDeployTarball_DoctorStrict_WarnsOnlyContinues(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# fixture\n"), 0o644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
-	prev := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = prev }()
+	prev := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = prev }()
 
 	var stderr bytes.Buffer
-	oldErr := osStderr
-	osStderr = &stderr
-	defer func() { osStderr = oldErr }()
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	defer func() { (*main.OsStderr) = oldErr }()
 
 	sink := &decomposeSink{
 		scanStatus:  http.StatusOK,
@@ -1494,7 +1501,7 @@ func TestCmdDeployTarball_DoctorStrict_WarnsOnlyContinues(t *testing.T) {
 
 	t.Chdir(dir)
 
-	if code := cmdDeployTarball([]string{
+	if code := main.CmdDeployTarball([]string{
 		"--doctor-strict",
 		"--tarball", writeTarball(t),
 		"--project-slug", "fixture",
@@ -1515,14 +1522,14 @@ func TestCmdDeployTarball_DoctorStrict_WarnsOnlyContinues(t *testing.T) {
 // on, so a regression to "human prose" would break parse-ability.
 func TestCmdDeployTarball_DoctorStrict_JSON(t *testing.T) {
 	dir := t.TempDir()
-	prev := jsonOutput
-	jsonOutput = true
-	defer func() { jsonOutput = prev }()
+	prev := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = prev }()
 
 	var stderr bytes.Buffer
-	oldErr := osStderr
-	osStderr = &stderr
-	defer func() { osStderr = oldErr }()
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	defer func() { (*main.OsStderr) = oldErr }()
 
 	sink := &decomposeSink{
 		scanStatus:  http.StatusOK,
@@ -1537,9 +1544,9 @@ func TestCmdDeployTarball_DoctorStrict_JSON(t *testing.T) {
 
 	t.Chdir(dir)
 
-	if code := cmdDeployTarball([]string{
+	if code := main.CmdDeployTarball([]string{
 		"--doctor-strict",
-		"--tarball", writeDeploySourceArchive(t, map[string]string{
+		"--tarball", main.WriteDeploySourceArchive(t, map[string]string{
 			"fixture/data/marker.txt": "archive-only",
 		}),
 		"--project-slug", "fixture",
@@ -1554,8 +1561,8 @@ func TestCmdDeployTarball_DoctorStrict_JSON(t *testing.T) {
 	// stderr must be a single-line JSON envelope (newlines inside
 	// the embedded report are fine — we grep on the envelope keys).
 	var env struct {
-		Doctor doctorReport `json:"doctor"`
-		Exit   int          `json:"exit"`
+		Doctor main.DoctorReport `json:"doctor"`
+		Exit   int               `json:"exit"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stderr.String())), &env); err != nil {
 		t.Fatalf("stderr must be a JSON envelope under --json; got %q (err=%v)", stderr.String(), err)
@@ -1579,30 +1586,30 @@ func TestCmdDeployTarball_DoctorStrict_JSON(t *testing.T) {
 // project, and the refusal said only "over-quota or unsupported".
 func TestComposeProjectName(t *testing.T) {
 	dir := t.TempDir()
-	if got := composeProjectName(dir); got != "" {
+	if got := main.ComposeProjectName(dir); got != "" {
 		t.Fatalf("no compose file: got %q, want empty", got)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("name: h9p\nservices:\n  web:\n    build: ./web\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := composeProjectName(dir); got != "h9p" {
+	if got := main.ComposeProjectName(dir); got != "h9p" {
 		t.Fatalf("composeProjectName = %q, want h9p", got)
 	}
 	other := t.TempDir()
 	if err := os.WriteFile(filepath.Join(other, "docker-compose.yml"), []byte("services:\n  web:\n    image: nginx\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := composeProjectName(other); got != "" {
+	if got := main.ComposeProjectName(other); got != "" {
 		t.Fatalf("unnamed compose: got %q, want empty", got)
 	}
 }
 
 func TestPlanBlockedErrorNamesReasons(t *testing.T) {
 	reason := `workload "h9p-back" conflicts with existing app slug "h9p-back" outside this project member`
-	if got := planBlockedError(api.PlanResponse{CanApplyReasons: []string{reason}}).Error(); got != reason {
+	if got := main.PlanBlockedError(api.PlanResponse{CanApplyReasons: []string{reason}}).Error(); got != reason {
 		t.Fatalf("planBlockedError = %q, want the plan's reason", got)
 	}
-	if got := planBlockedError(api.PlanResponse{}).Error(); !strings.Contains(got, "over-quota") {
+	if got := main.PlanBlockedError(api.PlanResponse{}).Error(); !strings.Contains(got, "over-quota") {
 		t.Fatalf("no reasons: got %q, want the generic fallback", got)
 	}
 }

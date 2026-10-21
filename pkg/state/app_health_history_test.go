@@ -251,3 +251,53 @@ func TestAppHealthHistoryByteRetention(t *testing.T) {
 		}
 	})
 }
+
+// TestAppHealthQuietAppWaitsTheQuietInterval pins ADR-734 amendment 1 through
+// the claim/finish path: an app whose fresh assessment is unchanged and shows
+// no instances, required capacity or requests is not claimed again until the
+// quiet interval passes, while an app serving traffic keeps the 30-second
+// target.
+func TestAppHealthQuietAppWaitsTheQuietInterval(t *testing.T) {
+	appHealthStores(t, func(t *testing.T, store state.Store, s state.AppHealthHistoryStore) {
+		_, app, _, _ := healthFixture(t, store)
+		now := time.Now().UTC().Truncate(time.Second)
+		quiet := func(a *api.AppHealthResponse) {
+			a.Capacity = api.AppHealthCapacity{Known: true}
+			a.Requests.RequestCount = 0
+		}
+		claimAt := func(at time.Time) bool {
+			t.Helper()
+			claim, err := s.ClaimAppHealth(t.Context(), uuid.NewString(), at)
+			if errors.Is(err, state.ErrNotFound) {
+				return false
+			}
+			if err != nil || claim.AppID != app.ID {
+				t.Fatalf("claim at %s: %+v %v", at.Sub(now), claim, err)
+			}
+			if err := s.FinishAppHealth(t.Context(), claim, func() api.AppHealthResponse {
+				a := historyAssessment(app.ID, "healthy", at.Add(time.Millisecond))
+				quiet(&a)
+				return a
+			}(), at.Add(time.Millisecond)); err != nil {
+				t.Fatal(err)
+			}
+			return true
+		}
+		// The baseline is a new history entry, so it keeps the 30-second target.
+		recordAppHealth(t, s, app.ID, "healthy", now, quiet)
+		if !claimAt(now.Add(31 * time.Second)) {
+			t.Fatal("app not claimed 31 s after its baseline")
+		}
+		// That unchanged quiet observation waits the quiet interval.
+		if claimAt(now.Add(62 * time.Second)) {
+			t.Fatal("quiet app claimed 31 s after an unchanged observation")
+		}
+		if !claimAt(now.Add(31*time.Second + api.AppHealthCollectorQuietInterval + time.Second)) {
+			t.Fatal("quiet app not claimed after the quiet interval")
+		}
+		page, err := s.ListAppHealthHistory(t.Context(), app.AccountID, app.ID, 20, "", now.Add(31*time.Second+api.AppHealthCollectorQuietInterval+2*time.Second))
+		if err != nil || len(page.Entries) != 1 || page.Entries[0].Kind != "baseline" {
+			t.Fatalf("quiet observations recorded history beyond the baseline (a gap?): %+v %v", page, err)
+		}
+	})
+}

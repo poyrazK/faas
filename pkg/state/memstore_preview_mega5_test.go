@@ -10,25 +10,26 @@
 //
 // Whitebox `package state`. No Postgres dependency.
 
-package state
+package state_test
 
 import (
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 // seedApp inserts an App into m.apps under the given ID. Returns the
 // struct so the test can mutate it (e.g. set PreviewOfSlug or Status).
-func seedApp_Mega5(m *MemStore, id, accountID, slug string) App {
-	a := App{
+func seedApp_Mega5(m *state.MemStore, id, accountID, slug string) state.App {
+	a := state.App{
 		ID:        id,
 		AccountID: accountID,
 		Slug:      slug,
-		Status:    AppActive,
+		Status:    state.AppActive,
 		CreatedAt: time.Now().UTC(),
 	}
-	m.apps[id] = a
+	(*m.Apps())[id] = a
 	return a
 }
 
@@ -36,29 +37,29 @@ func seedApp_Mega5(m *MemStore, id, accountID, slug string) App {
 
 func TestStampPreviewDestroyCommentedAt_NotFound_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	if _, err := m.StampPreviewDestroyCommentedAt(t.Context(), "missing", time.Now()); !errors.Is(err, ErrNotFound) {
+	m := state.NewMemStore()
+	if _, err := m.StampPreviewDestroyCommentedAt(t.Context(), "missing", time.Now()); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestStampPreviewDestroyCommentedAt_ProductionApp_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	// Production app (PreviewOfSlug == "") → ErrNotFound per the
 	// doc-comment contract.
 	seedApp_Mega5(m, "prod-1", "acc-1", "my-app")
-	if _, err := m.StampPreviewDestroyCommentedAt(t.Context(), "prod-1", time.Now()); !errors.Is(err, ErrNotFound) {
+	if _, err := m.StampPreviewDestroyCommentedAt(t.Context(), "prod-1", time.Now()); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound (production app)", err)
 	}
 }
 
 func TestStampPreviewDestroyCommentedAt_Success_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	a := seedApp_Mega5(m, "prev-1", "acc-1", "my-app")
 	a.PreviewOfSlug = "my-app"
-	m.apps["prev-1"] = a
+	(*m.Apps())["prev-1"] = a
 
 	when := time.Now()
 	app, err := m.StampPreviewDestroyCommentedAt(t.Context(), "prev-1", when)
@@ -72,17 +73,17 @@ func TestStampPreviewDestroyCommentedAt_Success_Mega5(t *testing.T) {
 		t.Errorf("PreviewDestroyCommentedAt = %v, want %v", *app.PreviewDestroyCommentedAt, when)
 	}
 	// Persisted back into m.apps.
-	if m.apps["prev-1"].PreviewDestroyCommentedAt == nil {
+	if (*m.Apps())["prev-1"].PreviewDestroyCommentedAt == nil {
 		t.Error("m.apps[prev-1].PreviewDestroyCommentedAt = nil, want persisted")
 	}
 }
 
 func TestStampPreviewDestroyCommentedAt_Idempotent_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	a := seedApp_Mega5(m, "prev-1", "acc-1", "my-app")
 	a.PreviewOfSlug = "my-app"
-	m.apps["prev-1"] = a
+	(*m.Apps())["prev-1"] = a
 
 	when1 := time.Now()
 	when2 := time.Now().Add(time.Hour)
@@ -96,9 +97,9 @@ func TestStampPreviewDestroyCommentedAt_Idempotent_Mega5(t *testing.T) {
 	if _, err := m.StampPreviewDestroyCommentedAt(t.Context(), "prev-1", when2); err != nil {
 		t.Fatalf("second stamp: %v", err)
 	}
-	if !m.apps["prev-1"].PreviewDestroyCommentedAt.Equal(when2) {
+	if !(*m.Apps())["prev-1"].PreviewDestroyCommentedAt.Equal(when2) {
 		t.Errorf("second stamp: got %v, want %v",
-			*m.apps["prev-1"].PreviewDestroyCommentedAt, when2)
+			*(*m.Apps())["prev-1"].PreviewDestroyCommentedAt, when2)
 	}
 }
 
@@ -106,7 +107,7 @@ func TestStampPreviewDestroyCommentedAt_Idempotent_Mega5(t *testing.T) {
 
 func TestListPreviewsForAccount_Empty_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	apps, err := m.ListPreviewsForAccount(t.Context(), "acc-1")
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
@@ -118,11 +119,11 @@ func TestListPreviewsForAccount_Empty_Mega5(t *testing.T) {
 
 func TestListPreviewsForAccount_OnlyDeleted_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	a := seedApp_Mega5(m, "prev-1", "acc-1", "my-app")
 	a.PreviewOfSlug = "my-app"
-	a.Status = AppDeleted
-	m.apps["prev-1"] = a
+	a.Status = state.AppDeleted
+	(*m.Apps())["prev-1"] = a
 
 	apps, err := m.ListPreviewsForAccount(t.Context(), "acc-1")
 	if err != nil {
@@ -135,24 +136,24 @@ func TestListPreviewsForAccount_OnlyDeleted_Mega5(t *testing.T) {
 
 func TestListPreviewsForAccount_Mixed_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	// Production app (PreviewOfSlug == ""): excluded.
 	prod := seedApp_Mega5(m, "prod-1", "acc-1", "my-app")
 	prod.PreviewOfSlug = ""
-	m.apps["prod-1"] = prod
+	(*m.Apps())["prod-1"] = prod
 	// Other account's preview: excluded by AccountID filter.
 	other := seedApp_Mega5(m, "prev-other", "acc-other", "my-app")
 	other.PreviewOfSlug = "my-app"
-	m.apps["prev-other"] = other
+	(*m.Apps())["prev-other"] = other
 	// Deleted preview: excluded by Status filter.
 	deleted := seedApp_Mega5(m, "prev-del", "acc-1", "my-app")
 	deleted.PreviewOfSlug = "my-app"
-	deleted.Status = AppDeleted
-	m.apps["prev-del"] = deleted
+	deleted.Status = state.AppDeleted
+	(*m.Apps())["prev-del"] = deleted
 	// Live preview: included.
 	live := seedApp_Mega5(m, "prev-live", "acc-1", "my-app")
 	live.PreviewOfSlug = "my-app"
-	m.apps["prev-live"] = live
+	(*m.Apps())["prev-live"] = live
 
 	apps, err := m.ListPreviewsForAccount(t.Context(), "acc-1")
 	if err != nil {
@@ -168,15 +169,15 @@ func TestListPreviewsForAccount_Mixed_Mega5(t *testing.T) {
 
 func TestListPreviewsForAccount_SortCreatedAtDesc_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	older := seedApp_Mega5(m, "prev-old", "acc-1", "my-app")
 	older.PreviewOfSlug = "my-app"
 	older.CreatedAt = time.Now().Add(-1 * time.Hour)
-	m.apps["prev-old"] = older
+	(*m.Apps())["prev-old"] = older
 	newer := seedApp_Mega5(m, "prev-new", "acc-1", "my-app")
 	newer.PreviewOfSlug = "my-app"
 	newer.CreatedAt = time.Now()
-	m.apps["prev-new"] = newer
+	(*m.Apps())["prev-new"] = newer
 
 	apps, err := m.ListPreviewsForAccount(t.Context(), "acc-1")
 	if err != nil {
@@ -197,15 +198,15 @@ func TestListPreviewsForAccount_SortCreatedAtDesc_Mega5(t *testing.T) {
 
 func TestPreviewAppsByParent_NoMatches_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	// Seed a production app + an unrelated preview; both are filtered
 	// out, leaving the empty-result branch (the missing 10%).
 	prod := seedApp_Mega5(m, "prod-1", "acc-1", "my-app")
 	prod.PreviewOfSlug = ""
-	m.apps["prod-1"] = prod
+	(*m.Apps())["prod-1"] = prod
 	other := seedApp_Mega5(m, "prev-other", "acc-1", "other-app")
 	other.PreviewOfSlug = "other-app"
-	m.apps["prev-other"] = other
+	(*m.Apps())["prev-other"] = other
 
 	apps, err := m.PreviewAppsByParent(t.Context(), "acc-1", "my-app")
 	if err != nil {
@@ -218,15 +219,15 @@ func TestPreviewAppsByParent_NoMatches_Mega5(t *testing.T) {
 
 func TestPreviewAppsByParent_Happy_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	p1 := seedApp_Mega5(m, "prev-1", "acc-1", "my-app")
 	p1.PreviewOfSlug = "my-app"
 	p1.CreatedAt = time.Now().Add(-time.Hour)
-	m.apps["prev-1"] = p1
+	(*m.Apps())["prev-1"] = p1
 	p2 := seedApp_Mega5(m, "prev-2", "acc-1", "my-app")
 	p2.PreviewOfSlug = "my-app"
 	p2.CreatedAt = time.Now()
-	m.apps["prev-2"] = p2
+	(*m.Apps())["prev-2"] = p2
 
 	apps, err := m.PreviewAppsByParent(t.Context(), "acc-1", "my-app")
 	if err != nil {

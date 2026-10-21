@@ -1,5 +1,5 @@
 // adr: 20261021090000
-package sched
+package sched_test
 
 import (
 	"context"
@@ -8,14 +8,14 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
-	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
 // rehearsalAckVMM acknowledges the requested containment like a current vmmd.
-type rehearsalAckVMM struct{ *fakeVMM }
+type rehearsalAckVMM struct{ *sched.FakeVMM }
 
-func (v rehearsalAckVMM) CreateColdBoot(ctx context.Context, node, instance string, app AppSpec) (*WakeOutcome, error) {
-	out, err := v.fakeVMM.CreateColdBoot(ctx, node, instance, app)
+func (v rehearsalAckVMM) CreateColdBoot(ctx context.Context, node, instance string, app sched.AppSpec) (*sched.WakeOutcome, error) {
+	out, err := v.FakeVMM.CreateColdBoot(ctx, node, instance, app)
 	if out != nil {
 		out.RehearsalRunID = app.RehearsalRunID
 	}
@@ -25,17 +25,13 @@ func (v rehearsalAckVMM) CreateColdBoot(ctx context.Context, node, instance stri
 func TestContainedBootPointsPlatformAPIAtRunLocalEndpoint(t *testing.T) {
 	for _, run := range []string{"", strings.Repeat("a", 32)} {
 		t.Run(map[bool]string{false: "ordinary", true: "contained"}[run != ""], func(t *testing.T) {
-			vmm := rehearsalAckVMM{&fakeVMM{}}
-			e := &Engine{vmm: vmm}
+			vmm := rehearsalAckVMM{&sched.FakeVMM{}}
 			customer := make([]fcvm.APIEnvEntry, 1, 2)
 			customer[0] = fcvm.APIEnvEntry{Key: api.ScenarioPlatformAPIURLEnv, Value: "https://api.gregale.dev"}
-			spec := AppSpec{AppID: "app", APIEnv: customer}
-			ctx := withBootPrepared(t.Context(), bootPrepared{instanceID: "instance", rehearsalRunID: run, haveRehearsal: true,
-				capture: state.InstanceApplicationStandardAdmission{}, haveCapture: true})
-			if _, err := e.createRuntimeWithStandards(ctx, "node", "instance", string(state.StateColdBooting), spec, nil, false); err != nil {
+			if err := sched.CreateRuntimeWithRehearsalRun(t.Context(), vmm, sched.AppSpec{AppID: "app", APIEnv: customer}, run); err != nil {
 				t.Fatal(err)
 			}
-			got := vmm.lastColdBootSpec.APIEnv
+			got := vmm.LastColdBootSpec().APIEnv
 			last := got[len(got)-1]
 			if run == "" {
 				if len(got) != 1 || last.Value != "https://api.gregale.dev" {

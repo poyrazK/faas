@@ -12,9 +12,10 @@
 // ParkDeployment integration is tested separately in
 // engine_liveness_test.go (depends on a live store + audit
 // pipeline, which the window test deliberately avoids).
-package sched
+package sched_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/sched"
 	"sync"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ import (
 // a single restart below the maxN threshold does NOT trigger
 // ParkDeployment.
 func TestLivenessWindow_BelowMaxNoPark(t *testing.T) {
-	w := NewLivenessWindow(5*time.Minute, 3)
+	w := sched.NewLivenessWindow(5*time.Minute, 3)
 	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
 	if shouldPark, count := w.RecordRestart("dep-1", now); shouldPark || count != 1 {
@@ -38,7 +39,7 @@ func TestLivenessWindow_BelowMaxNoPark(t *testing.T) {
 // TestLivenessWindow_ThirdInWindowParks is AC #3: the 3rd restart
 // inside the 5-min window flips shouldPark=true.
 func TestLivenessWindow_ThirdInWindowParks(t *testing.T) {
-	w := NewLivenessWindow(5*time.Minute, 3)
+	w := sched.NewLivenessWindow(5*time.Minute, 3)
 	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
 	w.RecordRestart("dep-1", base)
@@ -59,7 +60,7 @@ func TestLivenessWindow_ThirdInWindowParks(t *testing.T) {
 // base+2m, with the third restart at base+2m+1ns (just past
 // the cutoff) all stay in the ring.
 func TestLivenessWindow_ForgetsOldEntries(t *testing.T) {
-	w := NewLivenessWindow(5*time.Minute, 3)
+	w := sched.NewLivenessWindow(5*time.Minute, 3)
 	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
 	// Three restarts 1 min apart — all inside the 5-min
@@ -81,7 +82,7 @@ func TestLivenessWindow_ForgetsOldEntries(t *testing.T) {
 	// the new window). After 4 in a row, count=4 > maxN=3
 	// so shouldPark=true on the fourth. We verify the
 	// trailing-expire path differently below.
-	w2 := NewLivenessWindow(5*time.Minute, 3)
+	w2 := sched.NewLivenessWindow(5*time.Minute, 3)
 	w2.RecordRestart("dep-2", base.Add(10*time.Minute))
 	w2.RecordRestart("dep-2", base.Add(11*time.Minute))
 	w2.RecordRestart("dep-2", base.Add(12*time.Minute))
@@ -96,7 +97,7 @@ func TestLivenessWindow_ForgetsOldEntries(t *testing.T) {
 	// base+5m. All three earlier entries are ≤ base+2m, which
 	// is NOT after base+5m, so they are dropped. The 4th
 	// call appends itself → count=1.
-	w3 := NewLivenessWindow(5*time.Minute, 3)
+	w3 := sched.NewLivenessWindow(5*time.Minute, 3)
 	w3.RecordRestart("dep-3", base)
 	w3.RecordRestart("dep-3", base.Add(time.Minute))
 	w3.RecordRestart("dep-3", base.Add(2*time.Minute))
@@ -111,12 +112,12 @@ func TestLivenessWindow_ForgetsOldEntries(t *testing.T) {
 // not panic when the Engine's DestroyForLivenessFailure path
 // touches a nil tracker.
 func TestLivenessWindow_NilSafe(t *testing.T) {
-	var w *LivenessWindow
+	var w *sched.LivenessWindow
 	shouldPark, count := w.RecordRestart("dep-x", time.Now())
 	if shouldPark || count != 0 {
 		t.Errorf("nil receiver: shouldPark=%v count=%d, want false/0", shouldPark, count)
 	}
-	if n := w.recent("dep-x", time.Now()); n != 0 {
+	if n := w.Recent("dep-x", time.Now()); n != 0 {
 		t.Errorf("nil receiver: recent=%d, want 0", n)
 	}
 	w.Forget("dep-x") // must not panic
@@ -128,14 +129,14 @@ func TestLivenessWindow_NilSafe(t *testing.T) {
 // misconfiguration must NOT silently start parking on every
 // failure.
 func TestLivenessWindow_DisabledByZeroOpts(t *testing.T) {
-	w := NewLivenessWindow(0, 3) // window=0 → gate disabled
+	w := sched.NewLivenessWindow(0, 3) // window=0 → gate disabled
 	now := time.Now()
 	for i := 0; i < 10; i++ {
 		if shouldPark, _ := w.RecordRestart("dep-1", now); shouldPark {
 			t.Errorf("window=0 should never park; got shouldPark=true on iteration %d", i)
 		}
 	}
-	w2 := NewLivenessWindow(5*time.Minute, 0) // maxN=0 → gate disabled
+	w2 := sched.NewLivenessWindow(5*time.Minute, 0) // maxN=0 → gate disabled
 	for i := 0; i < 10; i++ {
 		if shouldPark, _ := w2.RecordRestart("dep-1", now); shouldPark {
 			t.Errorf("maxN=0 should never park; got shouldPark=true on iteration %d", i)
@@ -148,7 +149,7 @@ func TestLivenessWindow_DisabledByZeroOpts(t *testing.T) {
 // N and the shouldPark flip must happen exactly once (when the
 // ring first reaches maxN). Race-detector clean.
 func TestLivenessWindow_ConcurrentSafe(t *testing.T) {
-	w := NewLivenessWindow(5*time.Minute, 100)
+	w := sched.NewLivenessWindow(5*time.Minute, 100)
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
@@ -158,7 +159,7 @@ func TestLivenessWindow_ConcurrentSafe(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if got := w.recent("dep-1", time.Now()); got != 50 {
+	if got := w.Recent("dep-1", time.Now()); got != 50 {
 		t.Errorf("concurrent RecordRestart: recent=%d, want 50", got)
 	}
 }
@@ -167,7 +168,7 @@ func TestLivenessWindow_ConcurrentSafe(t *testing.T) {
 // deployments have independent rings: dep-1 hitting maxN must
 // NOT trigger ParkDeployment on dep-2.
 func TestLivenessWindow_PerDeploymentIsolation(t *testing.T) {
-	w := NewLivenessWindow(5*time.Minute, 3)
+	w := sched.NewLivenessWindow(5*time.Minute, 3)
 	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
 
 	// Three restarts on dep-1 → parks dep-1.
@@ -189,7 +190,7 @@ func TestLivenessWindow_PerDeploymentIsolation(t *testing.T) {
 // breaker, while failures split across nodes do not combine into an app-wide
 // permanent eviction decision.
 func TestLivenessWindow_NodeScopedIsolation(t *testing.T) {
-	w := NewLivenessWindow(5*time.Minute, 3)
+	w := sched.NewLivenessWindow(5*time.Minute, 3)
 	base := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 
 	w.RecordRestartOnNode("dep-1", "node-a", base)
@@ -203,10 +204,10 @@ func TestLivenessWindow_NodeScopedIsolation(t *testing.T) {
 	if shouldPark, count := w.RecordRestartOnNode("dep-1", "node-a", base.Add(4*time.Second)); !shouldPark || count != 3 {
 		t.Fatalf("third node-a failure: shouldPark=%v count=%d, want true/3", shouldPark, count)
 	}
-	if got := w.recentOnNode("dep-1", "node-a", base.Add(4*time.Second)); got != 3 {
+	if got := w.RecentOnNode("dep-1", "node-a", base.Add(4*time.Second)); got != 3 {
 		t.Errorf("node-a recent count=%d, want 3", got)
 	}
-	if got := w.recentOnNode("dep-1", "node-b", base.Add(4*time.Second)); got != 2 {
+	if got := w.RecentOnNode("dep-1", "node-b", base.Add(4*time.Second)); got != 2 {
 		t.Errorf("node-b recent count=%d, want 2", got)
 	}
 }

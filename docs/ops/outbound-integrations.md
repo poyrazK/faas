@@ -555,7 +555,8 @@ list:
 ]}
 ```
 
-- Prices are millicents per million tokens; EUR 0.15 is 15,000.
+- Prices are US-dollar millicents per million tokens; $0.15 is 15,000. Cost
+  limits and costs are in US dollars too (ADR 20261019123822).
 - The longest matching model prefix wins, and `*` matches any model.
 - An absent cached-input or cache-write price uses the input price.
 - A new list applies to calls settled from then on. Earlier lists stay, so
@@ -605,6 +606,7 @@ Larger bodies stream exactly as before, without these features.
 
 ## AI automatic prompt caching
 
+
 `gregale ai policy <id> --prompt-cache on` (or `auto_prompt_cache` in the AI
 policy) lets the gateway add prompt-cache breakpoints to Claude requests that
 carry none (ADR-1437). It covers:
@@ -647,6 +649,14 @@ marks.
 OpenAI and Gemini cache prompts without markers, so the setting changes
 nothing for them. A marked body is re-encoded as JSON: key order changes, the
 content does not.
+
+Prefixes are shared across outboundd replicas (ADR 20261019132139). A replica
+that has not seen a prefix asks `outbound_ai_prompt_prefixes`, which holds
+SHA-256 hashes only, and marks it if any replica saw it within five minutes.
+The lookup is bounded at 200 ms and fails open to the replica's own memory.
+Rows are pruned hourly after ten minutes, and
+`outbound_ai_prompt_cache_shared_total{result}` counts lookups (repeated,
+first, refreshed, error).
 
 ## AI fallback routes
 
@@ -808,13 +818,13 @@ answer in text. Check `finish_reason` before reading `tool_calls`.
 
 See [ADR-994](../adr/994-ai-gateway-price-catalog-end-users-affinity.md).
 outboundd and apid embed `pkg/outbound/aiprices/catalog.json`: list prices for
-about 700 models across the six providers, in EUR millicents per million
-tokens. A call's model is priced from the integration's price list first, then
+about 850 models across the six providers, in US-dollar millicents per million
+tokens: the providers' list prices with no exchange rate (ADR 20261019123822). A call's model is priced from the integration's price list first, then
 from the catalog for the integration's provider. Reservations and settlement
 use the same price.
 
-- The file records its LiteLLM source commit, generation date and USD-to-EUR
-  rate. Prices are base-tier list prices; batch, priority, long-context tiers
+- The file records its LiteLLM source commit, generation date and currency.
+  Prices are base-tier list prices; batch, priority, long-context tiers
   and negotiated discounts are not modelled.
 - A dated or versioned model the catalog lacks is priced as its family
   (`gpt-4o-2024-08-06` as `gpt-4o`, `claude-sonnet-4-5@20250929` as
@@ -824,7 +834,7 @@ use the same price.
 - To refresh the catalog, download LiteLLM's
   `model_prices_and_context_window.json` at a pinned commit into its own
   directory, run `python3 -I scripts/gen_ai_price_catalog.py` with that
-  commit and the current ECB rate, and review the diff in a PR.
+  commit, and review the diff in a PR.
 
 ## Per-end-user limits
 
@@ -1021,7 +1031,8 @@ to be free (ADR-1432).
 - **Refused:** any other `POST`, and every `PUT` or `PATCH`, with
   `403 outbound_ai_endpoint_unmetered`. Examples:
   - realtime client secrets and calls, which let a browser spend with the
-    provider directly;
+    provider directly (realtime WebSocket sessions are metered; see AI
+    realtime sessions);
   - vector stores and containers, billed by storage and session;
   - fine-tuning jobs (OpenAI is winding its fine-tuning platform down);
   - Gemini context caches and batch mode, and Vertex batch and tuning jobs;
@@ -1034,6 +1045,63 @@ lets refused calls through as before. They carry `X-Gregale-AI-Unmetered:
 allowed`, their spend is outside the integration's caps, and
 `outbound_ai_unmetered_calls_total` counts them by integration. Operator
 integrations take `ai_allow_unmetered` in `outboundd.toml`.
+
+## AI realtime sessions
+
+OpenAI and Azure OpenAI Realtime WebSocket sessions pass through the gateway
+metered (ADR 20261019072722). An app connects to
+`ws://…/i/<integration-id>/v1/realtime?model=<model>` (Azure:
+`/openai/v1/realtime` or `/openai/realtime`) through `GREGALE_OUTBOUND_URL` or
+an access token, without a provider key.
+
+- **Transparent.** outboundd forwards the caller's handshake with the
+  provider credential, refuses compression, and copies frames unchanged both
+  ways. It reads only the provider's text messages, up to 4 MiB each.
+- **Per-response caps.** The upgrade is admitted like a call, with no
+  reservation. Each response the provider starts (`response.created`) is
+  admitted with its own reservation: the previous response's input tokens (4,096
+  for the first) plus 4,096 output tokens, priced as audio. `response.done`
+  settles it from its usage. A refusal sends the caller an `error` event and
+  closes the session with code 1008.
+- **Transcriptions** (`conversation.item.input_audio_transcription.completed`)
+  settle under the session's transcription model and count against caps from
+  the next response.
+- **Fail closed.** A provider message the gateway cannot read ends the session.
+  A response without usage, and any response still open when a session ends,
+  settles at its reservation. Sessions last at most an hour.
+- **Gemini and Vertex Live** (ADR 20261020161811). A `gemini` integration
+  takes `/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`
+  (or `v1alpha`), a `vertex` integration
+  `/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent` (or
+  `v1beta1`); the integration's allowed path prefixes must include `/ws`.
+  - The model is `setup.model` from the caller's first message, which the
+    gateway reads, within 10 seconds and up to 4 MiB, before forwarding it.
+    A first message without a model ends the session with 1008.
+  - Each model turn is admitted at its first output (`modelTurn`,
+    `outputTranscription` or `toolCall`) with the same reservation as an
+    OpenAI response, and settled from the turn's `usageMetadata`: its prompt
+    tokens (the context the turn read) and its output, split into text, audio
+    and image. Video frames price as image tokens; search grounding is a tool
+    fee of the turn.
+  - Provider messages are read from binary frames as well as text. A refusal
+    closes the session with 1008 and the refusal code as the reason.
+- **Not metered:** Live ephemeral tokens (`…BidiGenerateContentConstrained`),
+  every other WebSocket path, realtime calls (WebRTC) and client secrets.
+  They are refused with
+  `403 outbound_ai_endpoint_unmetered` unless the integration allows unmetered
+  calls. Routes refuse upgrades with `400 outbound_ai_route_realtime_unsupported`.
+- **Content policies** that check requests, responses or moderation refuse
+  sessions with `403 outbound_ai_realtime_policy_unenforceable`.
+- **Audio prices.** Price-list entries take `input_audio_millicents_per_mtok`,
+  `cached_input_audio_millicents_per_mtok` and
+  `output_audio_millicents_per_mtok` (CLI keys `input-audio`, `cached-audio`,
+  `output-audio`); each falls back to the matching text price. The built-in
+  catalog carries them for realtime and audio models, and Chat Completions
+  audio usage is priced with them too. Usage items report
+  `input_audio_tokens` and `output_audio_tokens`.
+- **Metrics:** `outbound_ai_realtime_sessions_total{event}` (opened,
+  unmetered, closed_client, closed_provider, closed_cap, closed_duration,
+  closed_unreadable, closed_error) and `outbound_ai_realtime_sessions_active`.
 
 ## AI built-in tool fees
 

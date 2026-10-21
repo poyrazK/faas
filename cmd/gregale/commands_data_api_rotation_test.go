@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -15,18 +15,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const rotationTestBinding = "00000000-0000-4000-8000-000000000001"
 
-func rotationOwnerFixture() dataAPIRotationOwnerReport {
+func rotationOwnerFixture() main.DataAPIRotationOwnerReport {
 	paused, members := false, 1
-	report := dataAPIRotationOwnerReport{Version: 1, Kind: "data_api_rotation_preflight", BindingID: rotationTestBinding, Ready: true, Complete: true, Paused: &paused, MemberCount: &members}
-	for code := range dataAPIRotationActions {
-		report.Checks = append(report.Checks, dataAPIRotationCheck{Code: code, Status: "passed", NextAction: "postgres://private-owner:secret@example/database"})
+	report := main.DataAPIRotationOwnerReport{Version: 1, Kind: "data_api_rotation_preflight", BindingID: rotationTestBinding, Ready: true, Complete: true, Paused: &paused, MemberCount: &members}
+	for code := range *main.DataAPIRotationActions {
+		report.Checks = append(report.Checks, main.DataAPIRotationCheck{Code: code, Status: "passed", NextAction: "postgres://private-owner:secret@example/database"})
 	}
-	slices.SortFunc(report.Checks, func(a, b dataAPIRotationCheck) int { return strings.Compare(a.Code, b.Code) })
+	slices.SortFunc(report.Checks, func(a, b main.DataAPIRotationCheck) int { return strings.Compare(a.Code, b.Code) })
 	return report
 }
 
@@ -77,7 +78,7 @@ func rotationCommandConfig(t *testing.T, mode string) string {
 	t.Setenv("GREGALE_ROTATION_TEST_HELPER", mode)
 	directory := t.TempDir()
 	path := filepath.Join(directory, "owner-check.json")
-	content, err := json.Marshal(dataAPISyncCommand{Command: []string{os.Args[0], "-test.run=^TestDataAPIRotationOwnerHelper$"}, Directory: "."})
+	content, err := json.Marshal(main.DataAPISyncCommand{Command: []string{os.Args[0], "-test.run=^TestDataAPIRotationOwnerHelper$"}, Directory: "."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,14 +118,14 @@ func TestDataAPIRotationPreflightReadOnlyAndSanitized(t *testing.T) {
 				reads = append(reads, r.URL.Path)
 				switch r.URL.Path {
 				case "/v1/apps/notes":
-					writeJSONTest(w, api.AppResponse{ID: "app", Slug: "notes"})
+					main.WriteJSONTest(w, api.AppResponse{ID: "app", Slug: "notes"})
 				case "/v1/postgres/bindings/" + rotationTestBinding:
-					writeJSONTest(w, binding)
+					main.WriteJSONTest(w, binding)
 				case "/v1/apps/notes/bindings":
 					if r.URL.Query().Get("scope") != "production" {
 						t.Error("missing exact binding scope")
 					}
-					writeJSONTest(w, inventory)
+					main.WriteJSONTest(w, inventory)
 				default:
 					t.Errorf("unexpected API read: %s", r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)
@@ -135,9 +136,9 @@ func TestDataAPIRotationPreflightReadOnlyAndSanitized(t *testing.T) {
 			t.Setenv("FAAS_TOKEN", "private-account-token")
 			t.Setenv("GREGALE_DATA_API_ACCESS_TOKEN", "")
 			t.Setenv("GREGALE_DATA_API_REFRESH_TOKEN", "")
-			out, stderr, restore := swapIO(t)
+			out, stderr, restore := main.SwapIO(t)
 			defer restore()
-			code := run([]string{"--json", "data-api", "rotation", "preflight", "notes", "--binding", rotationTestBinding, "--owner-check", config})
+			code := main.Run([]string{"--json", "data-api", "rotation", "preflight", "notes", "--binding", rotationTestBinding, "--owner-check", config})
 			if (code == 0) != (mode == "ready") {
 				t.Fatalf("exit=%d output=%s err=%s", code, out.String(), stderr())
 			}
@@ -145,7 +146,7 @@ func TestDataAPIRotationPreflightReadOnlyAndSanitized(t *testing.T) {
 				t.Fatalf("expected only app, binding and inventory reads: %v", reads)
 			}
 			if slices.Contains([]string{"ready", "pending", "partial", "changed", "blocked", "unknown"}, mode) {
-				var result dataAPIRotationReport
+				var result main.DataAPIRotationReport
 				if err := json.Unmarshal([]byte(out.String()), &result); err != nil || result.Ready == nil || *result.Ready != (mode == "ready") || result.Owner == nil {
 					t.Fatalf("unexpected report: %s (%v)", out.String(), err)
 				}
@@ -163,13 +164,13 @@ func TestDataAPIRotationPreflightReadOnlyAndSanitized(t *testing.T) {
 
 func TestDataAPIRotationOwnerDeadline(t *testing.T) {
 	path := rotationCommandConfig(t, "timeout")
-	command, err := loadDataAPIRotationCommand(path)
+	command, err := main.LoadDataAPIRotationCommand(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if _, err := runDataAPIRotationOwnerCheck(ctx, command, rotationTestBinding); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := main.RunDataAPIRotationOwnerCheck(ctx, command, rotationTestBinding); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadline was not preserved: %v", err)
 	}
 }
@@ -186,9 +187,9 @@ func TestDataAPIRotationOutputBoundsPipeCopies(t *testing.T) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		t.Fatal(err)
 	}
-	var output dataAPIRotationOutput
-	if _, err := io.Copy(&output, file); err == nil || !output.exceeded || output.buffer.Len() > api.DataAPIRotationReportMaxBytes {
-		t.Fatalf("file-copy optimization bypassed the output bound: size=%d err=%v", output.buffer.Len(), err)
+	var output main.DataAPIRotationOutput
+	if _, err := io.Copy(&output, file); err == nil || !(*output.Exceeded()) || (*output.Buffer()).Len() > api.DataAPIRotationReportMaxBytes {
+		t.Fatalf("file-copy optimization bypassed the output bound: size=%d err=%v", (*output.Buffer()).Len(), err)
 	}
 }
 
@@ -215,7 +216,7 @@ func TestDataAPIRotationRolloutDoesNotConflateHandoffWithRetirement(t *testing.T
 			case "duplicate":
 				inventory.Bindings = append(inventory.Bindings, *item)
 			}
-			result := describeDataAPIRotationRollout("notes", binding, inventory)
+			result := main.DescribeDataAPIRotationRollout("notes", binding, inventory)
 			want := map[string]string{"idle": "idle", "unavailable": "binding_unavailable", "pending": "rollout_pending", "completed": "cleanup_pending", "retiring": "retiring", "failed": "rollout_failed", "incomplete": "unknown", "missing": "unknown", "changed": "changed_during_read", "duplicate": "unknown"}[name]
 			if result.State != want || result.Complete != !slices.Contains([]string{"incomplete", "missing", "changed", "duplicate"}, name) || (binding.RotationPending && result.Retirement == "no_previous_generation_pending") {
 				t.Fatalf("incorrect rollout interpretation: %+v", result)
@@ -241,9 +242,9 @@ func TestDataAPIRotationStatusAndHostedDiagnostics(t *testing.T) {
 				}
 				switch r.URL.Path {
 				case "/v1/apps/notes":
-					writeJSONTest(w, api.AppResponse{ID: "app", Slug: "notes"})
+					main.WriteJSONTest(w, api.AppResponse{ID: "app", Slug: "notes"})
 				case "/v1/postgres/bindings/" + rotationTestBinding:
-					writeJSONTest(w, binding)
+					main.WriteJSONTest(w, binding)
 				case "/v1/apps/notes/bindings":
 					if strings.HasPrefix(command, "diagnostics") && r.URL.Query().Get("deployment_id") != "deploy" {
 						t.Error("diagnostics lost deployment selection")
@@ -252,7 +253,7 @@ func TestDataAPIRotationStatusAndHostedDiagnostics(t *testing.T) {
 						w.WriteHeader(http.StatusForbidden)
 						return
 					}
-					writeJSONTest(w, inventory)
+					main.WriteJSONTest(w, inventory)
 				case "/v1/apps/notes/logs":
 					w.Header().Set("Content-Type", "text/event-stream")
 					_, _ = fmt.Fprintf(w, "event: log\ndata: %s\n\nevent: end\ndata: {}\n\n", dataAPIDiagnosticEnvelope(t, dataAPIDiagnosticFixture(t, 1, "rest", "completed", 200, 1, nil)))
@@ -264,13 +265,13 @@ func TestDataAPIRotationStatusAndHostedDiagnostics(t *testing.T) {
 			t.Setenv("FAAS_API", server.URL)
 			t.Setenv("FAAS_TOKEN", "account-token")
 			t.Setenv("GREGALE_DATA_API_ACCESS_TOKEN", "")
-			out, stderr, restore := swapIO(t)
+			out, stderr, restore := main.SwapIO(t)
 			defer restore()
 			args := []string{"--json", "data-api", "rotation", "status", "notes", "--binding", rotationTestBinding}
 			if strings.HasPrefix(command, "diagnostics") {
 				args = []string{"--json", "data-api", "diagnostics", "notes", "--rotation-binding", rotationTestBinding, "--deployment", "deploy"}
 			}
-			code := run(args)
+			code := main.Run(args)
 			if (code == 0) != (command != "foreign" && command != "diagnostics-unavailable") {
 				t.Fatalf("exit=%d out=%s err=%s", code, out.String(), stderr())
 			}
@@ -281,7 +282,7 @@ func TestDataAPIRotationStatusAndHostedDiagnostics(t *testing.T) {
 				return
 			}
 			if command == "diagnostics-unavailable" {
-				var report dataAPIDiagnosticsReport
+				var report main.DataAPIDiagnosticsReport
 				if err := json.Unmarshal([]byte(out.String()), &report); err != nil || !report.Partial || !slices.Contains(report.PartialReasons, "rotation_inventory_unavailable") || report.Summary.Requests != 1 || reads != 4 {
 					t.Fatalf("metadata failure lost log evidence: %s (%v)", out.String(), err)
 				}
@@ -295,9 +296,9 @@ func TestDataAPIRotationStatusAndHostedDiagnostics(t *testing.T) {
 }
 
 func TestDataAPIRotationRejectsOfflineAndInvalidConfig(t *testing.T) {
-	out, _, restore := swapIO(t)
+	out, _, restore := main.SwapIO(t)
 	defer restore()
-	if code := run([]string{"--json", "data-api", "diagnostics", "--file", "offline.ndjson", "--rotation-binding", rotationTestBinding}); code == 0 || strings.Contains(out.String(), `"rotation"`) {
+	if code := main.Run([]string{"--json", "data-api", "diagnostics", "--file", "offline.ndjson", "--rotation-binding", rotationTestBinding}); code == 0 || strings.Contains(out.String(), `"rotation"`) {
 		t.Fatal("offline diagnostics accepted a hosted read")
 	}
 	path := filepath.Join(t.TempDir(), "check.json")
@@ -305,7 +306,7 @@ func TestDataAPIRotationRejectsOfflineAndInvalidConfig(t *testing.T) {
 		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadDataAPIRotationCommand(path); err == nil || strings.Contains(err.Error(), "private-owner") {
+		if _, err := main.LoadDataAPIRotationCommand(path); err == nil || strings.Contains(err.Error(), "private-owner") {
 			t.Fatalf("invalid owner configuration accepted or exposed: %v", err)
 		}
 	}

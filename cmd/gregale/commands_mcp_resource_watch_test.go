@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,14 +11,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
 
 func TestRunMCPResourceWatchReadsAfterNotification(t *testing.T) {
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout, jsonOutput = &output, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &output, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	const uri = "file:///reports/current"
 	initial := json.RawMessage(`{"resultType":"complete","contents":[{"uri":"file:///reports/current","mimeType":"text/plain","text":"before"}]}`)
 	var listens, reads atomic.Int32
@@ -66,7 +67,7 @@ func TestRunMCPResourceWatchReadsAfterNotification(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- runMCPResourceWatch(ctx, client, uri, initial, time.Hour) }()
+	go func() { done <- main.RunMCPResourceWatch(ctx, client, uri, initial, time.Hour) }()
 	select {
 	case <-secondListen:
 		cancel()
@@ -83,7 +84,7 @@ func TestRunMCPResourceWatchReadsAfterNotification(t *testing.T) {
 		cancel()
 		t.Fatal("resource watch did not stop after context cancellation")
 	}
-	var event mcpResourceWatchEvent
+	var event main.McpResourceWatchEvent
 	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &event); err != nil || event.Event != "resource_updated" || event.Trigger != "notification" || event.URI != uri || !bytes.Contains(event.Result, []byte(`"after"`)) {
 		t.Fatalf("event=%+v err=%v output=%s", event, err, output.String())
 	}
@@ -92,11 +93,11 @@ func TestRunMCPResourceWatchReadsAfterNotification(t *testing.T) {
 func TestRecordMCPResourceWatchUpdateIgnoresJSONKeyOrder(t *testing.T) {
 	current := json.RawMessage(`{"resultType":"complete","contents":[{"uri":"file:///x","text":"same"}]}`)
 	next := json.RawMessage(`{"contents":[{"text":"same","uri":"file:///x"}],"resultType":"complete"}`)
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout, jsonOutput = &output, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
-	updated, err := recordMCPResourceWatchUpdate(current, next, "file:///x", "poll")
+	(*main.OsStdout), (*main.JsonOutput) = &output, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
+	updated, err := main.RecordMCPResourceWatchUpdate(current, next, "file:///x", "poll")
 	if err != nil || !bytes.Equal(updated, next) || output.Len() != 0 {
 		t.Fatalf("updated=%s err=%v output=%s", updated, err, output.String())
 	}

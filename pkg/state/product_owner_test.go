@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"errors"
@@ -9,25 +9,34 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type productOwnerTestStore interface {
-	productBillingTestStore
-	ProductOwnerStore
+	state.ProductBillingTestStore
+	state.ProductOwnerStore
 }
 
 func TestProductControlOwnerMemory(t *testing.T) {
-	s := NewMemStore()
-	insert := func(op Operation) { s.mu.Lock(); defer s.mu.Unlock(); s.insertProductOperationLocked(op) }
-	settle := func(op Operation) { s.mu.Lock(); defer s.mu.Unlock(); s.settleProductOperationLocked(op) }
-	f := seedProductBilling(t, s, insert, settle)
+	s := state.NewMemStore()
+	insert := func(op state.Operation) {
+		(*s.Mu()).Lock()
+		defer (*s.Mu()).Unlock()
+		s.InsertProductOperationLocked(op)
+	}
+	settle := func(op state.Operation) {
+		(*s.Mu()).Lock()
+		defer (*s.Mu()).Unlock()
+		s.SettleProductOperationLocked(op)
+	}
+	f := state.SeedProductBilling(t, s, insert, settle)
 	productOwnerContract(t, s, f, insert)
 }
 
-func productOwnerContract(t *testing.T, s productOwnerTestStore, f productBillingFixture, insert func(Operation)) {
+func productOwnerContract(t *testing.T, s productOwnerTestStore, f state.ProductBillingFixture, insert func(state.Operation)) {
 	t.Helper()
 	ctx := t.Context()
-	scope := f.scope
+	scope := (*f.Scope())
 	current, err := s.GetProductCustomer(ctx, scope.AccountID, scope.AppID, scope.TenantID)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +58,7 @@ func productOwnerContract(t *testing.T, s productOwnerTestStore, f productBillin
 	if _, err = s.SetProductCustomer(ctx, scope.AccountID, scope.AppID, changed); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ApplyProductCustomerChange(ctx, scope.AccountID, scope.AppID, req); !errors.Is(err, ErrConflict) && !errors.Is(err, ErrProductCustomerChangeStale) {
+	if _, err = s.ApplyProductCustomerChange(ctx, scope.AccountID, scope.AppID, req); !errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrProductCustomerChangeStale) {
 		t.Fatalf("stale identity accepted: %v", err)
 	}
 	if _, err = s.SetProductCustomer(ctx, scope.AccountID, scope.AppID, current); err != nil {
@@ -84,15 +93,15 @@ func productOwnerContract(t *testing.T, s productOwnerTestStore, f productBillin
 	}
 	bad := req
 	bad.Customer.Suspended = true
-	if _, err = s.ApplyProductCustomerChange(ctx, scope.AccountID, scope.AppID, bad); !errors.Is(err, ErrConflict) {
+	if _, err = s.ApplyProductCustomerChange(ctx, scope.AccountID, scope.AppID, bad); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("reused ID: %v", err)
 	}
-	if _, err = s.PreviewProductCustomerChange(ctx, uuid.NewString(), scope.AppID, target); !errors.Is(err, ErrNotFound) {
+	if _, err = s.PreviewProductCustomerChange(ctx, uuid.NewString(), scope.AppID, target); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("foreign owner: %v", err)
 	}
 	badTarget := target
 	badTarget.AuthOrganizationID = uuid.NewString()
-	if _, err = s.PreviewProductCustomerChange(ctx, scope.AccountID, scope.AppID, badTarget); !errors.Is(err, ErrConflict) {
+	if _, err = s.PreviewProductCustomerChange(ctx, scope.AccountID, scope.AppID, badTarget); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("identity replacement: %v", err)
 	}
 
@@ -107,7 +116,7 @@ func productOwnerContract(t *testing.T, s productOwnerTestStore, f productBillin
 	if _, err = s.PutProductCatalog(ctx, scope.AccountID, scope.AppID, spec); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ApplyProductCustomerChange(ctx, scope.AccountID, scope.AppID, api.ProductCustomerChangeRequest{ID: uuid.NewString(), ExpectedHash: p.Hash, Customer: p.After}); !errors.Is(err, ErrProductCustomerChangeStale) {
+	if _, err = s.ApplyProductCustomerChange(ctx, scope.AccountID, scope.AppID, api.ProductCustomerChangeRequest{ID: uuid.NewString(), ExpectedHash: p.Hash, Customer: p.After}); !errors.Is(err, state.ErrProductCustomerChangeStale) {
 		t.Fatalf("stale catalog accepted: %v", err)
 	}
 	p, err = s.PreviewProductCustomerChange(ctx, scope.AccountID, scope.AppID, target)
@@ -128,7 +137,7 @@ func productOwnerContract(t *testing.T, s productOwnerTestStore, f productBillin
 	for err := range results {
 		if err == nil {
 			success++
-		} else if errors.Is(err, ErrProductCustomerChangeStale) {
+		} else if errors.Is(err, state.ErrProductCustomerChangeStale) {
 			stale++
 		} else {
 			t.Fatal(err)
@@ -150,24 +159,24 @@ func productOwnerContract(t *testing.T, s productOwnerTestStore, f productBillin
 	productOwnerReadContract(t, s, f, insert)
 }
 
-func productOwnerAssignmentContract(t *testing.T, s productOwnerTestStore, f productBillingFixture, usedID, existingOrg string) {
+func productOwnerAssignmentContract(t *testing.T, s productOwnerTestStore, f state.ProductBillingFixture, usedID, existingOrg string) {
 	t.Helper()
 	ctx := t.Context()
-	scope := f.scope
+	scope := (*f.Scope())
 	// A collision in a different tenant's scope must roll back its assignment,
 	// including when PostgreSQL discovers the UUID conflict after the upsert.
-	before, err := s.GetProductCustomer(ctx, scope.AccountID, scope.AppID, f.other.TenantID)
+	before, err := s.GetProductCustomer(ctx, scope.AccountID, scope.AppID, (*f.Other()).TenantID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.PreviewProductCustomerChange(ctx, scope.AccountID, scope.AppID, api.ProductCustomer{TenantID: f.other.TenantID, Plan: "starter"})
+	p, err := s.PreviewProductCustomerChange(ctx, scope.AccountID, scope.AppID, api.ProductCustomer{TenantID: (*f.Other()).TenantID, Plan: "starter"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ApplyProductCustomerChange(ctx, scope.AccountID, scope.AppID, api.ProductCustomerChangeRequest{ID: usedID, ExpectedHash: p.Hash, Customer: p.After}); !errors.Is(err, ErrConflict) {
+	if _, err = s.ApplyProductCustomerChange(ctx, scope.AccountID, scope.AppID, api.ProductCustomerChangeRequest{ID: usedID, ExpectedHash: p.Hash, Customer: p.After}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("cross-tenant ID collision: %v", err)
 	}
-	after, err := s.GetProductCustomer(ctx, scope.AccountID, scope.AppID, f.other.TenantID)
+	after, err := s.GetProductCustomer(ctx, scope.AccountID, scope.AppID, (*f.Other()).TenantID)
 	if err != nil || before != after {
 		t.Fatalf("conflict changed assignment: %+v %v", after, err)
 	}
@@ -180,10 +189,10 @@ func productOwnerAssignmentContract(t *testing.T, s productOwnerTestStore, f pro
 	if err != nil || p.Before != nil {
 		t.Fatalf("first preview: %+v %v", p, err)
 	}
-	if _, err = s.ApplyProductCustomerChange(ctx, scope.AccountID, scope.AppID, api.ProductCustomerChangeRequest{ID: uuid.NewString(), ExpectedHash: p.Hash, Customer: p.After}); !errors.Is(err, ErrConflict) {
+	if _, err = s.ApplyProductCustomerChange(ctx, scope.AccountID, scope.AppID, api.ProductCustomerChangeRequest{ID: uuid.NewString(), ExpectedHash: p.Hash, Customer: p.After}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate organization: %v", err)
 	}
-	if _, err = s.GetProductCustomer(ctx, scope.AccountID, scope.AppID, tenant.ID); !errors.Is(err, ErrNotFound) {
+	if _, err = s.GetProductCustomer(ctx, scope.AccountID, scope.AppID, tenant.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("failed first assignment persisted: %v", err)
 	}
 	target.AuthOrganizationID = uuid.NewString()
@@ -197,10 +206,10 @@ func productOwnerAssignmentContract(t *testing.T, s productOwnerTestStore, f pro
 	}
 }
 
-func productOwnerReadContract(t *testing.T, s productOwnerTestStore, f productBillingFixture, insert func(Operation)) {
+func productOwnerReadContract(t *testing.T, s productOwnerTestStore, f state.ProductBillingFixture, insert func(state.Operation)) {
 	t.Helper()
 	ctx := t.Context()
-	scope := f.scope
+	scope := (*f.Scope())
 	page, err := s.ListProductOwnerAttention(ctx, scope.AccountID, scope.AppID, "")
 	if err != nil || len(page.Items) != 3 {
 		t.Fatalf("attention: %+v %v", page, err)
@@ -210,11 +219,11 @@ func productOwnerReadContract(t *testing.T, s productOwnerTestStore, f productBi
 			t.Fatalf("missing independent evidence: %+v", item)
 		}
 	}
-	if _, err = s.ListProductOwnerAttention(ctx, uuid.NewString(), scope.AppID, ""); !errors.Is(err, ErrNotFound) {
+	if _, err = s.ListProductOwnerAttention(ctx, uuid.NewString(), scope.AppID, ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("foreign attention: %v", err)
 	}
 	for _, name := range []string{"unknown", "expired"} {
-		if _, err = s.WaiveProductReceipt(ctx, scope, f.ops[name].ID, "console write-off"); err != nil {
+		if _, err = s.WaiveProductReceipt(ctx, scope, (*f.Ops())[name].ID, "console write-off"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -226,10 +235,10 @@ func productOwnerReadContract(t *testing.T, s productOwnerTestStore, f productBi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.GetProductOwnerDocument(ctx, f.other, doc.ID); !errors.Is(err, ErrNotFound) {
+	if _, err = s.GetProductOwnerDocument(ctx, (*f.Other()), doc.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("foreign document: %v", err)
 	}
-	credit := api.ProductCreditRequest{ID: uuid.NewString(), TenantID: scope.TenantID, OperationID: f.ops["success"].ID, AmountMillicents: 1234, Reason: "service credit"}
+	credit := api.ProductCreditRequest{ID: uuid.NewString(), TenantID: scope.TenantID, OperationID: (*f.Ops())["success"].ID, AmountMillicents: 1234, Reason: "service credit"}
 	if _, err = s.CreditProductReceipt(ctx, scope, credit); err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +258,7 @@ func productOwnerReadContract(t *testing.T, s productOwnerTestStore, f productBi
 	// Newer receipts and a timestamp tie exercise keyset pagination. No result
 	// rows exist; independent commercial evidence must still be complete.
 	for i := 0; i < api.ProductControlOwnerPageSize; i++ {
-		op := f.ops["success"]
+		op := (*f.Ops())["success"]
 		op.ID = uuid.NewString()
 		receipt := *op.ProductControl
 		receipt.AdmittedAt = receipt.AdmittedAt.Add(time.Hour)
@@ -277,16 +286,16 @@ func productOwnerReadContract(t *testing.T, s productOwnerTestStore, f productBi
 		}
 		previous = &e
 	}
-	if _, err = s.ListProductOwnerRuns(ctx, f.other, first.NextCursor); !errors.Is(err, ErrInvalidArgument) {
+	if _, err = s.ListProductOwnerRuns(ctx, (*f.Other()), first.NextCursor); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("cross-customer cursor: %v", err)
 	}
-	if _, err = s.ListProductOwnerRuns(ctx, scope, "invalid"); !errors.Is(err, ErrInvalidArgument) {
+	if _, err = s.ListProductOwnerRuns(ctx, scope, "invalid"); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("invalid cursor: %v", err)
 	}
 	// Independently retained receipts in many closed months exercise the
 	// attention cursor separately from the recent-run cursor.
 	for i := 0; i < api.ProductControlOwnerPageSize+1; i++ {
-		op := f.ops["success"]
+		op := (*f.Ops())["success"]
 		op.ID = uuid.NewString()
 		receipt := *op.ProductControl
 		receipt.AdmittedAt = time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, i, 0)
@@ -310,7 +319,7 @@ func productOwnerReadContract(t *testing.T, s productOwnerTestStore, f productBi
 		}
 		seenPeriods[key] = true
 	}
-	if _, err = s.ListProductOwnerAttention(ctx, scope.AccountID, scope.AppID, first.NextCursor); !errors.Is(err, ErrInvalidArgument) {
+	if _, err = s.ListProductOwnerAttention(ctx, scope.AccountID, scope.AppID, first.NextCursor); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("cross-query cursor: %v", err)
 	}
 }

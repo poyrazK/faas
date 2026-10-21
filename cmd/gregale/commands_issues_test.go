@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -33,12 +34,12 @@ func TestIssuesListAssigneeFilterAndTriageColumns(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 
-	if code := cmdIssues([]string{"list", "--app", "exports", "--assignee", "me", "--sort", "impact", "--min-customers", "2"}); code != 0 {
+	if code := main.CmdIssues([]string{"list", "--app", "exports", "--assignee", "me", "--sort", "impact", "--min-customers", "2"}); code != 0 {
 		t.Fatalf("cmdIssues returned %d", code)
 	}
 	if got := query.Get("assignee"); got != "me" {
@@ -74,15 +75,15 @@ func TestIssuesRegroupingCLIUsesActionFieldsAndCanonicalResponse(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var output bytes.Buffer
-	osStdout, jsonOutput = &output, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &output, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 	for _, args := range [][]string{
 		{"merge", "--app", "exports", "--target", "destination", "source"},
 		{"split", "--app", "exports", "--member", "original", "source"},
 	} {
-		if code := cmdIssues(args); code != 0 {
+		if code := main.CmdIssues(args); code != 0 {
 			t.Fatalf("regrouping command failed: %v status=%d", args, code)
 		}
 	}
@@ -94,7 +95,7 @@ func TestIssuesRegroupingCLIUsesActionFieldsAndCanonicalResponse(t *testing.T) {
 		t.Fatal("CLI did not display the canonical response")
 	}
 	for _, action := range []string{"merge", "split"} {
-		if code := cmdIssues([]string{action, "--app", "exports", "source"}); code == 0 {
+		if code := main.CmdIssues([]string{action, "--app", "exports", "source"}); code == 0 {
 			t.Fatal("missing regrouping operand was accepted")
 		}
 	}
@@ -127,26 +128,26 @@ func TestIssuesImpactAlertPolicyCLI(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 
-	if code := cmdIssues([]string{"impact-alert", "--app", "exports"}); code != 0 {
+	if code := main.CmdIssues([]string{"impact-alert", "--app", "exports"}); code != 0 {
 		t.Fatalf("policy read returned %d", code)
 	}
 	if method != http.MethodGet || path != "/v1/apps/exports/issue-impact-alert-policy" || !strings.Contains(out.String(), "4 verified customers") {
 		t.Fatalf("policy read request=%s %s output=%q", method, path, out.String())
 	}
 	out.Reset()
-	if code := cmdIssues([]string{"impact-alert", "--app", "exports", "--min-customers", "6"}); code != 0 {
+	if code := main.CmdIssues([]string{"impact-alert", "--app", "exports", "--min-customers", "6"}); code != 0 {
 		t.Fatalf("policy update returned %d", code)
 	}
 	if method != http.MethodPut || path != "/v1/apps/exports/issue-impact-alert-policy" || threshold != 6 || !strings.Contains(out.String(), "6 verified customers") {
 		t.Fatalf("policy update request=%s %s threshold=%d output=%q", method, path, threshold, out.String())
 	}
 	out.Reset()
-	if code := cmdIssues([]string{"impact-alert", "--app", "exports", "--min-customers", "0"}); code != 0 {
+	if code := main.CmdIssues([]string{"impact-alert", "--app", "exports", "--min-customers", "0"}); code != 0 {
 		t.Fatalf("policy disable returned %d", code)
 	}
 	if threshold != 0 || !strings.Contains(out.String(), "disabled") {
@@ -170,12 +171,12 @@ func TestIssuesOwnershipRulesCLI(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	oldOut, oldJSON := osStdout, jsonOutput
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
 
-	if code := cmdIssues([]string{"ownership-rules", "--app", "exports"}); code != 0 {
+	if code := main.CmdIssues([]string{"ownership-rules", "--app", "exports"}); code != 0 {
 		t.Fatalf("policy read returned %d", code)
 	}
 	if method != http.MethodGet || path != "/v1/apps/exports/issue-ownership-rules" || !strings.Contains(out.String(), "disabled") {
@@ -191,7 +192,7 @@ func TestIssuesOwnershipRulesCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if code := cmdIssues([]string{"ownership-rules", "--app", "exports", "--rules-file", filename}); code != 0 {
+	if code := main.CmdIssues([]string{"ownership-rules", "--app", "exports", "--rules-file", filename}); code != 0 {
 		t.Fatalf("policy update returned %d", code)
 	}
 	if method != http.MethodPut || path != "/v1/apps/exports/issue-ownership-rules" || len(configured.Rules) != 1 || !strings.Contains(out.String(), "worker") {

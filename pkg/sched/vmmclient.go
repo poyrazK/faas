@@ -1244,6 +1244,8 @@ func (c *VMMClient) FrameworkReady(ctx context.Context, instance string, warmupM
 }
 
 func (c *VMMClient) Destroy(ctx context.Context, instance string) error {
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	if _, err := c.cli.Destroy(ctx, &vmmdpb.DestroyRequest{Instance: instance}); err != nil {
 		return liftErr(err)
 	}
@@ -1662,6 +1664,18 @@ func (c *VMMClient) CancelLiveMigration(ctx context.Context, _, instanceID, leas
 		return liftErr(err)
 	}
 	return nil
+}
+
+// CancelFunctionMigrationSource preserves the physical rollback outcome.
+func (c *VMMClient) CancelFunctionMigrationSource(ctx context.Context, _ string, id, token string) (bool, error) {
+	response, err := c.cli.CancelLiveMigration(ctx, &vmmdpb.CancelLiveMigrationRequest{InstanceId: id, LeaseToken: token})
+	if err != nil {
+		return false, liftErr(err)
+	}
+	if response.GetSourceProtocolVersion() != fcvm.FunctionMigrationSourceProtocolVersion {
+		return false, state.ErrMigrationCommitUnresolved
+	}
+	return response.GetSourceRetired(), nil
 }
 
 // Ping implements VMM. Wire-level liveness probe (issue #97 /

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,20 +9,21 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestTenantWorkflowContinuationsRequireRunOwnershipAndActiveLink(t *testing.T) {
-	workflowScheduleStores(t, func(t *testing.T, store Store) {
+	state.WorkflowScheduleStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		account, err := store.CreateAccount(ctx, "tenant-continuation-"+uuid.NewString()+"@example.com", api.PlanHobby)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "tenant-continuation-" + uuid.NewString(), Type: AppTypeApp, RAMMB: 256, PlatformTenantRequired: true})
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "tenant-continuation-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 256, PlatformTenantRequired: true})
 		if err != nil {
 			t.Fatal(err)
 		}
-		tenants := store.(PlatformTenantStore)
+		tenants := store.(state.PlatformTenantStore)
 		tenant, _, err := tenants.CreatePlatformTenant(ctx, account.ID, "customer-"+uuid.NewString(), "Customer", 10)
 		if err != nil {
 			t.Fatal(err)
@@ -39,17 +40,17 @@ func TestTenantWorkflowContinuationsRequireRunOwnershipAndActiveLink(t *testing.
 			t.Fatal(err)
 		}
 
-		continuations := store.(TenantWorkflowContinuationStore)
+		continuations := store.(state.TenantWorkflowContinuationStore)
 		eventSpec, err := json.Marshal(api.WorkflowSpec{Name: "approval", Steps: []api.WorkflowStepSpec{{Name: "wait", WaitForEvent: "approved", Timeout: time.Hour}}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		eventRun := &WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: "approval", DefinitionSnapshot: eventSpec}
+		eventRun := &state.WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: "approval", DefinitionSnapshot: eventSpec}
 		if err := store.CreateWorkflowRun(ctx, eventRun); err != nil {
 			t.Fatal(err)
 		}
-		event := &WorkflowEvent{ID: uuid.NewString(), RunID: eventRun.ID, EventName: "approved", Payload: json.RawMessage(`{"ok":true}`)}
-		if err := continuations.InsertTenantWorkflowEvent(ctx, otherTenant.ID, event); !errors.Is(err, ErrWorkflowRunNotFound) {
+		event := &state.WorkflowEvent{ID: uuid.NewString(), RunID: eventRun.ID, EventName: "approved", Payload: json.RawMessage(`{"ok":true}`)}
+		if err := continuations.InsertTenantWorkflowEvent(ctx, otherTenant.ID, event); !errors.Is(err, state.ErrWorkflowRunNotFound) {
 			t.Fatalf("foreign tenant event = %v, want not found", err)
 		}
 		if err := continuations.InsertTenantWorkflowEvent(ctx, tenant.ID, event); err != nil {
@@ -67,14 +68,14 @@ func TestTenantWorkflowContinuationsRequireRunOwnershipAndActiveLink(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		callbackRun := &WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: "callback", DefinitionSnapshot: callbackSpec}
+		callbackRun := &state.WorkflowRun{AppID: app.ID, PlatformTenantID: tenant.ID, WorkflowName: "callback", DefinitionSnapshot: callbackSpec}
 		if err := store.CreateWorkflowRun(ctx, callbackRun); err != nil {
 			t.Fatal(err)
 		}
 		callbackID := api.WorkflowCallbackID(callbackRun.ID, "await")
 		callbackEvent := api.WorkflowCallbackEventName(callbackRun.ID, "await")
 		payload := json.RawMessage(`{"approved":true}`)
-		if _, err := continuations.CompleteTenantWorkflowCallback(ctx, otherTenant.ID, callbackRun.ID, "await", callbackEvent, callbackID, time.Hour, payload); !errors.Is(err, ErrWorkflowRunNotFound) {
+		if _, err := continuations.CompleteTenantWorkflowCallback(ctx, otherTenant.ID, callbackRun.ID, "await", callbackEvent, callbackID, time.Hour, payload); !errors.Is(err, state.ErrWorkflowRunNotFound) {
 			t.Fatalf("foreign tenant callback = %v, want not found", err)
 		}
 		if duplicate, err := continuations.CompleteTenantWorkflowCallback(ctx, tenant.ID, callbackRun.ID, "await", callbackEvent, callbackID, time.Hour, payload); err != nil || duplicate {
@@ -83,17 +84,17 @@ func TestTenantWorkflowContinuationsRequireRunOwnershipAndActiveLink(t *testing.
 		if duplicate, err := continuations.CompleteTenantWorkflowCallback(ctx, tenant.ID, callbackRun.ID, "await", callbackEvent, callbackID, time.Hour, payload); err != nil || !duplicate {
 			t.Fatalf("tenant callback replay = (duplicate %t, err %v), want duplicate", duplicate, err)
 		}
-		if _, err := continuations.CompleteTenantWorkflowCallback(ctx, tenant.ID, callbackRun.ID, "await", callbackEvent, callbackID, time.Hour, json.RawMessage(`{"approved":false}`)); !errors.Is(err, ErrConflict) {
+		if _, err := continuations.CompleteTenantWorkflowCallback(ctx, tenant.ID, callbackRun.ID, "await", callbackEvent, callbackID, time.Hour, json.RawMessage(`{"approved":false}`)); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("tenant callback payload conflict = %v, want conflict", err)
 		}
 
 		if _, err := store.RevokeAPIConsumer(ctx, account.ID, consumer.ID); err != nil {
 			t.Fatal(err)
 		}
-		if err := continuations.InsertTenantWorkflowEvent(ctx, tenant.ID, &WorkflowEvent{ID: uuid.NewString(), RunID: eventRun.ID, EventName: "approved", Payload: json.RawMessage(`{}`)}); !errors.Is(err, ErrWorkflowRunNotFound) {
+		if err := continuations.InsertTenantWorkflowEvent(ctx, tenant.ID, &state.WorkflowEvent{ID: uuid.NewString(), RunID: eventRun.ID, EventName: "approved", Payload: json.RawMessage(`{}`)}); !errors.Is(err, state.ErrWorkflowRunNotFound) {
 			t.Fatalf("event after tenant link revocation = %v, want not found", err)
 		}
-		if _, err := continuations.CompleteTenantWorkflowCallback(ctx, tenant.ID, callbackRun.ID, "await", callbackEvent, uuid.NewString(), time.Hour, payload); !errors.Is(err, ErrWorkflowRunNotFound) {
+		if _, err := continuations.CompleteTenantWorkflowCallback(ctx, tenant.ID, callbackRun.ID, "await", callbackEvent, uuid.NewString(), time.Hour, payload); !errors.Is(err, state.ErrWorkflowRunNotFound) {
 			t.Fatalf("callback after tenant link revocation = %v, want not found", err)
 		}
 	})

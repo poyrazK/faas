@@ -1,6 +1,6 @@
 // adr: 1651
 // CI scheduling stays default-deny and records output only after native stop.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -29,7 +30,7 @@ func (ciSchedulerSource) Stage(_ context.Context, req ci.JobsSourceRequest) (ci.
 // Boot and release record synthetic native receipts. They never run commands.
 type ciSchedulerBoot struct {
 	store      *state.PgStore
-	spec       JobVmmSpec
+	spec       sched.JobVmmSpec
 	calls      int
 	releases   int
 	hook       func()
@@ -38,15 +39,15 @@ type ciSchedulerBoot struct {
 	ignoreHeld bool
 }
 
-func (v *ciSchedulerBoot) JobColdBoot(_ context.Context, spec JobVmmSpec) (JobVmmResult, error) {
+func (v *ciSchedulerBoot) JobColdBoot(_ context.Context, spec sched.JobVmmSpec) (sched.JobVmmResult, error) {
 	v.spec, v.calls = spec, v.calls+1
 	if v.hook != nil {
 		v.hook()
 	}
-	return JobVmmResult{InstanceID: spec.InstanceID, NodeID: spec.NodeID, Netns: "ci-synthetic", HostIP: "10.100.0.25", GuestUID: 20025, StartHeld: spec.StartHeld && !v.ignoreHeld}, v.bootErr
+	return sched.JobVmmResult{InstanceID: spec.InstanceID, NodeID: spec.NodeID, Netns: "ci-synthetic", HostIP: "10.100.0.25", GuestUID: 20025, StartHeld: spec.StartHeld && !v.ignoreHeld}, v.bootErr
 }
 
-func (v *ciSchedulerBoot) ReleaseJobStart(ctx context.Context, spec JobStartSpec) error {
+func (v *ciSchedulerBoot) ReleaseJobStart(ctx context.Context, spec sched.JobStartSpec) error {
 	instance, err := v.store.InstanceByID(ctx, spec.InstanceID)
 	if err != nil || instance.State != string(state.StateRunning) || !v.spec.StartHeld {
 		return errors.New("release before durable runtime publication")
@@ -63,15 +64,15 @@ type ciSchedulerHarness struct {
 	row     ci.Execution
 	backend ci.JobsBackend
 	binding ci.GitHubBinding
-	engine  *Engine
+	engine  *sched.Engine
 	boot    *ciSchedulerBoot
-	vmm     *fakeVMM
+	vmm     *sched.FakeVMM
 }
 
 func newCISchedulerHarness(t *testing.T) *ciSchedulerHarness {
 	t.Helper()
 	pool := pgtest.OpenMigrated(t)
-	h := &ciSchedulerHarness{pool: pool, store: state.NewPgStore(pool), ci: ci.NewPostgresStore(pool), vmm: &fakeVMM{}}
+	h := &ciSchedulerHarness{pool: pool, store: state.NewPgStore(pool), ci: ci.NewPostgresStore(pool), vmm: &sched.FakeVMM{}}
 	ctx := t.Context()
 	account, err := h.store.CreateAccount(ctx, "ci-scheduler-"+uuid.NewString()+"@example.invalid", api.PlanPro)
 	if err != nil {
@@ -113,13 +114,13 @@ func newCISchedulerHarness(t *testing.T) *ciSchedulerHarness {
 		t.Fatal(err)
 	}
 	h.boot = &ciSchedulerBoot{store: h.store}
-	h.engine = newEngine(t, h.store, h.vmm, &fakeNotifier{}, "1.10.0").
-		WithJobLeaser(AdaptJobLeaser(NewMemLeaser(nil))).WithJobVmmClient(h.boot).
+	h.engine = sched.XNewEngine(t, h.store, h.vmm, &sched.FakeNotifier{}, "1.10.0").
+		WithJobLeaser(sched.AdaptJobLeaser(sched.NewMemLeaser(nil))).WithJobVmmClient(h.boot).
 		WithCIJobsRuntime(h.ci, h.cfg, "https://ci-runtime.example.invalid")
 	return h
 }
 
-func (h *ciSchedulerHarness) wake(t *testing.T) (JobWakeResult, error) {
+func (h *ciSchedulerHarness) wake(t *testing.T) (sched.JobWakeResult, error) {
 	t.Helper()
 	return h.engine.WakeJob(t.Context(), h.row.AccountID, h.row.Jobs[0].Attempt.ID, 0)
 }
@@ -151,9 +152,9 @@ func TestCIJobsSchedulerIntegration(t *testing.T) {
 		if _, err := h.ci.AuthorizeJobsRuntime(t.Context(), h.cfg, proof, ci.RuntimeSource); err != nil {
 			t.Fatal(err)
 		}
-		h.engine = newEngine(t, h.store, h.vmm, &fakeNotifier{}, "1.10.0").WithJobVmmClient(h.boot).
+		h.engine = sched.XNewEngine(t, h.store, h.vmm, &sched.FakeNotifier{}, "1.10.0").WithJobVmmClient(h.boot).
 			WithCIJobsRuntime(h.ci, h.cfg, "https://ci-runtime.example.invalid")
-		if _, err := h.wake(t); !errors.Is(err, ErrJobTaskAlreadyClaimed) || h.boot.calls != 1 {
+		if _, err := h.wake(t); !errors.Is(err, sched.ErrJobTaskAlreadyClaimed) || h.boot.calls != 1 {
 			t.Fatal("scheduler restart executed the same CI task again")
 		}
 		if err := h.engine.HandleJobExit(t.Context(), wake.RunID /* wrong account is refused */, wake.RunID, 0, 0, "succeeded", string(wake.LeaseToken)); err == nil {
@@ -169,7 +170,7 @@ func TestCIJobsSchedulerIntegration(t *testing.T) {
 	})
 	t.Run("default_off_and_missing_origin_never_boot", func(t *testing.T) {
 		h := newCISchedulerHarness(t)
-		h.engine = newEngine(t, h.store, h.vmm, &fakeNotifier{}, "1.10.0").WithJobVmmClient(h.boot)
+		h.engine = sched.XNewEngine(t, h.store, h.vmm, &sched.FakeNotifier{}, "1.10.0").WithJobVmmClient(h.boot)
 		if _, err := h.wake(t); !errors.Is(err, ci.ErrRuntimeAuthority) {
 			t.Fatal("unconfigured scheduler accepted owned CI")
 		}
@@ -177,7 +178,7 @@ func TestCIJobsSchedulerIntegration(t *testing.T) {
 		if _, err := h.wake(t); !errors.Is(err, ci.ErrRuntimeAuthority) || h.boot.calls != 0 {
 			t.Fatal("missing transport origin admitted compute")
 		}
-		h.engine.WithCIJobsRuntime(h.ci, h.cfg, "https://ci-runtime.example.invalid").WithJobVmmClient(&recordingJobVMM{})
+		h.engine.WithCIJobsRuntime(h.ci, h.cfg, "https://ci-runtime.example.invalid").WithJobVmmClient(&sched.RecordingJobVMM{})
 		if _, err := h.wake(t); !errors.Is(err, ci.ErrRuntimeAuthority) {
 			t.Fatal("missing held-start release capability admitted compute")
 		}
@@ -201,7 +202,7 @@ func TestCIJobsSchedulerIntegration(t *testing.T) {
 				}
 			}
 			if name == "destroy_failure_retains_capacity" {
-				h.vmm.destroyErr = errors.New("synthetic destroy failure")
+				(*h.vmm.DestroyErr()) = errors.New("synthetic destroy failure")
 			}
 			if name == "boot_failure" {
 				h.boot.bootErr = errors.New("synthetic boot failure")
@@ -231,18 +232,18 @@ func TestCIJobsSchedulerIntegration(t *testing.T) {
 				t.Fatal("revoked/failed boot released the command or retried")
 			}
 			if name == "destroy_failure_retains_capacity" {
-				if instance.State == string(state.StateStopped) || !h.engine.ledger.ResidentFor(instance.ID) {
+				if instance.State == string(state.StateStopped) || !(*h.engine.XLedger()).ResidentFor(instance.ID) {
 					t.Fatal("failed destroy certified cleanup or released capacity")
 				}
-				h.vmm.destroyErr = nil
+				(*h.vmm.DestroyErr()) = nil
 				if _, err := h.engine.ReconcileOrphanedJobInstances(t.Context(), 10); err != nil {
 					t.Fatal(err)
 				}
 				instance, err = h.store.InstanceByID(t.Context(), instance.ID)
-				if err != nil || instance.State != string(state.StateStopped) || h.engine.ledger.ResidentFor(instance.ID) {
+				if err != nil || instance.State != string(state.StateStopped) || (*h.engine.XLedger()).ResidentFor(instance.ID) {
 					t.Fatal("native reconciliation did not finish retained cleanup")
 				}
-			} else if instance.State != string(state.StateStopped) || h.vmm.destroys != 1 {
+			} else if instance.State != string(state.StateStopped) || (*h.vmm.Destroys()) != 1 {
 				t.Fatal("CI rollback did not confirm native cleanup")
 			}
 		})
@@ -270,14 +271,14 @@ func TestCIJobsSchedulerIntegration(t *testing.T) {
 			if err != nil || task.Attempt != 1 || task.Status == "queued" {
 				t.Fatal("CI infrastructure failure acquired another attempt")
 			}
-			h.engine.cleanupJobInstance(t.Context(), wake.InstanceID, wake.NodeID, "synthetic_ci_cleanup")
+			h.engine.CleanupJobInstance(t.Context(), wake.InstanceID, wake.NodeID, "synthetic_ci_cleanup")
 		}
 	})
 }
 
 func TestCIJobReservedEnvIsRemoved(t *testing.T) {
 	env := map[string]string{"GREGALE_CI_CAPABILITY": "forged", "GREGALE_CI_RUNTIME_URL": "https://forged.invalid", "USER_VALUE": "kept"}
-	scrubCIJobEnv(env)
+	sched.ScrubCIJobEnv(env)
 	if len(env) != 1 || env["USER_VALUE"] != "kept" {
 		t.Fatal("customer CI runtime authority was forwarded")
 	}

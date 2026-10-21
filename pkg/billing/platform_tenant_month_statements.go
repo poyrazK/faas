@@ -80,7 +80,7 @@ func addsWithinInt64(total, delta int64) bool {
 // own lines and every line stays exactly units × price. streamUsage is each
 // stream's charge for the month, which a minimum tops up (ADR-1322).
 func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantCards []state.PlatformTenantRateCard,
-	usage []state.APIConsumerUsageBucket, inputs TenantUsageInputs, opts QuoteOptions) (map[string]*tenantLine, string, map[string]int64, error) {
+	usage []state.APIConsumerUsageBucket, inputs TenantUsageInputs, opts QuoteOptions) (map[string]*tenantLine, string, feeUsage, error) {
 	ordered := append([]state.APIConsumerUsageBucket(nil), usage...)
 	sort.Slice(ordered, func(i, j int) bool {
 		if !ordered[i].WindowStart.Equal(ordered[j].WindowStart) {
@@ -111,7 +111,7 @@ func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantC
 	}
 	lines := map[string]*tenantLine{}
 	currency := ""
-	streamUsage := map[string]int64{}
+	streamUsage := newFeeUsage()
 	record := func(bucket state.APIConsumerUsageBucket, priced APIConsumerUsageChargeBucket, tenant bool) error {
 		if priced.Currency != "" {
 			if currency != "" && currency != priced.Currency {
@@ -173,20 +173,20 @@ func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantC
 		}
 		metered, err := tenantStreamUsage(unit, cards, sub, inputs)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", feeUsage{}, err
 		}
 		quote, err := QuoteAPIConsumerUsageWith(tenantCardsAsApp(cards), metered, time.Time{}, opts)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", feeUsage{}, err
 		}
 		for i, priced := range quote.Buckets {
 			if err := record(sub[i], priced, true); err != nil {
-				return nil, "", nil, err
+				return nil, "", feeUsage{}, err
 			}
-			if !addsWithinInt64(streamUsage[unit], priced.AmountMillicents) {
-				return nil, "", nil, fmt.Errorf("platform tenant stream usage overflow")
+			if !addsWithinInt64(streamUsage.byStream[unit], priced.AmountMillicents) {
+				return nil, "", feeUsage{}, fmt.Errorf("platform tenant stream usage overflow")
 			}
-			streamUsage[unit] += priced.AmountMillicents
+			streamUsage.add(unit, priced.RateCardID, priced.AmountMillicents)
 		}
 	}
 	apps := make([]string, 0, len(fallbackByApp))
@@ -196,18 +196,18 @@ func priceTenantMonth(cardsByApp map[string][]state.APIConsumerRateCard, tenantC
 	sort.Strings(apps)
 	for _, appID := range apps {
 		if err := requireFlatAppCards(cardsByApp[appID]); err != nil {
-			return nil, "", nil, err
+			return nil, "", feeUsage{}, err
 		}
 		quote, err := QuoteAPIConsumerUsage(cardsByApp[appID], fallbackByApp[appID])
 		if err != nil {
 			if errors.Is(err, ErrMixedAPIConsumerRateCardCurrency) {
-				return nil, "", nil, ErrMixedTenantCurrency
+				return nil, "", feeUsage{}, ErrMixedTenantCurrency
 			}
-			return nil, "", nil, err
+			return nil, "", feeUsage{}, err
 		}
 		for i, priced := range quote.Buckets {
 			if err := record(fallbackByApp[appID][i], priced, false); err != nil {
-				return nil, "", nil, err
+				return nil, "", feeUsage{}, err
 			}
 		}
 	}

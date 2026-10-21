@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/datarepair"
 )
@@ -36,10 +37,10 @@ func TestDataRepairDoctorCLIReadOnlyAndScoped(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "hosted-reader")
 	var out bytes.Buffer
-	old := osStdout
-	osStdout = &out
-	defer func() { osStdout = old }()
-	if cmdDataRepair([]string{"doctor", "--table", "public.products", "--url", server.URL}) != 1 || gotPath != "/v1/data-repair/doctor" || gotToken != "Bearer executor-reader" {
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	defer func() { (*main.OsStdout) = old }()
+	if main.CmdDataRepair([]string{"doctor", "--table", "public.products", "--url", server.URL}) != 1 || gotPath != "/v1/data-repair/doctor" || gotToken != "Bearer executor-reader" {
 		t.Fatal("standalone doctor lost its fixed origin, authority or unknown exit status")
 	}
 	var got datarepair.DoctorReport
@@ -48,7 +49,7 @@ func TestDataRepairDoctorCLIReadOnlyAndScoped(t *testing.T) {
 	}
 	out.Reset()
 	report.BoundDoctor()
-	if cmdDataRepair([]string{"doctor", "--table", "public.products", "--app", "products", "--environment", scope.Environment, "--customer", scope.PlatformTenantID}) != 1 ||
+	if main.CmdDataRepair([]string{"doctor", "--table", "public.products", "--app", "products", "--environment", scope.Environment, "--customer", scope.PlatformTenantID}) != 1 ||
 		gotPath != "/v1/apps/products/data-repair/doctor" || gotToken != "Bearer hosted-reader" || gotCustomer != scope.PlatformTenantID || out.Len() == 0 {
 		t.Fatal("hosted doctor lost exact scope or reader authority")
 	}
@@ -62,7 +63,7 @@ func TestDataRepairDoctorCLIReadOnlyAndScoped(t *testing.T) {
 		{"doctor", "--table", "public.products", "--profile", "capture", "--app", "products"},
 		{"doctor", "--table", "public.products", "--profile", "capture", "--url", server.URL},
 	} {
-		if cmdDataRepair(args) != 1 {
+		if main.CmdDataRepair(args) != 1 {
 			t.Fatal("accepted invalid query or mutation authority", args)
 		}
 	}
@@ -82,14 +83,14 @@ func TestDataRepairDoctorCLIReadOnlyAndScoped(t *testing.T) {
 				report.Status = "ready"
 			}
 			out.Reset()
-			if cmdDataRepair([]string{"doctor", "--table", "public.products", "--app", "products", "--customer", scope.PlatformTenantID}) != 1 || out.Len() != 0 {
+			if main.CmdDataRepair([]string{"doctor", "--table", "public.products", "--app", "products", "--customer", scope.PlatformTenantID}) != 1 || out.Len() != 0 {
 				t.Fatal("invalid report became printable readiness", strings.TrimSpace(out.String()))
 			}
 		})
 	}
 	oversized = true
 	out.Reset()
-	if cmdDataRepair([]string{"doctor", "--table", "public.products", "--url", server.URL}) != 1 || out.Len() != 0 {
+	if main.CmdDataRepair([]string{"doctor", "--table", "public.products", "--url", server.URL}) != 1 || out.Len() != 0 {
 		t.Fatal("oversized diagnostic response was printed")
 	}
 }

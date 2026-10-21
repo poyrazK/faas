@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // TestLoadClusterSigningKey_EmptyTableReturnsNotFound pins the
@@ -27,10 +28,10 @@ func TestLoadClusterSigningKey_EmptyTableReturnsNotFound(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := NewPgStore(pool)
+	store := state.NewPgStore(pool)
 
 	ctx := context.Background()
-	if _, err := store.LoadClusterSigningKey(ctx); !errors.Is(err, ErrNotFound) {
+	if _, err := store.LoadClusterSigningKey(ctx); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("empty table: got %v, want ErrNotFound", err)
 	}
 }
@@ -50,7 +51,7 @@ func TestLoadClusterSigningKey_RoundTrip(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := NewPgStore(pool)
+	store := state.NewPgStore(pool)
 
 	ctx := context.Background()
 
@@ -66,7 +67,7 @@ func TestLoadClusterSigningKey_RoundTrip(t *testing.T) {
 	if _, err := rand.Read(sealed); err != nil {
 		t.Fatalf("rand: %v", err)
 	}
-	k := ClusterSigningKey{
+	k := state.ClusterSigningKey{
 		KeyID:        deriveKidForTest(t, priv),
 		PublicKeyPEM: string(pemBytes),
 		SealedBlob:   sealed,
@@ -108,7 +109,7 @@ func TestInsertClusterSigningKey_SingletonRejectsSecondID(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := NewPgStore(pool)
+	store := state.NewPgStore(pool)
 
 	ctx := context.Background()
 	pub, _, err := ed25519.GenerateKey(rand.Reader)
@@ -121,7 +122,7 @@ func TestInsertClusterSigningKey_SingletonRejectsSecondID(t *testing.T) {
 	}
 	sealed := make([]byte, 32)
 	_, _ = rand.Read(sealed)
-	first := ClusterSigningKey{
+	first := state.ClusterSigningKey{
 		KeyID:        "AAAAAAAAAAAAAAAAAAAAAA",
 		PublicKeyPEM: string(pemBytes),
 		SealedBlob:   sealed,
@@ -154,7 +155,7 @@ func TestInsertClusterSigningKey_RotationIsInPlace(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := NewPgStore(pool)
+	store := state.NewPgStore(pool)
 
 	ctx := context.Background()
 	pub1, _, err := ed25519.GenerateKey(rand.Reader)
@@ -181,14 +182,14 @@ func TestInsertClusterSigningKey_RotationIsInPlace(t *testing.T) {
 	kid1 := "AAAAAAAAAAAAAAAAAAAAAB"
 	kid2 := "AAAAAAAAAAAAAAAAAAAAAC"
 
-	if err := store.InsertClusterSigningKey(ctx, ClusterSigningKey{
+	if err := store.InsertClusterSigningKey(ctx, state.ClusterSigningKey{
 		KeyID:        kid1,
 		PublicKeyPEM: string(pem1),
 		SealedBlob:   sealed1,
 	}); err != nil {
 		t.Fatalf("insert 1: %v", err)
 	}
-	if err := store.InsertClusterSigningKey(ctx, ClusterSigningKey{
+	if err := store.InsertClusterSigningKey(ctx, state.ClusterSigningKey{
 		KeyID:        kid2,
 		PublicKeyPEM: string(pem2),
 		SealedBlob:   sealed2,
@@ -224,10 +225,10 @@ func TestDeleteClusterSigningKey_EmptyReturnsNotFound(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := NewPgStore(pool)
+	store := state.NewPgStore(pool)
 
 	ctx := context.Background()
-	if err := store.DeleteClusterSigningKey(ctx); !errors.Is(err, ErrNotFound) {
+	if err := store.DeleteClusterSigningKey(ctx); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("delete empty: got %v, want ErrNotFound", err)
 	}
 }
@@ -239,7 +240,7 @@ func TestDeleteClusterSigningKey_AfterInsert(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := NewPgStore(pool)
+	store := state.NewPgStore(pool)
 
 	ctx := context.Background()
 	pub, _, err := ed25519.GenerateKey(rand.Reader)
@@ -252,7 +253,7 @@ func TestDeleteClusterSigningKey_AfterInsert(t *testing.T) {
 	}
 	sealed := make([]byte, 32)
 	_, _ = rand.Read(sealed)
-	if err := store.InsertClusterSigningKey(ctx, ClusterSigningKey{
+	if err := store.InsertClusterSigningKey(ctx, state.ClusterSigningKey{
 		KeyID:        "AAAAAAAAAAAAAAAAAAAAAD",
 		PublicKeyPEM: string(pemBytes),
 		SealedBlob:   sealed,
@@ -262,7 +263,7 @@ func TestDeleteClusterSigningKey_AfterInsert(t *testing.T) {
 	if err := store.DeleteClusterSigningKey(ctx); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := store.LoadClusterSigningKey(ctx); !errors.Is(err, ErrNotFound) {
+	if _, err := store.LoadClusterSigningKey(ctx); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("load after delete: got %v, want ErrNotFound", err)
 	}
 }
@@ -302,7 +303,7 @@ func TestInsertClusterSigningKey_IdempotentReInsertSameKid(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := NewPgStore(pool)
+	store := state.NewPgStore(pool)
 
 	ctx := context.Background()
 	pub, _, err := ed25519.GenerateKey(rand.Reader)
@@ -319,7 +320,7 @@ func TestInsertClusterSigningKey_IdempotentReInsertSameKid(t *testing.T) {
 	_, _ = rand.Read(sealed2)
 
 	kid := "AAAAAAAAAAAAAAAAAAAAAA"
-	first := ClusterSigningKey{KeyID: kid, PublicKeyPEM: string(pemBytes), SealedBlob: sealed1}
+	first := state.ClusterSigningKey{KeyID: kid, PublicKeyPEM: string(pemBytes), SealedBlob: sealed1}
 	if err := store.InsertClusterSigningKey(ctx, first); err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
@@ -335,7 +336,7 @@ func TestInsertClusterSigningKey_IdempotentReInsertSameKid(t *testing.T) {
 	// Re-insert with the SAME kid but a different sealed_blob.
 	// The idempotent branch must replace sealed_blob without
 	// stamping retired_at to now() (the load-bearing invariant).
-	second := ClusterSigningKey{KeyID: kid, PublicKeyPEM: string(pemBytes), SealedBlob: sealed2}
+	second := state.ClusterSigningKey{KeyID: kid, PublicKeyPEM: string(pemBytes), SealedBlob: sealed2}
 	if err := store.InsertClusterSigningKey(ctx, second); err != nil {
 		t.Fatalf("re-insert same kid: %v", err)
 	}
@@ -369,7 +370,7 @@ func TestInsertClusterSigningKey_RejectsEmptyFields(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := NewPgStore(pool)
+	store := state.NewPgStore(pool)
 
 	ctx := context.Background()
 	pub, _, err := ed25519.GenerateKey(rand.Reader)
@@ -385,11 +386,11 @@ func TestInsertClusterSigningKey_RejectsEmptyFields(t *testing.T) {
 
 	cases := []struct {
 		name string
-		key  ClusterSigningKey
+		key  state.ClusterSigningKey
 	}{
-		{"empty_key_id", ClusterSigningKey{KeyID: "", PublicKeyPEM: string(pemBytes), SealedBlob: sealed}},
-		{"empty_public_key_pem", ClusterSigningKey{KeyID: deriveKidForTest(t, nil), PublicKeyPEM: "", SealedBlob: sealed}},
-		{"empty_sealed_blob", ClusterSigningKey{KeyID: deriveKidForTest(t, nil), PublicKeyPEM: string(pemBytes), SealedBlob: nil}},
+		{"empty_key_id", state.ClusterSigningKey{KeyID: "", PublicKeyPEM: string(pemBytes), SealedBlob: sealed}},
+		{"empty_public_key_pem", state.ClusterSigningKey{KeyID: deriveKidForTest(t, nil), PublicKeyPEM: "", SealedBlob: sealed}},
+		{"empty_sealed_blob", state.ClusterSigningKey{KeyID: deriveKidForTest(t, nil), PublicKeyPEM: string(pemBytes), SealedBlob: nil}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -436,7 +437,7 @@ func TestCreateClusterSigningKeyIfAbsent_CreatesOnceNeverOverwrites(t *testing.T
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store := NewPgStore(pool)
+	store := state.NewPgStore(pool)
 	ctx := context.Background()
 
 	// The table CHECKs a 22-char base64url kid and a PKIX PEM public key.
@@ -451,12 +452,12 @@ func TestCreateClusterSigningKeyIfAbsent_CreatesOnceNeverOverwrites(t *testing.T
 		}
 		return string(body)
 	}
-	first := ClusterSigningKey{KeyID: strings.Repeat("A", 22), PublicKeyPEM: pemFor(), SealedBlob: []byte("first-blob")}
+	first := state.ClusterSigningKey{KeyID: strings.Repeat("A", 22), PublicKeyPEM: pemFor(), SealedBlob: []byte("first-blob")}
 	created, err := store.CreateClusterSigningKeyIfAbsent(ctx, first)
 	if err != nil || !created {
 		t.Fatalf("first create: created=%v err=%v", created, err)
 	}
-	second := ClusterSigningKey{KeyID: strings.Repeat("B", 22), PublicKeyPEM: pemFor(), SealedBlob: []byte("second-blob")}
+	second := state.ClusterSigningKey{KeyID: strings.Repeat("B", 22), PublicKeyPEM: pemFor(), SealedBlob: []byte("second-blob")}
 	created, err = store.CreateClusterSigningKeyIfAbsent(ctx, second)
 	if err != nil || created {
 		t.Fatalf("second create: created=%v err=%v, want false/nil", created, err)
@@ -468,7 +469,7 @@ func TestCreateClusterSigningKeyIfAbsent_CreatesOnceNeverOverwrites(t *testing.T
 	if got.KeyID != first.KeyID || got.PublicKeyPEM != first.PublicKeyPEM || string(got.SealedBlob) != "first-blob" {
 		t.Fatalf("row was overwritten: %+v", got)
 	}
-	if _, err := store.CreateClusterSigningKeyIfAbsent(ctx, ClusterSigningKey{}); err == nil {
+	if _, err := store.CreateClusterSigningKeyIfAbsent(ctx, state.ClusterSigningKey{}); err == nil {
 		t.Fatal("empty key was accepted")
 	}
 }

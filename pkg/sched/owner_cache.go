@@ -135,15 +135,13 @@ var errNoOwnerEntry = errors.New("sched: app has no owner cache entry")
 // workload-retirement gate's verdict from a thaw ticket or an owner cache
 // entry instead of reading it first: both were issued only while the gate
 // passed, and a retirement moves the generation their guarded writes check.
+// A coordinated wake's selection is production's too (ADR-1740 amendment
+// 2026-10-21); a step that decides from fresh reads runs the gate first.
 func (e *Engine) gateGuardedByGeneration(ctx context.Context, appID, deploymentID string) bool {
 	if !e.frozenFastPath.Load() && !e.ownerCacheEnabled.Load() {
 		return false
 	}
-	if deploymentID != "" || ScopeFrom(ctx) != "" || ctx.Value(ownerCacheBypassKey{}) != nil {
-		return false
-	}
-	_, selected := wakeEnvironmentFrom(ctx)
-	return !selected
+	return deploymentID == "" && ScopeFrom(ctx) == "" && ctx.Value(ownerCacheBypassKey{}) == nil
 }
 
 type deferredWorkloadGateKey struct{}
@@ -235,18 +233,34 @@ func withoutOwnerCache(ctx context.Context) context.Context {
 }
 
 // ownerEntryForAdmission returns the app's entry for an ordinary production
-// admission: no explicit deployment, no scope, no coordinated wake
-// selection, cache on and not bypassed. A failed load falls back to the
+// admission: no explicit deployment, no scope, cache on and not bypassed.
+// A coordinated wake (EnsureWake, the gateway's path) is served only when
+// its selection is the entry's production deployment, environment and
+// account (ADR-1741 amendment 2026-10-21). A failed load falls back to the
 // ordinary reads, which report the error the wake path always reported.
 func (e *Engine) ownerEntryForAdmission(ctx context.Context, appID, deploymentID string) (ownerEntry, bool) {
 	if deploymentID != "" || ScopeFrom(ctx) != "" || ctx.Value(ownerCacheBypassKey{}) != nil {
 		return ownerEntry{}, false
 	}
-	if _, selected := wakeEnvironmentFrom(ctx); selected {
+	entry, err := e.ownerEntryFor(ctx, appID)
+	if err != nil {
 		return ownerEntry{}, false
 	}
-	entry, err := e.ownerEntryFor(ctx, appID)
-	return entry, err == nil
+	if selected, ok := wakeEnvironmentFrom(ctx); ok && !entry.serves(selected) {
+		e.observeOwnerCache("selection")
+		return ownerEntry{}, false
+	}
+	return entry, true
+}
+
+// serves reports whether a coordinated wake's selection is the one this
+// entry holds. The selection was read moments ago; when it differs, the
+// entry is stale or the selection is not production's, and the wake decides
+// from its own reads.
+func (entry ownerEntry) serves(selected wakeEnvironment) bool {
+	return selected.app.ID == entry.app.ID && selected.deployment.ID == entry.dep.ID &&
+		selected.account.ID == entry.acct.ID && selected.owner.Scope == entry.scaling.Scope &&
+		selected.owner.EnvironmentID == entry.scaling.EnvironmentID
 }
 
 // ownerEntryFor returns the app's entry, loading it on a miss. It serves

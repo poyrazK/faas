@@ -1,7 +1,7 @@
 // adr: 909 — under measured admission, RAM-pressure eviction follows a
 // node's measured memory, not its reservations.
 
-package sched
+package sched_test
 
 import (
 	"reflect"
@@ -9,17 +9,18 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestSelectMemoryEvictions(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	old := now.Add(-time.Hour)
-	vm := func(id, node string, lastRequest time.Duration, plan api.Plan) InstanceInfo {
-		return InstanceInfo{Instance: id, AppID: "app-" + id, Plan: plan, State: state.StateRunning, RAMMB: 1024,
+	vm := func(id, node string, lastRequest time.Duration, plan api.Plan) sched.InstanceInfo {
+		return sched.InstanceInfo{Instance: id, AppID: "app-" + id, Plan: plan, State: state.StateRunning, RAMMB: 1024,
 			NodeID: node, Started: old, LastRequest: now.Add(-lastRequest)}
 	}
-	instances := []InstanceInfo{
+	instances := []sched.InstanceInfo{
 		vm("a-busy", "a", time.Second, api.PlanPro),
 		vm("a-idle", "a", time.Hour, api.PlanPro),
 		vm("a-idler", "a", 2*time.Hour, api.PlanPro),
@@ -55,7 +56,7 @@ func TestSelectMemoryEvictions(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := SelectMemoryEvictions(now, instances, tc.used, ceiling, tc.resident)
+			got := sched.SelectMemoryEvictions(now, instances, tc.used, ceiling, tc.resident)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("evict %v, want %v", got, tc.want)
 			}

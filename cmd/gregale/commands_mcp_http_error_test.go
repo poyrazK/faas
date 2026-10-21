@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -17,7 +18,7 @@ func TestMCPCLIHTTPErrorStatusAndExit(t *testing.T) {
 	for _, status := range []int{401, 403, 429, 503} {
 		for _, command := range []string{"tools", "call", "lock", "legacy-initialize"} {
 			t.Run(fmt.Sprintf("%s/%d", command, status), func(t *testing.T) {
-				resetJSONOut(t)
+				main.ResetJSONOut(t)
 				var requests atomic.Int32
 				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					requests.Add(1)
@@ -30,9 +31,9 @@ func TestMCPCLIHTTPErrorStatusAndExit(t *testing.T) {
 					_, _ = fmt.Fprint(w, `{"status":400,"code":"invalid_request","detail":"unsafe-upstream-marker"}`)
 				}))
 				defer s.Close()
-				out, restoreOut := captureStdout(t)
+				out, restoreOut := main.CaptureStdout(t)
 				defer restoreOut()
-				errOut, restoreErr := captureStderr(t)
+				errOut, restoreErr := main.CaptureStderr(t)
 				verb := command
 				if command == "legacy-initialize" {
 					verb = "tools"
@@ -47,13 +48,13 @@ func TestMCPCLIHTTPErrorStatusAndExit(t *testing.T) {
 				if command == "lock" {
 					args = append(args, "--out", filepath.Join(t.TempDir(), "contract.json"))
 				}
-				code := run(args)
+				code := main.Run(args)
 				restoreErr()
 				var problem api.Problem
 				if err := json.Unmarshal([]byte(errOut.String()), &problem); err != nil {
 					t.Fatalf("not one JSON Problem: %v: %s", err, errOut.String())
 				}
-				if problem.Status != status || code != exitCodeForStatus(status) || requests.Load() != 1 {
+				if problem.Status != status || code != main.ExitCodeForStatus(status) || requests.Load() != 1 {
 					t.Fatalf("status=%d exit=%d requests=%d: %s", problem.Status, code, requests.Load(), errOut.String())
 				}
 				if problem.RetryAfterSeconds == nil || *problem.RetryAfterSeconds != 7 || out.String() != "" || strings.Contains(errOut.String(), "unsafe-upstream-marker") {
@@ -65,7 +66,7 @@ func TestMCPCLIHTTPErrorStatusAndExit(t *testing.T) {
 }
 
 func TestMCPCLIHTTPToolCallFailureIsNotRetried(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	var calls atomic.Int32
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -89,8 +90,8 @@ func TestMCPCLIHTTPToolCallFailureIsNotRetried(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer s.Close()
-	errOut, restoreErr := captureStderr(t)
-	code := run([]string{"mcp", "call", "--url", s.URL + "/mcp", "--tool", "charge", "--json"})
+	errOut, restoreErr := main.CaptureStderr(t)
+	code := main.Run([]string{"mcp", "call", "--url", s.URL + "/mcp", "--tool", "charge", "--json"})
 	restoreErr()
 	var problem api.Problem
 	if err := json.Unmarshal([]byte(errOut.String()), &problem); err != nil {

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,11 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 )
 
-func releaseRouteHealthReviewFixture() (api.RouteHealthReport, previewRouteReport) {
+func releaseRouteHealthReviewFixture() (api.RouteHealthReport, main.PreviewRouteReport) {
 	preview := releaseSuggestionPreviewFixture()
 	preview.CandidateDeployment = healthCandidateID
 	for i := range preview.Routes {
@@ -28,7 +29,7 @@ func releaseRouteHealthReviewFixture() (api.RouteHealthReport, previewRouteRepor
 	}
 
 	health := cliHealthReport("healthy")
-	health.StableDeploymentID = customerBaseline
+	health.StableDeploymentID = main.CustomerBaseline
 	users := api.RouteHealthFinding{Method: "GET", Path: "/users/{id}", Windows: routehealth.Windows(health.CheckedAt)}
 	for i := range users.Windows {
 		users.Windows[i].Candidate.Requests = 100
@@ -43,7 +44,7 @@ func releaseRouteHealthReviewFixture() (api.RouteHealthReport, previewRouteRepor
 
 func TestBuildReleaseRouteHealthReviewJoinsImpactGateAndEvidence(t *testing.T) {
 	health, preview := releaseRouteHealthReviewFixture()
-	report, err := buildReleaseRouteHealthReviewReport(health, "api", healthCandidateID, preview)
+	report, err := main.BuildReleaseRouteHealthReviewReport(health, "api", healthCandidateID, preview)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +55,7 @@ func TestBuildReleaseRouteHealthReviewJoinsImpactGateAndEvidence(t *testing.T) {
 		report.ReleaseScope.StructuralRoutesSkipped != 2 || len(report.ReleaseScope.UnmatchedSourceRoutes) != 1 {
 		t.Fatalf("review scope/status = %+v / %s", report.ReleaseScope, report.Status)
 	}
-	routes := map[string]routeHealthReviewRoute{}
+	routes := map[string]main.RouteHealthReviewRoute{}
 	for _, route := range report.Routes {
 		routes[route.Path] = route
 	}
@@ -75,18 +76,18 @@ func TestBuildReleaseRouteHealthReviewJoinsImpactGateAndEvidence(t *testing.T) {
 }
 
 func TestBuildReleaseRouteHealthReviewWithholdsVerdictsOnDeploymentMismatch(t *testing.T) {
-	for name, mismatch := range map[string]func(*api.RouteHealthReport, *previewRouteReport){
-		"stable deployment": func(health *api.RouteHealthReport, _ *previewRouteReport) {
+	for name, mismatch := range map[string]func(*api.RouteHealthReport, *main.PreviewRouteReport){
+		"stable deployment": func(health *api.RouteHealthReport, _ *main.PreviewRouteReport) {
 			health.StableDeploymentID = healthCandidateID
 		},
-		"candidate deployment": func(_ *api.RouteHealthReport, preview *previewRouteReport) {
-			preview.CandidateDeployment = customerTenant
+		"candidate deployment": func(_ *api.RouteHealthReport, preview *main.PreviewRouteReport) {
+			preview.CandidateDeployment = main.CustomerTenant
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			health, preview := releaseRouteHealthReviewFixture()
 			mismatch(&health, &preview)
-			report, err := buildReleaseRouteHealthReviewReport(health, "api", healthCandidateID, preview)
+			report, err := main.BuildReleaseRouteHealthReviewReport(health, "api", healthCandidateID, preview)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,7 +113,7 @@ func TestBuildReleaseRouteHealthReviewSurfacesUnselectableAffectedRoute(t *testi
 			preview.Routes[i].Path = "/sleepy/*"
 		}
 	}
-	report, err := buildReleaseRouteHealthReviewReport(health, "api", healthCandidateID, preview)
+	report, err := main.BuildReleaseRouteHealthReviewReport(health, "api", healthCandidateID, preview)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +133,7 @@ func TestReleaseRouteHealthGateRequiresCompleteImpactAndHealthyCoverage(t *testi
 	preview.SourceImpact.AnalysisStatus = "complete"
 	preview.SourceImpact.MappingStatus = "complete"
 	preview.SourceImpact.IssueCount = 0
-	preview.SourceImpact.Unmatched = []previewUnmatchedSource{}
+	preview.SourceImpact.Unmatched = []main.PreviewUnmatchedSource{}
 	kept := preview.Routes[:0]
 	for _, route := range preview.Routes {
 		if route.Path != "/old" && route.Path != "/new" {
@@ -158,7 +159,7 @@ func TestReleaseRouteHealthGateRequiresCompleteImpactAndHealthyCoverage(t *testi
 	if health.Status != "healthy" {
 		t.Fatalf("fixture candidate status = %s", health.Status)
 	}
-	report, err := buildReleaseRouteHealthReviewReport(health, "api", healthCandidateID, preview)
+	report, err := main.BuildReleaseRouteHealthReviewReport(health, "api", healthCandidateID, preview)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,8 +170,8 @@ func TestReleaseRouteHealthGateRequiresCompleteImpactAndHealthyCoverage(t *testi
 }
 
 func TestRoutesHealthReviewReadsBoundPreviewAndCandidateReport(t *testing.T) {
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	health, preview := releaseRouteHealthReviewFixture()
 	previewBody, err := json.Marshal(preview)
 	if err != nil {
@@ -187,23 +188,23 @@ func TestRoutesHealthReviewReadsBoundPreviewAndCandidateReport(t *testing.T) {
 			r.Header.Get("Authorization") != "Bearer test-token" {
 			t.Errorf("unexpected route health request: %s %s", r.Method, r.URL.String())
 		}
-		writeJSONTest(w, health)
+		main.WriteJSONTest(w, health)
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 
 	var out bytes.Buffer
-	oldOut, oldJSON := osStdout, jsonOutput
-	osStdout, jsonOutput = &out, true
-	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
-	code := cmdRoutesHealth([]string{"review", "api", "--deployment", healthCandidateID, "--preview-report", previewPath})
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, true
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON })
+	code := main.CmdRoutesHealth([]string{"review", "api", "--deployment", healthCandidateID, "--preview-report", previewPath})
 	if code != 0 {
 		t.Fatalf("review returned %d: %s", code, out.String())
 	}
 	if reads != 1 {
 		t.Fatalf("route health reads = %d, want one", reads)
 	}
-	var report routeHealthReviewReport
+	var report main.RouteHealthReviewReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("decode review: %v (%s)", err, out.String())
 	}
@@ -216,7 +217,7 @@ func TestRoutesHealthReviewReadsBoundPreviewAndCandidateReport(t *testing.T) {
 		}
 	}
 	out.Reset()
-	code = cmdRoutesHealth([]string{"review", "api", "--deployment", healthCandidateID, "--preview-report", previewPath, "--fail-on-incomplete"})
+	code = main.CmdRoutesHealth([]string{"review", "api", "--deployment", healthCandidateID, "--preview-report", previewPath, "--fail-on-incomplete"})
 	if code != 1 {
 		t.Fatalf("incomplete release returned %d, want a failing CI exit; output: %s", code, out.String())
 	}

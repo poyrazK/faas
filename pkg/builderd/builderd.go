@@ -32,9 +32,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/safetext"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -903,9 +903,24 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, "load public build URLs", buildStart)
 		return BuildResult{}, publicErr
 	}
+	dockerfileBuild, buildOptionsIgnored, buildOptionsErr := selectDockerfileBuild(app, dep, frozen != nil && frozen.Source != nil, fw)
+	if buildOptionsErr != nil {
+		b.markFailed(ctx, build, state.FailureInfra, "invalid Compose build options: "+buildOptionsErr.Error(), buildStart)
+		return BuildResult{}, buildOptionsErr
+	}
+	if buildOptionsIgnored {
+		b.emitBuildLog(ctx, build.ID, "Compose build.args and build.target ignored: this service builds without a Dockerfile\n")
+	}
+	if dockerfileBuild != nil && dockerfileBuild.Target != "" {
+		b.emitBuildLog(ctx, build.ID, "building Dockerfile stage "+dockerfileBuild.Target+"\n")
+	}
+	if shadowed := shadowedBuildArgs(dockerfileBuild, publicURLs); len(shadowed) > 0 {
+		b.emitBuildLog(ctx, build.ID, "build arguments "+strings.Join(shadowed, ", ")+" are also public build URLs; the reviewed URLs are used\n")
+	}
 	recipe := BuildCacheRecipe{
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
+		DockerfileBuild:       dockerfileBuild,
 		SourceSHA256:          srcHash, SourceRoot: dep.SourceRoot,
 		DockerfilePath: dockerfilePath,
 		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
@@ -913,10 +928,15 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DevWatchCommand: watch.Command,
 		DevWatchHost:    watch.Host,
 	}
+	reuseScope, reuseOptedIn := gitOpsReuseScope(app, dep)
+	recipe.GitOpsReuseScope = reuseScope
 	if sourceMaps != nil {
 		recipe.IssueSourceMapsDirectory = sourceMaps.Directory
 	}
 	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
+	if reuseOptedIn && (reuseScope == "" || b.buildPublisher == nil) {
+		cacheAvailable = false
+	}
 	if cacheAvailable {
 		recipe.BuilderBaseIdentity = buildEnvironment.BuilderBaseIdentity
 		recipe.TargetPlatform = buildEnvironment.TargetPlatform
@@ -926,6 +946,16 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		cacheKeySHA256 = ""
 	}
 	cached, cacheOutcome, cacheHit := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable, dep.ID)
+	if cacheHit && reuseOptedIn {
+		trusted, ok := b.trustedGitOpsCacheEntry(ctx, app, dep, recipe, buildEnvironment, cached)
+		if !ok || !b.buildEnvironmentStillCurrent(buildEnvironment) {
+			b.cache.ReleaseLease(cached.Path)
+			cached, cacheOutcome, cacheHit = CacheEntry{}, cacheOutcomeInvalidated, false
+			b.emitBuildLog(ctx, build.ID, "[gitops] unchanged build reuse unavailable: origin is not a current same-app signed retained producer with matching inputs; building afresh\n")
+		} else {
+			cached.Toolchain = trusted
+		}
+	}
 	b.observeCacheOutcome(ctx, build.ID, cacheOutcome, cacheKeySHA256)
 	if cacheHit {
 		if b.stopIfBuildCancelled(ctx, build) {
@@ -939,6 +969,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// (PR-B review finding M-3).
 		b.ops.ObserveBuildQueueWait(time.Since(build.EnqueuedAt))
 		buildStart = time.Now()
+		if reuseOptedIn {
+			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[gitops] unchanged isolated context and recipe verified; reusing signed origin deployment %s build %s; target qualification remains required\n", cached.Toolchain.OriginDeploymentID, cached.Toolchain.OriginBuildID))
+		}
 		b.emitBuildLog(ctx, build.ID, "build started (cache hit)\n")
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[build] cache hit (sha256:%s) — skipping vm spawn\n", cacheKeySHA256))
 		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
@@ -949,6 +982,17 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 				IssueSourceMaps: cached.Toolchain.IssueSourceMaps, IssueSourceMapsImageSHA256: cached.Toolchain.IssueSourceMapsImageSHA256}, buildStart)
 		if completeErr != nil || completed.BuildID == "" {
 			b.cache.ReleaseLease(cached.Path)
+		} else if reuseOptedIn && b.buildEnvironmentStillCurrent(buildEnvironment) {
+			// Keep the verified origin. After its own signed completion this
+			// target becomes the fallback origin, used only once the current
+			// one stops being a live signed producer; a target that never
+			// goes live therefore cannot stall reuse. Bytes are unchanged, so
+			// only the metadata is rewritten.
+			metadata := cached.Toolchain
+			metadata.NextOriginDeploymentID, metadata.NextOriginBuildID = dep.ID, build.ID
+			if err := b.cache.UpdateBuildOrigins(recipe, cached.Path, metadata); err != nil {
+				b.log.Warn("builderd: record GitOps cache fallback origin (continuing)", "err", err)
+			}
 		}
 		return completed, completeErr
 
@@ -1006,6 +1050,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	vmReq := VMRequest{
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
+		DockerfileBuild:       dockerfileBuild,
 		BuildID:               build.ID,
 		TenantID:              app.AccountID,
 		DeploymentID:          dep.ID,
@@ -1201,6 +1246,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
 		return BuildResult{}, err
 	}
+	if out.ExitCode == 0 && out.DockerfileBuildSHA256 != dockerfileBuild.SHA256() {
+		// An older builder guest ignores the options and builds the final
+		// stage with default arguments; refuse that artifact.
+		err := errors.New("builder guest did not acknowledge the Compose build arguments and target")
+		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
+		return BuildResult{}, err
+	}
 	if out.DependencyCacheStoreError != "" {
 		b.log.Warn("builderd: dependency cache store failed (continuing)", "build", build.ID, "err", out.DependencyCacheStoreError)
 		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next build may reinstall dependencies\n")
@@ -1316,6 +1368,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// the successful deployment intact but deliberately skips cache publication.
 	if cacheAvailable && b.buildEnvironmentStillCurrent(buildEnvironment) {
 		if err := b.cache.StoreBuildWithToolchain(recipe, out.OCIImage, artifactBytes, CacheToolchain{
+			OriginDeploymentID: dep.ID, OriginBuildID: build.ID,
 			BuildkitVer:                result.BuildkitVer,
 			RailpackVer:                result.RailpackVer,
 			DevPatch:                   result.DevPatch,
@@ -1648,10 +1701,10 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 			if !ok {
 				return errors.New("source-map build publication store unavailable")
 			}
-			return st.CompleteBuildWithIssueSourceMaps(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov,
+			return st.CompleteBuildWithIssueSourceMaps(ctx, build, result.LayerPath, storagekey.AppLayer(app.Slug, dep.ID), result.LayerBytes, prov,
 				state.BuildIssueSourceMapPublication{AccountID: app.AccountID, AppID: app.ID, Request: *result.IssueSourceMaps})
 		}
-		return b.store.CompleteBuild(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov)
+		return b.store.CompleteBuild(ctx, build, result.LayerPath, storagekey.AppLayer(app.Slug, dep.ID), result.LayerBytes, prov)
 	}); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return BuildResult{}, nil

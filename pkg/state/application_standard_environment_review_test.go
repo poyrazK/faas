@@ -1,5 +1,5 @@
 // adr: 595. Exact-plan reviews bind desired and deployed environment revisions.
-package state
+package state_test
 
 import (
 	"bytes"
@@ -10,39 +10,40 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type standardEnvironmentReviewTestStore = contractTestStore
+type standardEnvironmentReviewTestStore = state.ContractTestStore
 
 type standardEnvironmentReviewFixture struct {
-	app     App
-	env     ProjectEnvironment
-	spec    ProjectEnvironmentWorkloadSpec
-	dep     Deployment
-	request ApplicationStandardReviewRequest
+	app     state.App
+	env     state.ProjectEnvironment
+	spec    state.ProjectEnvironmentWorkloadSpec
+	dep     state.Deployment
+	request state.ApplicationStandardReviewRequest
 }
 
 func newStandardEnvironmentReviewFixture(t *testing.T, s standardEnvironmentReviewTestStore) standardEnvironmentReviewFixture {
 	t.Helper()
 	ctx := t.Context()
-	owner, err := s.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{Email: "environment-review-" + uuid.NewString() + "@example.test", Plan: api.PlanPro})
+	owner, err := s.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{Email: "environment-review-" + uuid.NewString() + "@example.test", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := s.CreateProject(ctx, Project{AccountID: owner.Account.ID, Slug: "review-project"})
+	project, err := s.CreateProject(ctx, state.Project{AccountID: owner.Account.ID, Slug: "review-project"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(ctx, App{AccountID: owner.Account.ID, OrgID: owner.PersonalOrg.ID, ProjectID: project.ID,
-		Slug: "environment-review", WorkloadName: "web", Type: AppTypeApp, RAMMB: 128})
+	app, err := s.CreateApp(ctx, state.App{AccountID: owner.Account.ID, OrgID: owner.PersonalOrg.ID, ProjectID: project.ID,
+		Slug: "environment-review", WorkloadName: "web", Type: state.AppTypeApp, RAMMB: 128})
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := s.CreateProjectEnvironment(ctx, ProjectEnvironment{AccountID: app.AccountID, ProjectID: project.ID, Slug: "staging"})
+	env, err := s.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: app.AccountID, ProjectID: project.ID, Slug: "staging"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings, err := WorkloadSettingsFromApp(app)
+	settings, err := state.WorkloadSettingsFromApp(app)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,20 +55,20 @@ func newStandardEnvironmentReviewFixture(t *testing.T, s standardEnvironmentRevi
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Scope: env.Slug, Kind: DeploymentKindImage})
+	dep, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: env.Slug, Kind: state.DeploymentKindImage})
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.PublishApplicationStandardVersion(ctx, ApplicationStandardPublish{OrgID: app.OrgID, ActorID: app.AccountID, Slug: "environment-standard",
+	v, err := s.PublishApplicationStandardVersion(ctx, state.ApplicationStandardPublish{OrgID: app.OrgID, ActorID: app.AccountID, Slug: "environment-standard",
 		CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: json.RawMessage(`{"security_policy":{"mode":"mandatory","value":"warn"}}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return standardEnvironmentReviewFixture{app: app, env: env, spec: spec, dep: dep, request: ApplicationStandardReviewRequest{
+	return standardEnvironmentReviewFixture{app: app, env: env, spec: spec, dep: dep, request: state.ApplicationStandardReviewRequest{
 		Scope: "application", ScopeID: app.ID, StandardID: v.StandardID, AdmissionVersion: 1, Active: true, BatchSize: 1}}
 }
 
-func (f standardEnvironmentReviewFixture) preview(t *testing.T, s standardEnvironmentReviewTestStore) ApplicationStandardReviewPlan {
+func (f standardEnvironmentReviewFixture) preview(t *testing.T, s standardEnvironmentReviewTestStore) state.ApplicationStandardReviewPlan {
 	t.Helper()
 	p, err := s.PreviewApplicationStandardAssignment(t.Context(), f.app.OrgID, f.app.AccountID, f.request)
 	if err != nil || len(p.Blockers) != 0 || len(p.Applications) != 1 {
@@ -76,12 +77,12 @@ func (f standardEnvironmentReviewFixture) preview(t *testing.T, s standardEnviro
 	return p
 }
 
-func (f standardEnvironmentReviewFixture) assertStale(t *testing.T, s standardEnvironmentReviewTestStore, p ApplicationStandardReviewPlan) {
+func (f standardEnvironmentReviewFixture) assertStale(t *testing.T, s standardEnvironmentReviewTestStore, p state.ApplicationStandardReviewPlan) {
 	t.Helper()
-	if _, err := s.ValidateApplicationStandardReview(t.Context(), f.app.OrgID, f.app.AccountID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewStale) {
+	if _, err := s.ValidateApplicationStandardReview(t.Context(), f.app.OrgID, f.app.AccountID, p.ID, p.ApprovalHash); !errors.Is(err, state.ErrApplicationStandardReviewStale) {
 		t.Fatalf("changed environment review validated: %v", err)
 	}
-	if _, err := s.ApproveApplicationStandardReview(t.Context(), f.app.OrgID, f.app.AccountID, p.ID, p.ApprovalHash); !errors.Is(err, ErrApplicationStandardReviewStale) {
+	if _, err := s.ApproveApplicationStandardReview(t.Context(), f.app.OrgID, f.app.AccountID, p.ID, p.ApprovalHash); !errors.Is(err, state.ErrApplicationStandardReviewStale) {
 		t.Fatalf("changed environment review approved: %v", err)
 	}
 	assignments, err := s.ListApplicationStandardAssignments(t.Context(), f.app.OrgID)
@@ -95,7 +96,7 @@ func (f standardEnvironmentReviewFixture) assertStale(t *testing.T, s standardEn
 }
 
 func TestMemApplicationStandardEnvironmentReview(t *testing.T) {
-	standardEnvironmentReviewRevisions(t, NewMemStore())
+	standardEnvironmentReviewRevisions(t, state.NewMemStore())
 }
 
 func standardEnvironmentReviewRevisions(t *testing.T, s standardEnvironmentReviewTestStore) {
@@ -109,7 +110,7 @@ func standardEnvironmentReviewRevisions(t *testing.T, s standardEnvironmentRevie
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, value := range []any{p, p.approvalInputs, retained, retained.approvalInputs} {
+	for _, value := range []any{p, (*p.ApprovalInputs()), retained, (*retained.ApprovalInputs())} {
 		raw, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
@@ -147,7 +148,7 @@ func standardEnvironmentReviewRevisions(t *testing.T, s standardEnvironmentRevie
 	if err := s.DeleteProjectEnvironment(t.Context(), f.app.AccountID, f.app.ProjectID, f.env.Slug); err != nil {
 		t.Fatal(err)
 	}
-	env, err := s.CreateProjectEnvironment(t.Context(), ProjectEnvironment{AccountID: f.app.AccountID, ProjectID: f.app.ProjectID, Slug: f.env.Slug})
+	env, err := s.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: f.app.AccountID, ProjectID: f.app.ProjectID, Slug: f.env.Slug})
 	if err != nil || env.ID == f.env.ID {
 		t.Fatalf("environment lifetime reused: %+v %v", env, err)
 	}
@@ -162,17 +163,17 @@ func standardEnvironmentReviewRevisions(t *testing.T, s standardEnvironmentRevie
 }
 
 func TestMemApplicationStandardEnvironmentReviewPinAndBody(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	standardEnvironmentReviewPinAndBody(t, m, func(f standardEnvironmentReviewFixture, specID string) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		m.projectEnvironmentWorkloadDeploymentSpecs[f.dep.ID] = specID
+		(*m.Mu()).Lock()
+		defer (*m.Mu()).Unlock()
+		(*m.ProjectEnvironmentWorkloadDeploymentSpecs())[f.dep.ID] = specID
 	}, func(f standardEnvironmentReviewFixture) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		spec := m.projectEnvironmentWorkloadSpecs[f.spec.ID]
+		(*m.Mu()).Lock()
+		defer (*m.Mu()).Unlock()
+		spec := (*m.ProjectEnvironmentWorkloadSpecs())[f.spec.ID]
 		spec.Settings.RAMMB = 1024
-		m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
+		(*m.ProjectEnvironmentWorkloadSpecs())[spec.ID] = spec
 	})
 }
 
@@ -193,13 +194,13 @@ func standardEnvironmentReviewPinAndBody(t *testing.T, s standardEnvironmentRevi
 	p = f.preview(t, s)
 	corrupt(f)
 	f.assertStale(t, s, p)
-	if _, err := s.PreviewApplicationStandardAssignment(t.Context(), f.app.OrgID, f.app.AccountID, f.request); !errors.Is(err, ErrConflict) {
+	if _, err := s.PreviewApplicationStandardAssignment(t.Context(), f.app.OrgID, f.app.AccountID, f.request); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("corrupt retained settings accepted: %v", err)
 	}
 }
 
 func TestMemApplicationStandardEnvironmentMaterializationReview(t *testing.T) {
-	standardEnvironmentMaterializationReview(t, NewMemStore())
+	standardEnvironmentMaterializationReview(t, state.NewMemStore())
 }
 
 func standardEnvironmentMaterializationReview(t *testing.T, s standardEnvironmentReviewTestStore) {
@@ -242,38 +243,38 @@ func standardEnvironmentMaterializationDrift(t *testing.T, s standardEnvironment
 }
 
 func TestMemApplicationStandardEnvironmentMaterializationCorruptBody(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	standardEnvironmentMaterializationDrift(t, m, func(f standardEnvironmentReviewFixture) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		spec := m.projectEnvironmentWorkloadSpecs[f.spec.ID]
+		(*m.Mu()).Lock()
+		defer (*m.Mu()).Unlock()
+		spec := (*m.ProjectEnvironmentWorkloadSpecs())[f.spec.ID]
 		spec.Settings.RAMMB = 1024
-		m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
+		(*m.ProjectEnvironmentWorkloadSpecs())[spec.ID] = spec
 	})
 }
 
 func TestApplicationStandardEnvironmentReviewRejectsUnverifiedIdentity(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	f := newStandardEnvironmentReviewFixture(t, m)
-	w, err := makeStandardReviewEnvironmentWorkload(f.spec, f.env, "deployed", f.dep.ID, f.dep.Scope)
+	w, err := state.MakeStandardReviewEnvironmentWorkload(f.spec, f.env, "deployed", f.dep.ID, f.dep.Scope)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		name   string
-		mutate func(*standardReviewEnvironmentWorkload)
+		mutate func(*state.StandardReviewEnvironmentWorkload)
 	}{
-		{"missing body", func(w *standardReviewEnvironmentWorkload) { w.Settings = nil }},
-		{"foreign app", func(w *standardReviewEnvironmentWorkload) { w.AppID = uuid.NewString() }},
-		{"foreign owner", func(w *standardReviewEnvironmentWorkload) { w.AccountID = uuid.NewString() }},
-		{"foreign project", func(w *standardReviewEnvironmentWorkload) { w.ProjectID = uuid.NewString() }},
-		{"wrong scope", func(w *standardReviewEnvironmentWorkload) { w.DeploymentScope = "production" }},
+		{"missing body", func(w *state.StandardReviewEnvironmentWorkload) { w.Settings = nil }},
+		{"foreign app", func(w *state.StandardReviewEnvironmentWorkload) { w.AppID = uuid.NewString() }},
+		{"foreign owner", func(w *state.StandardReviewEnvironmentWorkload) { w.AccountID = uuid.NewString() }},
+		{"foreign project", func(w *state.StandardReviewEnvironmentWorkload) { w.ProjectID = uuid.NewString() }},
+		{"wrong scope", func(w *state.StandardReviewEnvironmentWorkload) { w.DeploymentScope = "production" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			copy := w
 			tc.mutate(&copy)
-			app := standardReviewAppSnapshot{AppID: f.app.ID, AccountID: f.app.AccountID, ProjectID: f.app.ProjectID, EnvironmentWorkloads: []standardReviewEnvironmentWorkload{copy}}
-			if err := normalizeStandardReviewEnvironmentWorkloads(&app); !errors.Is(err, ErrConflict) {
+			app := state.StandardReviewAppSnapshot{AppID: f.app.ID, AccountID: f.app.AccountID, ProjectID: f.app.ProjectID, EnvironmentWorkloads: []state.StandardReviewEnvironmentWorkload{copy}}
+			if err := state.NormalizeStandardReviewEnvironmentWorkloads(&app); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("unverified input accepted: %v", err)
 			}
 		})
@@ -281,24 +282,24 @@ func TestApplicationStandardEnvironmentReviewRejectsUnverifiedIdentity(t *testin
 }
 
 func TestApplicationStandardEnvironmentReviewPrivateVerification(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	f := newStandardEnvironmentReviewFixture(t, m)
-	m.mu.Lock()
-	snapshot, err := m.standardReviewSnapshotLocked(t.Context(), f.app.OrgID, f.app.AccountID, f.request)
-	m.mu.Unlock()
+	(*m.Mu()).Lock()
+	snapshot, err := m.StandardReviewSnapshotLocked(t.Context(), f.app.OrgID, f.app.AccountID, f.request)
+	(*m.Mu()).Unlock()
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := normalizeStandardReviewSnapshot(snapshot)
+	first, err := state.NormalizeStandardReviewSnapshot(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := normalizeStandardReviewSnapshot(first)
+	second, err := state.NormalizeStandardReviewSnapshot(first)
 	if err != nil {
 		t.Fatalf("private verified snapshot cannot be reused: %v", err)
 	}
-	a, _ := standardReviewDigest(first)
-	b, _ := standardReviewDigest(second)
+	a, _ := state.StandardReviewDigest(first)
+	b, _ := state.StandardReviewDigest(second)
 	if a != b || len(first.Applications[0].EnvironmentWorkloads) != 2 {
 		t.Fatal("normalization changed verified environment provenance")
 	}
@@ -312,11 +313,11 @@ func TestApplicationStandardEnvironmentReviewPrivateVerification(t *testing.T) {
 	if bytes.Contains(raw, []byte(base64.StdEncoding.EncodeToString(f.spec.Settings.PublicAuthBasicSealed))) {
 		t.Fatal("verified snapshot retained sealed settings")
 	}
-	var supplied standardReviewSnapshot
+	var supplied state.StandardReviewSnapshot
 	if err := json.Unmarshal(raw, &supplied); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := normalizeStandardReviewSnapshot(supplied); !errors.Is(err, ErrConflict) {
+	if _, err := state.NormalizeStandardReviewSnapshot(supplied); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("serialized descriptor supplied private verification authority: %v", err)
 	}
 }

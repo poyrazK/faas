@@ -37,11 +37,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/rootfs"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 
 	"filippo.io/age"
@@ -903,7 +903,7 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	// the ext4 bytes to a local tempdir so grype dir:<path> can
 	// scan a filesystem path regardless of where the canonical
 	// bytes live.
-	appsKey := sched.AppLayerKey(app.Slug, layerID)
+	appsKey := storagekey.AppLayer(app.Slug, layerID)
 	rc, err := be.Get(ctx, appsKey)
 	if err != nil {
 		return "", func() {}, fmt.Errorf("imaged: scan stage backend.Get(%q): %w", appsKey, err)
@@ -1580,7 +1580,7 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	if err := h.deleteJobArtifactKey(ctx, be, sched.JobLayerKey(jobID)); err != nil {
+	if err := h.deleteJobArtifactKey(ctx, be, storagekey.JobLayer(jobID)); err != nil {
 		return err
 	}
 	if lister, ok := be.(storage.LocalArtifactLister); ok {
@@ -1707,7 +1707,7 @@ func jobArtifactJobID(key string) (string, bool) {
 	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(key, prefix), suffix), "/")
 	if len(parts) == 1 {
 		stem := parts[0]
-		if _, err := uuid.Parse(stem); err == nil && sched.JobLayerKey(stem) == key {
+		if _, err := uuid.Parse(stem); err == nil && storagekey.JobLayer(stem) == key {
 			return stem, true
 		}
 		attempt := strings.Split(stem, "__")
@@ -1720,7 +1720,7 @@ func jobArtifactJobID(key string) (string, bool) {
 		if _, err := uuid.Parse(attempt[1]); err != nil {
 			return "", false
 		}
-		return attempt[0], sched.JobLayerAttemptKey(attempt[0], attempt[1]) == key
+		return attempt[0], storagekey.JobLayerAttempt(attempt[0], attempt[1]) == key
 	}
 	return "", false
 }
@@ -2414,7 +2414,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	// economics (CLAUDE.md "load-bearing — DO NOT fix"). The M5 fallback
 	// below streams all layers via oci.PullLayers for fakes that don't
 	// implement ManifestPuller.
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	be, err := h.storageFor()
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "imaged: storageFor")
@@ -2693,7 +2693,7 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.transitionFailure(ctx, dep.ID, msg)
 			return findings, fmt.Errorf("imaged: %s", msg)
 		}
-		layerKey := sched.AppSidecarLayerKey(app.Slug, dep.ID, sc.Name)
+		layerKey := storagekey.AppSidecarLayer(app.Slug, dep.ID, sc.Name)
 		// Per-sidecar pull path. We use the same h.oci
 		// ManifestPuller as the main image; per-sidecar
 		// auth may differ (a sidecar image can sit on a
@@ -3061,7 +3061,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		defer cleanupBuiltLayers()
 	}
 
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	be, err := h.storageFor()
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "storageFor")
@@ -5127,7 +5127,7 @@ func (h *Handler) buildFullRootfsLayer(
 	if err != nil {
 		return fmt.Errorf("imaged: full-rootfs storage backend: %w", err)
 	}
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	sbomKey := h.sbomStorageKeyForDeployment(ctx, dep.ID)
 	sbomRun := h.syftRun
 	// Direct OCI deployments have no source build row and therefore no

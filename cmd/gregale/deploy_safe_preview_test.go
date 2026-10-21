@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -7,13 +7,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/deploydiff"
 )
 
 func TestNewSafeReleasePreview_UsesBalancedLadderAndRollbackTarget(t *testing.T) {
 	latest := &api.DeploymentResponse{ID: "dep-previous"}
-	got, err := newSafeReleasePreview(&api.CanaryPresetSpec{Preset: "balanced"}, latest)
+	got, err := main.NewSafeReleasePreview(&api.CanaryPresetSpec{Preset: "balanced"}, latest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +36,7 @@ func TestNewSafeReleasePreview_UsesBalancedLadderAndRollbackTarget(t *testing.T)
 }
 
 func TestSafeReleaseHealthGate_FiltersToActionableRules(t *testing.T) {
-	got := safeReleaseHealthGate([]api.AlertRuleResponse{
+	got := main.SafeReleaseHealthGate([]api.AlertRuleResponse{
 		{Name: "zeta", Metric: "latency_p95_ms", Action: "demote", Enabled: true, State: "ok"},
 		{Name: "alpha", Metric: "error_rate_pct", Action: "rollback", Enabled: true, State: "firing"},
 		{Name: "ignored-webhook", Action: "webhook", Enabled: true, State: "firing"},
@@ -59,12 +60,12 @@ func TestAddSafeReleasePreview_ReportsMissingHealthGate(t *testing.T) {
 	defer server.Close()
 
 	d := deploydiff.Diff{Slug: "demo"}
-	opts := diffCLIOptions{
+	opts := main.DiffCLIOptions{
 		Slug:   "demo",
 		Safe:   true,
 		Canary: &api.CanaryPresetSpec{Preset: "balanced"},
 	}
-	addSafeReleasePreview(context.Background(), NewClient(server.URL, "test"), opts, deploydiff.EmptyBaseline(), &d)
+	main.AddSafeReleasePreview(context.Background(), main.NewClient(server.URL, "test"), opts, deploydiff.EmptyBaseline(), &d)
 	if d.SafeRelease == nil || d.SafeRelease.HealthGate.Status != deploydiff.SafeReleaseHealthNotConfigured {
 		t.Fatalf("safe release = %+v, want not_configured health gate", d.SafeRelease)
 	}
@@ -83,8 +84,8 @@ func TestAddSafeReleasePreview_ReportsHealthGateInHumanOutput(t *testing.T) {
 	defer server.Close()
 
 	d := deploydiff.Diff{Slug: "demo"}
-	opts := diffCLIOptions{Slug: "demo", Safe: true, Canary: &api.CanaryPresetSpec{Preset: "balanced"}}
-	addSafeReleasePreview(context.Background(), NewClient(server.URL, "test"), opts, deploydiff.EmptyBaseline(), &d)
+	opts := main.DiffCLIOptions{Slug: "demo", Safe: true, Canary: &api.CanaryPresetSpec{Preset: "balanced"}}
+	main.AddSafeReleasePreview(context.Background(), main.NewClient(server.URL, "test"), opts, deploydiff.EmptyBaseline(), &d)
 	if d.SafeRelease.HealthGate.Status != deploydiff.SafeReleaseHealthBlocked {
 		t.Fatalf("status = %q, want blocked", d.SafeRelease.HealthGate.Status)
 	}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -54,7 +55,7 @@ func TestVersionProtectionCLI(t *testing.T) {
 		{[]string{"legal-hold", "demo", bucket, key, "null", "OFF", id}, "PUT legal-hold"},
 	} {
 		c := &protectionCLIClient{}
-		if _, err := runVersionProtection(t.Context(), c, tc.args); err != nil || c.method != tc.method {
+		if _, err := main.RunVersionProtection(t.Context(), c, tc.args); err != nil || c.method != tc.method {
 			t.Fatal(tc, c, err)
 		}
 		if tc.args[0] == "status" {
@@ -89,7 +90,7 @@ func TestVersionProtectionCLI(t *testing.T) {
 		{"legal-hold", "demo", bucket, key, version, "ON", id, "extra"},
 	} {
 		c := &protectionCLIClient{}
-		if _, err := runVersionProtection(t.Context(), c, args); err == nil || c.method != "" {
+		if _, err := main.RunVersionProtection(t.Context(), c, args); err == nil || c.method != "" {
 			t.Fatal("invalid input contacted API", args, c, err)
 		}
 	}
@@ -111,7 +112,7 @@ func TestEventHoldProtectionCLI(t *testing.T) {
 		{[]string{"event-hold", "demo", bucket, "key", version, "COMPLIANCE", "OFF", "--retain-until", until, id}, "OFF", 0, 0, true},
 	} {
 		c := &protectionCLIClient{}
-		if _, e := runVersionProtection(t.Context(), c, tc.args); e != nil || c.method != "PUT retention" || c.retention.EventHold != tc.status || c.id != id || (c.retention.RetainUntilDate != nil) != tc.minimum {
+		if _, e := main.RunVersionProtection(t.Context(), c, tc.args); e != nil || c.method != "PUT retention" || c.retention.EventHold != tc.status || c.id != id || (c.retention.RetainUntilDate != nil) != tc.minimum {
 			t.Fatal(tc, c, e)
 		}
 		if tc.status == "ON" {
@@ -130,7 +131,7 @@ func TestEventHoldProtectionCLI(t *testing.T) {
 	} {
 		args := append([]string{"event-hold", "demo", bucket, "key", version}, tail...)
 		c := &protectionCLIClient{}
-		if _, e := runVersionProtection(t.Context(), c, args); e == nil || c.method != "" {
+		if _, e := main.RunVersionProtection(t.Context(), c, args); e == nil || c.method != "" {
 			t.Fatal("invalid event policy contacted API", args, e)
 		}
 	}

@@ -367,7 +367,7 @@ func (c ExclusiveOperationsConfig) Validate() error {
 
 func validExclusiveBrokerKind(kind string) bool {
 	switch kind {
-	case "kafka", "nats", "redis_streams", "sqs_compat", "queue", "amqp", "rabbitmq":
+	case "kafka", "nats", "redis_streams", "sqs_compat", "queue":
 		return true
 	default:
 		return false
@@ -1485,19 +1485,25 @@ type Manifest struct {
 // deliberately shell-shaped, matching a Procfile's `release:` entry and
 // preserving operators' existing quoting and expansion semantics.
 type ReleaseConfig struct {
-	Command string `yaml:"command"`
+	Command         string `yaml:"command"`
+	ContractCommand string `yaml:"contract_command,omitempty"`
 }
 
 func (c *ReleaseConfig) Validate() error {
 	if c == nil {
 		return nil
 	}
-	_, problem := (api.CreateAppTaskRequest{
-		Command:      []string{c.Command},
-		CommandShell: true,
-	}).Resolve()
-	if problem != nil {
-		return fmt.Errorf("release: %s", problem.Detail)
+	if c.Command == "" && c.ContractCommand == "" {
+		return fmt.Errorf("release: command is required")
+	}
+	for _, command := range []string{c.Command, c.ContractCommand} {
+		if command == "" {
+			continue
+		}
+		_, problem := (api.CreateAppTaskRequest{Command: []string{command}, CommandShell: true}).Resolve()
+		if problem != nil {
+			return fmt.Errorf("release: %s", problem.Detail)
+		}
 	}
 	return nil
 }
@@ -1794,12 +1800,14 @@ func (w *WorkerSpec) Validate() error {
 	}
 	if w.Source != nil {
 		switch w.Source.Kind {
-		case TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue, TriggerKindAMQP, TriggerKindRabbitMQ:
+		case TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue:
 			// valid broker kinds
+		case TriggerKindAMQP, TriggerKindRabbitMQ:
+			return fmt.Errorf("worker.source: %w", errBrokerKindUnavailable(w.Source.Kind))
 		case "":
 			return errors.New("worker.source: kind is required")
 		default:
-			return fmt.Errorf("worker.source: unsupported kind %q; must be one of kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq", w.Source.Kind)
+			return fmt.Errorf("worker.source: unsupported kind %q; must be one of kafka, nats, redis_streams, sqs_compat, queue", w.Source.Kind)
 		}
 		if err := w.Source.validateKindConfig(0); err != nil {
 			return fmt.Errorf("worker.source: %w", err)
@@ -2277,10 +2285,10 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			TriggerKindRedisStreams,
 			TriggerKindSQSCompat,
 			TriggerKindQueue,
-			TriggerKindAMQP,
-			TriggerKindRabbitMQ,
 			TriggerKindRealtime:
 			// fall through to per-kind validation below
+		case TriggerKindAMQP, TriggerKindRabbitMQ:
+			return fmt.Errorf("trigger[%d]: %w", i, errBrokerKindUnavailable(t.Kind))
 		case "":
 			return fmt.Errorf("trigger[%d]: missing kind (want one of %s)", i, supportedKindsList())
 		default:
@@ -2564,7 +2572,18 @@ func validateAppRetryPolicy(policy *RetryPolicyConfig) error {
 // shape — then alphabetical) so a customer grep'ing for "kafka" in
 // the error message finds it consistently.
 func supportedKindsList() string {
-	return "cron, kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq, realtime"
+	return "cron, kafka, nats, redis_streams, sqs_compat, queue, realtime"
+}
+
+// errBrokerKindUnavailable rejects broker kinds the manifest can parse but
+// the platform cannot run yet. apid's trigger API, the plan allowlist and
+// the triggers.kind CHECK accept only the kinds in supportedKindsList, so
+// accepting amqp/rabbitmq here let a deploy pass validation and then fail
+// with "amqp triggers are not available on the <plan> plan" on every plan.
+// The AMQP poller exists in pkg/sched; enabling the kind follows the
+// extension checklist on api.TriggerKind.
+func errBrokerKindUnavailable(kind TriggerKind) error {
+	return fmt.Errorf("%s triggers are not available yet (supported kinds: %s)", kind, supportedKindsList())
 }
 
 // validateKindConfig runs the per-kind config check. The cron kind's

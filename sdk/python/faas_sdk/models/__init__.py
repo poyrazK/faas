@@ -39,6 +39,7 @@ from .account_trace_invocation import AccountTraceInvocation
 from .account_trace_lookup_error import AccountTraceLookupError
 from .account_trace_lookup_response import AccountTraceLookupResponse
 from .account_trace_match import AccountTraceMatch
+from .account_trace_wake import AccountTraceWake
 from .account_usage_response import AccountUsageResponse
 from .activity_actor_response import ActivityActorResponse
 from .activity_actor_response_type import ActivityActorResponseType
@@ -148,6 +149,8 @@ from .app_change_timeline_response import AppChangeTimelineResponse
 from .app_change_timeline_response_unavailable_sources_item import AppChangeTimelineResponseUnavailableSourcesItem
 from .app_configured_resources import AppConfiguredResources
 from .app_configured_resources_cpu_millicores import AppConfiguredResourcesCpuMillicores
+from .app_deploy_settings_condition import AppDeploySettingsCondition
+from .app_deploy_settings_condition_expected_settings import AppDeploySettingsConditionExpectedSettings
 from .app_effective_limits import AppEffectiveLimits
 from .app_env_list_response import AppEnvListResponse
 from .app_env_list_response_env_by_scope import AppEnvListResponseEnvByScope
@@ -768,6 +771,7 @@ from .control_data_pipeline_request import ControlDataPipelineRequest
 from .control_data_pipeline_request_action import ControlDataPipelineRequestAction
 from .control_event_execution_lineage_case_backfill_request import ControlEventExecutionLineageCaseBackfillRequest
 from .control_event_execution_lineage_retry_job_request import ControlEventExecutionLineageRetryJobRequest
+from .control_project_release_action import ControlProjectReleaseAction
 from .control_realtime_replay_job_action import ControlRealtimeReplayJobAction
 from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
 from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
@@ -960,6 +964,11 @@ from .create_queue_binding_canary_request import CreateQueueBindingCanaryRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
 from .create_queue_binding_request_workload_class import CreateQueueBindingRequestWorkloadClass
+from .create_release_freeze_request import CreateReleaseFreezeRequest
+from .create_release_freeze_request_kind import CreateReleaseFreezeRequestKind
+from .create_release_gate_request import CreateReleaseGateRequest
+from .create_release_gate_request_comparison import CreateReleaseGateRequestComparison
+from .create_release_gate_request_kind import CreateReleaseGateRequestKind
 from .create_scenario_objects_request import CreateScenarioObjectsRequest
 from .create_scenario_postgres_request import CreateScenarioPostgresRequest
 from .create_slo_request import CreateSLORequest
@@ -1014,6 +1023,8 @@ from .dashboard_discard_failed_event_body import DashboardDiscardFailedEventBody
 from .dashboard_replay_account_failed_event_body import DashboardReplayAccountFailedEventBody
 from .dashboard_replay_app_debug_request_body import DashboardReplayAppDebugRequestBody
 from .dashboard_replay_failed_event_body import DashboardReplayFailedEventBody
+from .data_api_access_config import DataAPIAccessConfig
+from .data_api_access_config_version import DataAPIAccessConfigVersion
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
@@ -1021,6 +1032,20 @@ from .data_api_runtime_connection_report import DataAPIRuntimeConnectionReport
 from .data_api_runtime_connection_report_runtime_model import DataAPIRuntimeConnectionReportRuntimeModel
 from .data_api_runtime_connection_report_state import DataAPIRuntimeConnectionReportState
 from .data_api_runtime_connection_report_version import DataAPIRuntimeConnectionReportVersion
+from .data_api_server_key import DataAPIServerKey
+from .data_api_server_key_permission_set import DataAPIServerKeyPermissionSet
+from .data_api_server_key_permission_set_access import DataAPIServerKeyPermissionSetAccess
+from .data_api_server_key_slot import DataAPIServerKeySlot
+from .data_api_usage import DataAPIUsage
+from .data_api_usage_bucket import DataAPIUsageBucket
+from .data_api_usage_counts import DataAPIUsageCounts
+from .data_api_usage_granularity import DataAPIUsageGranularity
+from .data_api_usage_hour import DataAPIUsageHour
+from .data_api_usage_month_to_date import DataAPIUsageMonthToDate
+from .data_api_usage_report import DataAPIUsageReport
+from .data_api_usage_report_response import DataAPIUsageReportResponse
+from .data_api_usage_report_version import DataAPIUsageReportVersion
+from .data_api_user_auth import DataAPIUserAuth
 from .data_connection import DataConnection
 from .data_connection_check import DataConnectionCheck
 from .data_connection_check_state import DataConnectionCheckState
@@ -1173,6 +1198,14 @@ from .deployment_change import DeploymentChange
 from .deployment_change_after_type_3 import DeploymentChangeAfterType3
 from .deployment_change_before_type_3 import DeploymentChangeBeforeType3
 from .deployment_change_field import DeploymentChangeField
+from .deployment_configuration_status import DeploymentConfigurationStatus
+from .deployment_cron_activation_status import DeploymentCronActivationStatus
+from .deployment_cron_activation_status_reason import DeploymentCronActivationStatusReason
+from .deployment_cron_activation_status_status import DeploymentCronActivationStatusStatus
+from .deployment_cron_config import DeploymentCronConfig
+from .deployment_cron_staging_request import DeploymentCronStagingRequest
+from .deployment_cron_staging_request_operation import DeploymentCronStagingRequestOperation
+from .deployment_cron_staging_snapshot import DeploymentCronStagingSnapshot
 from .deployment_dependency_gate import DeploymentDependencyGate
 from .deployment_dependency_gate_status import DeploymentDependencyGateStatus
 from .deployment_dependency_pin import DeploymentDependencyPin
@@ -1217,6 +1250,15 @@ from .deployment_stage_history_entry_status import DeploymentStageHistoryEntrySt
 from .deployment_stage_state import DeploymentStageState
 from .deployment_stage_state_current import DeploymentStageStateCurrent
 from .deployment_stage_state_retry_requested_stage import DeploymentStageStateRetryRequestedStage
+from .deployment_staging_receipt import DeploymentStagingReceipt
+from .deployment_staging_receipt_status import DeploymentStagingReceiptStatus
+from .deployment_staging_request import DeploymentStagingRequest
+from .deployment_staging_request_before import DeploymentStagingRequestBefore
+from .deployment_staging_request_desired import DeploymentStagingRequestDesired
+from .deployment_staging_request_operation import DeploymentStagingRequestOperation
+from .deployment_staging_snapshot import DeploymentStagingSnapshot
+from .deployment_staging_snapshot_settings import DeploymentStagingSnapshotSettings
+from .deployment_submission_receipt import DeploymentSubmissionReceipt
 from .deployment_summary_response import DeploymentSummaryResponse
 from .deployment_worker_drain_status import DeploymentWorkerDrainStatus
 from .detach_environment_git_source_request import DetachEnvironmentGitSourceRequest
@@ -1319,6 +1361,7 @@ from .durable_entity_validator_deployment_info import DurableEntityValidatorDepl
 from .durable_entity_validator_deployment_info_source import DurableEntityValidatorDeploymentInfoSource
 from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
 from .edge_protection_response import EdgeProtectionResponse
+from .edge_protection_response_challenge import EdgeProtectionResponseChallenge
 from .edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
 from .edge_protection_response_range import EdgeProtectionResponseRange
 from .edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
@@ -1334,6 +1377,7 @@ from .edge_rule_budget_action import EdgeRuleBudgetAction
 from .edge_rule_cache_action import EdgeRuleCacheAction
 from .edge_rule_cache_action_methods_item import EdgeRuleCacheActionMethodsItem
 from .edge_rule_cache_action_vary_on_item import EdgeRuleCacheActionVaryOnItem
+from .edge_rule_challenge_action import EdgeRuleChallengeAction
 from .edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
 from .edge_rule_cors_action import EdgeRuleCORSAction
 from .edge_rule_event_response import EdgeRuleEventResponse
@@ -1354,6 +1398,11 @@ from .edge_rule_list_response_kind import EdgeRuleListResponseKind
 from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
 from .edge_rule_match_expr import EdgeRuleMatchExpr
 from .edge_rule_match_expr_op import EdgeRuleMatchExprOp
+from .edge_rule_recipe_suggestion import EdgeRuleRecipeSuggestion
+from .edge_rule_recipe_suggestion_alternative import EdgeRuleRecipeSuggestionAlternative
+from .edge_rule_recipe_suggestion_alternative_params import EdgeRuleRecipeSuggestionAlternativeParams
+from .edge_rule_recipe_suggestion_params import EdgeRuleRecipeSuggestionParams
+from .edge_rule_recipe_suggestions_response import EdgeRuleRecipeSuggestionsResponse
 from .edge_rule_redirect_action import EdgeRuleRedirectAction
 from .edge_rule_redirect_action_headers import EdgeRuleRedirectActionHeaders
 from .edge_rule_redirect_action_status_code import EdgeRuleRedirectActionStatusCode
@@ -1418,13 +1467,27 @@ from .environment_git_ops_changed_webhook_payload_previous_status import (
 )
 from .environment_git_ops_changed_webhook_payload_status import EnvironmentGitOpsChangedWebhookPayloadStatus
 from .environment_git_ops_changed_webhook_payload_version import EnvironmentGitOpsChangedWebhookPayloadVersion
+from .environment_git_ops_diagnostic import EnvironmentGitOpsDiagnostic
+from .environment_git_ops_diagnostic_actor import EnvironmentGitOpsDiagnosticActor
+from .environment_git_ops_explanation import EnvironmentGitOpsExplanation
+from .environment_git_ops_explanation_source_freshness import EnvironmentGitOpsExplanationSourceFreshness
+from .environment_git_ops_explanation_status import EnvironmentGitOpsExplanationStatus
 from .environment_git_ops_override_request import EnvironmentGitOpsOverrideRequest
 from .environment_git_ops_plan import EnvironmentGitOpsPlan
 from .environment_git_ops_run import EnvironmentGitOpsRun
 from .environment_git_ops_run_status import EnvironmentGitOpsRunStatus
 from .environment_git_ops_run_steps_type_0_item import EnvironmentGitOpsRunStepsType0Item
 from .environment_git_ops_status_response import EnvironmentGitOpsStatusResponse
+from .environment_git_promotion_artifact import EnvironmentGitPromotionArtifact
+from .environment_git_promotion_change import EnvironmentGitPromotionChange
+from .environment_git_promotion_origin import EnvironmentGitPromotionOrigin
+from .environment_git_promotion_origin_provider import EnvironmentGitPromotionOriginProvider
+from .environment_git_promotion_target import EnvironmentGitPromotionTarget
 from .environment_git_protected_branch_evidence import EnvironmentGitProtectedBranchEvidence
+from .environment_git_recovery_release import EnvironmentGitRecoveryRelease
+from .environment_git_recovery_release_eligibility import EnvironmentGitRecoveryReleaseEligibility
+from .environment_git_recovery_release_protection_status import EnvironmentGitRecoveryReleaseProtectionStatus
+from .environment_git_recovery_release_retention_status import EnvironmentGitRecoveryReleaseRetentionStatus
 from .environment_git_review_evidence import EnvironmentGitReviewEvidence
 from .environment_git_reviewed_merge_evidence import EnvironmentGitReviewedMergeEvidence
 from .environment_git_revision_approval import EnvironmentGitRevisionApproval
@@ -1444,12 +1507,19 @@ from .environment_queue_binding import EnvironmentQueueBinding
 from .environment_queue_binding_mode import EnvironmentQueueBindingMode
 from .environment_queue_smoke import EnvironmentQueueSmoke
 from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
+from .environment_recovery_retention import EnvironmentRecoveryRetention
 from .environment_route_budgets import EnvironmentRouteBudgets
 from .environment_route_budgets_budget_source import EnvironmentRouteBudgetsBudgetSource
 from .environment_route_contract import EnvironmentRouteContract
 from .environment_service_binding import EnvironmentServiceBinding
 from .environment_workload import EnvironmentWorkload
 from .environment_workload_activation_evidence import EnvironmentWorkloadActivationEvidence
+from .environment_workload_progress import EnvironmentWorkloadProgress
+from .environment_workload_progress_activation import EnvironmentWorkloadProgressActivation
+from .environment_workload_progress_build_cache_status import EnvironmentWorkloadProgressBuildCacheStatus
+from .environment_workload_progress_preparation import EnvironmentWorkloadProgressPreparation
+from .environment_workload_progress_qualification import EnvironmentWorkloadProgressQualification
+from .environment_workload_progress_serving import EnvironmentWorkloadProgressServing
 from .environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
 from .environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
 from .environment_workload_queue_smoke import EnvironmentWorkloadQueueSmoke
@@ -1883,6 +1953,10 @@ from .financial_app_costs_response import FinancialAppCostsResponse
 from .financial_app_costs_response_currency import FinancialAppCostsResponseCurrency
 from .financial_app_meter_costs import FinancialAppMeterCosts
 from .financial_attribution import FinancialAttribution
+from .financial_budget_alert import FinancialBudgetAlert
+from .financial_budget_alert_last_error import FinancialBudgetAlertLastError
+from .financial_budget_alert_state import FinancialBudgetAlertState
+from .financial_budget_evaluation import FinancialBudgetEvaluation
 from .financial_budget_history_response import FinancialBudgetHistoryResponse
 from .financial_budget_list_response import FinancialBudgetListResponse
 from .financial_budget_preview_request import FinancialBudgetPreviewRequest
@@ -1891,6 +1965,7 @@ from .financial_budget_response import FinancialBudgetResponse
 from .financial_budget_response_status import FinancialBudgetResponseStatus
 from .financial_budget_revision_response import FinancialBudgetRevisionResponse
 from .financial_budget_revision_response_mutation import FinancialBudgetRevisionResponseMutation
+from .financial_budget_runtime import FinancialBudgetRuntime
 from .financial_budget_scope import FinancialBudgetScope
 from .financial_budget_scope_kind import FinancialBudgetScopeKind
 from .financial_budget_spec import FinancialBudgetSpec
@@ -1900,12 +1975,21 @@ from .financial_budget_spec_currency import FinancialBudgetSpecCurrency
 from .financial_budget_spec_meters_item import FinancialBudgetSpecMetersItem
 from .financial_budget_spec_mode import FinancialBudgetSpecMode
 from .financial_budget_spec_resume_rule import FinancialBudgetSpecResumeRule
+from .financial_budget_stop import FinancialBudgetStop
+from .financial_budget_stop_resume_rule import FinancialBudgetStopResumeRule
+from .financial_budget_stop_target import FinancialBudgetStopTarget
+from .financial_budget_stop_target_last_error import FinancialBudgetStopTargetLastError
+from .financial_budget_stop_target_state import FinancialBudgetStopTargetState
 from .financial_budget_target import FinancialBudgetTarget
 from .financial_budget_target_kind import FinancialBudgetTargetKind
+from .financial_compute_balance import FinancialComputeBalance
+from .financial_compute_balance_basis import FinancialComputeBalanceBasis
+from .financial_compute_balance_scope_kind import FinancialComputeBalanceScopeKind
 from .financial_contract_costs import FinancialContractCosts
 from .financial_costs_response import FinancialCostsResponse
 from .financial_costs_response_currency import FinancialCostsResponseCurrency
 from .financial_costs_response_invoice_reconciliation import FinancialCostsResponseInvoiceReconciliation
+from .financial_egress_balance import FinancialEgressBalance
 from .financial_forecast import FinancialForecast
 from .financial_forecast_currency import FinancialForecastCurrency
 from .financial_forecast_response import FinancialForecastResponse
@@ -1948,6 +2032,7 @@ from .gdpr_audit_export_response_action import GdprAuditExportResponseAction
 from .gdpr_audit_export_response_data import GdprAuditExportResponseData
 from .gdpr_audit_export_response_source import GdprAuditExportResponseSource
 from .get_account_slo_window import GetAccountSLOWindow
+from .get_app_data_api_usage_granularity import GetAppDataAPIUsageGranularity
 from .get_app_edge_protection_range import GetAppEdgeProtectionRange
 from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
 from .get_app_metrics_range import GetAppMetricsRange
@@ -2264,6 +2349,8 @@ from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_durable_entity_registry_response_200 import ListDurableEntityRegistryResponse200
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
+from .list_environment_git_releases_request import ListEnvironmentGitReleasesRequest
+from .list_environment_git_releases_response import ListEnvironmentGitReleasesResponse
 from .list_event_acknowledgment_history_page_kind import ListEventAcknowledgmentHistoryPageKind
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_event_execution_lineage_retry_job_controls_action import ListEventExecutionLineageRetryJobControlsAction
@@ -2357,6 +2444,8 @@ from .list_profile_investigations_response import ListProfileInvestigationsRespo
 from .list_profile_periodic_monitors_response import ListProfilePeriodicMonitorsResponse
 from .list_project_binding_verification_runs_status import ListProjectBindingVerificationRunsStatus
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
+from .list_release_freezes_response import ListReleaseFreezesResponse
+from .list_release_gates_response import ListReleaseGatesResponse
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
 from .list_statement_invoices_status import ListStatementInvoicesStatus
@@ -3205,6 +3294,8 @@ from .operation_waiting_state import OperationWaitingState
 from .operation_waiting_state_approver import OperationWaitingStateApprover
 from .operation_waiting_state_kind import OperationWaitingStateKind
 from .operation_webhook_binding_response import OperationWebhookBindingResponse
+from .operation_webhook_binding_response_mode import OperationWebhookBindingResponseMode
+from .operation_webhook_signal import OperationWebhookSignal
 from .operation_workflow_action_obligation import OperationWorkflowActionObligation
 from .operation_workflow_action_preview_request import OperationWorkflowActionPreviewRequest
 from .operation_workflow_action_preview_response import OperationWorkflowActionPreviewResponse
@@ -3939,6 +4030,9 @@ from .platform_tenant_credential_policy_response_allowed_scopes_item import (
 from .platform_tenant_credential_result import PlatformTenantCredentialResult
 from .platform_tenant_credential_result_action import PlatformTenantCredentialResultAction
 from .platform_tenant_credentials_response import PlatformTenantCredentialsResponse
+from .platform_tenant_credit_list_response import PlatformTenantCreditListResponse
+from .platform_tenant_credit_response import PlatformTenantCreditResponse
+from .platform_tenant_credit_response_status import PlatformTenantCreditResponseStatus
 from .platform_tenant_customer_lifecycle_webhook_payload import PlatformTenantCustomerLifecycleWebhookPayload
 from .platform_tenant_customer_lifecycle_webhook_payload_customer_status import (
     PlatformTenantCustomerLifecycleWebhookPayloadCustomerStatus,
@@ -4006,6 +4100,7 @@ from .platform_tenant_self_deployment_response_status import PlatformTenantSelfD
 from .platform_tenant_self_hostname_response import PlatformTenantSelfHostnameResponse
 from .platform_tenant_self_hostname_response_action import PlatformTenantSelfHostnameResponseAction
 from .platform_tenant_self_statement_list_response import PlatformTenantSelfStatementListResponse
+from .platform_tenant_spend_cap_response import PlatformTenantSpendCapResponse
 from .platform_tenant_statement_finalized_webhook_payload import PlatformTenantStatementFinalizedWebhookPayload
 from .platform_tenant_statement_finalized_webhook_payload_status import (
     PlatformTenantStatementFinalizedWebhookPayloadStatus,
@@ -4017,6 +4112,7 @@ from .platform_tenant_statement_response import PlatformTenantStatementResponse
 from .platform_tenant_statement_response_status import PlatformTenantStatementResponseStatus
 from .platform_tenant_statement_summary_response import PlatformTenantStatementSummaryResponse
 from .platform_tenant_statement_summary_response_status import PlatformTenantStatementSummaryResponseStatus
+from .platform_tenant_subject_signal_request import PlatformTenantSubjectSignalRequest
 from .platform_tenant_surface_certificate_changed_webhook_payload import (
     PlatformTenantSurfaceCertificateChangedWebhookPayload,
 )
@@ -4083,8 +4179,12 @@ from .preview_durable_entity_quota_policy_response_200 import PreviewDurableEnti
 from .preview_durable_entity_retirement_response_200 import PreviewDurableEntityRetirementResponse200
 from .preview_environment_git_plan_response import PreviewEnvironmentGitPlanResponse
 from .preview_environment_git_plan_response_provider import PreviewEnvironmentGitPlanResponseProvider
+from .preview_environment_git_promotion_request import PreviewEnvironmentGitPromotionRequest
+from .preview_environment_git_promotion_response import PreviewEnvironmentGitPromotionResponse
 from .preview_environment_git_revision_request import PreviewEnvironmentGitRevisionRequest
 from .preview_environment_git_revision_response import PreviewEnvironmentGitRevisionResponse
+from .preview_environment_git_rollback_request import PreviewEnvironmentGitRollbackRequest
+from .preview_environment_git_rollback_response import PreviewEnvironmentGitRollbackResponse
 from .preview_environment_member_response import PreviewEnvironmentMemberResponse
 from .preview_environment_status_response import PreviewEnvironmentStatusResponse
 from .preview_environment_status_response_phase import PreviewEnvironmentStatusResponsePhase
@@ -4206,6 +4306,13 @@ from .project_binding_verification_run_diagnostics_status import ProjectBindingV
 from .project_binding_verification_run_members import ProjectBindingVerificationRunMembers
 from .project_binding_verification_run_status import ProjectBindingVerificationRunStatus
 from .project_delete_preview_response import ProjectDeletePreviewResponse
+from .project_deployment_check import ProjectDeploymentCheck
+from .project_deployment_check_request import ProjectDeploymentCheckRequest
+from .project_deployment_check_status import ProjectDeploymentCheckStatus
+from .project_deployment_check_workload import ProjectDeploymentCheckWorkload
+from .project_deployment_readiness import ProjectDeploymentReadiness
+from .project_deployment_readiness_schema_version import ProjectDeploymentReadinessSchemaVersion
+from .project_deployment_readiness_status import ProjectDeploymentReadinessStatus
 from .project_environment_approval_response import ProjectEnvironmentApprovalResponse
 from .project_environment_approval_response_status import ProjectEnvironmentApprovalResponseStatus
 from .project_environment_approval_response_token_kind import ProjectEnvironmentApprovalResponseTokenKind
@@ -4252,6 +4359,14 @@ from .project_environment_promotion_list_response import ProjectEnvironmentPromo
 from .project_environment_promotion_preview_response import ProjectEnvironmentPromotionPreviewResponse
 from .project_environment_promotion_release_graph_response import ProjectEnvironmentPromotionReleaseGraphResponse
 from .project_environment_promotion_response import ProjectEnvironmentPromotionResponse
+from .project_environment_promotion_response_status import ProjectEnvironmentPromotionResponseStatus
+from .project_environment_promotion_secret_preview_request import ProjectEnvironmentPromotionSecretPreviewRequest
+from .project_environment_promotion_secret_preview_request_secrets import (
+    ProjectEnvironmentPromotionSecretPreviewRequestSecrets,
+)
+from .project_environment_promotion_secret_preview_request_secrets_additional_property import (
+    ProjectEnvironmentPromotionSecretPreviewRequestSecretsAdditionalProperty,
+)
 from .project_environment_promotion_status_response import ProjectEnvironmentPromotionStatusResponse
 from .project_environment_promotion_status_response_rollback_status import (
     ProjectEnvironmentPromotionStatusResponseRollbackStatus,
@@ -4330,31 +4445,89 @@ from .project_environment_workload_diff_response import ProjectEnvironmentWorklo
 from .project_initial_secrets import ProjectInitialSecrets
 from .project_initial_secrets_additional_property import ProjectInitialSecretsAdditionalProperty
 from .project_migration import ProjectMigration
+from .project_migration_baseline_verification import ProjectMigrationBaselineVerification
+from .project_migration_baseline_verification_status import ProjectMigrationBaselineVerificationStatus
 from .project_migration_build_wait import ProjectMigrationBuildWait
 from .project_migration_build_wait_status import ProjectMigrationBuildWaitStatus
+from .project_migration_contract import ProjectMigrationContract
+from .project_migration_contract_status import ProjectMigrationContractStatus
 from .project_migration_list import ProjectMigrationList
+from .project_migration_recovery import ProjectMigrationRecovery
+from .project_migration_recovery_request import ProjectMigrationRecoveryRequest
+from .project_migration_recovery_status import ProjectMigrationRecoveryStatus
 from .project_migration_service import ProjectMigrationService
 from .project_migration_service_public_build_urls import ProjectMigrationServicePublicBuildUrls
 from .project_migration_service_public_service_connections import ProjectMigrationServicePublicServiceConnections
 from .project_migration_service_service_connections import ProjectMigrationServiceServiceConnections
 from .project_migration_status import ProjectMigrationStatus
+from .project_promotion_admission import ProjectPromotionAdmission
+from .project_promotion_control import ProjectPromotionControl
+from .project_promotion_control_action import ProjectPromotionControlAction
+from .project_promotion_control_request import ProjectPromotionControlRequest
+from .project_promotion_control_status import ProjectPromotionControlStatus
+from .project_promotion_health import ProjectPromotionHealth
+from .project_promotion_health_phase import ProjectPromotionHealthPhase
+from .project_promotion_health_policy import ProjectPromotionHealthPolicy
+from .project_promotion_health_verdict import ProjectPromotionHealthVerdict
+from .project_promotion_migration_policy import ProjectPromotionMigrationPolicy
+from .project_promotion_migration_policy_compatibility import ProjectPromotionMigrationPolicyCompatibility
+from .project_promotion_migration_recovery import ProjectPromotionMigrationRecovery
+from .project_promotion_migration_recovery_request import ProjectPromotionMigrationRecoveryRequest
+from .project_promotion_migration_recovery_request_action import ProjectPromotionMigrationRecoveryRequestAction
+from .project_promotion_migration_recovery_status import ProjectPromotionMigrationRecoveryStatus
+from .project_promotion_worker_health import ProjectPromotionWorkerHealth
 from .project_public_build_ur_ls import ProjectPublicBuildURLs
 from .project_public_build_ur_ls_additional_property import ProjectPublicBuildURLsAdditionalProperty
+from .project_release_addition import ProjectReleaseAddition
+from .project_release_command import ProjectReleaseCommand
+from .project_release_command_compatibility import ProjectReleaseCommandCompatibility
+from .project_release_command_status import ProjectReleaseCommandStatus
+from .project_release_configuration import ProjectReleaseConfiguration
+from .project_release_control import ProjectReleaseControl
+from .project_release_control_action import ProjectReleaseControlAction
+from .project_release_control_request import ProjectReleaseControlRequest
+from .project_release_control_status import ProjectReleaseControlStatus
 from .project_release_deactivation_receipt import ProjectReleaseDeactivationReceipt
+from .project_release_probe import ProjectReleaseProbe
+from .project_release_probe_evidence import ProjectReleaseProbeEvidence
+from .project_release_secret_configuration import ProjectReleaseSecretConfiguration
+from .project_release_secret_stage_request import ProjectReleaseSecretStageRequest
+from .project_release_secret_stage_request_workloads import ProjectReleaseSecretStageRequestWorkloads
+from .project_release_secret_stage_request_workloads_additional_property import (
+    ProjectReleaseSecretStageRequestWorkloadsAdditionalProperty,
+)
+from .project_release_secret_stage_response import ProjectReleaseSecretStageResponse
+from .project_release_secret_version_map import ProjectReleaseSecretVersionMap
+from .project_release_secret_version_map_additional_property import ProjectReleaseSecretVersionMapAdditionalProperty
 from .project_release_set_list_response import ProjectReleaseSetListResponse
 from .project_release_set_member_response import ProjectReleaseSetMemberResponse
 from .project_release_set_response import ProjectReleaseSetResponse
+from .project_release_stabilization import ProjectReleaseStabilization
+from .project_release_stabilization_health import ProjectReleaseStabilizationHealth
+from .project_release_stabilization_status import ProjectReleaseStabilizationStatus
 from .project_release_stage import ProjectReleaseStage
 from .project_release_stage_member import ProjectReleaseStageMember
 from .project_release_stage_status import ProjectReleaseStageStatus
+from .project_release_verification import ProjectReleaseVerification
+from .project_release_verification_actions_item import ProjectReleaseVerificationActionsItem
+from .project_release_verification_percent import ProjectReleaseVerificationPercent
+from .project_release_worker import ProjectReleaseWorker
+from .project_release_worker_status import ProjectReleaseWorkerStatus
 from .project_response import ProjectResponse
+from .project_safe_release import ProjectSafeRelease
+from .project_safe_release_status import ProjectSafeReleaseStatus
 from .project_scan_request import ProjectScanRequest
 from .project_scan_request_app_slugs import ProjectScanRequestAppSlugs
 from .project_service_connections import ProjectServiceConnections
 from .project_service_connections_additional_property import ProjectServiceConnectionsAdditionalProperty
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
 from .project_source_ref_scan_request_app_slugs import ProjectSourceRefScanRequestAppSlugs
+from .project_submission_receipt import ProjectSubmissionReceipt
+from .project_submission_receipt_status import ProjectSubmissionReceiptStatus
 from .project_summary_response import ProjectSummaryResponse
+from .project_worker_health import ProjectWorkerHealth
+from .project_worker_health_status import ProjectWorkerHealthStatus
+from .project_worker_job_sample import ProjectWorkerJobSample
 from .project_workload_response import ProjectWorkloadResponse
 from .promote_automation_live_baseline_request import PromoteAutomationLiveBaselineRequest
 from .promote_project_environment_request import PromoteProjectEnvironmentRequest
@@ -4415,6 +4588,7 @@ from .put_issue_team_request import PutIssueTeamRequest
 from .put_issue_tracker_link_request import PutIssueTrackerLinkRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
+from .put_operation_webhook_binding_request_mode import PutOperationWebhookBindingRequestMode
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
@@ -4606,6 +4780,17 @@ from .register_scenario_test_response_recorder_version import RegisterScenarioTe
 from .register_scenario_test_response_webhook_mode import RegisterScenarioTestResponseWebhookMode
 from .rekey_progress import RekeyProgress
 from .release_database_ref import ReleaseDatabaseRef
+from .release_freeze import ReleaseFreeze
+from .release_freeze_kind import ReleaseFreezeKind
+from .release_freeze_source import ReleaseFreezeSource
+from .release_freeze_status import ReleaseFreezeStatus
+from .release_freeze_weekly import ReleaseFreezeWeekly
+from .release_freeze_weekly_days_item import ReleaseFreezeWeeklyDaysItem
+from .release_gate import ReleaseGate
+from .release_gate_comparison import ReleaseGateComparison
+from .release_gate_kind import ReleaseGateKind
+from .release_gate_result import ReleaseGateResult
+from .release_gate_result_kind import ReleaseGateResultKind
 from .release_restore_point import ReleaseRestorePoint
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
@@ -4973,6 +5158,11 @@ from .runtime_release_response_runtime import RuntimeReleaseResponseRuntime
 from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
+from .safe_apply_project_project_add_services import SafeApplyProjectProjectAddServices
+from .safe_apply_project_project_progressive import SafeApplyProjectProjectProgressive
+from .safe_apply_project_project_release_mode import SafeApplyProjectProjectReleaseMode
+from .safe_apply_project_project_stabilization import SafeApplyProjectProjectStabilization
+from .safe_apply_project_project_worker_health import SafeApplyProjectProjectWorkerHealth
 from .save_automation_draft_request import SaveAutomationDraftRequest
 from .save_automation_live_suite_request import SaveAutomationLiveSuiteRequest
 from .save_automation_test_suite_request import SaveAutomationTestSuiteRequest
@@ -4985,6 +5175,11 @@ from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflo
 from .scaling_schedule import ScalingSchedule
 from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
+from .scan_project_project_add_services import ScanProjectProjectAddServices
+from .scan_project_project_progressive import ScanProjectProjectProgressive
+from .scan_project_project_release_mode import ScanProjectProjectReleaseMode
+from .scan_project_project_stabilization import ScanProjectProjectStabilization
+from .scan_project_project_worker_health import ScanProjectProjectWorkerHealth
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
 from .scenario_action_snapshot import ScenarioActionSnapshot
@@ -5823,6 +6018,7 @@ __all__ = (
     "AccountTraceLookupError",
     "AccountTraceLookupResponse",
     "AccountTraceMatch",
+    "AccountTraceWake",
     "AccountUsageResponse",
     "ActivityActorResponse",
     "ActivityActorResponseType",
@@ -5932,6 +6128,8 @@ __all__ = (
     "AppChangeTimelineResponseUnavailableSourcesItem",
     "AppConfiguredResources",
     "AppConfiguredResourcesCpuMillicores",
+    "AppDeploySettingsCondition",
+    "AppDeploySettingsConditionExpectedSettings",
     "AppEffectiveLimits",
     "AppEnvListResponse",
     "AppEnvListResponseEnvByScope",
@@ -6536,6 +6734,7 @@ __all__ = (
     "ControlDataPipelineRequestAction",
     "ControlEventExecutionLineageCaseBackfillRequest",
     "ControlEventExecutionLineageRetryJobRequest",
+    "ControlProjectReleaseAction",
     "ControlRealtimeReplayJobAction",
     "ControlWorkflowRecoveryPolicyRequest",
     "ControlWorkflowRecoveryPolicyRequestOperation",
@@ -6715,6 +6914,11 @@ __all__ = (
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
     "CreateQueueBindingRequestWorkloadClass",
+    "CreateReleaseFreezeRequest",
+    "CreateReleaseFreezeRequestKind",
+    "CreateReleaseGateRequest",
+    "CreateReleaseGateRequestComparison",
+    "CreateReleaseGateRequestKind",
     "CreateScenarioObjectsRequest",
     "CreateScenarioPostgresRequest",
     "CreateSLORequest",
@@ -6764,6 +6968,8 @@ __all__ = (
     "DashboardReplayAccountFailedEventBody",
     "DashboardReplayAppDebugRequestBody",
     "DashboardReplayFailedEventBody",
+    "DataAPIAccessConfig",
+    "DataAPIAccessConfigVersion",
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
@@ -6771,6 +6977,20 @@ __all__ = (
     "DataAPIRuntimeConnectionReportRuntimeModel",
     "DataAPIRuntimeConnectionReportState",
     "DataAPIRuntimeConnectionReportVersion",
+    "DataAPIServerKey",
+    "DataAPIServerKeyPermissionSet",
+    "DataAPIServerKeyPermissionSetAccess",
+    "DataAPIServerKeySlot",
+    "DataAPIUsage",
+    "DataAPIUsageBucket",
+    "DataAPIUsageCounts",
+    "DataAPIUsageGranularity",
+    "DataAPIUsageHour",
+    "DataAPIUsageMonthToDate",
+    "DataAPIUsageReport",
+    "DataAPIUsageReportResponse",
+    "DataAPIUsageReportVersion",
+    "DataAPIUserAuth",
     "DataConnection",
     "DataConnectionCheck",
     "DataConnectionCheckState",
@@ -6920,6 +7140,14 @@ __all__ = (
     "DeploymentChangeAfterType3",
     "DeploymentChangeBeforeType3",
     "DeploymentChangeField",
+    "DeploymentConfigurationStatus",
+    "DeploymentCronActivationStatus",
+    "DeploymentCronActivationStatusReason",
+    "DeploymentCronActivationStatusStatus",
+    "DeploymentCronConfig",
+    "DeploymentCronStagingRequest",
+    "DeploymentCronStagingRequestOperation",
+    "DeploymentCronStagingSnapshot",
     "DeploymentDependencyGate",
     "DeploymentDependencyGateStatus",
     "DeploymentDependencyPin",
@@ -6964,6 +7192,15 @@ __all__ = (
     "DeploymentStageState",
     "DeploymentStageStateCurrent",
     "DeploymentStageStateRetryRequestedStage",
+    "DeploymentStagingReceipt",
+    "DeploymentStagingReceiptStatus",
+    "DeploymentStagingRequest",
+    "DeploymentStagingRequestBefore",
+    "DeploymentStagingRequestDesired",
+    "DeploymentStagingRequestOperation",
+    "DeploymentStagingSnapshot",
+    "DeploymentStagingSnapshotSettings",
+    "DeploymentSubmissionReceipt",
     "DeploymentSummaryResponse",
     "DeploymentWorkerDrainStatus",
     "DeployTokenResponse",
@@ -7067,6 +7304,7 @@ __all__ = (
     "DurableEntityValidatorDeploymentInfoSource",
     "DurableEntityValidatorDeploymentInfoStatus",
     "EdgeProtectionResponse",
+    "EdgeProtectionResponseChallenge",
     "EdgeProtectionResponsePreAuth",
     "EdgeProtectionResponseRange",
     "EdgeProtectionResponseRejectionsItem",
@@ -7082,6 +7320,7 @@ __all__ = (
     "EdgeRuleCacheAction",
     "EdgeRuleCacheActionMethodsItem",
     "EdgeRuleCacheActionVaryOnItem",
+    "EdgeRuleChallengeAction",
     "EdgeRuleCircuitBreakerAction",
     "EdgeRuleCORSAction",
     "EdgeRuleEventResponse",
@@ -7102,6 +7341,11 @@ __all__ = (
     "EdgeRuleMaintenanceAction",
     "EdgeRuleMatchExpr",
     "EdgeRuleMatchExprOp",
+    "EdgeRuleRecipeSuggestion",
+    "EdgeRuleRecipeSuggestionAlternative",
+    "EdgeRuleRecipeSuggestionAlternativeParams",
+    "EdgeRuleRecipeSuggestionParams",
+    "EdgeRuleRecipeSuggestionsResponse",
     "EdgeRuleRedirectAction",
     "EdgeRuleRedirectActionHeaders",
     "EdgeRuleRedirectActionStatusCode",
@@ -7164,13 +7408,27 @@ __all__ = (
     "EnvironmentGitOpsChangedWebhookPayloadPreviousStatus",
     "EnvironmentGitOpsChangedWebhookPayloadStatus",
     "EnvironmentGitOpsChangedWebhookPayloadVersion",
+    "EnvironmentGitOpsDiagnostic",
+    "EnvironmentGitOpsDiagnosticActor",
+    "EnvironmentGitOpsExplanation",
+    "EnvironmentGitOpsExplanationSourceFreshness",
+    "EnvironmentGitOpsExplanationStatus",
     "EnvironmentGitOpsOverrideRequest",
     "EnvironmentGitOpsPlan",
     "EnvironmentGitOpsRun",
     "EnvironmentGitOpsRunStatus",
     "EnvironmentGitOpsRunStepsType0Item",
     "EnvironmentGitOpsStatusResponse",
+    "EnvironmentGitPromotionArtifact",
+    "EnvironmentGitPromotionChange",
+    "EnvironmentGitPromotionOrigin",
+    "EnvironmentGitPromotionOriginProvider",
+    "EnvironmentGitPromotionTarget",
     "EnvironmentGitProtectedBranchEvidence",
+    "EnvironmentGitRecoveryRelease",
+    "EnvironmentGitRecoveryReleaseEligibility",
+    "EnvironmentGitRecoveryReleaseProtectionStatus",
+    "EnvironmentGitRecoveryReleaseRetentionStatus",
     "EnvironmentGitReviewedMergeEvidence",
     "EnvironmentGitReviewEvidence",
     "EnvironmentGitRevisionApproval",
@@ -7190,12 +7448,19 @@ __all__ = (
     "EnvironmentQueueBindingMode",
     "EnvironmentQueueSmoke",
     "EnvironmentQueueSmokePayloadType0",
+    "EnvironmentRecoveryRetention",
     "EnvironmentRouteBudgets",
     "EnvironmentRouteBudgetsBudgetSource",
     "EnvironmentRouteContract",
     "EnvironmentServiceBinding",
     "EnvironmentWorkload",
     "EnvironmentWorkloadActivationEvidence",
+    "EnvironmentWorkloadProgress",
+    "EnvironmentWorkloadProgressActivation",
+    "EnvironmentWorkloadProgressBuildCacheStatus",
+    "EnvironmentWorkloadProgressPreparation",
+    "EnvironmentWorkloadProgressQualification",
+    "EnvironmentWorkloadProgressServing",
     "EnvironmentWorkloadQueueBindings",
     "EnvironmentWorkloadQueueRecoveries",
     "EnvironmentWorkloadQueueSmoke",
@@ -7595,6 +7860,10 @@ __all__ = (
     "FinancialAppCostsResponseCurrency",
     "FinancialAppMeterCosts",
     "FinancialAttribution",
+    "FinancialBudgetAlert",
+    "FinancialBudgetAlertLastError",
+    "FinancialBudgetAlertState",
+    "FinancialBudgetEvaluation",
     "FinancialBudgetHistoryResponse",
     "FinancialBudgetListResponse",
     "FinancialBudgetPreviewRequest",
@@ -7603,6 +7872,7 @@ __all__ = (
     "FinancialBudgetResponseStatus",
     "FinancialBudgetRevisionResponse",
     "FinancialBudgetRevisionResponseMutation",
+    "FinancialBudgetRuntime",
     "FinancialBudgetScope",
     "FinancialBudgetScopeKind",
     "FinancialBudgetSpec",
@@ -7612,12 +7882,21 @@ __all__ = (
     "FinancialBudgetSpecMetersItem",
     "FinancialBudgetSpecMode",
     "FinancialBudgetSpecResumeRule",
+    "FinancialBudgetStop",
+    "FinancialBudgetStopResumeRule",
+    "FinancialBudgetStopTarget",
+    "FinancialBudgetStopTargetLastError",
+    "FinancialBudgetStopTargetState",
     "FinancialBudgetTarget",
     "FinancialBudgetTargetKind",
+    "FinancialComputeBalance",
+    "FinancialComputeBalanceBasis",
+    "FinancialComputeBalanceScopeKind",
     "FinancialContractCosts",
     "FinancialCostsResponse",
     "FinancialCostsResponseCurrency",
     "FinancialCostsResponseInvoiceReconciliation",
+    "FinancialEgressBalance",
     "FinancialForecast",
     "FinancialForecastCurrency",
     "FinancialForecastResponse",
@@ -7660,6 +7939,7 @@ __all__ = (
     "GdprAuditExportResponseData",
     "GdprAuditExportResponseSource",
     "GetAccountSLOWindow",
+    "GetAppDataAPIUsageGranularity",
     "GetAppEdgeProtectionRange",
     "GetAppLogDrainAnalyticsWindow",
     "GetAppMetricsRange",
@@ -7964,6 +8244,8 @@ __all__ = (
     "ListDurableEntityRegistryResponse200",
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
+    "ListEnvironmentGitReleasesRequest",
+    "ListEnvironmentGitReleasesResponse",
     "ListEventAcknowledgmentHistoryPageKind",
     "ListEventDeliveriesState",
     "ListEventExecutionLineageRetryJobControlsAction",
@@ -8025,6 +8307,8 @@ __all__ = (
     "ListProfilePeriodicMonitorsResponse",
     "ListProjectBindingVerificationRunsStatus",
     "ListProjectEnvironmentPromotionsStatus",
+    "ListReleaseFreezesResponse",
+    "ListReleaseGatesResponse",
     "ListScheduleOccurrencesResponse",
     "ListSecretsForAccountResponse",
     "ListStatementInvoicesStatus",
@@ -8847,6 +9131,8 @@ __all__ = (
     "OperationWaitingStateApprover",
     "OperationWaitingStateKind",
     "OperationWebhookBindingResponse",
+    "OperationWebhookBindingResponseMode",
+    "OperationWebhookSignal",
     "OperationWorkflowActionObligation",
     "OperationWorkflowActionPreviewRequest",
     "OperationWorkflowActionPreviewResponse",
@@ -9469,6 +9755,9 @@ __all__ = (
     "PlatformTenantCredentialResult",
     "PlatformTenantCredentialResultAction",
     "PlatformTenantCredentialsResponse",
+    "PlatformTenantCreditListResponse",
+    "PlatformTenantCreditResponse",
+    "PlatformTenantCreditResponseStatus",
     "PlatformTenantCustomerLifecycleWebhookPayload",
     "PlatformTenantCustomerLifecycleWebhookPayloadCustomerStatus",
     "PlatformTenantDetailResponse",
@@ -9532,6 +9821,7 @@ __all__ = (
     "PlatformTenantSelfHostnameResponse",
     "PlatformTenantSelfHostnameResponseAction",
     "PlatformTenantSelfStatementListResponse",
+    "PlatformTenantSpendCapResponse",
     "PlatformTenantStatementFinalizedWebhookPayload",
     "PlatformTenantStatementFinalizedWebhookPayloadStatus",
     "PlatformTenantStatementHandoffResponse",
@@ -9541,6 +9831,7 @@ __all__ = (
     "PlatformTenantStatementResponseStatus",
     "PlatformTenantStatementSummaryResponse",
     "PlatformTenantStatementSummaryResponseStatus",
+    "PlatformTenantSubjectSignalRequest",
     "PlatformTenantSurfaceCertificateChangedWebhookPayload",
     "PlatformTenantSurfaceCertificateChangedWebhookPayloadCertState",
     "PlatformTenantSurfaceDeploymentChangedWebhookPayload",
@@ -9595,8 +9886,12 @@ __all__ = (
     "PreviewDurableEntityRetirementResponse200",
     "PreviewEnvironmentGitPlanResponse",
     "PreviewEnvironmentGitPlanResponseProvider",
+    "PreviewEnvironmentGitPromotionRequest",
+    "PreviewEnvironmentGitPromotionResponse",
     "PreviewEnvironmentGitRevisionRequest",
     "PreviewEnvironmentGitRevisionResponse",
+    "PreviewEnvironmentGitRollbackRequest",
+    "PreviewEnvironmentGitRollbackResponse",
     "PreviewEnvironmentMemberResponse",
     "PreviewEnvironmentStatusResponse",
     "PreviewEnvironmentStatusResponsePhase",
@@ -9716,6 +10011,13 @@ __all__ = (
     "ProjectBindingVerificationRunMembers",
     "ProjectBindingVerificationRunStatus",
     "ProjectDeletePreviewResponse",
+    "ProjectDeploymentCheck",
+    "ProjectDeploymentCheckRequest",
+    "ProjectDeploymentCheckStatus",
+    "ProjectDeploymentCheckWorkload",
+    "ProjectDeploymentReadiness",
+    "ProjectDeploymentReadinessSchemaVersion",
+    "ProjectDeploymentReadinessStatus",
     "ProjectEnvironmentApprovalResponse",
     "ProjectEnvironmentApprovalResponseStatus",
     "ProjectEnvironmentApprovalResponseTokenKind",
@@ -9758,6 +10060,10 @@ __all__ = (
     "ProjectEnvironmentPromotionPreviewResponse",
     "ProjectEnvironmentPromotionReleaseGraphResponse",
     "ProjectEnvironmentPromotionResponse",
+    "ProjectEnvironmentPromotionResponseStatus",
+    "ProjectEnvironmentPromotionSecretPreviewRequest",
+    "ProjectEnvironmentPromotionSecretPreviewRequestSecrets",
+    "ProjectEnvironmentPromotionSecretPreviewRequestSecretsAdditionalProperty",
     "ProjectEnvironmentPromotionStatusResponse",
     "ProjectEnvironmentPromotionStatusResponseRollbackStatus",
     "ProjectEnvironmentPromotionStatusResponseStatus",
@@ -9816,31 +10122,87 @@ __all__ = (
     "ProjectInitialSecrets",
     "ProjectInitialSecretsAdditionalProperty",
     "ProjectMigration",
+    "ProjectMigrationBaselineVerification",
+    "ProjectMigrationBaselineVerificationStatus",
     "ProjectMigrationBuildWait",
     "ProjectMigrationBuildWaitStatus",
+    "ProjectMigrationContract",
+    "ProjectMigrationContractStatus",
     "ProjectMigrationList",
+    "ProjectMigrationRecovery",
+    "ProjectMigrationRecoveryRequest",
+    "ProjectMigrationRecoveryStatus",
     "ProjectMigrationService",
     "ProjectMigrationServicePublicBuildUrls",
     "ProjectMigrationServicePublicServiceConnections",
     "ProjectMigrationServiceServiceConnections",
     "ProjectMigrationStatus",
+    "ProjectPromotionAdmission",
+    "ProjectPromotionControl",
+    "ProjectPromotionControlAction",
+    "ProjectPromotionControlRequest",
+    "ProjectPromotionControlStatus",
+    "ProjectPromotionHealth",
+    "ProjectPromotionHealthPhase",
+    "ProjectPromotionHealthPolicy",
+    "ProjectPromotionHealthVerdict",
+    "ProjectPromotionMigrationPolicy",
+    "ProjectPromotionMigrationPolicyCompatibility",
+    "ProjectPromotionMigrationRecovery",
+    "ProjectPromotionMigrationRecoveryRequest",
+    "ProjectPromotionMigrationRecoveryRequestAction",
+    "ProjectPromotionMigrationRecoveryStatus",
+    "ProjectPromotionWorkerHealth",
     "ProjectPublicBuildURLs",
     "ProjectPublicBuildURLsAdditionalProperty",
+    "ProjectReleaseAddition",
+    "ProjectReleaseCommand",
+    "ProjectReleaseCommandCompatibility",
+    "ProjectReleaseCommandStatus",
+    "ProjectReleaseConfiguration",
+    "ProjectReleaseControl",
+    "ProjectReleaseControlAction",
+    "ProjectReleaseControlRequest",
+    "ProjectReleaseControlStatus",
     "ProjectReleaseDeactivationReceipt",
+    "ProjectReleaseProbe",
+    "ProjectReleaseProbeEvidence",
+    "ProjectReleaseSecretConfiguration",
+    "ProjectReleaseSecretStageRequest",
+    "ProjectReleaseSecretStageRequestWorkloads",
+    "ProjectReleaseSecretStageRequestWorkloadsAdditionalProperty",
+    "ProjectReleaseSecretStageResponse",
+    "ProjectReleaseSecretVersionMap",
+    "ProjectReleaseSecretVersionMapAdditionalProperty",
     "ProjectReleaseSetListResponse",
     "ProjectReleaseSetMemberResponse",
     "ProjectReleaseSetResponse",
+    "ProjectReleaseStabilization",
+    "ProjectReleaseStabilizationHealth",
+    "ProjectReleaseStabilizationStatus",
     "ProjectReleaseStage",
     "ProjectReleaseStageMember",
     "ProjectReleaseStageStatus",
+    "ProjectReleaseVerification",
+    "ProjectReleaseVerificationActionsItem",
+    "ProjectReleaseVerificationPercent",
+    "ProjectReleaseWorker",
+    "ProjectReleaseWorkerStatus",
     "ProjectResponse",
+    "ProjectSafeRelease",
+    "ProjectSafeReleaseStatus",
     "ProjectScanRequest",
     "ProjectScanRequestAppSlugs",
     "ProjectServiceConnections",
     "ProjectServiceConnectionsAdditionalProperty",
     "ProjectSourceRefScanRequest",
     "ProjectSourceRefScanRequestAppSlugs",
+    "ProjectSubmissionReceipt",
+    "ProjectSubmissionReceiptStatus",
     "ProjectSummaryResponse",
+    "ProjectWorkerHealth",
+    "ProjectWorkerHealthStatus",
+    "ProjectWorkerJobSample",
     "ProjectWorkloadResponse",
     "PromoteAutomationLiveBaselineRequest",
     "PromoteProjectEnvironmentRequest",
@@ -9901,6 +10263,7 @@ __all__ = (
     "PutIssueTrackerLinkRequest",
     "PutJobRegistryCredentialRequest",
     "PutOperationWebhookBindingRequest",
+    "PutOperationWebhookBindingRequestMode",
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",
@@ -10086,6 +10449,17 @@ __all__ = (
     "RegisterScenarioTestResponseWebhookMode",
     "RekeyProgress",
     "ReleaseDatabaseRef",
+    "ReleaseFreeze",
+    "ReleaseFreezeKind",
+    "ReleaseFreezeSource",
+    "ReleaseFreezeStatus",
+    "ReleaseFreezeWeekly",
+    "ReleaseFreezeWeeklyDaysItem",
+    "ReleaseGate",
+    "ReleaseGateComparison",
+    "ReleaseGateKind",
+    "ReleaseGateResult",
+    "ReleaseGateResultKind",
     "ReleaseRestorePoint",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
@@ -10447,6 +10821,11 @@ __all__ = (
     "RuntimeUpgradePreviewResponse",
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
+    "SafeApplyProjectProjectAddServices",
+    "SafeApplyProjectProjectProgressive",
+    "SafeApplyProjectProjectReleaseMode",
+    "SafeApplyProjectProjectStabilization",
+    "SafeApplyProjectProjectWorkerHealth",
     "SaveAutomationDraftRequest",
     "SaveAutomationLiveSuiteRequest",
     "SaveAutomationTestSuiteRequest",
@@ -10459,6 +10838,11 @@ __all__ = (
     "ScalingSchedule",
     "ScalingTarget",
     "ScalingTargetMetric",
+    "ScanProjectProjectAddServices",
+    "ScanProjectProjectProgressive",
+    "ScanProjectProjectReleaseMode",
+    "ScanProjectProjectStabilization",
+    "ScanProjectProjectWorkerHealth",
     "ScanResult",
     "ScanResultStatus",
     "ScenarioActionSnapshot",

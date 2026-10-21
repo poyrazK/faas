@@ -784,6 +784,12 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if !d.engine.ownsApp(app) {
 		return
 	}
+	if err := state.CheckFinancialBudgetAdmissionForScope(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
+		// Keep pending work and its attempt count intact. A held budget is
+		// an admission decision, not a failed customer execution.
+		d.log.Debug("drain: preview budget admission deferred", "inv", inv.ID, "app_id", app.ID)
+		return
+	}
 	// /invoke is an HTTP/request primitive. Worker and job apps have no
 	// request listener, so an async/webhook/replay row targeting one can never
 	// become deliverable. Terminalise legacy rows here as a defence-in-depth

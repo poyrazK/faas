@@ -5,7 +5,7 @@
 // parity tests fire (those run against a real PG service container).
 //
 // Mirrors the iam6 org-keys pattern in memstore_iam6_org_keys_test.go.
-package state
+package state_test
 
 import (
 	"bytes"
@@ -15,10 +15,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStore_DeleteOldEvents_RetentionTrim(t *testing.T) {
-	m, ctx, _, _, _ := memCoverageFixture(t)
+	m, ctx, _, _, _ := state.MemCoverageFixture(t)
 	subj := uuid.NewString()
 	if err := m.AppendEvent(ctx, "test", "auth.session.binding_mismatch", &subj, []byte(`{"x":1}`)); err != nil {
 		t.Fatalf("append event: %v", err)
@@ -39,7 +40,7 @@ func TestMemStore_DeleteOldEvents_RetentionTrim(t *testing.T) {
 }
 
 func TestMemStore_CreateAPIKeyWithExpiryAndProvenance_RoundTrip(t *testing.T) {
-	m, ctx, account, _, _ := memCoverageFixture(t)
+	m, ctx, account, _, _ := state.MemCoverageFixture(t)
 	exp := time.Now().Add(24 * time.Hour)
 	parent := "parent-" + uuid.NewString()
 	key, err := m.CreateAPIKeyWithExpiryAndProvenance(ctx, account.ID, []byte{0x01, 0x02, 0x03, 0x04}, "cov-key", []string{"read"}, &exp, "10.0.0.5", "Mozilla/5.0", &parent)
@@ -67,7 +68,7 @@ func TestMemStore_CreateAPIKeyWithExpiryAndProvenance_RoundTrip(t *testing.T) {
 }
 
 func TestMemStore_CreateOrgAPIKeyWithProvenance_RoundTrip(t *testing.T) {
-	m, ctx, account, _, _ := memCoverageFixture(t)
+	m, ctx, account, _, _ := state.MemCoverageFixture(t)
 	orgID := "org-" + uuid.NewString()
 	exp := time.Now().Add(time.Hour)
 	parent := "parent-" + uuid.NewString()
@@ -102,7 +103,7 @@ func TestMemStore_CreateOrgAPIKeyWithProvenance_RoundTrip(t *testing.T) {
 }
 
 func TestMemStore_RotateOrgAPIKeyWithProvenance_Chain(t *testing.T) {
-	m, ctx, account, _, _ := memCoverageFixture(t)
+	m, ctx, account, _, _ := state.MemCoverageFixture(t)
 	orgID := "org-" + uuid.NewString()
 	exp := time.Now().Add(time.Hour)
 	old, err := m.CreateOrgAPIKey(ctx, orgID, account.ID, []byte{0x30}, "to-rotate", []string{"admin"}, &exp)
@@ -130,7 +131,7 @@ func TestMemStore_RotateOrgAPIKeyWithProvenance_Chain(t *testing.T) {
 }
 
 func TestMemStore_CreateSessionWithBinding_RoundTrip(t *testing.T) {
-	m, ctx, account, _, _ := memCoverageFixture(t)
+	m, ctx, account, _, _ := state.MemCoverageFixture(t)
 	id := "sid-" + uuid.NewString()
 	hash := "binding-" + uuid.NewString()
 	s, err := m.CreateSessionWithBinding(ctx, id, account.ID, "10.0.0.5", "Mozilla/5.0", hash)
@@ -155,18 +156,18 @@ func TestMemStore_CreateSessionWithBinding_RoundTrip(t *testing.T) {
 	}
 
 	// Duplicate sid → ErrConflict.
-	if _, err := m.CreateSessionWithBinding(ctx, id, account.ID, "", "", ""); !errors.Is(err, ErrConflict) {
+	if _, err := m.CreateSessionWithBinding(ctx, id, account.ID, "", "", ""); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("duplicate sid err = %v, want ErrConflict", err)
 	}
 
 	// Unknown account → ErrNotFound.
-	if _, err := m.CreateSessionWithBinding(ctx, "sid-missing", "missing", "", "", ""); !errors.Is(err, ErrNotFound) {
+	if _, err := m.CreateSessionWithBinding(ctx, "sid-missing", "missing", "", "", ""); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("missing account err = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStore_UpdateSessionBinding_IDORSafety(t *testing.T) {
-	m, ctx, account, _, _ := memCoverageFixture(t)
+	m, ctx, account, _, _ := state.MemCoverageFixture(t)
 	id := "sid-" + uuid.NewString()
 	hash1 := "hash-A"
 	if _, err := m.CreateSessionWithBinding(ctx, id, account.ID, "10.0.0.5", "Mozilla/5.0", hash1); err != nil {
@@ -186,12 +187,12 @@ func TestMemStore_UpdateSessionBinding_IDORSafety(t *testing.T) {
 	}
 
 	// Cross-account update → ErrNotFound (IDOR-safe).
-	if err := m.UpdateSessionBinding(ctx, id, "other-acct", hash2); !errors.Is(err, ErrNotFound) {
+	if err := m.UpdateSessionBinding(ctx, id, "other-acct", hash2); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("cross-account err = %v, want ErrNotFound", err)
 	}
 
 	// Missing sid → ErrNotFound.
-	if err := m.UpdateSessionBinding(ctx, "sid-missing", account.ID, hash2); !errors.Is(err, ErrNotFound) {
+	if err := m.UpdateSessionBinding(ctx, "sid-missing", account.ID, hash2); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("missing sid err = %v, want ErrNotFound", err)
 	}
 
@@ -199,7 +200,7 @@ func TestMemStore_UpdateSessionBinding_IDORSafety(t *testing.T) {
 	if _, err := m.RevokeSession(ctx, id, account.ID); err != nil {
 		t.Fatalf("RevokeSession: %v", err)
 	}
-	if err := m.UpdateSessionBinding(ctx, id, account.ID, hash2); !errors.Is(err, ErrNotFound) {
+	if err := m.UpdateSessionBinding(ctx, id, account.ID, hash2); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("post-revoke err = %v, want ErrNotFound", err)
 	}
 }
@@ -210,7 +211,7 @@ func TestMemStore_UpdateSessionBinding_IDORSafety(t *testing.T) {
 // PR touches no audit payload shape but the new retention path reads
 // every event so the copy invariant is load-bearing.
 func TestMemStore_AppendEvent_DataCopy(t *testing.T) {
-	m, ctx, _, _, _ := memCoverageFixture(t)
+	m, ctx, _, _, _ := state.MemCoverageFixture(t)
 	original := bytes.Repeat([]byte{0xAB}, 8)
 	if err := m.AppendEvent(ctx, "test", "iam.coverage", nil, original); err != nil {
 		t.Fatalf("AppendEvent: %v", err)

@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 20261017210000
-package state
+package state_test
 
 import (
 	"bytes"
@@ -14,17 +14,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestPgCheckedRegressionActionAtomicReceipt(t *testing.T) {
 	ctx := t.Context()
-	store := NewPgStore(pgtest.OpenMigrated(t))
+	store := state.NewPgStore(pgtest.OpenMigrated(t))
 	account, err := store.CreateAccount(ctx, "checked-triage-"+uuid.NewString()+"@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "checked-triage", Type: AppTypeApp, RAMMB: 256})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "checked-triage", Type: state.AppTypeApp, RAMMB: 256})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +59,7 @@ func TestPgCheckedRegressionActionAtomicReceipt(t *testing.T) {
 	if !errors.Is(err, failure) || read().ReviewVersion != before.ReviewVersion {
 		t.Fatal("render failure committed observation", err)
 	}
-	if _, _, err := store.GetIdempotent(ctx, account.ID, key); !errors.Is(err, ErrNotFound) {
+	if _, _, err := store.GetIdempotent(ctx, account.ID, key); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("rollback retained an orphan reservation", err)
 	}
 	expected := []byte(`{"receipt":"committed"}`)
@@ -86,7 +87,7 @@ func TestPgCheckedRegressionActionAtomicReceipt(t *testing.T) {
 	}
 	arg.ExpectedVersion.Valid = false
 	_, _, err = store.ApplyCheckedRegressionAction(ctx, account.ID, sha256.Sum256([]byte("missing guard")), "Investigated", arg, func(sqlc.DebugRegressionObservation) ([]byte, error) { return expected, nil })
-	if !errors.Is(err, ErrInvalidArgument) || read().ReviewVersion != committed.ReviewVersion {
+	if !errors.Is(err, state.ErrInvalidArgument) || read().ReviewVersion != committed.ReviewVersion {
 		t.Fatal("unguarded native action accepted", err)
 	}
 }

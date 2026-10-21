@@ -31,9 +31,13 @@ const (
 // The archive is streamed entry-by-entry. Only files small enough for the
 // source-tree scanner are held in memory; all other regular files are copied
 // directly through the tar writer.
-func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly map[string][]byte) (outPath string, regularFileCount int, findings []secretscan.Finding, err error) {
+func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly map[string][]byte, excludes ...string) (outPath string, regularFileCount int, findings []secretscan.Finding, err error) {
 	if capMB <= 0 {
 		return "", 0, nil, fmt.Errorf("invalid source cap %d MB", capMB)
+	}
+	excluded := make(map[string]bool, len(excludes))
+	for _, name := range excludes {
+		excluded[filepath.ToSlash(filepath.Clean(name))] = true
 	}
 	patterns, err := readGitArchiveIgnore(srcPath)
 	if err != nil {
@@ -101,7 +105,7 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		if name == "" {
 			continue
 		}
-		if gitArchiveShouldExclude(name, isDir, patterns) {
+		if excluded[name] || gitArchiveShouldExclude(name, isDir, patterns) {
 			continue
 		}
 		if hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg {

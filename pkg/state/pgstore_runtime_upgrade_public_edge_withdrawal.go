@@ -13,7 +13,7 @@ import (
 var _ RuntimeUpgradePublicEdgeWithdrawalStore = (*PgStore)(nil)
 var _ RuntimeUpgradePublicEdgeCoverageVerifier = (*PgStore)(nil)
 
-func (s *PgStore) RepairRuntimeUpgradePublicEdgeWithdrawal(ctx context.Context, member RuntimeUpgradePublicEdgeMember, install func(string) (RuntimeUpgradePublicEdgeWithdrawalSnapshot, error)) (bool, error) {
+func (s *pgCore) RepairRuntimeUpgradePublicEdgeWithdrawal(ctx context.Context, member RuntimeUpgradePublicEdgeMember, install func(string) (RuntimeUpgradePublicEdgeWithdrawalSnapshot, error)) (bool, error) {
 	if !validPublicEdgeMember(member) || install == nil {
 		return false, ErrInvalidArgument
 	}

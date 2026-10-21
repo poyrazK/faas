@@ -67,6 +67,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_ARTIFACT_REPLICATOR` | imaged | `envfile` |  |  | `` |  |
 | `FAAS_ARTIFACT_SYNC_TARGET` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
 | `FAAS_ARTIFACT_SYNC_USER` | imaged | `script` |  |  | `` | consumed by deploy/scripts/faas-artifact-replicator.sh via /etc/faas/artifact-sync.env |
+| `FAAS_ATOMIC_SERVICE_ADDITIONS_ENABLED` | apid | `default` |  |  | `` | disabled by default pending dedicated native service-addition qualification; operator opt-in only |
+| `FAAS_ATOMIC_WORKER_RELEASES_ENABLED` | apid | `default` |  |  | `` | disabled by default pending dedicated native release qualification; operator opt-in only |
 | `FAAS_AUDIT_HMAC_KEY` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
 | `FAAS_AUDIT_HMAC_KEY_FILE` | apid | `default` |  |  | `` |  |
 | `FAAS_AUTH_RPC_ENABLED` | apid | `default` |  |  | `` |  |
@@ -213,6 +215,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_ENTITY_ACCESS_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
 | `FAAS_E2E_ENTITY_SECRET_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
 | `FAAS_E2E_HELLO_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt hello-server fixture binary so shared metal hosts need no Go toolchain; must never be set on a production host |
+| `FAAS_E2E_PROMOTION_PUBLICATION_SOCKET` | apid, shared | `dev-only` |  |  | `` | private native publication barrier; compiled only with metal,promotionacceptance and guarded by native qualification host/catalog checks; production and ordinary metal builds ignore it |
 | `FAAS_E2E_READY_TIMEOUT_SCALE` | shared | `dev-only` |  |  | `` | test-harness only; whole-number multiplier (1-20) for pkg/e2etest's daemon readiness waits, for small native acceptance hosts that restage bases at startup; must never be set on a production host |
 | `FAAS_E2E_S3_ACCESS_KEY` | shared | `dev-only` |  |  | `` | disposable S3 provider access key for the isolated object-storage acceptance fixture; must never be set on a production host |
 | `FAAS_E2E_S3_SECRET_KEY` | shared | `dev-only` |  |  | `` | disposable S3 provider secret key for the isolated object-storage acceptance fixture; must never be set on a production host |
@@ -242,6 +245,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EXECUTION_DISPATCH` | schedd | `default` |  |  | `` | exact opt-in for disposable execution dispatch; remains disabled until the authenticated payload decoder is wired |
 | `FAAS_EXECUTION_PYTHON_DATA_V1_BASE_REF` | imaged, shared | `default` |  |  | `` | optional digest-pinned linux/amd64 OCI manifest for the shared python-data-v1 execution base; unset stages no profile image; enable only after ADR-383 native acceptance |
 | `FAAS_EXTENSION_SOCKET` | guest | `guest` |  | /run/guest/extension.sock | `` | optional per-guest extension lifecycle endpoint; vmmd may deliver an override in the guest boot environment |
+| `FAAS_FINANCIAL_SYSTEM_ACCEPTANCE` | shared | `dev-only` |  |  | `` | opt-in dedicated financial full-system test harness; never set by ordinary production units |
 | `FAAS_FLAGS_ENABLED` | apid, shared | `default` |  |  | `int` | boot fallback for the customer_flags platform flag (ADR-1700): optional override for flags_enabled TOML; 1 releases customer Flags to every account, unset preserves the disabled default; ignored once an operator writes platform_flag.customer_flags |
 | `FAAS_FLAGS_WORKLOAD_ISSUER` | apid | `default` |  |  | `url` | optional override for the trusted Flags workload issuer; TOML is the primary deployment setting |
 | `FAAS_FLAGS_WORKLOAD_JWKS_PATH` | apid | `default` |  |  | `path-exists` | optional local public JWKS override for Flags workload verification; an empty path leaves runtime access unavailable |
@@ -341,7 +345,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GRYPE_BIN` | imaged | `default` |  |  | `` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_GUEST_TRACING_ENABLED` | apid, vmmd | `default` |  | 0 | `` | operator-only in-guest request tracing broker; set in /etc/faas/otel.env on apid and vmmd hosts; apid refuses tracing.enabled until set (ADR-958) |
+| `FAAS_HANDOFF_CHECK_FDS` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor that is checked before it takes traffic: a JSON list of the check connections it serves (ADR 20261020214632) |
 | `FAAS_HANDOFF_FDS` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set by a daemon for the successor it starts on `systemctl reload`: how many listening sockets follow fd 3 (ADR-1736) |
+| `FAAS_HANDOFF_GO_FD` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor that is checked before it takes traffic: the pipe its predecessor writes go on once every check passed (ADR 20261020214632) |
 | `FAAS_HANDOFF_PARENT` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor: the PID of the generation still draining, which a newer hand-off ends (ADR-1736) |
 | `FAAS_HANDOFF_READY_FD` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor: the pipe it reports readiness on to its predecessor (ADR-1736) |
 | `FAAS_HANDOFF_SPAWN` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for the short-lived intermediate a hand-off starts: it starts the successor so that systemd, not the old generation, is its parent (ADR-1736) |
@@ -514,6 +520,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG` | postgres | `script` |  |  | `` | LoadCredential= path on the postgresql@.service drop-in; consumed by the archive_command shell in the postgres role |
 | `FAAS_OPERATIONS_WORKLOAD_ISSUER` | apid | `default` |  |  | `url` | optional Operations workload issuer override; configures runtime trust without enabling customer admission |
 | `FAAS_OPERATIONS_WORKLOAD_JWKS_PATH` | apid | `default` |  |  | `path-exists` | optional public Operations workload JWKS override; missing trust denies runtime reports; customer admission remains closed |
+| `FAAS_OPERATION_CHILDREN_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs child Operations (ADR-20261018183000) are available to; unset admits none |
+| `FAAS_OPERATION_CONCURRENCY_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs per-customer Operation concurrency (ADR-20261018210500) is available to; unset admits none and releases anything still queued |
+| `FAAS_OPERATION_SCHEDULES_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs Operation schedules (ADR-20261018161833) are available to; unset admits none and stops every schedule firing |
 | `FAAS_OTEL_FLUSH_INTERVAL` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
 | `FAAS_OTEL_SPANS_WRITER_ENABLED` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
 | `FAAS_OUTBOUNDD_ROLE` | outboundd, shared | `dropin` |  |  | `` |  |
@@ -579,10 +588,21 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PROFILE_SOCKET` | vmmd, profiled | `unit` |  |  | `` |  |
 | `FAAS_PROFILING_ENABLED` | apid, vmmd, profiled, guest, shared | `default` |  | 0 | `` | operator-only CPU profiling; opt in through /etc/faas/profiling.env (ADR-819) |
 | `FAAS_PROFILING_ENDPOINT` | guest, shared | `guest` |  |  | `` | loopback bridge stamped by guest-init for SDKs |
+| `FAAS_PROJECT_CANARIES_ENABLED` | apid | `default` |  |  | `` | disabled by default pending dedicated native release qualification; operator opt-in only |
+| `FAAS_PROJECT_MIGRATION_CONTRACTS_ENABLED` | apid | `default` |  |  | `` | disabled by default pending dedicated native release qualification; operator opt-in only |
+| `FAAS_PROJECT_RELEASE_SECRETS_ENABLED` | apid, shared | `default` |  |  | `` | disabled by default pending dedicated native release qualification; operator opt-in only |
 | `FAAS_PROMETHEUS_URL` | apid, meterd | `default` |  |  | `` |  |
+| `FAAS_PROMOTION_HEALTH_ENABLED` | apid, shared | `default` |  |  | `` | disabled by default pending native HTTP environment promotion qualification; affects new admissions only |
+| `FAAS_PROMOTION_MIGRATIONS_ENABLED` | apid, shared | `default` |  |  | `` | default-off admission for backward-compatible destination migration promotions; requires sync config, health gating and native qualification |
+| `FAAS_PROMOTION_ROLLOUT_POLICY` | apid, shared | `default` |  |  | `` | absolute operator rollout policy path; absent or invalid blocks new verified promotions; policy may narrow or pause signed approval scope |
+| `FAAS_PROMOTION_ROLLOUT_QUALIFICATION` | apid, shared | `dev-only` |  |  | `` | guarded native promotion harness only; requires root, designated acceptance marker, KVM and an isolated local test database; never production readiness |
+| `FAAS_PROMOTION_ROLLOUT_TRUST_KEY` | apid, shared | `default` |  |  | `` | operator-installed base64 Ed25519 public trust key path; read once at APID startup; signing keys stay off the host |
+| `FAAS_PROMOTION_SERVICE_GRAPH_ENABLED` | apid, shared | `default` |  |  | `` | default-off admission for destination-aware HTTP service graph promotion; requires health gating and native qualification |
+| `FAAS_PROMOTION_WORKERS_ENABLED` | apid, shared | `default` |  |  | `` | default-off admission for coordinated HTTP/push-worker promotions; requires health gating and scoped rollout approval |
 | `FAAS_PUBLIC_CONTROL_ADDR` | gatewayd-public, shared | `unit` |  |  | `` |  |
 | `FAAS_PUBLIC_EDGE_CONTROL_PLANE_TARGET` | gatewayd-public | `dropin` |  |  | `` | ADR-1343; a compute-node edge forwards public object reads, uploads and the OTLP endpoint to this control-plane gatewayd-public URL (http://<private>:<port>); unset answers them 503 |
 | `FAAS_PUBLIC_EDGE_MODE` | gatewayd-public | `unit` |  |  | `` | ADR-1343; "compute" runs gatewayd-public as a compute-node app edge (app hosts only, node-local gateway first); unset is the control-plane edge |
+| `FAAS_PUBLIC_FORWARD_TARGET` | shared | `internal` |  |  | `` | native vmmd captures the public interface generation for its HTTP/Upgrade/TCP/UDP bridge subprocesses; never operator- or customer-supplied |
 | `FAAS_PUBLIC_IFACE` | vmmd, shared | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; "shared" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement) |
 | `FAAS_PUBLIC_LISTEN_ADDR` | gatewayd-public | `unit` |  |  | `` | matches faas-gatewayd-public.socket ListenStream; explicit loopback satisfies ADR-126's multi-host check |
 | `FAAS_PUBLIC_PRIVATE_LISTEN_ADDR` | gatewayd-public | `dropin` |  |  | `` | ADR-1343; a second listener for the public handler on the control plane's private address, for compute-node edges; unset means none |
@@ -608,6 +628,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_LIVE_TLS_CA_FILE` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): CA that verifies livequeryd hubs dialed over wss://; unset uses the system roots |
 | `FAAS_REALTIME_LIVE_TLS_CERT_FILE` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): realtimed's client certificate for livequeryd hubs that require one (-client-ca); set with FAAS_REALTIME_LIVE_TLS_KEY_FILE |
 | `FAAS_REALTIME_LIVE_TLS_KEY_FILE` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): private key for FAAS_REALTIME_LIVE_TLS_CERT_FILE |
+| `FAAS_REALTIME_LIVE_TLS_SERVER_NAME` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): name every livequeryd hub is verified as instead of its URL host; livequeryd.faas with the fleet PKI's live-query leaves |
 | `FAAS_REALTIME_MAX_AGE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  | 10000 | `` | node connection cap; 6000 with FAAS_REALTIME_FAIR_USE_ENABLED=1, sized to realtimed's 512 MB MemoryMax at ~52 KB per idle connection (ADR-1323); raise only with MemoryMax |
 | `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |

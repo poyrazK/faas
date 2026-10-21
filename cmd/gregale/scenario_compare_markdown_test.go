@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,14 +12,14 @@ import (
 func TestRenderTestComparisonMarkdownIncludesBudgetStatsAndEscapesCells(t *testing.T) {
 	beforeValue, afterValue, limit, delta := 100.0, 112.0, 110.0, 12.0
 	spreadBefore, spreadAfter := 4.0, 28.0
-	comparison := testReportComparison{
+	comparison := main.TestReportComparison{
 		Before: "before|<base>\nreport.json", After: "after.json",
-		Summary: testReportComparisonStats{Matched: 1, Added: 1, StatusChanged: 1},
-		Runs: []testRunComparison{{
+		Summary: main.TestReportComparisonStats{Matched: 1, Added: 1, StatusChanged: 1},
+		Runs: []main.TestRunComparison{{
 			Key: "health/local/local#1|<script>", Change: "matched", BeforeStatus: "passed", AfterStatus: "failed",
-			Metrics: []testMetricDelta{{Name: "duration_ms", Unit: "ms", Before: &beforeValue, After: &afterValue, Delta: &delta}},
+			Metrics: []main.TestMetricDelta{{Name: "duration_ms", Unit: "ms", Before: &beforeValue, After: &afterValue, Delta: &delta}},
 		}},
-		Gate: &testComparisonGate{Status: "failed", Passed: 1, Failed: 1, Inconclusive: 1, Checks: []testComparisonGateCheck{{
+		Gate: &main.TestComparisonGate{Status: "failed", Passed: 1, Failed: 1, Inconclusive: 1, Checks: []main.TestComparisonGateCheck{{
 			Run: "health/local/local", Metric: "load.p95_latency", Status: "inconclusive", Unit: "ms",
 			Before: &beforeValue, After: &afterValue, Limit: &limit,
 			BeforeRuns: 3, AfterRuns: 3, BeforeSpread: &spreadBefore, AfterSpread: &spreadAfter, SpreadUnit: "%",
@@ -26,7 +27,7 @@ func TestRenderTestComparisonMarkdownIncludesBudgetStatsAndEscapesCells(t *testi
 		}}},
 	}
 
-	markdown := renderTestComparisonMarkdown(comparison)
+	markdown := main.RenderTestComparisonMarkdown(comparison)
 	for _, expected := range []string{
 		"# Gregale test comparison",
 		"before\\|&lt;base&gt; report.json",
@@ -46,15 +47,15 @@ func TestRenderTestComparisonMarkdownIncludesBudgetStatsAndEscapesCells(t *testi
 
 func TestRenderTestComparisonMarkdownShowsKeyMetricsWithoutBudget(t *testing.T) {
 	before, after, delta, deltaPercent := 100.0, 120.0, 20.0, 20.0
-	comparison := testReportComparison{
+	comparison := main.TestReportComparison{
 		Before: "baseline.json", After: "current.json",
-		Summary: testReportComparisonStats{Matched: 1},
-		Runs: []testRunComparison{{
+		Summary: main.TestReportComparisonStats{Matched: 1},
+		Runs: []main.TestRunComparison{{
 			Key: "api/local/local#1", Change: "matched", BeforeStatus: "passed", AfterStatus: "passed",
-			Metrics: []testMetricDelta{{Name: "p95_latency", Unit: "ms", Before: &before, After: &after, Delta: &delta, DeltaPercent: &deltaPercent}},
+			Metrics: []main.TestMetricDelta{{Name: "p95_latency", Unit: "ms", Before: &before, After: &after, Delta: &delta, DeltaPercent: &deltaPercent}},
 		}},
 	}
-	markdown := renderTestComparisonMarkdown(comparison)
+	markdown := main.RenderTestComparisonMarkdown(comparison)
 	if !strings.Contains(markdown, "No budget was supplied") || !strings.Contains(markdown, "p95\\_latency 100.000 → 120.000 ms") {
 		t.Fatalf("informational Markdown summary omitted metric deltas:\n%s", markdown)
 	}
@@ -67,9 +68,9 @@ func TestCmdTestCompareWritesMarkdownAndAppendsGitHubSummaryOnGateFailure(t *tes
 	budgetPath := filepath.Join(dir, "budget.yaml")
 	markdownPath := filepath.Join(dir, "comparison.md")
 	summaryPath := filepath.Join(dir, "step-summary.md")
-	before := []testRunReceipt{comparisonBudgetReceipt(100, 150, 0, 100, 1000, 50, "passed")}
-	after := []testRunReceipt{comparisonBudgetReceipt(100, 150, 0, 100, 1000, 50, "failed")}
-	for path, receipts := range map[string][]testRunReceipt{beforePath: before, afterPath: after} {
+	before := []main.TestRunReceipt{main.ComparisonBudgetReceipt(100, 150, 0, 100, 1000, 50, "passed")}
+	after := []main.TestRunReceipt{main.ComparisonBudgetReceipt(100, 150, 0, 100, 1000, 50, "failed")}
+	for path, receipts := range map[string][]main.TestRunReceipt{beforePath: before, afterPath: after} {
 		body, err := json.Marshal(receipts)
 		if err != nil {
 			t.Fatal(err)
@@ -85,11 +86,11 @@ func TestCmdTestCompareWritesMarkdownAndAppendsGitHubSummaryOnGateFailure(t *tes
 		t.Fatal(err)
 	}
 	t.Setenv("GITHUB_STEP_SUMMARY", summaryPath)
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
 	var stdout, stderr strings.Builder
-	osStdout, osStderr, jsonOutput = &stdout, &stderr, false
-	t.Cleanup(func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON })
-	code := cmdTestCompare([]string{beforePath, afterPath, "--budget", budgetPath, "--markdown", markdownPath, "--github-summary"})
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &stdout, &stderr, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON })
+	code := main.CmdTestCompare([]string{beforePath, afterPath, "--budget", budgetPath, "--markdown", markdownPath, "--github-summary"})
 	if code == 0 {
 		t.Fatal("failed budget returned success")
 	}
@@ -114,11 +115,11 @@ func TestCmdTestCompareWritesMarkdownAndAppendsGitHubSummaryOnGateFailure(t *tes
 
 func TestCmdTestCompareGitHubSummaryRequiresEnvironmentPath(t *testing.T) {
 	t.Setenv("GITHUB_STEP_SUMMARY", "")
-	oldErr := osStderr
+	oldErr := (*main.OsStderr)
 	var stderr strings.Builder
-	osStderr = &stderr
-	t.Cleanup(func() { osStderr = oldErr })
-	if code := cmdTestCompare([]string{"--github-summary"}); code == 0 {
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
+	if code := main.CmdTestCompare([]string{"--github-summary"}); code == 0 {
 		t.Fatal("missing GitHub summary path returned success")
 	}
 	if !strings.Contains(stderr.String(), "GITHUB_STEP_SUMMARY to be set") {
@@ -136,11 +137,11 @@ func TestCmdTestCompareMarkdownCannotOverwriteAnInputReport(t *testing.T) {
 	if err := os.WriteFile(afterPath, []byte("later report"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	oldErr := osStderr
+	oldErr := (*main.OsStderr)
 	var stderr strings.Builder
-	osStderr = &stderr
-	t.Cleanup(func() { osStderr = oldErr })
-	if code := cmdTestCompare([]string{beforePath, afterPath, "--markdown", beforePath}); code == 0 {
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
+	if code := main.CmdTestCompare([]string{beforePath, afterPath, "--markdown", beforePath}); code == 0 {
 		t.Fatal("Markdown output overwrote an input report")
 	}
 	body, err := os.ReadFile(beforePath)

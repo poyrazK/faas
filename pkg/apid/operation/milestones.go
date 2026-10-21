@@ -180,7 +180,7 @@ func (s *Service) GetAccountOperationMilestones(w http.ResponseWriter, r *http.R
 }
 
 func (s *Service) GetPlatformTenantSelfOperationMilestones(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	tenant, ok := httpkit.PlatformTenantSelfID(w, r)
+	tenant, ok := s.activePlatformTenantSelfID(w, r, acct)
 	if !ok {
 		return
 	}
@@ -226,7 +226,7 @@ func (s *Service) ListAccountBusinessMilestones(w http.ResponseWriter, r *http.R
 }
 
 func (s *Service) ListPlatformTenantSelfBusinessMilestones(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	tenant, ok := httpkit.PlatformTenantSelfID(w, r)
+	tenant, ok := s.activePlatformTenantSelfID(w, r, acct)
 	if !ok {
 		return
 	}

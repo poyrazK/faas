@@ -277,3 +277,39 @@ func CustomDomainAddresses() ([]netip.Addr, error) {
 	}
 	return out, nil
 }
+
+// OperationSchedulesEnabled reports whether Operation schedules
+// (ADR-20261018161833) are available to accountID. Default off:
+// FAAS_OPERATION_SCHEDULES_ACCOUNTS, a comma-separated list of account
+// UUIDs, names the accounts that see the schedule routes and whose schedules
+// fire. Read at every call.
+func OperationSchedulesEnabled(accountID string) bool {
+	return accountListed(os.Getenv("FAAS_OPERATION_SCHEDULES_ACCOUNTS"), accountID)
+}
+
+func accountListed(list, accountID string) bool {
+	for _, id := range strings.Split(list, ",") {
+		if id = strings.TrimSpace(id); id != "" && id == accountID {
+			return true
+		}
+	}
+	return false
+}
+
+// OperationChildrenEnabled reports whether child Operations
+// (ADR-20261018183000) are available to accountID. Default off:
+// FAAS_OPERATION_CHILDREN_ACCOUNTS, a comma-separated list of account UUIDs,
+// names the accounts whose running Operations may start children and that
+// see the children routes. Read at every call.
+func OperationChildrenEnabled(accountID string) bool {
+	return accountListed(os.Getenv("FAAS_OPERATION_CHILDREN_ACCOUNTS"), accountID)
+}
+
+// OperationConcurrencyEnabled reports whether per-customer Operation
+// concurrency (ADR-20261018210500) is available to accountID. Default off:
+// FAAS_OPERATION_CONCURRENCY_ACCOUNTS, a comma-separated list of account
+// UUIDs, names the accounts whose policies queue work and that see the
+// concurrency routes. Read at every call.
+func OperationConcurrencyEnabled(accountID string) bool {
+	return accountListed(os.Getenv("FAAS_OPERATION_CONCURRENCY_ACCOUNTS"), accountID)
+}

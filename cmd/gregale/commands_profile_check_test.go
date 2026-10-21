@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,12 +12,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestProfileCheckJSONReportsAccountAndEnvironmentOverrides(t *testing.T) {
-	setupConnectionProfiles(t)
-	token := testAPIKey('a')
+	main.SetupConnectionProfiles(t)
+	token := main.TestAPIKey('a')
 	t.Setenv("FAAS_TOKEN", token)
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,19 +33,19 @@ func TestProfileCheckJSONReportsAccountAndEnvironmentOverrides(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	path, _ := cliConfigPath()
+	path, _ := main.CliConfigPath()
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	previousJSON := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = previousJSON })
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = previousJSON })
 	var out bytes.Buffer
-	if exit := captureStdoutSwap(t, &out, func() int { return run([]string{"--profile", "staging", "profile", "check"}) }); exit != 0 {
+	if exit := main.CaptureStdoutSwap(t, &out, func() int { return main.Run([]string{"--profile", "staging", "profile", "check"}) }); exit != 0 {
 		t.Fatalf("exit=%d output=%s", exit, out.String())
 	}
-	var report profileCheckReport
+	var report main.ProfileCheckReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +65,7 @@ func TestProfileCheckJSONReportsAccountAndEnvironmentOverrides(t *testing.T) {
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("check changed saved configuration")
 	}
-	if profileOverride != "" {
+	if (*main.ProfileOverride) != "" {
 		t.Fatal("check leaked its profile override")
 	}
 	if strings.Contains(out.String(), token) || strings.Contains(out.String(), "private-tax-id") {
@@ -86,8 +87,8 @@ func TestProfileCheckReportsAuthenticationAndAPIProblems(t *testing.T) {
 		{"server-error", "internal_error", "unknown", "api_error", 503, 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			setupConnectionProfiles(t)
-			token := testAPIKey('b')
+			main.SetupConnectionProfiles(t)
+			token := main.TestAPIKey('b')
 			if !tc.missing {
 				t.Setenv("FAAS_TOKEN", token)
 			}
@@ -101,12 +102,12 @@ func TestProfileCheckReportsAuthenticationAndAPIProblems(t *testing.T) {
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
-			old := jsonOutput
-			jsonOutput = true
-			t.Cleanup(func() { jsonOutput = old })
+			old := (*main.JsonOutput)
+			(*main.JsonOutput) = true
+			t.Cleanup(func() { (*main.JsonOutput) = old })
 			var out bytes.Buffer
-			exit := captureStdoutSwap(t, &out, func() int { return cmdProfile([]string{"check"}) })
-			var report profileCheckReport
+			exit := main.CaptureStdoutSwap(t, &out, func() int { return main.CmdProfile([]string{"check"}) })
+			var report main.ProfileCheckReport
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatal(err)
 			}
@@ -142,9 +143,9 @@ func TestProfileCheckNetworkAndCancellationDiagnostics(t *testing.T) {
 		{"cancelled", "cancelled", context.Canceled, 130},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			client := NewClient("https://invalid.example", testAPIKey('a'))
+			client := main.NewClient("https://invalid.example", main.TestAPIKey('a'))
 			client.HTTPClient().Transport = profileCheckTransport(func(r *http.Request) (*http.Response, error) { return nil, tc.err })
-			report := checkProfileConnection(t.Context(), client, &connectionContext{Profile: "default", APIBase: "https://invalid.example"}, "profile:default", true)
+			report := main.CheckProfileConnection(t.Context(), client, &main.ConnectionContext{Profile: "default", APIBase: "https://invalid.example"}, "profile:default", true)
 			if report.ExitCode != tc.exit || report.Diagnostic == nil || report.Diagnostic.Code != tc.code {
 				t.Fatalf("report=%+v diagnostic=%+v", report, report.Diagnostic)
 			}
@@ -153,18 +154,18 @@ func TestProfileCheckNetworkAndCancellationDiagnostics(t *testing.T) {
 }
 
 func TestProfileCheckTLSAndMalformedResponses(t *testing.T) {
-	setupConnectionProfiles(t)
+	main.SetupConnectionProfiles(t)
 	tlsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"id":"acct"}`)) }))
 	defer tlsServer.Close()
-	client := NewClient(tlsServer.URL, testAPIKey('a'))
-	report := checkProfileConnection(t.Context(), client, &connectionContext{Profile: "default", APIBase: tlsServer.URL}, "profile:default", true)
+	client := main.NewClient(tlsServer.URL, main.TestAPIKey('a'))
+	report := main.CheckProfileConnection(t.Context(), client, &main.ConnectionContext{Profile: "default", APIBase: tlsServer.URL}, "profile:default", true)
 	if report.ExitCode != 3 || report.Diagnostic.Code != "tls_failed" {
 		t.Fatalf("TLS report=%+v diagnostic=%+v", report, report.Diagnostic)
 	}
 	for _, body := range []string{"not JSON", "{}", "null"} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }))
-		client := NewClient(server.URL, testAPIKey('a'))
-		report := checkProfileConnection(t.Context(), client, &connectionContext{Profile: "default", APIBase: server.URL}, "profile:default", true)
+		client := main.NewClient(server.URL, main.TestAPIKey('a'))
+		report := main.CheckProfileConnection(t.Context(), client, &main.ConnectionContext{Profile: "default", APIBase: server.URL}, "profile:default", true)
 		server.Close()
 		if report.ExitCode != 1 || report.Diagnostic.Code != "invalid_response" || report.EndpointReachable == nil || !*report.EndpointReachable {
 			t.Fatalf("body=%q report=%+v diagnostic=%+v", body, report, report.Diagnostic)
@@ -173,19 +174,19 @@ func TestProfileCheckTLSAndMalformedResponses(t *testing.T) {
 }
 
 func TestProfileCheckRejectsUsageAndSecretBearingEndpoint(t *testing.T) {
-	setupConnectionProfiles(t)
+	main.SetupConnectionProfiles(t)
 	for _, args := range [][]string{{"--timeout", "0s"}, {"--timeout", "-1s"}, {"unexpected"}} {
-		if exit := cmdProfile(append([]string{"check"}, args...)); exit != 1 {
+		if exit := main.CmdProfile(append([]string{"check"}, args...)); exit != 1 {
 			t.Fatalf("invalid arguments %v: exit=%d", args, exit)
 		}
 	}
 	t.Setenv("FAAS_API", "https://user:secret-password@invalid.example")
-	old := jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = old })
-	stderr, restore := captureStderr(t)
+	old := (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = old })
+	stderr, restore := main.CaptureStderr(t)
 	defer restore()
-	if exit := cmdProfile([]string{"check"}); exit != 1 {
+	if exit := main.CmdProfile([]string{"check"}); exit != 1 {
 		t.Fatalf("invalid endpoint exit=%d", exit)
 	}
 	if strings.Contains(stderr.String(), "secret-password") {

@@ -456,13 +456,14 @@ Live queries are invisible to customers until launch.
   - the OpenAPI spec and the generated Go, Node and Python SDKs (the live
     routes are in the spec-compliance and sdk-coverage `routeExclude`
     lists);
-  - customer CLI help and the CLI reference, since `gregale postgres` is
-    operator-only;
-  - the `@gregale/data` package, which neither exports nor packs
-    `dist/live` and has no README section for it.
-- **Launch** means setting `*`, then restoring the spec entries, generated
-  SDKs, the `./live` exports with the React peer dependency, and the README
-  section from commits `4196fef625` and `b860a62753`.
+  - customer CLI help and the CLI reference for `gregale postgres live`,
+    since `gregale postgres` is operator-only.
+- **Already released** (2026-10-20, Data API reads only): `gregale data-api
+  live enable|status` in customer help, and `@gregale/data/live` with
+  `./live/react` and its README section. Outside the rollout, `data-api live`
+  reports that live queries are not available.
+- **Launch** means setting `*`, then restoring the spec entries and the
+  generated SDKs.
 - Removing an account from the list hides the routes and stops new live
   subscriptions within the 30-second endpoint reconciler. Sessions already
   open keep their subscriptions until they close; disable the database's
@@ -489,8 +490,14 @@ Live queries are invisible to customers until launch.
 4. Run livequeryd with these flags. The `livequeryd_service` Ansible role
    does this on the control plane (`faas_livequeryd_managed: true`; see its
    README): it passes secrets as systemd credentials, wires apid's recipient
-   file, and opens the hub port to compute nodes. Which accounts see live
-   queries is the `live_queries` platform flag (ADR-1700).
+   file, and opens the hub port to compute nodes. It issues the hub's mTLS
+   server leaf from the fleet CA; `faas_realtime_live_tls_managed: true` on
+   compute hosts gives realtimed its client leaf, and `pki_renew.yml` renews
+   both. Which accounts see live queries is the `live_queries` platform flag
+   (ADR-1700). One livequeryd serves every database the role lists in
+   `faas_livequeryd_databases` (`-databases-file`), each at
+   `/<database_id>/live`. A database must be listed there before its live
+   queries work. The flags below serve a single database, for development.
    - `-database-url-file`: a file holding the database connection string
      (`-database-url` puts its password in the process list);
    - `-keys-dsn-file`: a file holding a read-only control-plane connection

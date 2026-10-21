@@ -525,6 +525,23 @@ omitted route declarations clear that workload's manifest-owned routes, while
 existing project routes unchanged. Routes default to `POST`; `PUT`, `PATCH`,
 and `DELETE` are also accepted. This declaration is YAML-only.
 
+## Invocation history retention
+
+Every finished invocation is kept for your plan's result retention, counted
+from when it finished: Free 1 day, Hobby 7 days, Pro 30 days, Scale 90 days.
+This covers async invokes, queue and inbox messages, delayed tasks, cron runs,
+event deliveries, async edge routes and inbound webhooks. Async invokes and
+delayed tasks can ask for a shorter window with `retention_seconds`
+(`--retention` in the CLI).
+
+Failed and dead-lettered invocations are kept for at least 30 days, so you can
+inspect and replay them from the dead-letter queue (`gregale dlq <app>`) on
+every plan. After the window, the invocation, its attempt history and its
+replay links are deleted: `gregale crons runs`, queue history and invocation
+lookups only show work inside the window. Duplicate detection that relies on
+a stored invocation, such as inbound webhook receipts and async route
+idempotency keys, lasts as long as that invocation is kept.
+
 ## Application inbox
 
 For straightforward application-to-application work, send directly to the

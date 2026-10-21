@@ -10,6 +10,7 @@ from attrs import field as _attrs_field
 from ..models.edge_protection_response_range import EdgeProtectionResponseRange, check_edge_protection_response_range
 
 if TYPE_CHECKING:
+    from ..models.edge_protection_response_challenge import EdgeProtectionResponseChallenge
     from ..models.edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
     from ..models.edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
     from ..models.edge_protection_response_validation_failures_item import EdgeProtectionResponseValidationFailuresItem
@@ -37,6 +38,8 @@ class EdgeProtectionResponse:
     waf: EdgeProtectionResponseWaf
     """kind=waf inspections (ADR-831). Sampled detections are never blocked; block rules' 403s also appear in
     rejections under gate waf."""
+    challenge: EdgeProtectionResponseChallenge
+    """kind=challenge decisions (ADR-831 amendment 7); its 403s also appear in rejections under gate challenge."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +65,8 @@ class EdgeProtectionResponse:
 
         waf = self.waf.to_dict()
 
+        challenge = self.challenge.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -74,6 +79,7 @@ class EdgeProtectionResponse:
                 "validation_failures": validation_failures,
                 "rejections": rejections,
                 "waf": waf,
+                "challenge": challenge,
             }
         )
 
@@ -81,6 +87,7 @@ class EdgeProtectionResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.edge_protection_response_challenge import EdgeProtectionResponseChallenge
         from ..models.edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
         from ..models.edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
         from ..models.edge_protection_response_validation_failures_item import (
@@ -117,6 +124,8 @@ class EdgeProtectionResponse:
 
         waf = EdgeProtectionResponseWaf.from_dict(d.pop("waf"))
 
+        challenge = EdgeProtectionResponseChallenge.from_dict(d.pop("challenge"))
+
         edge_protection_response = cls(
             app_id=app_id,
             range_=range_,
@@ -126,6 +135,7 @@ class EdgeProtectionResponse:
             validation_failures=validation_failures,
             rejections=rejections,
             waf=waf,
+            challenge=challenge,
         )
 
         edge_protection_response.additional_properties = d

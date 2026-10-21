@@ -1,0 +1,29 @@
+# ADR 20261019132139 · AI gateway: prompt prefixes shared across outboundd replicas
+
+- **Status:** accepted
+- **Date:** 2026-10-19
+- **Amends:** ADR-1437 (automatic prompt caching)
+- **Decision:**
+  - **A prefix repeats when any outboundd has seen it.** ADR-1437 marks a stable system prompt or tool list once it repeats within the five-minute cache lifetime, as each process remembered it. Now, when this process has not seen a prefix, it asks Postgres.
+    - Table `outbound_ai_prompt_prefixes` holds one row per integration and prefix hash: the SHA-256 the process already computes over the integration, model and prefix. It never holds prompt text.
+    - One statement records the sighting and returns whether another one fell within the lifetime.
+  - **Only an unseen prefix costs a round trip.** Postgres is asked only when all of these hold:
+    - the integration has `auto_prompt_cache` on;
+    - the prefix is long enough to cache;
+    - the call carries no `X-Gregale-AI-Session`;
+    - this process has not seen the prefix within the lifetime.
+  - **Repeats keep the shared row fresh without waiting.** A prefix this process marks from its own memory refreshes the row in the background, at most once a minute per prefix.
+  - **Failure falls back to local memory.** If Postgres is slow (over `OutboundAIPromptPrefixLookupTimeout`) or failing, the call goes on with the process's own answer, unmarked as before. Marking only saves money, so it never refuses or delays a call beyond that bound.
+  - **Rows are pruned** hourly once they are older than twice the lifetime.
+  - `outbound_ai_prompt_cache_shared_total{result}` counts lookups: repeated, first, refreshed and error.
+- **Why:**
+  - The provider's prompt cache is shared, but each process's memory was not. With N replicas, a prefix was marked only once the same process saw it twice, which takes about N calls at random balancing. Every unmarked call paid full input price for a prefix the provider already held, or would have held.
+  - Marking on the first repeat anywhere makes caching start as soon as it does on one replica.
+- **Consequences:**
+  - **One extra statement per call with a new eligible prefix.** It costs nothing once the prefix is in this process's memory. `TestAIGatewayRoundTripBudget` is unchanged, since its calls do not turn automatic caching on.
+  - **The table is short-lived and bounded** by the distinct prefixes seen in two lifetimes. It sits outside the admission and settlement transactions.
+  - **Two replicas that see a new prefix at the same instant both treat it as new.** The next call marks it, as on one replica today.
+- **Rejected alternatives:**
+  - **Asking Postgres on every call.** Repeats are the common case, and local memory answers them.
+  - **Folding the lookup into admission.** Admission holds the integration's admission row lock, so every call would wait on a prefix write it may not need.
+  - **Gossip between replicas.** outboundd has no peer channel, and Postgres already orders the sightings.

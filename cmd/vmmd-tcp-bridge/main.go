@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/netns"
 )
 
 const (
@@ -34,7 +37,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	conn, err := (&net.Dialer{Timeout: dialTimeout}).Dial(
+	conn, err := netns.DialBridgeContext(context.Background(), &net.Dialer{Timeout: dialTimeout},
 		"tcp", net.JoinHostPort(os.Args[1], strconv.FormatUint(port, 10)))
 	if err != nil {
 		_ = writeReady("ERR " + err.Error() + "\n")

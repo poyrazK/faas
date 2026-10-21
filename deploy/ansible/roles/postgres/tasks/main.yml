@@ -331,6 +331,58 @@
   failed_when: false
   notify: reload postgresql
 
+# Statement statistics (2026-10-21). Without pg_stat_statements the only view
+# of where the control plane's Postgres CPU goes was sampling pg_stat_activity,
+# whose query text stopped at 1 kB. shared_preload_libraries and
+# track_activity_query_size are PGC_POSTMASTER (restart); track_io_timing is
+# reload-only. The extension is created in the `postgres` maintenance database
+# so the `faas` schema stays byte-identical to schema.sql; the view still
+# reports statements from every database.
+- name: postgres — preload pg_stat_statements (restart-needed)
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?shared_preload_libraries\\s*="
+    line: "shared_preload_libraries = 'pg_stat_statements'"
+    create: false
+  failed_when: false
+  # Host-configuration lane (ADR 20261018133100): never restart the
+  # postmaster outside a full release; only report the change.
+  check_mode: "{{ not (faas_stateful_restart_allowed | default(true) | bool) }}"
+  notify: restart postgresql
+
+- name: postgres — keep 4 kB of query text in pg_stat_activity (restart-needed)
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?track_activity_query_size\\s*="
+    line: "track_activity_query_size = 4096"
+    create: false
+  failed_when: false
+  # Host-configuration lane (ADR 20261018133100): never restart the
+  # postmaster outside a full release; only report the change.
+  check_mode: "{{ not (faas_stateful_restart_allowed | default(true) | bool) }}"
+  notify: restart postgresql
+
+- name: postgres — time block I/O in statement statistics (reload-only)
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?track_io_timing\\s*="
+    line: "track_io_timing = on"
+    create: false
+  failed_when: false
+  notify: reload postgresql
+
+- name: postgres — create pg_stat_statements in the maintenance database
+  community.postgresql.postgresql_ext:
+    name: pg_stat_statements
+    # community.postgresql 5.0.0 (requirements.yml) takes login_db; the
+    # removed `db` alias failed rc.284's control-plane convergence.
+    login_db: postgres
+    state: present
+  become: true
+  become_user: postgres
+  # A warm standby is read-only; CREATE EXTENSION runs on the primary.
+  when: not (faas_postgres_standby_mode | default(false) | bool)
+
 # `ALTER SYSTEM` writes postgresql.auto.conf, which PostgreSQL reads after
 # postgresql.conf. A stale value there silently shadows the role-managed
 # archive_command and can send live WAL to a different namespace than the
@@ -448,7 +500,7 @@
   failed_when: false  # chroot/CI may not have the conf file
   notify: reload postgresql
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # Only an active setting is removed; the stock commented default stays.
@@ -474,7 +526,7 @@
       characters) for the replicator role.
     quiet: true
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — create replication role `replicator` — ADR-1344
@@ -487,7 +539,7 @@
   become_user: postgres
   no_log: true
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — create the standby's physical replication slot — ADR-1344
@@ -498,7 +550,7 @@
   become: true
   become_user: postgres
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # Replication TLS. The standby connects with sslmode=verify-full against this
@@ -520,7 +572,7 @@
     postgres_replication_tls_san: >-
       {%- for name in (faas_postgres_replication_tls_names | default([faas_private_dns_address | default(''), inventory_hostname])) | select | unique -%}{{ 'IP:' if (name is match('^[0-9.]+$') or ':' in name) else 'DNS:' }}{{ name }}{{ '' if loop.last else ',' }}{%- endfor -%}
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — replication TLS directory — ADR-1344
@@ -531,7 +583,7 @@
     group: postgres
     mode: "0700"
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — read the names on the replication certificate — ADR-1344
@@ -540,7 +592,7 @@
   register: postgres_replication_tls_current_san
   failed_when: false
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — check the replication certificate is valid for 30 more days — ADR-1344
@@ -550,7 +602,7 @@
   changed_when: false
   failed_when: false
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # Written beside the live pair and renamed over it, so a failed run never
@@ -577,7 +629,7 @@
   changed_when: true
   notify: reload postgresql
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
     - >-
       postgres_replication_tls_checkend.rc != 0
@@ -591,7 +643,7 @@
     group: postgres
     mode: "0600"
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # PostgreSQL refuses a key that its group or others can read.
@@ -602,7 +654,7 @@
     group: postgres
     mode: "0600"
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # Ubuntu's postgresql.conf already ends with this include; the standby role
@@ -616,7 +668,7 @@
   failed_when: false  # chroot/CI may not have the conf file
   notify: reload postgresql
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 # ssl and the certificate paths are reload-only (PGC_SIGHUP). A reload that
@@ -636,7 +688,7 @@
   failed_when: false  # chroot/CI may not have the conf directory
   notify: reload postgresql
   when:
-    - faas_postgres_standby_address | default('')
+    - (faas_postgres_standby_address | default('')) | length > 0
     - not (faas_postgres_standby_mode | default(false) | bool)
 
 - name: postgres — stop serving the replication certificate without a standby (reload-only) — ADR-1344
@@ -719,3 +771,23 @@
     - "/etc/systemd/system/postgresql@{{ postgres_major_version }}-main.service.d/99-faas-off-host-backup.conf"
   failed_when: false
   notify: daemon-reload postgres
+
+# CPU priority (2026-10-21). On the split-box control plane PostgreSQL shares
+# two vCPUs with Prometheus, Grafana and the GitHub runners; deploy jobs pushed
+# the load average to 13-17 and a trivial `select 1` to 65 ms. A cgroup weight
+# on PostgreSQL's slice keeps the database ahead of those siblings under
+# contention and costs nothing when the host is idle. The runner and
+# Prometheus roles lower their own units' weights.
+- name: postgres — weight the PostgreSQL slice for CPU contention
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/system-postgresql.slice.d/50-faas-cpu-weight.conf
+    content: |
+      # Managed by Ansible (roles/postgres). See the task comment for the reason.
+      [Slice]
+      CPUWeight={{ faas_postgres_cpu_weight | default(1000) }}
+    owner: root
+    group: root
+    mode: "0644"
+  failed_when: false  # chroot/CI may not have systemd
+  notify: daemon-reload postgres
+

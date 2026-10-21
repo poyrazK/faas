@@ -9,7 +9,7 @@ import type { FinancialAppMeterCosts } from './FinancialAppMeterCosts.js';
 export type FinancialAppCostsResponse = {
   app_id: string;
   app_slug: string;
-  currency: 'EUR';
+  currency: 'USD';
   period_start: string;
   period_end: string;
   as_of: string;

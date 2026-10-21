@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net/http"
 	"net/http/httptest"
@@ -40,20 +41,20 @@ func TestIssueSavedViewCLIUsesLatestDefinitionAndRelativeOwner(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	previousOut, previousJSON := osStdout, jsonOutput
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
 	var out bytes.Buffer
-	osStdout, jsonOutput = &out, false
-	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
-	if cmdIssues([]string{"views", "save", "--app", "payments", "--key", "mine", "--name", "Mine", "--state", "open", "--assignee", "me", "--tag", "component=payments"}) != 0 {
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
+	if main.CmdIssues([]string{"views", "save", "--app", "payments", "--key", "mine", "--name", "Mine", "--state", "open", "--assignee", "me", "--tag", "component=payments"}) != 0 {
 		t.Fatal("save failed")
 	}
 	stored.Filters.State = "resolved"
-	if cmdIssues([]string{"views", "apply", "--app", "payments", "--key", "mine"}) != 0 {
+	if main.CmdIssues([]string{"views", "apply", "--app", "payments", "--key", "mine"}) != 0 {
 		t.Fatal("apply failed")
 	}
-	jsonOutput = true
+	(*main.JsonOutput) = true
 	out.Reset()
-	if cmdIssues([]string{"views", "delete", "--app", "payments", "--key", "mine"}) != 0 {
+	if main.CmdIssues([]string{"views", "delete", "--app", "payments", "--key", "mine"}) != 0 {
 		t.Fatal("delete failed")
 	}
 	var deletion struct {
@@ -63,7 +64,7 @@ func TestIssueSavedViewCLIUsesLatestDefinitionAndRelativeOwner(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &deletion); err != nil || !deletion.Deleted || deletion.Key != "mine" {
 		t.Fatalf("delete JSON: %s %v", out.String(), err)
 	}
-	if cmdIssues([]string{"views", "apply", "--app", "payments", "--key", "mine", "--state", "open"}) == 0 {
+	if main.CmdIssues([]string{"views", "apply", "--app", "payments", "--key", "mine", "--state", "open"}) == 0 {
 		t.Fatal("apply silently ignored an override")
 	}
 	if strings.Join(methods, ",") != "PUT /v1/apps/payments/issue-saved-views/mine,GET /v1/apps/payments/issue-saved-views/mine,GET /v1/apps/payments/issues,DELETE /v1/apps/payments/issue-saved-views/mine" {

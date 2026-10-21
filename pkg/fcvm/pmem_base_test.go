@@ -171,8 +171,9 @@ func TestMountPointOf(t *testing.T) {
 	}
 }
 
-// adr: 908 — by default a copy lives on its base's own mount, a changed base
-// gets a new copy, and copies nobody used for a week are swept.
+// adr: 908 — by default a copy lives on its base's own mount, a replaced base
+// gets a new copy while a touched one keeps its copy, and copies nobody used
+// for a week are swept.
 func TestPmemBaseAutoDirVersionsAndSweep(t *testing.T) {
 	mount, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -200,14 +201,28 @@ func TestPmemBaseAutoDirVersionsAndSweep(t *testing.T) {
 	if !strings.HasPrefix(first, filepath.Join(mount, pmemAutoDirName)+"/") {
 		t.Fatalf("copy %s is not under %s", first, filepath.Join(mount, pmemAutoDirName))
 	}
-	// A changed base gets a new copy.
+	// The node cache bumps a base's mtime on every read (its LRU signal).
+	// That is not a new base: the account keeps its copy and its warm page
+	// cache instead of cloning on every wake.
 	later := time.Now().Add(time.Minute)
 	if err := os.Chtimes(base, later, later); err != nil {
 		t.Fatal(err)
 	}
+	touched, err := v.pmemBase.accountCopy("acct", base)
+	if err != nil || touched != first || clones != 1 {
+		t.Fatalf("after an LRU touch: copy %s (first %s), clones %d, err %v", touched, first, clones, err)
+	}
+	// A replaced base (writers rename a new file into place) gets a new copy.
+	next := base + ".next"
+	if err := os.WriteFile(next, ext4Image(4<<20, 4096, PmemBaseLabel), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(next, base); err != nil {
+		t.Fatal(err)
+	}
 	second, err := v.pmemBase.accountCopy("acct", base)
 	if err != nil || second == first || clones != 2 {
-		t.Fatalf("after the base changed: copy %s (first %s), clones %d, err %v", second, first, clones, err)
+		t.Fatalf("after the base was replaced: copy %s (first %s), clones %d, err %v", second, first, clones, err)
 	}
 	// A week later, the first copy is swept and the one in use stays.
 	idle := time.Now().Add(-pmemCopyMaxIdle - time.Hour)

@@ -22,9 +22,10 @@
 //      RWMutex and per-entry struct-copy semantics are
 //      race-detector-clean.
 
-package sched
+package sched_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/sched"
 	"sync"
 	"testing"
 	"time"
@@ -36,9 +37,9 @@ import (
 // mutate the previous Lookup's returned struct).
 func TestNodeCapacityTable_ReplaceAndLookup(t *testing.T) {
 	t.Parallel()
-	tbl := newNodeCapacityTable()
+	tbl := sched.NewNodeCapacityTable()
 
-	want := CapacityReport{
+	want := sched.CapacityReport{
 		NodeID:        "node-a",
 		LiveCount:     12,
 		LeasedCount:   8,
@@ -73,7 +74,7 @@ func TestNodeCapacityTable_ReplaceAndLookup(t *testing.T) {
 	}
 
 	// Second Replace for a different node — both entries coexist.
-	tbl.Replace(CapacityReport{NodeID: "node-b", LiveCount: 4})
+	tbl.Replace(sched.CapacityReport{NodeID: "node-b", LiveCount: 4})
 	if _, ok := tbl.Lookup("node-a", now); !ok {
 		t.Errorf("second Replace overwrote node-a")
 	}
@@ -88,14 +89,14 @@ func TestNodeCapacityTable_ReplaceAndLookup(t *testing.T) {
 // (PR-2) and the gRPC handler must continue to work.
 func TestNodeCapacityTable_NilSafety(t *testing.T) {
 	t.Parallel()
-	var tbl *nodeCapacityTable
+	var tbl *sched.NodeCapacityTable
 
-	tbl.Replace(CapacityReport{NodeID: "x", UsedMB: 100})
+	tbl.Replace(sched.CapacityReport{NodeID: "x", UsedMB: 100})
 
 	if r, ok := tbl.Lookup("x", time.Now()); ok {
 		t.Errorf("nil Lookup returned ok=true with r=%+v", r)
 	}
-	if r := tbl.CapacitySink()(CapacityReport{NodeID: "x"}); r != nil {
+	if r := tbl.CapacitySink()(sched.CapacityReport{NodeID: "x"}); r != nil {
 		t.Errorf("nil CapacitySink() returned error = %v, want nil", r)
 	}
 }
@@ -108,11 +109,11 @@ func TestNodeCapacityTable_NilSafety(t *testing.T) {
 // that bypasses the gRPC layer) cannot poison the cache.
 func TestNodeCapacityTable_EmptyNodeIDNoOp(t *testing.T) {
 	t.Parallel()
-	tbl := newNodeCapacityTable()
+	tbl := sched.NewNodeCapacityTable()
 
-	tbl.Replace(CapacityReport{NodeID: ""})                    // empty → no-op
-	tbl.Replace(CapacityReport{NodeID: "node-a", UsedMB: 100}) // real → stored
-	tbl.Replace(CapacityReport{NodeID: "", UsedMB: 999999})    // second empty → still no-op
+	tbl.Replace(sched.CapacityReport{NodeID: ""})                    // empty → no-op
+	tbl.Replace(sched.CapacityReport{NodeID: "node-a", UsedMB: 100}) // real → stored
+	tbl.Replace(sched.CapacityReport{NodeID: "", UsedMB: 999999})    // second empty → still no-op
 
 	got, ok := tbl.Lookup("node-a", time.Now().Add(1*time.Second))
 	if !ok {
@@ -130,12 +131,12 @@ func TestNodeCapacityTable_EmptyNodeIDNoOp(t *testing.T) {
 // that have gone silent.
 func TestNodeCapacityTable_StaleReportReturnsFalse(t *testing.T) {
 	t.Parallel()
-	tbl := newNodeCapacityTable()
+	tbl := sched.NewNodeCapacityTable()
 
-	tbl.Replace(CapacityReport{NodeID: "node-a", UsedMB: 100})
+	tbl.Replace(sched.CapacityReport{NodeID: "node-a", UsedMB: 100})
 
 	// Inject a now that's CapacityFreshness+1ns in the future.
-	now := time.Now().Add(CapacityFreshness + 1*time.Nanosecond)
+	now := time.Now().Add(sched.CapacityFreshness + 1*time.Nanosecond)
 	if _, ok := tbl.Lookup("node-a", now); ok {
 		t.Error("Lookup returned true for a report older than CapacityFreshness")
 	}
@@ -143,7 +144,7 @@ func TestNodeCapacityTable_StaleReportReturnsFalse(t *testing.T) {
 	// And exactly at CapacityFreshness: still stale (the budget
 	// is ">", not ">="). The implementation's `now.Sub(...) >
 	// CapacityFreshness` boundary case must be documented.
-	if _, ok := tbl.Lookup("node-a", time.Now().Add(CapacityFreshness)); ok {
+	if _, ok := tbl.Lookup("node-a", time.Now().Add(sched.CapacityFreshness)); ok {
 		// If this fires, the boundary became ">=" instead of
 		// ">" — surfacing the drift loudly so the reviewer
 		// can pin the contract.
@@ -159,7 +160,7 @@ func TestNodeCapacityTable_StaleReportReturnsFalse(t *testing.T) {
 // the cache.
 func TestNodeCapacityTable_ConcurrentReplaceLookup(t *testing.T) {
 	t.Parallel()
-	tbl := newNodeCapacityTable()
+	tbl := sched.NewNodeCapacityTable()
 
 	const writers = 100
 	const readers = 100
@@ -170,7 +171,7 @@ func TestNodeCapacityTable_ConcurrentReplaceLookup(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			for j := 0; j < 50; j++ {
-				tbl.Replace(CapacityReport{
+				tbl.Replace(sched.CapacityReport{
 					NodeID:    "node-a",
 					LiveCount: int32(i*50 + j),
 					UsedMB:    int32((i + j) % 4096),

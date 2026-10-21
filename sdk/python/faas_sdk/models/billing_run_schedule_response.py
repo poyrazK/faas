@@ -20,7 +20,8 @@ class BillingRunScheduleResponse:
 
     sources: list[BillingRunSourcesItem]
     """Which customers a run bills. With platform_tenants, a consumer's tenant-attributed usage is billed on the
-    tenant statement and its app item is skipped."""
+    tenant statement and its app item is skipped. product_customers bills each Product Control customer's statement
+    for the month and needs Product Control to be enabled (ADR-20261018212918)."""
     finalize: bool
     export: BillingRunExport
     """Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1507; requires

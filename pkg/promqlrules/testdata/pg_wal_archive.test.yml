@@ -1,0 +1,45 @@
+# PgWalArchiveLarge measures how far back retained WAL reaches, not its size:
+# ADR-1344's one-minute archive_timeout makes ~20 GiB of segments a day.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/pg_backup.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # 2026-10-20 production: 32 GiB of WAL reaching back 36 hours, two daily
+  # basebackups retained, pruning healthy.
+  - interval: 1m
+    name: "large archive with a moving boundary stays quiet"
+    input_series:
+      - series: 'apid_pg_wal_archive_bytes{job="apid",instance="127.0.0.1:9101"}'
+        values: '35433480192x200'
+      - series: 'apid_pg_wal_archive_oldest_age_seconds{job="apid",instance="127.0.0.1:9101"}'
+        values: '129600+60x200'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: PgWalArchiveLarge
+
+  - interval: 1m
+    name: "archive reaching back past three days alerts after the hold"
+    input_series:
+      - series: 'apid_pg_wal_archive_oldest_age_seconds{job="apid",instance="127.0.0.1:9101"}'
+        values: '262800+60x200'
+    alert_rule_test:
+      - eval_time: 80m
+        alertname: PgWalArchiveLarge
+      - eval_time: 95m
+        alertname: PgWalArchiveLarge
+        exp_alerts:
+          - exp_labels:
+              job: apid
+              instance: 127.0.0.1:9101
+              severity: warn
+              family: pg_backup
+            exp_annotations:
+              summary: "Local PostgreSQL WAL archive reaches back more than three days"
+              description: |
+                Verified pruning is not keeping the local archive bounded: the oldest
+                retained WAL segment is more than three days old although only the two
+                newest basebackups are kept. Check the prune journal, the basebackup
+                push and off-host object-store reachability before deleting files.
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PostgresBackup.md"

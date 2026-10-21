@@ -503,7 +503,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay()).
 		WithCloneWakeDispatchRecorder(store.RecordCloneCheckpointWakeDispatch).
 		WithCloneMigrationAdoptionRecorder(store.RecordCloneCheckpointMigrationAdoption).
-		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume)
+		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume).
+		WithFinancialComputeAuthority(store)
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
 	// Tier A3: subscribe to compute_node_changed and refresh the
@@ -984,9 +985,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if leaser := sched.NewPgLeaserFromPool(pool, ownerNodeID, nil); leaser != nil {
 		engine.WithJobLeaser(sched.AdaptJobLeaser(leaser))
 	}
+	// adr: 1578
+	// Reconstruct measured destination work before ledger seeding and serving.
+	// Failures retain durable capacity/ownership for the fenced expiry path.
+	migrationRecoveryReady := true
+	if recovered, err := engine.RecoverFunctionMigrations(ctx); err != nil {
+		migrationRecoveryReady = false
+		log.Warn("recover function migrations at startup", "recovered", recovered, "err", err)
+	}
 	// Rebuild admission accounting from any instances still live from a prior
 	// run before we start admitting new wakes.
-	seedLedgerReady := true
+	seedLedgerReady := migrationRecoveryReady
 	if err := engine.SeedLedger(ctx); err != nil {
 		seedLedgerReady = false
 		log.Warn("seed ledger", "err", err)
@@ -1008,7 +1017,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if qualificationDispatchEnabled {
 		log.Info("schedd: environment GitOps qualification dispatch enabled by explicit gate")
 	} else if qualificationDispatchRequested {
-		log.Warn("schedd: environment GitOps qualification dispatch withheld because admission ledger seeding failed")
+		log.Warn("schedd: environment GitOps qualification dispatch withheld because migration recovery or admission ledger seeding failed")
 	} else {
 		log.Info("schedd: environment GitOps qualification dispatch disabled; native acceptance is still required")
 	}
@@ -1800,7 +1809,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			WithOpsMetrics(ops)).
 		// ADR-134 PR-B / EPIC #1278: expire async invocations and route
 		// deadline-breached rows through their configured failure destination.
-		WithInvocationsRetention(sched.NewInvocationsRetention(store, log)).
+		WithInvocationsRetention(sched.NewInvocationsRetention(store, log).
+			WithOperationTelemetry(sched.NewOperationTelemetry(ops.Registry(), ops.MetricPrefix(), operationTelemetryStore(store)))).
 		// Terminal trigger_records past their explicit retention or the
 		// default ages in pkg/api (TriggerRecordRetention and
 		// TriggerDeadLetterRetention). Off until
@@ -2922,4 +2932,11 @@ type schedTargetsLedger struct {
 // ledger's Concurrency accessor (pkg/sched/admission.go).
 func (s schedTargetsLedger) Concurrency(appID string) int {
 	return s.ledger.Concurrency(appID)
+}
+
+// operationTelemetryStore is the store's Customer Operations reader, or nil
+// for a store without one (ADR-20261016123221).
+func operationTelemetryStore(store state.Store) state.OperationTelemetryStore {
+	reader, _ := store.(state.OperationTelemetryStore)
+	return reader
 }

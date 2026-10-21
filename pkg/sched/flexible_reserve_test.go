@@ -1,22 +1,23 @@
 // adr: 366
-package sched
+package sched_test
 
 import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestFlexibleJobLeavesAppWakeReserve(t *testing.T) {
 	node := state.ComputeNode{ID: "node-1", Active: true, VPCPUs: 2, VCPUBudget: 2, AdmissionCeilingMB: 1600}
-	job := Request{Instance: "job-1", NodeID: node.ID, Plan: api.PlanHobby, RAMMB: 512,
-		VCPU: 1, CPUMillicores: 1000, Kind: KindJob, Flexible: true,
+	job := sched.Request{Instance: "job-1", NodeID: node.ID, Plan: api.PlanHobby, RAMMB: 512,
+		VCPU: 1, CPUMillicores: 1000, Kind: sched.KindJob, Flexible: true,
 		NodeCeilingMB: node.AdmissionCeilingMB, VCPUBudget: node.VCPUBudget, CPUBudgetMillicores: 2000}
 	choose := func(usedRAM, usedVCPU, usedCPU int64, flexible bool) error {
 		candidate := job
 		candidate.Flexible = flexible
-		_, err := choosePlacementWithCPU([]state.ComputeNode{node},
+		_, err := sched.ChoosePlacementWithCPU([]state.ComputeNode{node},
 			map[string]int64{node.ID: usedRAM}, map[string]int64{node.ID: usedVCPU},
 			map[string]int64{node.ID: usedCPU}, candidate)
 		return err
@@ -30,7 +31,7 @@ func TestFlexibleJobLeavesAppWakeReserve(t *testing.T) {
 	if err := choose(520, 1, 1000, false); err != nil {
 		t.Fatalf("standard work should use remaining capacity: %v", err)
 	}
-	ledger := NewNodeLedger()
+	ledger := sched.NewNodeLedger()
 	if err := ledger.Admit(job); err != nil {
 		t.Fatalf("first flexible admission: %v", err)
 	}

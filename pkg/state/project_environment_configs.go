@@ -33,6 +33,10 @@ func (m *MemStore) ProjectEnvironmentConfigLatest(_ context.Context, accountID, 
 func (m *MemStore) CreateProjectEnvironmentConfigVersion(_ context.Context, config ProjectEnvironmentConfig) (ProjectEnvironmentConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if config.EnvironmentSlug == "production" && !m.migrationPublicationAllowedLocked(config.ProjectID) {
+		return ProjectEnvironmentConfig{}, ErrConflict
+	}
+
 	project, ok := m.projects[config.ProjectID]
 	if !ok || project.AccountID != config.AccountID {
 		return ProjectEnvironmentConfig{}, ErrNotFound
@@ -94,6 +98,8 @@ func (m *MemStore) validateProjectEnvironmentPromotionConfigLocked(promotion Pro
 	if sourceErr != nil || previousErr != nil || sourceHash != promotion.SourceConfigHash || previousHash != promotion.PreviousTargetConfigHash {
 		return ErrConflict
 	}
+	capture := m.promotionReleaseConfigurations[promotion.ID]
+	_, destinationHash := promotionDestinationConfig(promotion, &capture)
 	target := m.projectEnvironmentConfigLatestLocked(promotion.ProjectID, promotion.ToEnvironment)
 	if rollback {
 		if promotion.RollbackConfigVersion != 0 {
@@ -102,13 +108,13 @@ func (m *MemStore) validateProjectEnvironmentPromotionConfigLocked(promotion Pro
 			}
 			return nil
 		}
-		if promotion.TargetConfigVersion == 0 || target.Version != promotion.TargetConfigVersion || target.ConfigHash != promotion.SourceConfigHash {
+		if promotion.TargetConfigVersion == 0 || target.Version != promotion.TargetConfigVersion || target.ConfigHash != destinationHash {
 			return ErrConflict
 		}
 		return nil
 	}
 	if promotion.TargetConfigVersion != 0 {
-		if target.Version != promotion.TargetConfigVersion || target.ConfigHash != promotion.SourceConfigHash {
+		if target.Version != promotion.TargetConfigVersion || target.ConfigHash != destinationHash {
 			return ErrConflict
 		}
 		return nil
@@ -121,7 +127,8 @@ func (m *MemStore) validateProjectEnvironmentPromotionConfigLocked(promotion Pro
 }
 
 func (m *MemStore) appendProjectEnvironmentPromotionConfigLocked(promotion ProjectEnvironmentPromotion, rollback bool) int64 {
-	values, hash := promotion.SourceConfigSnapshot, promotion.SourceConfigHash
+	capture := m.promotionReleaseConfigurations[promotion.ID]
+	values, hash := promotionDestinationConfig(promotion, &capture)
 	if rollback {
 		values, hash = promotion.PreviousTargetConfigSnapshot, promotion.PreviousTargetConfigHash
 	}
@@ -156,13 +163,52 @@ func (m *MemStore) projectConfigRuntimeChangeLocked(projectID, environment strin
 	if !projectConfigRuntimeEnvChanged(before, after) {
 		return
 	}
+	m.projectRuntimeChangeLocked(projectID, environment, at)
+}
+
+// projectRuntimeChangeLocked stamps every member app in the scopes that read
+// the environment and marks its older snapshots there stale. Project secrets
+// (ADR-1139) use it for every value change.
+func (m *MemStore) projectRuntimeChangeLocked(projectID, environment string, at time.Time) {
 	for id, app := range m.apps {
 		if app.ProjectID != projectID || app.Status == "deleted" {
 			continue
 		}
 		for _, scope := range projectConfigScopes(environment) {
+			if scope == "default" {
+				// The default scope reads production's configuration: stamp
+				// its own boundary (not the shared "default" one every
+				// environment consults) and mark its snapshots stale.
+				m.stampProjectConfigDefaultBoundaryLocked(id, at)
+				m.markDefaultScopeSnapshotsStaleLocked(id, at)
+				continue
+			}
 			m.markEnvironmentRuntimeChangedAndSnapshotsLocked(id, scope, at)
 		}
+	}
+}
+
+func (m *MemStore) stampProjectConfigDefaultBoundaryLocked(appID string, at time.Time) {
+	if m.environmentRuntimeConfigChangedAt == nil {
+		m.environmentRuntimeConfigChangedAt = map[environmentRuntimeKey]time.Time{}
+	}
+	key := environmentRuntimeKey{AppID: appID, Scope: projectConfigDefaultBoundary}
+	if prior := m.environmentRuntimeConfigChangedAt[key]; prior.After(at) {
+		at = prior
+	}
+	m.environmentRuntimeConfigChangedAt[key] = at
+}
+
+// markDefaultScopeSnapshotsStaleLocked marks an app's default-scope snapshots
+// taken at or before at stale, without advancing any runtime boundary.
+func (m *MemStore) markDefaultScopeSnapshotsStaleLocked(appID string, at time.Time) {
+	for id, snapshot := range m.snapshots {
+		deployment := m.deployments[snapshot.DeploymentID]
+		if deployment.AppID != appID || normalizedDeploymentScope(deployment.Scope) != "default" || snapshot.Stale || snapshot.CreatedAt.After(at) {
+			continue
+		}
+		snapshot.Stale = true
+		m.snapshots[id] = snapshot
 	}
 }
 

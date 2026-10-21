@@ -127,73 +127,100 @@ func workflowHTTPStatus(statusCode int, callErr error) *int {
 }
 
 func (o *WorkflowOrchestrator) executeWorkflowHandlerWithRetryAfter(ctx context.Context, run *state.WorkflowRun, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64) (int, []byte, time.Time, error) {
-	if executor, ok := o.executor.(WorkflowRetryAfterExecutor); ok {
-		return executor.ExecuteWorkflowStepWithRetryAfter(ctx, run.AppID, WorkflowStepIdentity{RunID: run.ID, PlatformTenantID: run.PlatformTenantID, DeploymentID: run.DeploymentID}, path, method, headers, body, timeout, operationID, generation)
+	executor, ok := o.executor.(WorkflowRetryAfterExecutor)
+	if !ok {
+		status, body, err := o.executeWorkflowHandler(ctx, run, path, method, headers, body, timeout, operationID, generation)
+		return status, body, time.Time{}, err
 	}
-	status, body, err := o.executeWorkflowHandler(ctx, run, path, method, headers, body, timeout, operationID, generation)
-	return status, body, time.Time{}, err
+	// The Retry-After transport needs the same Operation authority as the
+	// plain one; without it a linked step reaches the gateway unpinned.
+	ctx, timeout, done, err := o.prepareWorkflowOperationStep(ctx, run, headers, timeout)
+	if err != nil {
+		return 0, nil, time.Time{}, err
+	}
+	defer done()
+	status, result, retryAt, err := executor.ExecuteWorkflowStepWithRetryAfter(ctx, run.AppID, WorkflowStepIdentity{RunID: run.ID, PlatformTenantID: run.PlatformTenantID, DeploymentID: run.DeploymentID}, path, method, headers, body, timeout, operationID, generation)
+	if ctx.Err() != nil {
+		return 0, nil, time.Time{}, ctx.Err()
+	}
+	return status, result, retryAt, err
 }
 
 func (o *WorkflowOrchestrator) executeWorkflowHandler(ctx context.Context, run *state.WorkflowRun, path, method string, headers map[string]string, body []byte, timeout time.Duration, managedOperationID string, generation int64) (int, []byte, error) {
-	if adapter, ok := o.store.(state.WorkflowOperationStore); ok {
-		op, linked, err := adapter.OperationForWorkflowRun(ctx, run.ID)
-		if err != nil {
-			return 0, nil, err
-		}
-		if linked {
-			if op.Generation != run.ResumeCount+1 || op.CancellationRequested || op.State != api.OperationRunning {
-				return 0, nil, state.ErrOperationStaleAttempt
-			}
-			if op.ReleaseID != "" {
-				headers[api.ReleaseHeader] = op.ReleaseID
-			} else {
-				headers[api.RevisionHeader] = op.DeploymentID
-			}
-			attempt, err := strconv.Atoi(headers["X-Faas-Workflow-Attempt"])
-			if err != nil {
-				return 0, nil, err
-			}
-
-			proofStore, ok := o.store.(state.WorkflowOutboundStore)
-			if !ok {
-				return 0, nil, errors.New("workflow operation proof unavailable")
-			}
-			proof, err := proofStore.GetWorkflowOutboundAttempt(ctx, run.ID, headers["X-Faas-Workflow-Step"], attempt)
-			if err != nil {
-				return 0, nil, err
-			}
-			deadlineStore, ok := o.store.(state.WorkflowOperationDeadlineStore)
-			if !ok {
-				return 0, nil, errors.New("workflow operation deadline unavailable")
-			}
-			deadline, err := deadlineStore.WorkflowOperationAttemptDeadline(ctx, run.ID, headers["X-Faas-Workflow-Step"], attempt)
-			if err != nil {
-				return 0, nil, err
-			}
-			timeout = min(timeout, time.Until(deadline))
-			if timeout <= 0 {
-				return 0, nil, state.ErrOperationStaleAttempt
-			}
-			var stopDeadline context.CancelFunc
-			ctx, stopDeadline = context.WithDeadline(ctx, deadline)
-			defer stopDeadline()
-			headers[api.OperationIDHeader] = op.ID
-			headers[api.OperationExecutionKindHeader] = "workflow"
-			headers[api.OperationWorkflowRunHeader] = run.ID
-			headers[api.OperationWorkflowStepHeader] = headers["X-Faas-Workflow-Step"]
-			headers[api.OperationGenerationHeader] = strconv.Itoa(op.Generation)
-			headers[api.OperationAttemptHeader] = strconv.Itoa(attempt)
-			headers[api.OperationWorkflowCapabilityHeader] = proof.Token
-			var release func()
-			ctx, release = o.workflowItemContext(ctx, run.ID, headers["X-Faas-Workflow-Step"], attempt)
-			defer release()
-		}
+	ctx, timeout, done, err := o.prepareWorkflowOperationStep(ctx, run, headers, timeout)
+	if err != nil {
+		return 0, nil, err
 	}
+	defer done()
 	status, result, err := o.dispatchWorkflowHandler(ctx, run, path, method, headers, body, timeout, managedOperationID, generation)
 	if ctx.Err() != nil {
 		return 0, nil, ctx.Err()
 	}
 	return status, result, err
+}
+
+// prepareWorkflowOperationStep adds an Operation-linked run's authority to one
+// step dispatch: the version pin, Operation headers and capability token, the
+// attempt deadline and the per-item context. Unlinked runs pass through. The
+// returned func releases the deadline and item context.
+func (o *WorkflowOrchestrator) prepareWorkflowOperationStep(ctx context.Context, run *state.WorkflowRun, headers map[string]string, timeout time.Duration) (context.Context, time.Duration, func(), error) {
+	noop := func() {}
+	adapter, ok := o.store.(state.WorkflowOperationStore)
+	if !ok {
+		return ctx, timeout, noop, nil
+	}
+	op, linked, err := adapter.OperationForWorkflowRun(ctx, run.ID)
+	if err != nil {
+		return ctx, timeout, noop, err
+	}
+	if !linked {
+		return ctx, timeout, noop, nil
+	}
+	if op.Generation != run.ResumeCount+1 || op.CancellationRequested || op.State != api.OperationRunning {
+		return ctx, timeout, noop, state.ErrOperationStaleAttempt
+	}
+	if op.ReleaseID != "" {
+		headers[api.ReleaseHeader] = op.ReleaseID
+	} else {
+		headers[api.RevisionHeader] = op.DeploymentID
+	}
+	attempt, err := strconv.Atoi(headers["X-Faas-Workflow-Attempt"])
+	if err != nil {
+		return ctx, timeout, noop, err
+	}
+	proofStore, ok := o.store.(state.WorkflowOutboundStore)
+	if !ok {
+		return ctx, timeout, noop, errors.New("workflow operation proof unavailable")
+	}
+	proof, err := proofStore.GetWorkflowOutboundAttempt(ctx, run.ID, headers["X-Faas-Workflow-Step"], attempt)
+	if err != nil {
+		return ctx, timeout, noop, err
+	}
+	deadlineStore, ok := o.store.(state.WorkflowOperationDeadlineStore)
+	if !ok {
+		return ctx, timeout, noop, errors.New("workflow operation deadline unavailable")
+	}
+	deadline, err := deadlineStore.WorkflowOperationAttemptDeadline(ctx, run.ID, headers["X-Faas-Workflow-Step"], attempt)
+	if err != nil {
+		return ctx, timeout, noop, err
+	}
+	timeout = min(timeout, time.Until(deadline))
+	if timeout <= 0 {
+		return ctx, timeout, noop, state.ErrOperationStaleAttempt
+	}
+	ctx, stopDeadline := context.WithDeadline(ctx, deadline)
+	headers[api.OperationIDHeader] = op.ID
+	headers[api.OperationExecutionKindHeader] = "workflow"
+	headers[api.OperationWorkflowRunHeader] = run.ID
+	headers[api.OperationWorkflowStepHeader] = headers["X-Faas-Workflow-Step"]
+	headers[api.OperationGenerationHeader] = strconv.Itoa(op.Generation)
+	headers[api.OperationAttemptHeader] = strconv.Itoa(attempt)
+	headers[api.OperationWorkflowCapabilityHeader] = proof.Token
+	ctx, release := o.workflowItemContext(ctx, run.ID, headers["X-Faas-Workflow-Step"], attempt)
+	return ctx, timeout, func() {
+		release()
+		stopDeadline()
+	}, nil
 }
 
 func (o *WorkflowOrchestrator) dispatchWorkflowHandler(ctx context.Context, run *state.WorkflowRun, path, method string, headers map[string]string, body []byte, timeout time.Duration, managedOperationID string, generation int64) (int, []byte, error) {

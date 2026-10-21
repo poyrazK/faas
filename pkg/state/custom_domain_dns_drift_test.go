@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,26 +8,27 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreMarkCustomDomainDNSDrifted(t *testing.T) {
 	ctx := context.Background()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	account, err := m.CreateAccount(ctx, "dns-drift@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := m.CreateApp(ctx, App{
+	app, err := m.CreateApp(ctx, state.App{
 		ID:        uuid.NewString(),
 		AccountID: account.ID,
 		Slug:      "dns-drift",
-		Status:    AppActive,
+		Status:    state.AppActive,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if transitioned, err := m.MarkCustomDomainDNSDrifted(ctx, "missing.example.com", time.Now(), "missing"); !errors.Is(err, ErrNotFound) || transitioned {
+	if transitioned, err := m.MarkCustomDomainDNSDrifted(ctx, "missing.example.com", time.Now(), "missing"); !errors.Is(err, state.ErrNotFound) || transitioned {
 		t.Fatalf("missing domain = (%v, %v), want (false, ErrNotFound)", transitioned, err)
 	}
 
@@ -43,7 +44,7 @@ func TestMemStoreMarkCustomDomainDNSDrifted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if unchanged.CertStatus != CustomDomainCertPending || !unchanged.VerifiedAt.IsZero() {
+	if unchanged.CertStatus != state.CustomDomainCertPending || !unchanged.VerifiedAt.IsZero() {
 		t.Fatalf("pending domain changed: %+v", unchanged)
 	}
 
@@ -54,7 +55,7 @@ func TestMemStoreMarkCustomDomainDNSDrifted(t *testing.T) {
 	if err := m.MarkDomainVerified(ctx, verified.Domain); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.UpdateCustomDomainCertStatus(ctx, verified.Domain, CustomDomainCertIssued,
+	if err := m.UpdateCustomDomainCertStatus(ctx, verified.Domain, state.CustomDomainCertIssued,
 		checkedAt.Add(24*time.Hour), "stale", checkedAt); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestMemStoreMarkCustomDomainDNSDrifted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if drifted.Verified() || drifted.CertStatus != CustomDomainCertDNSDrifted || !drifted.CertExpiresAt.IsZero() || drifted.CertLastError != "wrong CNAME" || !drifted.DNSLastCheckedAt.Equal(checkedAt) {
+	if drifted.Verified() || drifted.CertStatus != state.CustomDomainCertDNSDrifted || !drifted.CertExpiresAt.IsZero() || drifted.CertLastError != "wrong CNAME" || !drifted.DNSLastCheckedAt.Equal(checkedAt) {
 		t.Fatalf("drift transition = %+v", drifted)
 	}
 

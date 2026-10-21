@@ -95,14 +95,16 @@ func (e *Engine) WakeWorkerApp(ctx context.Context, appID string) (bool, error) 
 }
 
 type workerScopePlan struct {
-	scope     string
-	app       state.App
-	target    string
-	desired   int
-	signal    string
-	cooldown  bool
-	queueHold bool
-	workers   []state.Instance
+	scope       string
+	app         state.App
+	target      string
+	desired     int
+	signal      string
+	cooldown    bool
+	queueHold   bool
+	pinned      bool
+	drainTarget string
+	workers     []state.Instance
 	// Includes residents already owned by a stop, for diagnostics only.
 	residents         map[string]bool
 	blockers          []api.WorkerAdmissionBlocker
@@ -143,7 +145,11 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 		}
 		e.completeWorkerRecovery(ctx, attempt, resultErr)
 	}()
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	// The loop below acts only on live worker rows, and the targets trigger
+	// reconciles every project worker app each second: read live rows, not
+	// the app's whole history (about 8 history reads a second on
+	// production-us after rc.285).
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return err
 	}
@@ -157,8 +163,12 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 		}
 		return plans[scope]
 	}
+	targets, held, err := e.projectWorkerTargets(ctx, app, deployments)
+	if err != nil {
+		return err
+	}
 	if app.Status == state.AppActive {
-		for id := range workerDeploymentTargets(deployments) {
+		for id := range targets {
 			dep := byDeployment[id]
 			scope := normalizedDeploymentScope(dep.Scope)
 			if api.ValidateScope(scope) != nil {
@@ -177,9 +187,87 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 			}
 		}
 	}
+	pinnedPlans := map[string]*workerScopePlan{}
+	if app.Status == state.AppActive && app.ProjectID != "" && app.PreviewOfSlug == "" {
+		owner, ok := e.store.(state.ProjectPinnedWorkerStore)
+		if !ok {
+			return state.ErrConflict
+		}
+		pinned, err := owner.PinnedProjectReleaseWorkers(ctx, app.ID)
+		if err != nil {
+			return fmt.Errorf("read pinned worker generations: %w", err)
+		}
+		for _, id := range pinned {
+			if _, active := targets[id]; active {
+				continue
+			}
+			dep, exists := byDeployment[id]
+			if !exists || dep.AppID != app.ID || dep.Status != state.DeployLive {
+				return state.ErrConflict
+			}
+			scope := normalizedDeploymentScope(dep.Scope)
+			if api.ValidateScope(scope) != nil {
+				return state.ErrInvalidArgument
+			}
+			if onlyScope != "" && onlyScope != scope {
+				continue
+			}
+			deployed, err := state.ResolveAppForDeployment(ctx, e.store, app, dep)
+			if err != nil {
+				return fmt.Errorf("resolve pinned worker policy: %w", err)
+			}
+			if instanceModeForApp(deployed) != string(state.InstanceModeWorker) {
+				return state.ErrConflict
+			}
+			plan := &workerScopePlan{scope: scope, app: deployed, target: id, desired: api.ProjectPinnedWorkerReplicas, pinned: true}
+			for activeID := range targets {
+				if normalizedDeploymentScope(byDeployment[activeID].Scope) == scope {
+					plan.drainTarget = activeID
+				}
+			}
+			plans[scope+"\x00"+id] = plan
+			pinnedPlans[id] = plan
+		}
+	}
+	if app.Status == state.AppActive {
+		for id := range held {
+			if _, active := targets[id]; active || pinnedPlans[id] != nil {
+				continue
+			}
+			dep, exists := byDeployment[id]
+			if !exists || dep.AppID != app.ID {
+				return state.ErrConflict
+			}
+			if dep.Status != state.DeployLive {
+				continue
+			}
+			scope := normalizedDeploymentScope(dep.Scope)
+			if onlyScope != "" && onlyScope != scope {
+				continue
+			}
+			deployed, err := state.ResolveAppForDeployment(ctx, e.store, app, dep)
+			if err != nil {
+				return err
+			}
+			if instanceModeForApp(deployed) != string(state.InstanceModeWorker) {
+				return state.ErrConflict
+			}
+			plan := &workerScopePlan{scope: scope, app: deployed, target: id, desired: api.ProjectPinnedWorkerReplicas, pinned: true}
+			for activeID := range targets {
+				if normalizedDeploymentScope(byDeployment[activeID].Scope) == scope {
+					plan.drainTarget = activeID
+				}
+			}
+			plans[scope+"\x00"+id] = plan
+			pinnedPlans[id] = plan
+		}
+	}
 	// Resolve retired generations too, before authorizing any stop. Unknown
 	// deployment identity is a read failure, not permission to drain the row.
 	for _, ins := range instances {
+		if _, candidate := held[ins.DeploymentID]; candidate && pinnedPlans[ins.DeploymentID] == nil && app.Status == state.AppActive {
+			continue
+		}
 		if ins.Mode != string(state.InstanceModeWorker) || !state.State(ins.State).CountsForRAM() {
 			continue
 		}
@@ -199,7 +287,10 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 			if state.State(ins.State) == state.StateMigrating {
 				return fmt.Errorf("worker environment %s is migrating: %w", scope, state.ErrConflict)
 			}
-			plan := planFor(scope)
+			plan := pinnedPlans[ins.DeploymentID]
+			if plan == nil {
+				plan = planFor(scope)
+			}
 			if plan.residents == nil {
 				plan.residents = make(map[string]bool)
 			}
@@ -215,12 +306,12 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 	}
 	scopes := make([]string, 0, len(plans))
 	for scope, plan := range plans {
-		plan.queueHold, err = e.retiredQueueHasInFlightWork(ctx, plan.app, scope)
+		plan.queueHold, err = e.retiredQueueHasInFlightWork(ctx, plan.app, plan.scope)
 		if err != nil {
 			return fmt.Errorf("retired queue delivery for %s: %w", scope, err)
 		}
-		if plan.target != "" {
-			plan.desired, plan.signal, err = e.workerReplicaTargetForScope(ctx, plan.app, scope, len(plan.workers), override)
+		if plan.target != "" && !plan.pinned {
+			plan.desired, plan.signal, err = e.workerReplicaTargetForScope(ctx, plan.app, plan.scope, len(plan.workers), override)
 			if err != nil {
 				return fmt.Errorf("worker demand for %s: %w", scope, err)
 			}
@@ -238,7 +329,14 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 		}
 		scopes = append(scopes, scope)
 	}
-	sort.Strings(scopes)
+	// Recover already admitted work before ordinary scale-out consumes the
+	// shared account budget. Ordering stays deterministic across restarts.
+	sort.Slice(scopes, func(i, j int) bool {
+		if plans[scopes[i]].pinned != plans[scopes[j]].pinned {
+			return plans[scopes[i]].pinned
+		}
+		return scopes[i] < scopes[j]
+	})
 	plansReady = true
 	if len(plans) == 0 && !isWorkerApp(app) {
 		return nil
@@ -334,6 +432,23 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 				attempt.observe("starting")
 			}
 			continue
+		}
+		if app.ProjectID != "" {
+			owner, ok := e.store.(state.ProjectReleaseWorkerStore)
+			if !ok {
+				return state.ErrConflict
+			}
+			expectedTarget := plan.target
+			if plan.pinned {
+				expectedTarget = plan.drainTarget
+			}
+			claimed, err := owner.ClaimProjectWorkerDrain(ctx, app.ID, ins.ID, expectedTarget)
+			if err != nil {
+				return err
+			}
+			if !claimed {
+				return state.ErrConflict
+			}
 		}
 		attempt.observe("draining")
 		stopErr = errors.Join(stopErr, e.beginWorkerStop(ctx, ins, e.workerStopOptions(app)))
@@ -630,7 +745,7 @@ func (e *Engine) mcpTasksObserverReady(ctx context.Context, worker state.App) (b
 	for _, deployment := range liveDeployments {
 		live[deployment.ID] = struct{}{}
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, observer.ID)
+	instances, err := e.liveInstancesForApp(ctx, observer.ID)
 	if err != nil {
 		return false, err
 	}

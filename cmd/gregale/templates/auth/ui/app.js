@@ -123,7 +123,10 @@ export function providerName(id) {
 }
 
 export function errorMessage(body, status) {
-  const code = body?.error_code ?? body?.code ?? body?.error
+  // GoTrue reports a hook's refusal (sign-up restrictions) as msg, with
+  // error_code "unknown".
+  const hookCode = typeof body?.msg === 'string' && /^[a-z_]+$/.test(body.msg) ? body.msg : undefined
+  const code = (body?.error_code === 'unknown' ? undefined : body?.error_code) ?? hookCode ?? body?.code ?? body?.error
   const known = {
     invalid_credentials: 'Wrong email or password.',
     email_not_confirmed: 'Confirm your email address first; check your inbox.',
@@ -132,6 +135,14 @@ export function errorMessage(body, status) {
     over_email_send_rate_limit: 'Too many emails sent. Wait a minute and try again.',
     email_provider_unconfigured: 'This application cannot send email yet.',
     signup_disabled: 'Sign-up is closed for this application.',
+    email_domain_blocked: 'Sign-up is not open to addresses at this domain.',
+    disposable_email: 'Use a permanent email address; temporary ones cannot sign up.',
+    email_domain_not_allowed: 'Sign-up is open only to addresses at the domains this application allows.',
+    signup_restricted: 'Sign up with an email address; this application checks who may join.',
+    signup_invitation_required: 'Sign-up is by invitation. Ask for an invitation to this address.',
+    waitlisted: 'You are on the waitlist. We will email you when you can sign up.',
+    waitlist_full: 'The waitlist is full. Try again later.',
+    signup_check_unavailable: 'Sign-up is briefly unavailable. Try again in a minute.',
     invitation_invalid: 'This invitation is no longer valid.',
     invitation_email_mismatch: 'This invitation was sent to a different email address.',
     already_member: 'You are already a member.',
@@ -154,6 +165,7 @@ export function errorMessage(body, status) {
     saml_provider_disabled: 'Organization sign-in is turned off for this application.',
     reauthentication_required: 'Sign in again to do this; your sign-in is too old.',
     current_session: 'Use Back to leave; this page signs itself out.',
+    impersonation_restricted: 'Support cannot change this from a session opened as you.',
   }
   if (code === 'last_owner') {
     const orgs = Array.isArray(body?.organizations) ? body.organizations.join(', ') : 'an organization'
@@ -299,6 +311,47 @@ async function offerPasskey(root, settings, session, done) {
     el('button', { type: 'button', class: 'secondary', on: { click: () => done(session) } }, 'Not now')))
 }
 
+// web3Message writes the message a wallet signs, in the grammar GoTrue's
+// parsers accept (EIP-4361 for Ethereum, its Solana equivalent); it matches
+// @gregale/auth's.
+export function web3Message(chain, { domain, address, uri, statement, chainId, nonce, issuedAt }) {
+  return [
+    `${domain} wants you to sign in with your ${chain === 'ethereum' ? 'Ethereum' : 'Solana'} account:`, address, '',
+    ...(statement ? [statement.replace(/[\r\n]+/g, ' '), ''] : []),
+    `URI: ${uri}`, 'Version: 1', ...(chainId !== undefined ? [`Chain ID: ${chainId}`] : []), `Nonce: ${nonce}`, `Issued At: ${issuedAt}`,
+  ].join('\n')
+}
+
+function injectedWallet(chain) {
+  return chain === 'ethereum' ? globalThis.ethereum : (globalThis.phantom?.solana ?? globalThis.solana)
+}
+
+// signInWithWallet asks the browser's wallet to sign a message naming this
+// page and returns GoTrue's session.
+async function signInWithWallet(chain) {
+  const wallet = injectedWallet(chain)
+  const uri = `${location.origin}/ui/sign-in`
+  const fields = { domain: location.host, uri, statement: `Sign in to ${document.title.replace(/^Sign in to /, '')}`, nonce: Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join(''), issuedAt: new Date().toISOString() }
+  let message, signature
+  if (chain === 'ethereum') {
+    const [address] = await wallet.request({ method: 'eth_requestAccounts' })
+    const chainId = Number.parseInt(await wallet.request({ method: 'eth_chainId' }), 16)
+    message = web3Message(chain, { ...fields, address, chainId })
+    signature = await wallet.request({ method: 'personal_sign', params: [`0x${Array.from(new TextEncoder().encode(message), b => b.toString(16).padStart(2, '0')).join('')}`, address] })
+  } else {
+    if (!wallet.publicKey) await wallet.connect()
+    message = web3Message(chain, { ...fields, address: wallet.publicKey.toBase58() })
+    const signed = await wallet.signMessage(new TextEncoder().encode(message), 'utf8')
+    signature = btoa(String.fromCharCode(...(signed instanceof Uint8Array ? signed : signed.signature)))
+  }
+  return request('POST', '/auth/v1/token?grant_type=web3', { body: { chain, message, signature } })
+}
+
+// walletFailure explains a wallet's refusal (EIP-1193 code 4001) plainly.
+function walletFailure(err) {
+  return err?.code === 4001 || /reject/i.test(err?.message ?? '') ? 'The wallet did not sign. Try again when you are ready.' : (err?.message ?? 'The wallet could not sign in.')
+}
+
 // tokenAAL reads the assurance level of an access token GoTrue just issued.
 export function tokenAAL(token) {
   try { return JSON.parse(new TextDecoder().decode(fromBase64url(token.split('.')[1]))).aal ?? 'aal1' } catch { return 'aal1' }
@@ -309,6 +362,14 @@ export function tokenAAL(token) {
 export function secondFactors(user) {
   const verified = (user?.factors ?? []).filter(factor => factor.status === 'verified')
   return { factors: verified.filter(factor => factor.factor_type === 'totp' || factor.factor_type === 'phone'), recovery: verified.some(factor => factor.factor_type === 'recovery_code') }
+}
+
+// joinedMessage confirms an accepted invitation. An organization that
+// requires a second factor (sql/0016) is usable only from an aal2 session.
+export function joinedMessage(membership, aal) {
+  const joined = `You joined as ${membership.role}.`
+  if (!membership.mfa_required || aal === 'aal2') return joined
+  return `${joined} This organization requires two-step verification: add a second step to your account, then sign in again, before you use it.`
 }
 
 // completeSignIn asks a user with a verified second factor to complete it
@@ -378,11 +439,18 @@ async function main() {
       } catch (err) { say(err.message) }
     } } }, 'Email me a sign-in link instead'))
     root.append(signIn)
-    const providers = Object.entries(settings.external ?? {}).filter(([name, on]) => on && !['email', 'phone', 'anonymous_users', 'saml'].includes(name))
+    const providers = Object.entries(settings.external ?? {}).filter(([name, on]) => on && !['email', 'phone', 'anonymous_users', 'saml', 'web3_ethereum', 'web3_solana'].includes(name))
     const passkey = passkeysAvailable(settings) ? [el('button', { type: 'button', class: 'secondary', on: { click: async event => {
       event.target.disabled = true
       try { await completeSignIn(root, await signInWithPasskey(signIn.protect), done) } catch (err) { say(passkeyFailure(err)); event.target.disabled = false }
     } } }, 'Sign in with a passkey')] : []
+    // A wallet the browser offers (window.ethereum, window.solana) signs in
+    // directly; GoTrue verifies the signature and creates the user once.
+    const wallets = ['ethereum', 'solana'].filter(chain => config.web3?.[chain] && injectedWallet(chain)).map(chain => el('button', { type: 'button', class: 'secondary', on: { click: async event => {
+      event.target.disabled = true
+      try { await completeSignIn(root, await signInWithWallet(chain), done) } catch (err) { say(walletFailure(err)); event.target.disabled = false }
+    } } }, `Sign in with ${chain === 'ethereum' ? 'an Ethereum' : 'a Solana'} wallet`))
+    passkey.push(...wallets)
     if (providers.length || passkey.length) {
       root.append(el('p', { class: 'divider' }, 'or'), el('div', { class: 'providers' }, ...passkey, ...providers.map(([name]) =>
         el('a', { class: 'button secondary', href: `/auth/v1/authorize?provider=${encodeURIComponent(name)}&redirect_to=${encodeURIComponent(target)}` }, `Continue with ${providerName(name)}`))))
@@ -474,8 +542,15 @@ async function main() {
         const session = await protect({ email, password }, body => request('POST', '/auth/v1/token?grant_type=password', { body }))
         const membership = await request('POST', '/authz/v1/invitations/accept', { token: session.access_token, body: { token: invitation } })
         sessionStorage.removeItem('gregale.invitation')
-        say(`You joined as ${membership.role}.`)
-        root.append(el('a', { class: 'button', href: handoffURL(config.site_url, session) }, `Continue to ${config.app}`))
+        // Like every sign-in here, a user with a second factor confirms it,
+        // so the session handed over can use an organization requiring one.
+        await completeSignIn(root, session, verified => {
+          render(root, `Join an organization on ${config.app}`)
+          const joined = status(root)
+          joined(joinedMessage(membership, tokenAAL(verified.access_token)))
+          if (membership.mfa_required && tokenAAL(verified.access_token) !== 'aal2') root.append(links([`/ui/account?redirect_to=${encodeURIComponent(config.site_url)}`, 'Add a second step on your account page']))
+          root.append(el('a', { class: 'button', href: handoffURL(config.site_url, verified) }, `Continue to ${config.app}`))
+        })
       } catch (err) { say(err.message) }
     }, 'Sign in and accept', field('Email', 'email', 'email', 'username'), field('Password', 'password', 'password', 'current-password')))
     root.append(links([`/ui/sign-up?redirect_to=${encodeURIComponent(location.origin + '/ui/invitation')}`, 'No account yet? Create one, then reopen this page']))
@@ -614,7 +689,7 @@ async function account(root, config, query) {
     async refresh() {
       let user
       try { user = await ctx.call('GET', '/auth/v1/user') } catch (err) { return say(err.message) }
-      const parts = await Promise.all([profileSection(ctx, user), mfaSection(ctx, user), passkeysSection(ctx), identitiesSection(ctx, user), connectedAppsSection(ctx), sessionsSection(ctx), deletionSection(ctx, root)]
+      const parts = await Promise.all([profileSection(ctx, user), mfaSection(ctx, user), passkeysSection(ctx), identitiesSection(ctx, user), connectedAppsSection(ctx), joinableSection(ctx), sessionsSection(ctx), deletionSection(ctx, root)]
         .map(part => Promise.resolve(part).catch(err => { say(err.message); return null })))
       area.replaceChildren(...parts.filter(Boolean))
     },
@@ -739,9 +814,24 @@ async function connectedAppsSection(ctx) {
   return section('Connected apps', ...(list.length ? list : [el('p', {}, 'No other apps can use your account.')]))
 }
 
+// joinableSection offers the organization that verified the person's email
+// domain and lets people at it join (sql/0017).
+async function joinableSection(ctx) {
+  if (ctx.options.organization_domains?.joining !== true) return null
+  const { organizations } = await ctx.call('GET', '/authz/v1/suggested-organizations')
+  if (!organizations.length) return null
+  return section('Organizations you can join', el('p', {}, 'Your organization verified your email domain, so you can join it.'),
+    ...organizations.map(org => row(`${org.name} (${org.domain}), as ${org.role}`,
+      el('button', { type: 'button', class: 'secondary', on: { click: () => ctx.act(async () => {
+        await ctx.call('POST', `/authz/v1/orgs/${encodeURIComponent(org.id)}/join`, {})
+        await ctx.refresh()
+        ctx.say(`You joined ${org.name}.`)
+      }) } }, 'Join'))))
+}
+
 async function sessionsSection(ctx) {
   const { sessions } = await ctx.call('GET', '/authz/v1/sessions')
-  const list = sessions.map(s => row(`${deviceName(s.user_agent)}${s.ip ? `, ${s.ip}` : ''}: ${s.current ? 'this page' : `active ${when(s.last_active_at)}`}`,
+  const list = sessions.map(s => row(`${deviceName(s.user_agent)}${s.ip ? `, ${s.ip}` : ''}: ${s.current ? 'this page' : `active ${when(s.last_active_at)}`}${s.impersonated ? ` (opened by ${ctx.config.app} support)` : ''}`,
     ...(s.current ? [] : [confirmButton('Sign out', () => ctx.act(async () => { await ctx.call('DELETE', `/authz/v1/sessions/${encodeURIComponent(s.id)}`); await ctx.refresh() }))])))
   const others = sessions.some(s => !s.current) ? [['Sign out everywhere else', () => ctx.act(async () => {
     await ctx.call('POST', '/auth/v1/logout?scope=others')

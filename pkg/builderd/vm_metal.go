@@ -38,7 +38,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -179,6 +179,7 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 	}
 	return api.BuildManifest{
 		PublicBuildURLs:       req.PublicBuildURLs,
+		DockerfileBuild:       req.DockerfileBuild.Clone(),
 		BuildDependencyDigest: req.BuildDependencyDigest,
 		SchemaVersion:         1,
 		BuildID:               req.BuildID,
@@ -307,8 +308,8 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 			// imaged's staged base and vmmd's scan gate. The legacy
 			// builder-base.ext4 spelling bypassed the published scan
 			// sidecar and made every metal build fail closed.
-			BaseKey:    sched.BaseKey("builder"), // ADR-025: storage key → vmmd resolves via StorageBackend
-			LayerKey:   drive1Path,               // absolute host path; vmmd treats as direct path (abs path bypass)
+			BaseKey:    storagekey.Base("builder"), // ADR-025: storage key → vmmd resolves via StorageBackend
+			LayerKey:   drive1Path,                 // absolute host path; vmmd treats as direct path (abs path bypass)
 			VcpuCount:  api.BuildVMVCPU,
 			MemSizeMib: int32(api.BuildVMRAMMB),
 		},
@@ -392,7 +393,7 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 	resp, err := d.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
 		Instance: instance,
 		App: &vmmdpb.AppSpec{
-			BaseKey:    sched.BaseKey("builder"),
+			BaseKey:    storagekey.Base("builder"),
 			LayerKey:   snapshot.LayerPath,
 			VcpuCount:  api.BuildVMVCPU,
 			MemSizeMib: int32(api.BuildVMRAMMB),
@@ -675,6 +676,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		exitCode = done.ExitCode
 		res.ExitCode = exitCode
 		res.PublicBuildURLsSHA256 = done.PublicBuildURLsSHA256
+		res.DockerfileBuildSHA256 = done.DockerfileBuildSHA256
 		res.BuildDependencyDigest = done.BuildDependencyDigest
 		res.LogTailBytes = int64(len(done.LogTail))
 		res.LogTail = done.LogTail

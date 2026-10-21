@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -53,38 +54,38 @@ func TestAppsTCPTLSCommands(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test")
-	stdout, _, restore := swapIO(t)
+	stdout, _, restore := main.SwapIO(t)
 	defer restore()
-	previousJSON := jsonOutput
-	jsonOutput = false
-	defer func() { jsonOutput = previousJSON }()
-	if code := cmdAppsTCP("test-app", []string{"add", "--name", "echo", "--guest-port", "9000", "--tls-mode", "terminate", "--tls-hostname", "Echo.Example"}); code != 0 {
+	previousJSON := (*main.JsonOutput)
+	(*main.JsonOutput) = false
+	defer func() { (*main.JsonOutput) = previousJSON }()
+	if code := main.CmdAppsTCP("test-app", []string{"add", "--name", "echo", "--guest-port", "9000", "--tls-mode", "terminate", "--tls-hostname", "Echo.Example"}); code != 0 {
 		t.Fatalf("add exit=%d", code)
 	}
 	if !strings.Contains(stdout.String(), "Created disabled TLS listener") || !strings.Contains(stdout.String(), "echo.example") {
 		t.Fatalf("output=%s", stdout)
 	}
 	stdout.Reset()
-	if code := cmdAppsTCP("test-app", nil); code != 0 {
+	if code := main.CmdAppsTCP("test-app", nil); code != 0 {
 		t.Fatalf("list exit=%d", code)
 	}
 	if !strings.Contains(stdout.String(), "terminate") || !strings.Contains(stdout.String(), "echo.example") {
 		t.Fatalf("list=%s", stdout)
 	}
 	stdout.Reset()
-	if code := cmdAppsTCP("test-app", []string{"tls", "echo", "--tls-mode", "terminate", "--tls-hostname", "Echo.Example"}); code != 0 {
+	if code := main.CmdAppsTCP("test-app", []string{"tls", "echo", "--tls-mode", "terminate", "--tls-hostname", "Echo.Example"}); code != 0 {
 		t.Fatalf("TLS update exit=%d", code)
 	}
 	if !strings.Contains(stdout.String(), "listener is disabled") {
 		t.Fatalf("update output=%s", stdout)
 	}
 	before := requests
-	if code := cmdAppsTCP("test-app", []string{"tls", "echo"}); code == 0 {
+	if code := main.CmdAppsTCP("test-app", []string{"tls", "echo"}); code == 0 {
 		t.Fatal("TLS update without policy accepted")
 	}
 	for _, flags := range [][]string{{"--tls-mode", "invalid"}, {"--tls-mode", "terminate"}, {"--tls-hostname", "echo.example"}, {"--tls-mode", "terminate", "--tls-hostname", "*.example"}} {
 		args := append([]string{"add", "--name", "echo", "--guest-port", "9000"}, flags...)
-		if code := cmdAppsTCP("test-app", args); code == 0 {
+		if code := main.CmdAppsTCP("test-app", args); code == 0 {
 			t.Fatalf("invalid flags accepted: %v", flags)
 		}
 	}

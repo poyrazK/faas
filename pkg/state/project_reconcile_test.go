@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreProjectTenantPolicyPreservation(t *testing.T) {
@@ -13,20 +14,20 @@ func TestMemStoreProjectTenantPolicyPreservation(t *testing.T) {
 		for _, explicit := range []bool{false, true} {
 			t.Run(op+map[bool]string{false: "/omitted", true: "/disable"}[explicit], func(t *testing.T) {
 				ctx := context.Background()
-				store := NewMemStore()
+				store := state.NewMemStore()
 				acct, err := store.CreateAccount(ctx, "policy@example.com", api.PlanHobby)
 				if err != nil {
 					t.Fatal(err)
 				}
-				project, err := store.CreateProject(ctx, Project{AccountID: acct.ID, Slug: "platform", ScanSource: ProjectScanSourceCompose})
+				project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "platform", ScanSource: state.ProjectScanSourceCompose})
 				if err != nil {
 					t.Fatal(err)
 				}
-				app, err := store.CreateApp(ctx, App{AccountID: acct.ID, ProjectID: project.ID, Slug: "customer-api", WorkloadName: "customer-api", PlatformTenantRequired: true})
+				app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "customer-api", WorkloadName: "customer-api", PlatformTenantRequired: true})
 				if err != nil {
 					t.Fatal(err)
 				}
-				mutation := ProjectReconcileMutation{Op: "update", App: App{ID: app.ID, Slug: app.Slug, WorkloadName: app.WorkloadName}, SetPlatformTenantRequired: explicit}
+				mutation := state.ProjectReconcileMutation{Op: "update", App: state.App{ID: app.ID, Slug: app.Slug, WorkloadName: app.WorkloadName}, SetPlatformTenantRequired: explicit}
 				if op == "restore" {
 					if _, err := store.SoftDeleteAppCascade(ctx, app.ID); err != nil {
 						t.Fatal(err)
@@ -34,14 +35,14 @@ func TestMemStoreProjectTenantPolicyPreservation(t *testing.T) {
 					mutation.Op = "create"
 					mutation.App.ID = ""
 				}
-				if _, err := store.ApplyProjectReconcile(ctx, project, []ProjectReconcileMutation{mutation}, nil, ProjectScanSourceCompose, api.MustLimitsFor(api.PlanHobby)); err != nil {
+				if _, err := store.ApplyProjectReconcile(ctx, project, []state.ProjectReconcileMutation{mutation}, nil, state.ProjectScanSourceCompose, api.MustLimitsFor(api.PlanHobby)); err != nil {
 					t.Fatal(err)
 				}
 				got, err := store.AppByID(ctx, app.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if got.PlatformTenantRequired != !explicit || got.Status != AppActive {
+				if got.PlatformTenantRequired != !explicit || got.Status != state.AppActive {
 					t.Fatalf("policy/status after %s: %+v", op, got)
 				}
 			})
@@ -51,16 +52,16 @@ func TestMemStoreProjectTenantPolicyPreservation(t *testing.T) {
 
 func TestMemStoreApplyProjectReconcileRollsBackOnCronResolutionError(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "project-reconcile@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	project, err := store.CreateProject(ctx, Project{AccountID: acct.ID, Slug: "demo", ScanSource: ProjectScanSourceCompose})
+	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "demo", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, ProjectID: project.ID, Slug: "api", WorkloadName: "api", Status: AppActive})
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "api", WorkloadName: "api", Status: state.AppActive})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
@@ -69,10 +70,10 @@ func TestMemStoreApplyProjectReconcileRollsBackOnCronResolutionError(t *testing.
 	}
 
 	root := "services/api"
-	_, err = store.ApplyProjectReconcile(ctx, project, []ProjectReconcileMutation{
-		{Op: "update", App: App{ID: app.ID, RootDir: root, WorkloadName: "api", StartCommand: "run"}},
-		{Op: "create", App: App{Slug: "worker", WorkloadName: "worker", Status: AppActive}},
-	}, []ProjectReconcileCron{{WorkloadName: "missing", Schedule: "0 * * * *", Path: "/", Enabled: true}}, ProjectScanSourceCompose, api.MustLimitsFor(api.PlanHobby))
+	_, err = store.ApplyProjectReconcile(ctx, project, []state.ProjectReconcileMutation{
+		{Op: "update", App: state.App{ID: app.ID, RootDir: root, WorkloadName: "api", StartCommand: "run"}},
+		{Op: "create", App: state.App{Slug: "worker", WorkloadName: "worker", Status: state.AppActive}},
+	}, []state.ProjectReconcileCron{{WorkloadName: "missing", Schedule: "0 * * * *", Path: "/", Enabled: true}}, state.ProjectScanSourceCompose, api.MustLimitsFor(api.PlanHobby))
 	if err == nil {
 		t.Fatal("expected cron resolution error")
 	}
@@ -98,7 +99,7 @@ func TestMemStoreApplyProjectReconcileRollsBackOnCronResolutionError(t *testing.
 
 func TestTargetCallerDenyAllSurvivesManifestRoundTrip(t *testing.T) {
 	empty := []string{}
-	manifest := mergeProjectManagedManifest(AppManifest{}, AppManifest{AllowedServiceCallers: &empty})
+	manifest := state.MergeProjectManagedManifest(state.AppManifest{}, state.AppManifest{AllowedServiceCallers: &empty})
 	if manifest.IsZero() {
 		t.Fatal("deny-all manifest must not be considered empty")
 	}
@@ -106,7 +107,7 @@ func TestTargetCallerDenyAllSurvivesManifestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var decoded AppManifest
+	var decoded state.AppManifest
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatal(err)
 	}
@@ -118,20 +119,20 @@ func TestTargetCallerDenyAllSurvivesManifestRoundTrip(t *testing.T) {
 // adr: 099 — project reconciliation leaves independently managed command crons intact.
 func TestMemStoreApplyProjectReconcilePreservesCommandCrons(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "project-command-cron@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	project, err := store.CreateProject(ctx, Project{AccountID: acct.ID, Slug: "command-cron", ScanSource: ProjectScanSourceCompose})
+	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "command-cron", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: acct.ID, ProjectID: project.ID, Slug: "api", WorkloadName: "api", Status: AppActive})
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "api", WorkloadName: "api", Status: state.AppActive})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	commandCron, err := store.CreateCronWithOptions(ctx, app.ID, "0 2 * * *", "/", true, CronOptions{
+	commandCron, err := store.CreateCronWithOptions(ctx, app.ID, "0 2 * * *", "/", true, state.CronOptions{
 		Command: []string{"bin/maintenance"},
 	})
 	if err != nil {
@@ -141,9 +142,9 @@ func TestMemStoreApplyProjectReconcilePreservesCommandCrons(t *testing.T) {
 		t.Fatalf("CreateCron(http): %v", err)
 	}
 
-	_, err = store.ApplyProjectReconcile(ctx, project, nil, []ProjectReconcileCron{{
+	_, err = store.ApplyProjectReconcile(ctx, project, nil, []state.ProjectReconcileCron{{
 		WorkloadName: "api", Schedule: "*/10 * * * *", Path: "/new", Enabled: true,
-	}}, ProjectScanSourceCompose, api.MustLimitsFor(api.PlanHobby))
+	}}, state.ProjectScanSourceCompose, api.MustLimitsFor(api.PlanHobby))
 	if err != nil {
 		t.Fatalf("ApplyProjectReconcile: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestMemStoreApplyProjectReconcilePreservesCommandCrons(t *testing.T) {
 
 func TestTargetCallerScopesSurviveManifestRoundTrip(t *testing.T) {
 	scopes := api.ServiceCallerScopes{}
-	manifest := mergeProjectManagedManifest(AppManifest{}, AppManifest{AllowedServiceCallScopes: &scopes})
+	manifest := state.MergeProjectManagedManifest(state.AppManifest{}, state.AppManifest{AllowedServiceCallScopes: &scopes})
 	if manifest.IsZero() {
 		t.Fatal("deny-all scope manifest must not be considered empty")
 	}
@@ -178,7 +179,7 @@ func TestTargetCallerScopesSurviveManifestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var decoded AppManifest
+	var decoded state.AppManifest
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatal(err)
 	}
@@ -189,19 +190,19 @@ func TestTargetCallerScopesSurviveManifestRoundTrip(t *testing.T) {
 
 func TestMemStoreApplyProjectReconcileRestoresRemovedWorkloadInPlace(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "project-restore@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := store.CreateProject(ctx, Project{AccountID: acct.ID, Slug: "restore", ScanSource: ProjectScanSourceCompose})
+	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "restore", ScanSource: state.ProjectScanSourceCompose})
 	if err != nil {
 		t.Fatal(err)
 	}
-	original, err := store.CreateApp(ctx, App{
+	original, err := store.CreateApp(ctx, state.App{
 		AccountID: acct.ID, ProjectID: project.ID, Slug: "worker", WorkloadName: "worker",
-		RootDir: "services/worker", WorkloadClass: WorkloadClassWorker, StartCommand: "node worker.js", Status: AppActive,
-		Manifest: AppManifest{WorkingDir: "/workspace", Env: map[string]string{"CUSTOM": "kept"}},
+		RootDir: "services/worker", WorkloadClass: state.WorkloadClassWorker, StartCommand: "node worker.js", Status: state.AppActive,
+		Manifest: state.AppManifest{WorkingDir: "/workspace", Env: map[string]string{"CUSTOM": "kept"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -214,14 +215,14 @@ func TestMemStoreApplyProjectReconcileRestoresRemovedWorkloadInPlace(t *testing.
 		t.Fatal(err)
 	}
 
-	result, err := store.ApplyProjectReconcile(ctx, project, []ProjectReconcileMutation{{
+	result, err := store.ApplyProjectReconcile(ctx, project, []state.ProjectReconcileMutation{{
 		Op: "create",
-		App: App{
+		App: state.App{
 			Slug: "worker", WorkloadName: "worker", RootDir: "apps/worker",
-			WorkloadClass: WorkloadClassJob, StartCommand: "node new-worker.js",
-			Manifest: AppManifest{BuildDockerfile: "Dockerfile.worker", Env: map[string]string{"SERVICE_URL": "http://api.internal"}},
+			WorkloadClass: state.WorkloadClassJob, StartCommand: "node new-worker.js",
+			Manifest: state.AppManifest{BuildDockerfile: "Dockerfile.worker", Env: map[string]string{"SERVICE_URL": "http://api.internal"}},
 		},
-	}}, nil, ProjectScanSourceCompose, api.MustLimitsFor(api.PlanHobby))
+	}}, nil, state.ProjectScanSourceCompose, api.MustLimitsFor(api.PlanHobby))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,10 +230,10 @@ func TestMemStoreApplyProjectReconcileRestoresRemovedWorkloadInPlace(t *testing.
 		t.Fatalf("restored apps = %#v", result.Added)
 	}
 	restored := result.Added[0]
-	if restored.ID != original.ID || restored.Status != AppActive || restored.DeletedAt != nil || restored.DeleteGraceUntil != nil {
+	if restored.ID != original.ID || restored.Status != state.AppActive || restored.DeletedAt != nil || restored.DeleteGraceUntil != nil {
 		t.Fatalf("restored identity/lifecycle = %#v", restored)
 	}
-	if restored.RootDir != "apps/worker" || restored.StartCommand != "node new-worker.js" || restored.WorkloadClass != WorkloadClassJob {
+	if restored.RootDir != "apps/worker" || restored.StartCommand != "node new-worker.js" || restored.WorkloadClass != state.WorkloadClassJob {
 		t.Fatalf("restored plan fields = %#v", restored)
 	}
 	if restored.Manifest.WorkingDir != "/workspace" || restored.Manifest.Env["CUSTOM"] != "kept" ||
@@ -246,7 +247,7 @@ func TestMemStoreApplyProjectReconcileRestoresRemovedWorkloadInPlace(t *testing.
 }
 
 func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
-	existing := AppManifest{
+	existing := state.AppManifest{
 		Env: map[string]string{
 			"CUSTOM":                                "kept",
 			"GREGALE_SERVICE_OLD_SERVICE_URL":       "http://old-service.svc.gregale:10080",
@@ -257,7 +258,7 @@ func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
 			Service: "old-service",
 		}},
 	}
-	desired := AppManifest{
+	desired := state.AppManifest{
 		Env: map[string]string{
 			"GREGALE_SERVICE_API_URL":       "https://api.internal",
 			"GREGALE_SERVICE_API_HTTPS_URL": "https://api.internal",
@@ -270,7 +271,7 @@ func TestMergeProjectManagedManifestRefreshesServiceBindingEnv(t *testing.T) {
 		ServiceBindingTransport: api.ServiceBindingTransportHTTPS,
 	}
 
-	got := mergeProjectManagedManifest(existing, desired)
+	got := state.MergeProjectManagedManifest(existing, desired)
 	if got.Env["CUSTOM"] != "kept" || got.Env["GREGALE_SERVICE_API_URL"] != "https://api.internal" ||
 		got.Env["GREGALE_SERVICE_API_HTTPS_URL"] != "https://api.internal" {
 		t.Fatalf("merged env = %#v, want custom env and current service binding", got.Env)

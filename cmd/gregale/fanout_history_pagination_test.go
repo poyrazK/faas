@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -16,7 +17,7 @@ func TestFanoutHistoryPaginationContract(t *testing.T) {
 	for _, machine := range []bool{false, true} {
 		for _, mode := range []string{"page", "all", "empty-page", "failure", "repeat"} {
 			t.Run(fmt.Sprintf("json=%t/%s", machine, mode), func(t *testing.T) {
-				setupCLIRegression(t)
+				main.SetupCLIRegression(t)
 				var cursors []string
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					q := r.URL.Query()
@@ -45,7 +46,7 @@ func TestFanoutHistoryPaginationContract(t *testing.T) {
 				}))
 				defer server.Close()
 				t.Setenv("FAAS_API", server.URL)
-				t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+				t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 				args := []string{"events", "fanout-history", "--event-source", "orders", "--event-id", "evt", "--subscription-id", "recipient", "--limit", "2", "--before", "ignored", "--cursor", "start + opaque|cursor", "demo"}
 				all := mode != "page" && mode != "empty-page"
 				if all {
@@ -54,7 +55,7 @@ func TestFanoutHistoryPaginationContract(t *testing.T) {
 				if machine {
 					args = append(args, "--json")
 				}
-				code, out, errOut := capturePreviewRun(t, args)
+				code, out, errOut := main.CapturePreviewRun(t, args)
 				wantCursors := []string{"start + opaque|cursor"}
 				if mode == "all" || mode == "failure" {
 					wantCursors = append(wantCursors, "next + opaque|cursor")
@@ -71,7 +72,7 @@ func TestFanoutHistoryPaginationContract(t *testing.T) {
 						t.Fatalf("exit=%d stdout=%s stderr=%s", code, out, errOut)
 					}
 					if machine {
-						assertOneProblem(t, errOut)
+						main.AssertOneProblem(t, errOut)
 					}
 					return
 				}
@@ -125,8 +126,8 @@ func TestFanoutHistoryPaginationContract(t *testing.T) {
 }
 
 func TestFanoutHistoryPaginationHelpAndValidation(t *testing.T) {
-	setupCLIRegression(t)
-	code, out, errOut := capturePreviewRun(t, []string{"events", "fanout-history", "--help"})
+	main.SetupCLIRegression(t)
+	code, out, errOut := main.CapturePreviewRun(t, []string{"events", "fanout-history", "--help"})
 	if code != 0 || errOut != "" {
 		t.Fatalf("exit=%d stderr=%s", code, errOut)
 	}
@@ -136,10 +137,10 @@ func TestFanoutHistoryPaginationHelpAndValidation(t *testing.T) {
 		}
 	}
 	for _, limit := range []string{"0", "201"} {
-		code, out, errOut = capturePreviewRun(t, []string{"events", "fanout-history", "demo", "--event-source", "orders", "--event-id", "evt", "--limit", limit, "--all", "--json"})
+		code, out, errOut = main.CapturePreviewRun(t, []string{"events", "fanout-history", "demo", "--event-source", "orders", "--event-id", "evt", "--limit", limit, "--all", "--json"})
 		if code != 1 || out != "" {
 			t.Fatalf("limit=%s exit=%d stdout=%s", limit, code, out)
 		}
-		assertOneProblem(t, errOut)
+		main.AssertOneProblem(t, errOut)
 	}
 }

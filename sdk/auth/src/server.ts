@@ -47,9 +47,37 @@ export type VerifiedClaims = Readonly<{
    * changed membership shows at the next token, within its lifetime.
    */
   organization?: Readonly<{ id: string; slug: string; role: string; permissions: readonly string[] }>
+  /**
+   * Set while the app's support staff use this session as the user
+   * (impersonation): who opened it, such as "admin:0A1B2C3D". Refuse
+   * actions the person must take themselves, such as payments.
+   */
+  actor?: string
+  /**
+   * Set when the token belongs to an organization's service account (the
+   * client-credentials grant), not a person: id is the account's ID (also
+   * sub) and organization is the account's. scope lists the permissions the
+   * token was narrowed to, when it was. authorize() applies the account's
+   * role and stops working at once when the account or its secret is
+   * revoked; verify() alone accepts the token until it expires.
+   */
+  serviceAccount?: Readonly<{ id: string; secretId: string; scope?: readonly string[] }>
   /** Every claim, including ones this type does not name. */
   raw: Readonly<Record<string, unknown>>
 }>
+
+// actorOf reads RFC 8693's act claim, which the Auth app sets on sessions
+// its operator opened as a user.
+function actorOf(act: unknown): { actor?: string } {
+  const sub = act !== null && typeof act === 'object' ? (act as { sub?: unknown }).sub : undefined
+  return typeof sub === 'string' && sub !== '' ? { actor: sub } : {}
+}
+
+function serviceAccountOf(payload: Record<string, unknown>): { serviceAccount?: VerifiedClaims['serviceAccount'] } {
+  if (payload.service_account !== true || typeof payload.sub !== 'string' || typeof payload.secret_id !== 'string') return {}
+  const scope = typeof payload.scope === 'string' ? { scope: payload.scope.split(' ').filter(Boolean) } : {}
+  return { serviceAccount: { id: payload.sub, secretId: payload.secret_id, ...scope } }
+}
 
 export type VerifierOptions = {
   /** The Auth app's origin, such as https://shop-auth.gregale.app. */
@@ -174,6 +202,8 @@ export function createVerifier(options: VerifierOptions) {
       sub: payload.sub, sessionId: str(payload.session_id), role: str(payload.role), email: str(payload.email), phone: str(payload.phone),
       aal: str(payload.aal), isAnonymous: payload.is_anonymous === true, expiresAt: exp, issuedAt: num(payload.iat),
       appMetadata: obj(payload.app_metadata), userMetadata: obj(payload.user_metadata), raw: payload,
+      ...actorOf(payload.act),
+      ...serviceAccountOf(payload),
       ...(typeof payload.org_id === 'string' && typeof payload.org_slug === 'string' && typeof payload.org_role === 'string'
         ? { organization: { id: payload.org_id, slug: payload.org_slug, role: payload.org_role, permissions: Array.isArray(payload.org_permissions) ? payload.org_permissions.filter((p): p is string => typeof p === 'string') : [] } }
         : {}),
@@ -208,3 +238,76 @@ export function createVerifier(options: VerifierOptions) {
 }
 
 export type Verifier = ReturnType<typeof createVerifier>
+
+export type ClientCredentialsOptions = {
+  /** The Auth app's origin, such as https://shop-auth.gregale.app. */
+  url: string
+  /** The service account's ID. */
+  clientId: string
+  /** One of its secrets (gasa_...). Keep it out of browsers. */
+  clientSecret: string
+  /** Permissions to narrow the token to; each must be one its role holds. */
+  scope?: readonly string[]
+  fetch?: typeof fetch
+  /** Milliseconds since the epoch; tests replace it. */
+  now?: () => number
+}
+
+// A token is fetched again this long before it expires, so a request that
+// carries it still finds it valid.
+const refreshMarginMs = 60_000
+
+/**
+ * Gets access tokens for an organization's service account with the
+ * client-credentials grant, for a backend calling an API or the Data API
+ * as that organization. token() caches one until a minute before it
+ * expires; concurrent callers share one request.
+ *
+ *   const machine = createClientCredentials({ url, clientId, clientSecret })
+ *   await fetch(api, { headers: { Authorization: `Bearer ${await machine.token()}` } })
+ */
+export function createClientCredentials(options: ClientCredentialsOptions) {
+  const origin = baseURL(options.url)
+  const fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis)
+  const now = options.now ?? Date.now
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(options.clientId)) throw new Error('clientId must be a service account ID')
+  if (!/^gasa_[A-Za-z0-9_-]{43}$/.test(options.clientSecret)) throw new Error('clientSecret must be a service account secret')
+  const form = new URLSearchParams({ grant_type: 'client_credentials', ...(options.scope?.length ? { scope: options.scope.join(' ') } : {}) })
+  const basic = `Basic ${btoa(`${encodeURIComponent(options.clientId)}:${encodeURIComponent(options.clientSecret)}`)}`
+  let cached: { token: string; refreshAt: number } | null = null
+  let pending: Promise<string> | null = null
+
+  async function request(): Promise<string> {
+    let response: Response
+    try {
+      response = await fetchImpl(`${origin}/auth/v1/oauth/token`, {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10_000),
+        headers: { Authorization: basic, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body: form.toString(),
+      })
+    } catch {
+      throw new AuthError(503, 'auth_unavailable')
+    }
+    let body: { access_token?: unknown; expires_in?: unknown; error?: unknown } | null = null
+    try { body = await response.json() } catch { body = null }
+    if (!response.ok || typeof body?.access_token !== 'string' || typeof body.expires_in !== 'number') {
+      const code = typeof body?.error === 'string' && /^[a-z0-9_]{1,64}$/.test(body.error) ? body.error : `http_${response.status}`
+      throw new AuthError(response.ok ? 502 : response.status, code)
+    }
+    cached = { token: body.access_token, refreshAt: now() + body.expires_in * 1000 - refreshMarginMs }
+    return body.access_token
+  }
+
+  /** Returns a valid access token, fetching a new one when needed. */
+  function token(): Promise<string> {
+    if (cached && now() < cached.refreshAt) return Promise.resolve(cached.token)
+    pending ??= request().finally(() => { pending = null })
+    return pending
+  }
+
+  /** Drops the cached token, for example after an API answered 401. */
+  function clear() { cached = null }
+
+  return { token, clear }
+}
+
+export type ClientCredentials = ReturnType<typeof createClientCredentials>

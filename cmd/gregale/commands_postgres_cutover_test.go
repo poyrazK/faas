@@ -1,5 +1,5 @@
 // adr: 465 — CLI resolves source/target names and keeps cutover output credential-free.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -51,15 +52,15 @@ func TestCmdPostgresCutoverActions(t *testing.T) {
 				defer srv.Close()
 				t.Setenv("FAAS_API", srv.URL)
 				t.Setenv("FAAS_TOKEN", "fp_live_test")
-				previousOut, previousJSON := osStdout, jsonOutput
-				t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+				previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+				t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
 				var out bytes.Buffer
-				osStdout, jsonOutput = &out, asJSON
+				(*main.OsStdout), (*main.JsonOutput) = &out, asJSON
 				args := []string{"cutover", action, "cutover-id"}
 				if action == "prepare" {
 					args = []string{"cutover", "prepare", "source", "target", "api", "--scope", "staging"}
 				}
-				if code := cmdPostgres(args); code != 0 {
+				if code := main.CmdPostgres(args); code != 0 {
 					t.Fatal("command failed", code)
 				}
 				if strings.Contains(out.String(), "private-") || strings.Contains(out.String(), "ciphertext") {
@@ -79,7 +80,7 @@ func TestCmdPostgresCutoverActions(t *testing.T) {
 }
 func TestCmdPostgresCutoverRejectsMalformedArguments(t *testing.T) {
 	for _, args := range [][]string{nil, {"unknown"}, {"get"}, {"verify", "id", "extra"}, {"prepare", "source", "target"}, {"prepare", "source", "target", "app", "--unexpected", "flag"}} {
-		if code := cmdPostgresCutover(args); code == 0 {
+		if code := main.CmdPostgresCutover(args); code == 0 {
 			t.Fatal("malformed arguments accepted")
 		}
 	}

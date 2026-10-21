@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -17,6 +17,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingcontract"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
@@ -67,7 +68,7 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 			if !ok {
 				t.Fatalf("API hosting catalog is missing %q", tc.fixtureID)
 			}
-			repo := initZeroConfigRepo(t)
+			repo := main.InitZeroConfigRepo(t)
 			if fixture.Expected.PackageManager != "npm" {
 				// The shared Git helper seeds a Node marker. Remove it for
 				// Python and Go fixtures so they exercise their own markers.
@@ -105,21 +106,21 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 				writeParityFile(t, member, "gregale.yaml", "hosting:\n  port: 8787\n  health: /ready\n")
 			}
 			sha := strings.TrimSpace(parityGit(t, repo, "rev-parse", "HEAD"))
-			withCwd(t, repo)
+			main.WithCwd(t, repo)
 
 			var created api.CreateAppRequest
 			var uploaded []byte
 			var sourceRoot string
-			stub := newZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *zeroConfigStubServer) {
+			stub := main.NewZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, z *main.ZeroConfigStubServer) {
 				switch {
 				case r.URL.Path == "/v1/apps" && r.Method == http.MethodPost:
-					z.gotCalls["create"]++
+					(*z.GotCalls())["create"]++
 					if err := json.NewDecoder(r.Body).Decode(&created); err != nil {
 						t.Errorf("decode app request: %v", err)
 					}
 					_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "demo"})
 				case r.URL.Path == "/v1/apps/demo/deployments" && r.Method == http.MethodPost:
-					z.gotCalls["deploy"]++
+					(*z.GotCalls())["deploy"]++
 					mr, err := r.MultipartReader()
 					if err != nil {
 						t.Errorf("multipart reader: %v", err)
@@ -152,7 +153,7 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 					http.Error(w, "not found", http.StatusNotFound)
 				}
 			})
-			t.Setenv("FAAS_API", stub.srv.URL)
+			t.Setenv("FAAS_API", (*stub.Srv()).URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 			// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
@@ -174,13 +175,13 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 			}
 			var plan simpleapp.Plan
 			runParityCLI(t, append(append([]string{}, args...), "--plan"), &plan)
-			if len(stub.gotCalls) != 0 {
-				t.Fatalf("--plan contacted the API: %+v", stub.gotCalls)
+			if len((*stub.GotCalls())) != 0 {
+				t.Fatalf("--plan contacted the API: %+v", (*stub.GotCalls()))
 			}
-			var receipt DeployReceipt
+			var receipt main.DeployReceipt
 			runParityCLI(t, append(append([]string{}, args...), "--no-wait"), &receipt)
-			if stub.gotCalls["create"] != 1 || stub.gotCalls["deploy"] != 1 {
-				t.Fatalf("deploy calls = %+v, want one create and upload", stub.gotCalls)
+			if (*stub.GotCalls())["create"] != 1 || (*stub.GotCalls())["deploy"] != 1 {
+				t.Fatalf("deploy calls = %+v, want one create and upload", (*stub.GotCalls()))
 			}
 			wantPort, wantHealth := fixture.Expected.Port, fixture.Expected.HealthPath
 			if tc.wantPort != 0 {
@@ -213,7 +214,7 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 			if receipt.SourceSHA256 != hex.EncodeToString(digest[:]) {
 				t.Errorf("receipt source digest = %q, differs from uploaded bytes", receipt.SourceSHA256)
 			}
-			entries := readCapturedDeployArchive(t, uploaded)
+			entries := main.ReadCapturedDeployArchive(t, uploaded)
 			if fixture.SourceRoot != "" {
 				for name, want := range fixture.Files {
 					if got, ok := entries[name]; !ok || string(got) != want {
@@ -267,10 +268,10 @@ func parityGit(t *testing.T, repo string, args ...string) string {
 func runParityCLI(t *testing.T, args []string, target any) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = &stdout, &stderr, true
-	defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
-	if code := cmdDeployTarball(args); code != 0 {
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &stdout, &stderr, true
+	defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
+	if code := main.CmdDeployTarball(args); code != 0 {
 		t.Fatalf("gregale deploy %v: exit %d\nstderr: %s\nstdout: %s", args, code, stderr.String(), stdout.String())
 	}
 	if err := json.Unmarshal(stdout.Bytes(), target); err != nil {

@@ -4,6 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { lookup } from "node:dns/promises";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
@@ -49,10 +50,10 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     await admin.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON notes TO "${name}"`);
     await admin.query(`GRANT USAGE, SELECT ON SEQUENCE notes_id_seq TO "${name}"`);
   }
-  async function runtime(name) {
+  async function runtime(name, options = {}) {
     const uri = new URL(url); uri.username = name; uri.password = password;
     const config = poolConfig(uri.href);
-    const db = createDatabase(() => new pg.Pool(config), { env: {DATABASE_URL: uri.href}, log: (code) => idleErrors.push(code) });
+    const db = createDatabase(() => new pg.Pool(config), { ...options, env: {DATABASE_URL: uri.href}, log: (code) => idleErrors.push(code) });
     databases.push(db); await db.start(); return db;
   }
   async function listen(db) {
@@ -68,6 +69,21 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     const end = Date.now() + 3_000;
     while (!await check()) { assert.ok(Date.now() < end, "fixture observation deadline exceeded"); await delay(10); }
   }
+  await t.test("TLS hostname verification and SCRAM authentication reject invalid peers and passwords", async () => {
+    const uri = new URL(url); uri.username = role; uri.password = "incorrect-fixture-password";
+    const unauthorized = new pg.Client(poolConfig(uri.href));
+    try { await assert.rejects(unauthorized.connect(), (error) => error.code === "28P01"); }
+    finally { await unauthorized.end(); }
+    uri.password = password;
+    // pg derives SNI from a DNS host, overriding ssl.servername. Connect to the
+    // resolved fixture IP so this negative case actually uses the wrong name.
+    const { address, family } = await lookup(uri.hostname.replace(/^\[|\]$/g, ""), { order: "ipv4first" });
+    uri.hostname = family === 6 ? `[${address}]` : address;
+    const config = poolConfig(uri.href);
+    const wrongHost = new pg.Client({ ...config, ssl: { ...config.ssl, servername: "wrong-fixture-host.invalid" } });
+    try { await assert.rejects(wrongHost.connect(), (error) => error.code === "ERR_TLS_CERT_ALTNAME_INVALID"); }
+    finally { await wrongHost.end(); }
+  });
   await t.test("serving rejects migration credentials without exposing either URL", () => {
     const result = spawnSync(process.execPath, [fileURLToPath(new URL("../handler.js", import.meta.url))], {
       encoding: "utf8", env: { ...process.env, DATABASE_URL: url, MIGRATION_DATABASE_URL: url },
@@ -102,6 +118,19 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     assert.notEqual(newPID, oldPID);
     assert.equal((await admin.query("SELECT count(*)::int AS count FROM notes")).rows[0].count, before);
     const result = await (await fetch(`${base}/notes`)).json(); assert.equal(result.notes[0].body, "preserved");
+  });
+  await t.test("checkpoint releases retained SQL sessions and restore reopens a fresh verified session", async () => {
+    const oldPID = (await db.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+    const generation = db.generation;
+    const checkpoint = () => fetch(`${base}/internal/before-checkpoint`, { method: "POST", headers: { "X-Faas-Before-Checkpoint": "1" } });
+    assert.equal((await checkpoint()).status, 204);
+    await waitFor(async () => (await admin.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE usename=$1", [role])).rows[0].count === 0);
+    assert.deepEqual(db.diagnostics, {state: "checkpointed", generation, activeRequests: 0});
+    assert.equal((await checkpoint()).status, 204);
+    assert.equal((await fetch(`${base}/healthz`)).status, 503);
+    assert.equal((await hook()).status, 204); assert.equal(db.generation, generation + 1);
+    assert.notEqual((await db.query("SELECT pg_backend_pid() AS pid")).rows[0].pid, oldPID);
+    assert.equal((await admin.query("SELECT count(*)::int AS count FROM notes")).rows[0].count, 1);
   });
   await t.test("HTTP cancellation before commit cannot leave a delayed write", async () => {
     await admin.query("BEGIN"); await admin.query("LOCK TABLE notes IN ACCESS EXCLUSIVE MODE");
@@ -140,13 +169,27 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     assert.equal((await fetch(`${base}/healthz`)).status, 200);
   });
   await t.test("a missing workload fails restore and keeps readiness closed", async () => {
+    const generation = db.generation;
     await admin.query("ALTER TABLE notes RENAME TO notes_saved");
-    assert.equal((await hook()).status, 503); assert.equal(db.generation, 1);
+    assert.equal((await hook()).status, 503); assert.equal(db.generation, generation);
     assert.equal((await fetch(`${base}/healthz`)).status, 503);
     await admin.query("ALTER TABLE notes_saved RENAME TO notes");
-    assert.equal((await hook()).status, 204); assert.equal(db.generation, 2);
+    assert.equal((await hook()).status, 204); assert.equal(db.generation, generation + 1);
+  });
+  await t.test("blocked restore SQL obeys the total deadline and cannot become ready after a late result", async () => {
+    const bounded = await runtime(role, { restoreTimeoutMS: 100 });
+    await bounded.query("SELECT id FROM notes LIMIT 1");
+    await admin.query("BEGIN"); await admin.query("LOCK TABLE notes IN ACCESS EXCLUSIVE MODE");
+    const started = performance.now();
+    try { await assert.rejects(bounded.restore(), /database_unavailable/); }
+    finally { await admin.query("ROLLBACK"); }
+    assert.ok(performance.now() - started < 1_500, "restore exceeded its total deadline");
+    assert.equal(bounded.generation, 0);
+    await assert.rejects(bounded.query("SELECT 1"), /database_unavailable/);
+    await bounded.restore(); assert.equal(bounded.generation, 1); await bounded.close();
   });
   await t.test("before_checkpoint closes every server session; restore reconnects", async () => {
+    const generation = db.generation;
     const sessions = async () => (await admin.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE usename=$1", [role])).rows[0].count;
     const checkpoint = () => fetch(`${base}/internal/before-checkpoint`, { method: "POST", headers: { "X-Faas-Before-Checkpoint": "1" } });
     assert.equal((await fetch(`${base}/healthz`)).status, 200);
@@ -156,7 +199,7 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     assert.equal((await fetch(`${base}/healthz`)).status, 503);
     assert.equal((await checkpoint()).status, 204); // A retried capture finds it drained.
     assert.equal(await sessions(), 0);
-    assert.equal((await hook()).status, 204); assert.equal(db.generation, 3);
+    assert.equal((await hook()).status, 204); assert.equal(db.generation, generation + 1);
     assert.equal((await fetch(`${base}/healthz`)).status, 200);
     const result = await (await fetch(`${base}/notes`)).json(); assert.ok(result.notes.some(note => note.body === "preserved"));
   });
@@ -243,9 +286,13 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     assert.ok(pools.every(entry => entry.ends === 1));
   });
   await t.test("retired held and fresh credentials fail; replacement preserves data", async () => {
+    const refreshed = await runtime(role);
+    await refreshed.query("SELECT id FROM notes LIMIT 1");
     await admin.query(`ALTER ROLE "${role}" NOLOGIN`); await terminate(role);
     assert.equal((await fetch(`${base}/healthz`)).status, 503);
     assert.equal((await hook()).status, 503);
+    await assert.rejects(refreshed.query("SELECT id FROM notes LIMIT 1"), /database_unavailable/);
+    await assert.rejects(refreshed.restore(), /database_unavailable/);
     const replacement = await runtime(nextRole), nextBase = await listen(replacement);
     assert.equal((await fetch(`${nextBase}/healthz`)).status, 200);
     assert.ok((await (await fetch(`${nextBase}/notes`)).json()).notes.some(note => note.body === "preserved"));

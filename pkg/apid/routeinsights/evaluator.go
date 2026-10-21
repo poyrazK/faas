@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/routeawake"
 	"github.com/onebox-faas/faas/pkg/routeadvisor"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -192,13 +193,10 @@ func (e *Evaluator) upsert(ctx context.Context, accountID, appID string, f Findi
 	if err != nil {
 		return fmt.Errorf("insight evidence: %w", err)
 	}
-	message := []rune(f.Message)
-	if len(message) > maxMessageRunes {
-		message = message[:maxMessageRunes]
-	}
+	message := safetext.TruncateRunes(f.Message, maxMessageRunes)
 	if err := e.Store.UpsertRouteInsight(ctx, sqlc.UpsertRouteInsightParams{
 		AccountID: pgUUID(accountID), AppID: pgUUID(appID), Kind: f.Kind, Method: f.Method, Route: f.Route,
-		Message: string(message), Evidence: evidence, ObservedAt: timestamptz(now),
+		Message: message, Evidence: evidence, ObservedAt: timestamptz(now),
 	}); err != nil {
 		return fmt.Errorf("upsert %s insight for %s %s: %w", f.Kind, f.Method, f.Route, err)
 	}

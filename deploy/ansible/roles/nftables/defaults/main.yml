@@ -24,6 +24,9 @@
 # (single-box dev gets no overlay — the overlay role is responsible
 # for the per-host bridge).
 tenant_bridge: br-tenants
+# Match native_process_recovery=true VMMD releases. Requires nftables 1.1.3+
+# and Linux 6.13+ for the public bridge socket generation guard (ADR-1749).
+faas_public_forwarding: false
 bridge_cidr: 10.100.0.1/16
 public_iface: "{{ ansible_default_ipv4.interface | default('eth0') }}"
 masquerade_cidr: 10.100.0.0/16

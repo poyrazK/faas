@@ -1,8 +1,9 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"math"
 	"testing"
 	"time"
@@ -14,9 +15,9 @@ import (
 // adr: 091 — in-memory edge-rule matching must stay aligned with Postgres.
 func TestMemStorePureHelpers(t *testing.T) {
 	t.Run("node page", func(t *testing.T) {
-		m := NewMemStore()
+		m := state.NewMemStore()
 		ctx := context.Background()
-		for _, node := range []ComputeNode{
+		for _, node := range []state.ComputeNode{
 			{Name: "b-node", TargetURL: "unix:///run/vmmd.sock", Active: true},
 			{Name: "a-node", TargetURL: "unix:///run/vmmd.sock", Active: false},
 		} {
@@ -53,7 +54,7 @@ func TestMemStorePureHelpers(t *testing.T) {
 			{"api.example.com", "other.example.com", false},
 		}
 		for _, tc := range cases {
-			if got := matchHostPattern(tc.pattern, tc.host); got != tc.want {
+			if got := state.MatchHostPattern(tc.pattern, tc.host); got != tc.want {
 				t.Errorf("matchHostPattern(%q, %q) = %v, want %v", tc.pattern, tc.host, got, tc.want)
 			}
 		}
@@ -68,19 +69,19 @@ func TestMemStorePureHelpers(t *testing.T) {
 			{9, 3},
 			{1e6, 1e3},
 		} {
-			if got := sqrtFloat64(tc.in); math.Abs(got-tc.want) > 1e-9 {
+			if got := state.SqrtFloat64(tc.in); math.Abs(got-tc.want) > 1e-9 {
 				t.Errorf("sqrtFloat64(%v) = %v, want %v", tc.in, got, tc.want)
 			}
 		}
 	})
 
 	t.Run("heartbeat stats", func(t *testing.T) {
-		m := NewMemStore()
+		m := state.NewMemStore()
 		ctx := context.Background()
-		if err := m.AppendComputeNodeHeartbeatWithStats(ctx, "missing", time.Now(), time.Now(), "builder_tick", 1, 2); !errors.Is(err, ErrNotFound) {
+		if err := m.AppendComputeNodeHeartbeatWithStats(ctx, "missing", time.Now(), time.Now(), "builder_tick", 1, 2); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("missing node heartbeat = %v, want ErrNotFound", err)
 		}
-		node, err := m.CreateComputeNode(ctx, ComputeNode{Name: "stats-node", TargetURL: "unix:///run/vmmd.sock", Active: true})
+		node, err := m.CreateComputeNode(ctx, state.ComputeNode{Name: "stats-node", TargetURL: "unix:///run/vmmd.sock", Active: true})
 		if err != nil {
 			t.Fatalf("CreateComputeNode: %v", err)
 		}
@@ -92,12 +93,13 @@ func TestMemStorePureHelpers(t *testing.T) {
 		if err := m.AppendComputeNodeHeartbeatWithStats(ctx, node.ID, second, second, "vmmd_tick", 25, 2048); err != nil {
 			t.Fatalf("vmmd heartbeat: %v", err)
 		}
-		if err := m.AppendComputeNodeHeartbeatWithStats(ctx, node.ID, second, second, "duplicate", 30, 4096); !errors.Is(err, ErrConflict) {
+		if err := m.AppendComputeNodeHeartbeatWithStats(ctx, node.ID, second, second, "duplicate", 30, 4096); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("duplicate heartbeat = %v, want ErrConflict", err)
 		}
+		(*
 		// A node history can exist before its compute-node projection is
 		// populated; keep the silent-row projection contract covered.
-		m.computeNodeHeartbeats["silent-node"] = nil
+		m.ComputeNodeHeartbeats())["silent-node"] = nil
 
 		all, err := m.LatestHeartbeatStats(ctx)
 		if err != nil {
