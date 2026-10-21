@@ -28,6 +28,11 @@ func discoverBillingRunProductItems(ctx context.Context, tx pgx.Tx, run BillingR
 		AccountID: mustPgUUID(run.AccountID), Period: run.PeriodStart.UTC().Format("2006-01")}); err != nil {
 		return fmt.Errorf("discover Product Control customers: %w", err)
 	}
+	start, end := productMonthBounds(run.PeriodStart.UTC().Format("2006-01"))
+	if err := q.BillingRunDiscoverProductFeeItems(ctx, tx, sqlc.BillingRunDiscoverProductFeeItemsParams{RunID: mustPgUUID(run.ID), Now: pgTime(now),
+		AccountID: mustPgUUID(run.AccountID), MonthStart: pgTime(start), MonthEnd: pgTime(end)}); err != nil {
+		return fmt.Errorf("discover Product Control customers with plan fees: %w", err)
+	}
 	if err := q.BillingRunMarkProductDiscovered(ctx, tx, sqlc.BillingRunMarkProductDiscoveredParams{Now: pgTime(now), ID: mustPgUUID(run.ID)}); err != nil {
 		return fmt.Errorf("mark Product Control customers discovered: %w", err)
 	}

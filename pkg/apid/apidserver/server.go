@@ -1430,6 +1430,7 @@ func newServerWithDeps(
 	s.productControl.DocumentInvoice = s.statementInvoices.ProductStatementInvoice
 	s.productControl.BillingDetails = s.statementInvoices.PaddleBillingDetails
 	s.productControl.PutBillingDetails = s.statementInvoices.PutPaddleBillingDetails
+	s.productControl.PlanPricingEnabled = func() bool { return s.runtimeBool(runtimeConfigProductControlPlanPricing, false) }
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
