@@ -926,6 +926,9 @@ var cliCommands = []cliCommand{
 			"gregale ai traces <integration-id> --limit 20",
 			"gregale ai traces <integration-id> <trace-id>",
 			"gregale ai policy <integration-id> --trace-max-calls 50 --trace-max-cost 2 --trace-max-repeated-tool-calls 3",
+			"gregale ai policy <integration-id> --request-log-content on --online-eval-percent 5 --online-eval-judge <openai-id> --online-eval-model gpt-5-mini --quality-alerts on",
+			"gregale ai feedback <integration-id> <call-id> --bad --label wrong_answer",
+			"gregale ai quality-alerts <integration-id>",
 			"gregale ai logs show <integration-id> <request-id>",
 			"gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'",
 			"gregale ai content-policy <integration-id> --response-email redact --response-secrets block --response-terms block --response-moderation flag",
@@ -949,6 +952,11 @@ var cliCommands = []cliCommand{
 				{Name: "trace-max-calls", Short: "calls each AI trace (X-Gregale-AI-Trace or traceparent) may make, or none", Value: "N"},
 				{Name: "trace-max-cost", Short: "cost each AI trace may reach in USD, or none", Value: "USD"},
 				{Name: "trace-max-repeated-tool-calls", Short: "consecutive calls of a trace that may request the same tools with the same arguments, or none", Value: "N"},
+				{Name: "online-eval-percent", Short: "share of answered app calls a judge model scores from 1 to 5 (needs --request-log-content on), or none", Value: "N"},
+				{Name: "online-eval-judge", Short: "the AI integration that runs the judge model", Value: "ID"},
+				{Name: "online-eval-model", Short: "the judge model", Value: "MODEL"},
+				{Name: "online-eval-rubric", Short: "what a good answer does for this app, up to 1,000 bytes, or none", Value: "TEXT"},
+				{Name: "quality-alerts", Short: "alert bound apps when a model's quality drifts from its previous 7 days", Value: "on|off", ClosedSet: []string{"on", "off"}},
 			}},
 			{Name: "content-policy", Short: "Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms, in requests and responses (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "email", Short: "e-mail addresses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
@@ -982,6 +990,14 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "only traces whose first call came from this app (UUID)", Value: "ID"},
 				{Name: "user", Short: "only traces whose first call named this end user", Value: "ID"},
 				{Name: "limit", Short: "traces to show, 1 to 200", Value: "N"},
+			}},
+			{Name: "feedback", Short: "Rate a logged AI call by its X-Gregale-AI-Call ID", Positionals: []string{"<integration-id>", "<call-id>"}, Flags: []cliFlag{
+				{Name: "good", Short: "rate the call good", Bool: true},
+				{Name: "bad", Short: "rate the call bad", Bool: true},
+				{Name: "label", Short: "a short label such as wrong_answer", Value: "LABEL"},
+			}},
+			{Name: "quality-alerts", Short: "List an integration's AI quality drift alerts, newest first", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "limit", Short: "alerts to show, 1 to 100", Value: "N"},
 			}},
 			{Name: "tag-limits", Short: "Show or change per-tag daily cost limits (unchanged limits are kept)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "set", Short: "cap a tag's UTC-day cost: key=value:USD (repeat)", Value: "SPEC"},

@@ -2791,6 +2791,9 @@ gregale ai tag-limits <integration-id> --set feature=search:20
 gregale ai traces <integration-id> --limit 20
 gregale ai traces <integration-id> <trace-id>
 gregale ai policy <integration-id> --trace-max-calls 50 --trace-max-cost 2 --trace-max-repeated-tool-calls 3
+gregale ai policy <integration-id> --request-log-content on --online-eval-percent 5 --online-eval-judge <openai-id> --online-eval-model gpt-5-mini --quality-alerts on
+gregale ai feedback <integration-id> <call-id> --bad --label wrong_answer
+gregale ai quality-alerts <integration-id>
 gregale ai logs show <integration-id> <request-id>
 gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'
 gregale ai content-policy <integration-id> --response-email redact --response-secrets block --response-terms block --response-moderation flag
@@ -2803,7 +2806,7 @@ gregale ai tokens create --app my-api --name laptop --expires-in-hours 24
 
 Set the AI provider and token or cost limits (unchanged flags keep their values)
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <USD>] [--monthly-cost <USD>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <USD>] [--log-export <on|off>] [--allow-unmetered <on|off>] [--prompt-cache <on|off>] [--trace-max-calls <N>] [--trace-max-cost <USD>] [--trace-max-repeated-tool-calls <N>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <USD>] [--monthly-cost <USD>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <USD>] [--log-export <on|off>] [--allow-unmetered <on|off>] [--prompt-cache <on|off>] [--trace-max-calls <N>] [--trace-max-cost <USD>] [--trace-max-repeated-tool-calls <N>] [--online-eval-percent <N>] [--online-eval-judge <ID>] [--online-eval-model <MODEL>] [--online-eval-rubric <TEXT>] [--quality-alerts <on|off>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2821,6 +2824,11 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 | `--trace-max-calls <N>` | calls each AI trace (X-Gregale-AI-Trace or traceparent) may make, or none |  |
 | `--trace-max-cost <USD>` | cost each AI trace may reach in USD, or none |  |
 | `--trace-max-repeated-tool-calls <N>` | consecutive calls of a trace that may request the same tools with the same arguments, or none |  |
+| `--online-eval-percent <N>` | share of answered app calls a judge model scores from 1 to 5 (needs --request-log-content on), or none |  |
+| `--online-eval-judge <ID>` | the AI integration that runs the judge model |  |
+| `--online-eval-model <MODEL>` | the judge model |  |
+| `--online-eval-rubric <TEXT>` | what a good answer does for this app, up to 1,000 bytes, or none |  |
+| `--quality-alerts <on|off>` | alert bound apps when a model&#39;s quality drifts from its previous 7 days | one of `on` · `off` |
 
 ### ai content-policy
 
@@ -2875,6 +2883,28 @@ List an integration&#39;s AI traces, newest first, or show one trace&#39;s calls
 | `--app <ID>` | only traces whose first call came from this app (UUID) |  |
 | `--user <ID>` | only traces whose first call named this end user |  |
 | `--limit <N>` | traces to show, 1 to 200 |  |
+
+### ai feedback
+
+Rate a logged AI call by its X-Gregale-AI-Call ID
+
+`gregale ai feedback [--good] [--bad] [--label <LABEL>] <integration-id> <call-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--good` | rate the call good |  |
+| `--bad` | rate the call bad |  |
+| `--label <LABEL>` | a short label such as wrong_answer |  |
+
+### ai quality-alerts
+
+List an integration&#39;s AI quality drift alerts, newest first
+
+`gregale ai quality-alerts [--limit <N>] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | alerts to show, 1 to 100 |  |
 
 ### ai tag-limits
 

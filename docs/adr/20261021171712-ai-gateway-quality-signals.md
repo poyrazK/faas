@@ -60,8 +60,7 @@
   - **Drift alerts.** With the AI policy's `quality_alerts` on, outboundd checks each integration every `OutboundAIQualityDriftCheckMinutes`.
     - **What it compares:** each model's UTC day so far against its previous `OutboundAIQualityDriftBaselineDays` days, summed over callers.
     - **Rate metrics** are the five flag rates and the share of bad ratings. One alerts when all of these hold:
-      - the day has at least `OutboundAIQualityDriftMinCalls` calls (or rated calls, for feedback);
-      - the baseline has at least `OutboundAIQualityDriftMinBaselineCalls`;
+      - the day has at least `OutboundAIQualityDriftMinCalls` answered calls and the baseline at least `OutboundAIQualityDriftMinBaselineCalls` (for bad ratings, each side needs `OutboundAIQualityDriftMinEvaluations` rated calls);
       - today's rate is at least `OutboundAIQualityDriftPoints` percentage points above the baseline, and at least twice the baseline.
     - **The mean evaluation score** alerts when it falls by at least `OutboundAIQualityDriftScoreDropTenths` tenths of a point, with at least `OutboundAIQualityDriftMinEvaluations` evaluations on each side.
     - **Each alert:**
@@ -72,7 +71,7 @@
   - **Visibility.**
     - `GET .../ai-usage` items gain the flag counts, good and bad ratings, evaluated calls, mean score and judge errors.
     - Request-log entries gain `quality_flags`, `feedback`, `feedback_label` and `evaluation_score`.
-    - CLI: `gregale ai usage` shows the flag share and the mean score; `gregale ai policy` takes `--online-eval-percent`, `--online-eval-judge`, `--online-eval-model`, `--online-eval-rubric` and `--quality-alerts`.
+    - CLI: `gregale ai usage` shows the flag and rating counts and the mean score; `gregale ai policy` takes `--online-eval-percent`, `--online-eval-judge`, `--online-eval-model`, `--online-eval-rubric` and `--quality-alerts`.
 - **Why:**
   - The gateway is the one place that sees every call, request and answer. These signals need no SDK and no code in the app, apart from feedback.
   - **The flags are structural.** They come from fields providers already return, so they cost no model call and they work on every call.
