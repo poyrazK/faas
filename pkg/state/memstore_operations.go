@@ -39,6 +39,7 @@ type operationMemory struct {
 	childParents           map[string]string
 	concurrencyPolicies    map[string]memOperationConcurrencyPolicy
 	queue                  map[string]memQueuedOperation
+	approvalForms          map[string]memOperationApprovalForm
 }
 
 // operationAttemptKey names one HTTP attempt of one execution generation.
