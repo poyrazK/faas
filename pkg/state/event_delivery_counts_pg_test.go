@@ -42,11 +42,12 @@ func TestPgEventDeliveryCountsMatchSlotDrivenCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sibling, _, err := store.UpsertEventSubscription(ctx, a.account, other.ID, "orders", "order.created", nil)
+	// Its own source keeps the sibling's events from also matching app A.
+	sibling, _, err := store.UpsertEventSubscription(ctx, a.account, other.ID, "orders.sibling", "order.created", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	siblingFixture := capacityFixture{store: store, account: a.account, app: other.ID, sub: sibling.ID, adopted: true, source: "orders"}
+	siblingFixture := capacityFixture{store: store, account: a.account, app: other.ID, sub: sibling.ID, adopted: true, source: "orders.sibling"}
 	siblingFixture.fill(t, 3)
 	b := newCapacityFixture(t, store, true)
 	b.fill(t, 2)
