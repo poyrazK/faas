@@ -12738,6 +12738,20 @@
     "kind": "operational"
   },
   {
+    "table": "product_control_plan_history",
+    "columns": [
+      "account_id",
+      "app_id",
+      "effective_at",
+      "first_assignment",
+      "id",
+      "plan",
+      "revision",
+      "tenant_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "product_control_receipts",
     "columns": [
       "account_id",
