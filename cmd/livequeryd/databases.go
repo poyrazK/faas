@@ -174,10 +174,19 @@ func runDatabases(ctx context.Context, log *slog.Logger) error {
 	for _, db := range dbs {
 		f.start(db, true)
 	}
+	discovering := make(chan struct{})
 	if len(discovery.backends) > 0 {
-		go discover(ctx, f, keys, discovery, log)
+		go func() {
+			defer close(discovering)
+			discover(ctx, f, keys, discovery, log)
+		}()
+	} else {
+		close(discovering)
 	}
 	<-ctx.Done()
+	// Discovery starts databases; it must be done before the fleet is
+	// waited on.
+	<-discovering
 	f.wait()
 	return nil
 }

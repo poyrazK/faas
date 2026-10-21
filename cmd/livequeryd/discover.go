@@ -150,6 +150,9 @@ func (f *fleet) start(db database, static bool) {
 }
 
 func (f *fleet) startLocked(db database, static bool) {
+	if f.ctx.Err() != nil {
+		return // shutting down
+	}
 	ctx, cancel := context.WithCancel(f.ctx)
 	m := &member{db: db, static: static, cancel: cancel, done: make(chan struct{}), metrics: f.set.Database(db.ID)}
 	f.members[db.ID] = m

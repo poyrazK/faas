@@ -244,7 +244,9 @@ func (s *Service) stored(w http.ResponseWriter, r *http.Request, err error) bool
 	case err == nil:
 		return true
 	case errors.As(err, &login):
-		s.Log.WarnContext(r.Context(), "live login at the provider failed", "err", login.err)
+		if s.Log != nil {
+			s.Log.WarnContext(r.Context(), "live login at the provider failed", "err", login.err)
+		}
 		s.DatabaseProblem(w, login.err)
 	case errors.Is(err, livekeys.ErrNotFound):
 		s.DatabaseProblem(w, managedpostgres.ErrNotFound)
