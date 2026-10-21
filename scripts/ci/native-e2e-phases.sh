@@ -94,6 +94,8 @@ native_e2e_phase_files() {
     wake) printf '%s\n' \
       wake_timeline_metal_test.go \
       frozen_tier_metal_test.go \
+      worker_frozen_metal_test.go \
+      worker_scale_from_zero_metal_test.go \
       wake_platform_bench_metal_test.go \
       wake_burst_metal_test.go \
       wake_platform_bench_metal_test.go \
