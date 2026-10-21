@@ -5169,6 +5169,14 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int, guestVCPU ...int) *P
 	if ramMB > l.RAMMB {
 		return ErrPlanLimitRAM(l, ramMB)
 	}
+	// apps.max_concurrency has CHECK (max_concurrency >= 1). An update
+	// with 0 or less reached the store and came back as a 503 "Briefly at
+	// capacity" (Hunt 11 H11-41), so clients retried a request that can
+	// never succeed. Create maps an omitted 0 to 1 before it gets here.
+	if maxConcurrency < 1 {
+		return ErrValidation(fmt.Sprintf("max_concurrency must be 1..%d on the %s plan; got %d", l.MaxConcurrency, l.Plan, maxConcurrency)).
+			WithLimit(int64(l.MaxConcurrency), int64(maxConcurrency))
+	}
 	if maxConcurrency > l.MaxConcurrency {
 		return NewProblem(403, CodePlanLimitConcur,
 			"Concurrency over plan limit",
