@@ -937,6 +937,9 @@ var cliCommands = []cliCommand{
 				{Name: "log-export", Short: "send each app call's metadata to the app's log drains", Value: "on|off", ClosedSet: []string{"on", "off"}},
 				{Name: "allow-unmetered", Short: "let through calls the gateway cannot meter (realtime client secrets, vector stores, fine-tuning), outside the caps", Value: "on|off", ClosedSet: []string{"on", "off"}},
 				{Name: "prompt-cache", Short: "add prompt-cache breakpoints to Claude requests that carry none: after a repeated system prompt or tools, and after a continuing conversation", Value: "on|off", ClosedSet: []string{"on", "off"}},
+				{Name: "trace-max-calls", Short: "calls each AI trace (X-Gregale-AI-Trace or traceparent) may make, or none", Value: "N"},
+				{Name: "trace-max-cost", Short: "cost each AI trace may reach in USD, or none", Value: "USD"},
+				{Name: "trace-max-repeated-tool-calls", Short: "consecutive calls of a trace that may request the same tools with the same arguments, or none", Value: "N"},
 			}},
 			{Name: "content-policy", Short: "Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms, in requests and responses (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "email", Short: "e-mail addresses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
@@ -965,6 +968,11 @@ var cliCommands = []cliCommand{
 				{Name: "from", Short: "export: first UTC day within the last 31 days (default today)", Value: "YYYY-MM-DD"},
 				{Name: "to", Short: "export: last UTC day (default today)", Value: "YYYY-MM-DD"},
 				{Name: "format", Short: "export: csv (default) or ndjson", Value: "FORMAT", ClosedSet: []string{"csv", "ndjson"}},
+			}},
+			{Name: "traces", Short: "List an integration's AI traces, newest first, or show one trace's calls: traces <integration-id> <trace-id>", Positionals: []string{"<integration-id>", "[trace-id]"}, Flags: []cliFlag{
+				{Name: "app", Short: "only traces whose first call came from this app (UUID)", Value: "ID"},
+				{Name: "user", Short: "only traces whose first call named this end user", Value: "ID"},
+				{Name: "limit", Short: "traces to show, 1 to 200", Value: "N"},
 			}},
 			{Name: "tag-limits", Short: "Show or change per-tag daily cost limits (unchanged limits are kept)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "set", Short: "cap a tag's UTC-day cost: key=value:USD (repeat)", Value: "SPEC"},

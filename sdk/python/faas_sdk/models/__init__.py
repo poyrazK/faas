@@ -3891,6 +3891,11 @@ from .outbound_ai_tag_limits import OutboundAITagLimits
 from .outbound_ai_tag_usage_export_row import OutboundAITagUsageExportRow
 from .outbound_ai_tag_usage_item import OutboundAITagUsageItem
 from .outbound_ai_tag_usage_response import OutboundAITagUsageResponse
+from .outbound_ai_trace import OutboundAITrace
+from .outbound_ai_trace_call import OutboundAITraceCall
+from .outbound_ai_trace_call_outcome import OutboundAITraceCallOutcome
+from .outbound_ai_trace_list import OutboundAITraceList
+from .outbound_ai_trace_response import OutboundAITraceResponse
 from .outbound_ai_usage_item import OutboundAIUsageItem
 from .outbound_ai_usage_response import OutboundAIUsageResponse
 from .outbound_ai_user_usage_export_row import OutboundAIUserUsageExportRow
@@ -9474,6 +9479,11 @@ __all__ = (
     "OutboundAITagUsageExportRow",
     "OutboundAITagUsageItem",
     "OutboundAITagUsageResponse",
+    "OutboundAITrace",
+    "OutboundAITraceCall",
+    "OutboundAITraceCallOutcome",
+    "OutboundAITraceList",
+    "OutboundAITraceResponse",
     "OutboundAIUsageItem",
     "OutboundAIUsageResponse",
     "OutboundAIUserUsageExportRow",

@@ -76,6 +76,13 @@ class OutboundIntegrationOffer:
     """Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1432)."""
     ai_auto_prompt_cache: bool | Unset = UNSET
     """Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1437)."""
+    ai_trace_max_calls: int | Unset = UNSET
+    """Calls each AI trace may make, settled and in flight (ADR 20261020202035). Absent when unlimited."""
+    ai_trace_max_cost_millicents: int | Unset = UNSET
+    """Cost each AI trace may reach, with live reservations (ADR 20261020202035). Absent when unlimited."""
+    ai_trace_max_repeated_tool_calls: int | Unset = UNSET
+    """Consecutive calls of a trace whose responses may request the same tools with the same arguments (ADR
+    20261020202035). Absent when unlimited."""
     ai_user_daily_token_limit: int | None | Unset = UNSET
     """UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994)."""
     ai_user_daily_cost_limit_millicents: int | None | Unset = UNSET
@@ -144,6 +151,12 @@ class OutboundIntegrationOffer:
 
         ai_auto_prompt_cache = self.ai_auto_prompt_cache
 
+        ai_trace_max_calls = self.ai_trace_max_calls
+
+        ai_trace_max_cost_millicents = self.ai_trace_max_cost_millicents
+
+        ai_trace_max_repeated_tool_calls = self.ai_trace_max_repeated_tool_calls
+
         ai_user_daily_token_limit: int | None | Unset
         if isinstance(self.ai_user_daily_token_limit, Unset):
             ai_user_daily_token_limit = UNSET
@@ -194,6 +207,12 @@ class OutboundIntegrationOffer:
             field_dict["ai_allow_unmetered"] = ai_allow_unmetered
         if ai_auto_prompt_cache is not UNSET:
             field_dict["ai_auto_prompt_cache"] = ai_auto_prompt_cache
+        if ai_trace_max_calls is not UNSET:
+            field_dict["ai_trace_max_calls"] = ai_trace_max_calls
+        if ai_trace_max_cost_millicents is not UNSET:
+            field_dict["ai_trace_max_cost_millicents"] = ai_trace_max_cost_millicents
+        if ai_trace_max_repeated_tool_calls is not UNSET:
+            field_dict["ai_trace_max_repeated_tool_calls"] = ai_trace_max_repeated_tool_calls
         if ai_user_daily_token_limit is not UNSET:
             field_dict["ai_user_daily_token_limit"] = ai_user_daily_token_limit
         if ai_user_daily_cost_limit_millicents is not UNSET:
@@ -291,6 +310,12 @@ class OutboundIntegrationOffer:
 
         ai_auto_prompt_cache = d.pop("ai_auto_prompt_cache", UNSET)
 
+        ai_trace_max_calls = d.pop("ai_trace_max_calls", UNSET)
+
+        ai_trace_max_cost_millicents = d.pop("ai_trace_max_cost_millicents", UNSET)
+
+        ai_trace_max_repeated_tool_calls = d.pop("ai_trace_max_repeated_tool_calls", UNSET)
+
         def _parse_ai_user_daily_token_limit(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -334,6 +359,9 @@ class OutboundIntegrationOffer:
             ai_log_export=ai_log_export,
             ai_allow_unmetered=ai_allow_unmetered,
             ai_auto_prompt_cache=ai_auto_prompt_cache,
+            ai_trace_max_calls=ai_trace_max_calls,
+            ai_trace_max_cost_millicents=ai_trace_max_cost_millicents,
+            ai_trace_max_repeated_tool_calls=ai_trace_max_repeated_tool_calls,
             ai_user_daily_token_limit=ai_user_daily_token_limit,
             ai_user_daily_cost_limit_millicents=ai_user_daily_cost_limit_millicents,
         )

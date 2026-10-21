@@ -1051,6 +1051,8 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/outbound/integrations/{integration}/credential-keys/{key}":             "DeleteOutboundCredentialKey",
 	"GET /v1/outbound/integrations/{integration}/ai-alerts":                            "ListOutboundAIBudgetAlerts",
 	"GET /v1/outbound/integrations/{integration}/ai-requests":                          "ListOutboundAIRequestLog",
+	"GET /v1/outbound/integrations/{integration}/ai-traces":                            "ListOutboundAITraces",
+	"GET /v1/outbound/integrations/{integration}/ai-traces/{trace}":                    "GetOutboundAITrace",
 	"GET /v1/outbound/integrations/{integration}/ai-requests/{request}/content":        "GetOutboundAIRequestContent",
 	"POST /v1/outbound/integrations/{integration}/ai-requests/{request}/replays":       "CreateOutboundAIReplay",
 	"GET /v1/outbound/ai-replays/{replay}":                                             "GetOutboundAIReplay",

@@ -36,5 +36,13 @@ export type OutboundAIRequestLogEntry = {
    * The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436).
    */
   tags: Array<string>;
+  /**
+   * The call's AI trace, when the integration records traces (ADR 20261020202035).
+   */
+  trace_id?: string;
+  /**
+   * The names of the tools the call's response requested, in order (ADR 20261020202035).
+   */
+  tool_calls?: Array<string>;
 };
 

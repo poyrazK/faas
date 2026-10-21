@@ -27,6 +27,8 @@ import type { OutboundAIRouteStats } from '../models/OutboundAIRouteStats.js';
 import type { OutboundAITagLimits } from '../models/OutboundAITagLimits.js';
 import type { OutboundAITagUsageExportRow } from '../models/OutboundAITagUsageExportRow.js';
 import type { OutboundAITagUsageResponse } from '../models/OutboundAITagUsageResponse.js';
+import type { OutboundAITraceList } from '../models/OutboundAITraceList.js';
+import type { OutboundAITraceResponse } from '../models/OutboundAITraceResponse.js';
 import type { OutboundAIUsageResponse } from '../models/OutboundAIUsageResponse.js';
 import type { OutboundAIUserUsageResponse } from '../models/OutboundAIUserUsageResponse.js';
 import type { OutboundAppBinding } from '../models/OutboundAppBinding.js';
@@ -968,6 +970,104 @@ export class OutboundService {
       query: {
         'limit': limit,
         'before': before,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Page an integration's AI traces.
+   * Requires MFA and read scope (ADR 20261020202035). A trace groups the calls of one agent task, named by X-Gregale-AI-Trace or the trace ID of a W3C traceparent header. Traces are recorded while the integration keeps a request log or has trace limits, and are kept for 7 days. Newest last call first.
+   * @returns OutboundAITraceList One page of traces.
+   * @throws ApiError
+   */
+  public static listOutboundAiTraces({
+    integration,
+    limit,
+    before,
+    appId,
+    endUser,
+  }: {
+    /**
+     * UUID of the integration whose AI traces are read.
+     */
+    integration: string,
+    /**
+     * Traces per page, 1 to 200 (default 200).
+     */
+    limit?: number,
+    /**
+     * The previous page's next_before, to read traces last called earlier.
+     */
+    before?: string,
+    /**
+     * Only traces whose first call came from this app.
+     */
+    appId?: string,
+    /**
+     * Only traces whose first call named this X-Gregale-AI-User.
+     */
+    endUser?: string,
+  }): CancelablePromise<OutboundAITraceList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-traces',
+      path: {
+        'integration': integration,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+        'app_id': appId,
+        'end_user': endUser,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read an AI trace with its logged calls.
+   * Requires MFA and read scope (ADR 20261020202035). Calls are the trace's request-log entries, oldest first, at most 500; calls_truncated marks a longer trace.
+   * @returns OutboundAITraceResponse The trace.
+   * @throws ApiError
+   */
+  public static getOutboundAiTrace({
+    integration,
+    trace,
+  }: {
+    /**
+     * UUID of the integration that recorded the trace.
+     */
+    integration: string,
+    /**
+     * The trace ID, path-escaped.
+     */
+    trace: string,
+  }): CancelablePromise<OutboundAITraceResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-traces/{trace}',
+      path: {
+        'integration': integration,
+        'trace': trace,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

@@ -46,6 +46,16 @@ class PutOutboundAIPolicyRequest:
     conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
     marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1437). Requires ai_provider.
    """
+    trace_max_calls: int | Unset = UNSET
+    """Refuse a trace's call once the trace made this many calls, settled and in flight, with 429
+    outbound_budget_exhausted and X-Gregale-Outbound-Rejection trace_call_limit (ADR 20261020202035). Requires
+    ai_provider."""
+    trace_max_cost_millicents: int | Unset = UNSET
+    """Refuse a trace's call that would take the trace's cost past this, with trace_cost_limit (ADR
+    20261020202035). Requires ai_provider."""
+    trace_max_repeated_tool_calls: int | Unset = UNSET
+    """Refuse a trace's call once this many consecutive calls requested the same tools with the same arguments,
+    with trace_tool_loop: the agent is looping (ADR 20261020202035). Requires ai_provider."""
     user_daily_token_limit: int | None | Unset = UNSET
     """Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider."""
     user_daily_cost_limit_millicents: int | None | Unset = UNSET
@@ -79,6 +89,12 @@ class PutOutboundAIPolicyRequest:
         allow_unmetered = self.allow_unmetered
 
         auto_prompt_cache = self.auto_prompt_cache
+
+        trace_max_calls = self.trace_max_calls
+
+        trace_max_cost_millicents = self.trace_max_cost_millicents
+
+        trace_max_repeated_tool_calls = self.trace_max_repeated_tool_calls
 
         user_daily_token_limit: int | None | Unset
         if isinstance(self.user_daily_token_limit, Unset):
@@ -114,6 +130,12 @@ class PutOutboundAIPolicyRequest:
             field_dict["allow_unmetered"] = allow_unmetered
         if auto_prompt_cache is not UNSET:
             field_dict["auto_prompt_cache"] = auto_prompt_cache
+        if trace_max_calls is not UNSET:
+            field_dict["trace_max_calls"] = trace_max_calls
+        if trace_max_cost_millicents is not UNSET:
+            field_dict["trace_max_cost_millicents"] = trace_max_cost_millicents
+        if trace_max_repeated_tool_calls is not UNSET:
+            field_dict["trace_max_repeated_tool_calls"] = trace_max_repeated_tool_calls
         if user_daily_token_limit is not UNSET:
             field_dict["user_daily_token_limit"] = user_daily_token_limit
         if user_daily_cost_limit_millicents is not UNSET:
@@ -163,6 +185,12 @@ class PutOutboundAIPolicyRequest:
 
         auto_prompt_cache = d.pop("auto_prompt_cache", UNSET)
 
+        trace_max_calls = d.pop("trace_max_calls", UNSET)
+
+        trace_max_cost_millicents = d.pop("trace_max_cost_millicents", UNSET)
+
+        trace_max_repeated_tool_calls = d.pop("trace_max_repeated_tool_calls", UNSET)
+
         def _parse_user_daily_token_limit(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -193,6 +221,9 @@ class PutOutboundAIPolicyRequest:
             log_export=log_export,
             allow_unmetered=allow_unmetered,
             auto_prompt_cache=auto_prompt_cache,
+            trace_max_calls=trace_max_calls,
+            trace_max_cost_millicents=trace_max_cost_millicents,
+            trace_max_repeated_tool_calls=trace_max_repeated_tool_calls,
             user_daily_token_limit=user_daily_token_limit,
             user_daily_cost_limit_millicents=user_daily_cost_limit_millicents,
         )

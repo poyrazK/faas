@@ -31,6 +31,18 @@ export type PutOutboundAIPolicyRequest = {
    */
   auto_prompt_cache?: boolean;
   /**
+   * Refuse a trace's call once the trace made this many calls, settled and in flight, with 429 outbound_budget_exhausted and X-Gregale-Outbound-Rejection trace_call_limit (ADR 20261020202035). Requires ai_provider.
+   */
+  trace_max_calls?: number;
+  /**
+   * Refuse a trace's call that would take the trace's cost past this, with trace_cost_limit (ADR 20261020202035). Requires ai_provider.
+   */
+  trace_max_cost_millicents?: number;
+  /**
+   * Refuse a trace's call once this many consecutive calls requested the same tools with the same arguments, with trace_tool_loop: the agent is looping (ADR 20261020202035). Requires ai_provider.
+   */
+  trace_max_repeated_tool_calls?: number;
+  /**
    * Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
    */
   user_daily_token_limit?: number | null;

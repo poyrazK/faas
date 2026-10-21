@@ -12,6 +12,7 @@ from ..models.outbound_ai_request_log_entry_outcome import (
     OutboundAIRequestLogEntryOutcome,
     check_outbound_ai_request_log_entry_outcome,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="OutboundAIRequestLogEntry")
 
@@ -42,6 +43,10 @@ class OutboundAIRequestLogEntry:
     """Whether the call's bodies can be read from its content endpoint (ADR-996)."""
     tags: list[str]
     """The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436)."""
+    trace_id: str | Unset = UNSET
+    """The call's AI trace, when the integration records traces (ADR 20261020202035)."""
+    tool_calls: list[str] | Unset = UNSET
+    """The names of the tools the call's response requested, in order (ADR 20261020202035)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -87,6 +92,12 @@ class OutboundAIRequestLogEntry:
 
         tags = self.tags
 
+        trace_id = self.trace_id
+
+        tool_calls: list[str] | Unset = UNSET
+        if not isinstance(self.tool_calls, Unset):
+            tool_calls = self.tool_calls
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -111,6 +122,10 @@ class OutboundAIRequestLogEntry:
                 "tags": tags,
             }
         )
+        if trace_id is not UNSET:
+            field_dict["trace_id"] = trace_id
+        if tool_calls is not UNSET:
+            field_dict["tool_calls"] = tool_calls
 
         return field_dict
 
@@ -176,6 +191,10 @@ class OutboundAIRequestLogEntry:
 
         tags = cast(list[str], d.pop("tags"))
 
+        trace_id = d.pop("trace_id", UNSET)
+
+        tool_calls = cast(list[str], d.pop("tool_calls", UNSET))
+
         outbound_ai_request_log_entry = cls(
             id=id,
             created_at=created_at,
@@ -195,6 +214,8 @@ class OutboundAIRequestLogEntry:
             end_user=end_user,
             content_captured=content_captured,
             tags=tags,
+            trace_id=trace_id,
+            tool_calls=tool_calls,
         )
 
         outbound_ai_request_log_entry.additional_properties = d
