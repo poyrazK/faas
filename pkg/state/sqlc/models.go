@@ -11989,6 +11989,19 @@ type ProjectEnvironmentRoutePolicy struct {
 	UpdatedAt               pgtype.Timestamptz
 }
 
+type ProjectEnvironmentSecret struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+	Key             string
+	Ciphertext      []byte
+	Kid             string
+	ValueHash       string
+	SecretVersion   int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type ProjectEnvironmentWorkloadDeploymentSpec struct {
 	DeploymentID pgtype.UUID
 	SpecID       pgtype.UUID

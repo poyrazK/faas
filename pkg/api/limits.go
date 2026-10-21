@@ -2745,6 +2745,9 @@ type Limits struct {
 	// with 413 CodeSecretValueTooLarge before sealing.
 	SecretCountMax      int // max secrets per app across all scopes (Free 8, Hobby 25, Pro 50, Scale 100)
 	SecretValueMaxBytes int // per-secret value byte cap (Free 4K, Hobby 8K, Pro 16K, Scale 32K)
+	// ProjectSecretCountMax bounds the secrets one project environment shares
+	// with its services (ADR-1139); each value uses SecretValueMaxBytes.
+	ProjectSecretCountMax int // (Free 8, Hobby 25, Pro 50, Scale 100)
 
 	// Customer env vars (issue #395 / ADR-045). Plaintext per-app store
 	// for non-sensitive runtime config (LOG_LEVEL, FEATURE_X, etc.). The
@@ -4092,6 +4095,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            0,
 		ServiceTCPSessionsPerAccount:   16,
 		SecretCountMax:                 8,
+		ProjectSecretCountMax:          8,
 		SecretValueMaxBytes:            4 * 1024,
 		EnvVarsMax:                     16,
 		EnvValueMaxBytes:               4 * 1024,
@@ -4490,6 +4494,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            0,
 		ServiceTCPSessionsPerAccount:   64,
 		SecretCountMax:                 25,
+		ProjectSecretCountMax:          25,
 		SecretValueMaxBytes:            8 * 1024,
 		EnvVarsMax:                     32,
 		EnvValueMaxBytes:               8 * 1024,
@@ -4914,6 +4919,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            8,
 		ServiceTCPSessionsPerAccount:   256,
 		SecretCountMax:                 50,
+		ProjectSecretCountMax:          50,
 		SecretValueMaxBytes:            16 * 1024,
 		EnvVarsMax:                     64,
 		EnvValueMaxBytes:               16 * 1024,
@@ -5300,6 +5306,7 @@ var planLimits = map[Plan]Limits{
 		EgressExtraPortsMax:            32,
 		ServiceTCPSessionsPerAccount:   1024,
 		SecretCountMax:                 100,
+		ProjectSecretCountMax:          100,
 		SecretValueMaxBytes:            32 * 1024,
 		EnvVarsMax:                     256,
 		EnvValueMaxBytes:               32 * 1024,

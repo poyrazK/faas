@@ -439,6 +439,7 @@ type Querier interface {
 	CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitSourceIdentityParams) (CommitSourceIdentityRow, error)
 	CommitTenantAppScope(ctx context.Context, db DBTX, arg CommitTenantAppScopeParams) (string, error)
 	CompareAndSwapAppSecretEnvelope(ctx context.Context, db DBTX, arg CompareAndSwapAppSecretEnvelopeParams) (int64, error)
+	CompareAndSwapProjectSecretEnvelope(ctx context.Context, db DBTX, arg CompareAndSwapProjectSecretEnvelopeParams) (int64, error)
 	CompareAndSwapPromotionSecretCapture(ctx context.Context, db DBTX, arg CompareAndSwapPromotionSecretCaptureParams) (int64, error)
 	CompareAndSwapReleaseSecretBundle(ctx context.Context, db DBTX, arg CompareAndSwapReleaseSecretBundleParams) (int64, error)
 	CompareAndSwapReleaseSecretCapture(ctx context.Context, db DBTX, arg CompareAndSwapReleaseSecretCaptureParams) (int64, error)
@@ -540,6 +541,8 @@ type Querier interface {
 	CountProjectEnvironmentClonePostgresContents(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresContentsRow, error)
 	CountProjectEnvironmentClonePostgresCopyReaders(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountProjectEnvironmentClonePostgresVerificationReadBudgets(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresVerificationReadBudgetsRow, error)
+	// The environment's key count and whether the written key is already one of them.
+	CountProjectEnvironmentSecrets(ctx context.Context, db DBTX, arg CountProjectEnvironmentSecretsParams) (CountProjectEnvironmentSecretsRow, error)
 	CountProjectMigrations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountProjectWorkerHealthPending(ctx context.Context, db DBTX, arg CountProjectWorkerHealthPendingParams) (CountProjectWorkerHealthPendingRow, error)
 	CountProtectedAutomationLiveSuites(ctx context.Context, db DBTX, arg CountProtectedAutomationLiveSuitesParams) (int64, error)
@@ -793,6 +796,7 @@ type Querier interface {
 	DeleteProductionDeadLetterEvent(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventParams) (int64, error)
 	DeleteProductionDeadLetterEvents(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventsParams) (int64, error)
 	DeleteProfileInvestigation(ctx context.Context, db DBTX, arg DeleteProfileInvestigationParams) (int64, error)
+	DeleteProjectEnvironmentSecret(ctx context.Context, db DBTX, arg DeleteProjectEnvironmentSecretParams) (int64, error)
 	DeleteQueueLeaseReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) error
 	DeleteReadinessSubscription(ctx context.Context, db DBTX, arg DeleteReadinessSubscriptionParams) (int64, error)
 	DeleteRoutePriorities(ctx context.Context, db DBTX, arg DeleteRoutePrioritiesParams) error
@@ -3059,6 +3063,8 @@ type Querier interface {
 	ListProfilePeriodicMonitors(ctx context.Context, db DBTX, arg ListProfilePeriodicMonitorsParams) ([][]byte, error)
 	ListProjectBindingVerificationRunSummaries(ctx context.Context, db DBTX, arg ListProjectBindingVerificationRunSummariesParams) ([]ListProjectBindingVerificationRunSummariesRow, error)
 	ListProjectCanaryWorkerTargets(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
+	// Metadata only: listings never carry ciphertext.
+	ListProjectEnvironmentSecrets(ctx context.Context, db DBTX, arg ListProjectEnvironmentSecretsParams) ([]ListProjectEnvironmentSecretsRow, error)
 	ListProjectMigrations(ctx context.Context, db DBTX, arg ListProjectMigrationsParams) ([]ListProjectMigrationsRow, error)
 	ListProjectReleaseAdditions(ctx context.Context, db DBTX, projectID string) ([]ListProjectReleaseAdditionsRow, error)
 	// Retired and expired graphs remain visible for diagnosis. UUID breaks ties.
@@ -3451,6 +3457,9 @@ type Querier interface {
 	LockProjectEnvironmentCloneTargetSidecarLayers(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]string, error)
 	LockProjectEnvironmentCloneTargetSidecarSignals(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]string, error)
 	LockProjectEnvironmentCloneWorkloadOperation(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneWorkloadOperationParams) (LockProjectEnvironmentCloneWorkloadOperationRow, error)
+	// ADR-1139: secrets shared by every service of a project environment.
+	// Serializes writers of one environment's secret set so the count limit holds.
+	LockProjectEnvironmentForSecrets(ctx context.Context, db DBTX, arg LockProjectEnvironmentForSecretsParams) (pgtype.UUID, error)
 	LockProjectEnvironmentQueuePreparationApp(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationAppParams) (pgtype.UUID, error)
 	LockProjectEnvironmentQueuePreparationEnvironment(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationEnvironmentParams) (pgtype.UUID, error)
 	LockProjectEnvironmentQueuePreparationSpec(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationSpecParams) (LockProjectEnvironmentQueuePreparationSpecRow, error)
@@ -4246,6 +4255,7 @@ type Querier interface {
 	// Counts include reference intent in the shared environment-key quota.
 	ProjectEnvironmentCloneQuota(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneQuotaParams) ([]ProjectEnvironmentCloneQuotaRow, error)
 	ProjectEnvironmentCloneSecretTargetExists(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneSecretTargetExistsParams) (bool, error)
+	ProjectEnvironmentIDForSecrets(ctx context.Context, db DBTX, arg ProjectEnvironmentIDForSecretsParams) (pgtype.UUID, error)
 	ProjectMigrationAdmissionAllowed(ctx context.Context, db DBTX, arg ProjectMigrationAdmissionAllowedParams) (pgtype.Bool, error)
 	ProjectProductionScalingState(ctx context.Context, db DBTX, arg ProjectProductionScalingStateParams) error
 	ProjectReleaseStageByID(ctx context.Context, db DBTX, arg ProjectReleaseStageByIDParams) (ProjectReleaseStage, error)
@@ -5804,6 +5814,7 @@ type Querier interface {
 	// updated_at, audit_login) and preserves created_at. Returns the
 	// full row as stored.
 	UpsertOIDCTrustPolicy(ctx context.Context, db DBTX, arg UpsertOIDCTrustPolicyParams) (UpsertOIDCTrustPolicyRow, error)
+	UpsertProjectEnvironmentSecret(ctx context.Context, db DBTX, arg UpsertProjectEnvironmentSecretParams) (UpsertProjectEnvironmentSecretRow, error)
 	UpsertQueueLeaseReceipt(ctx context.Context, db DBTX, arg UpsertQueueLeaseReceiptParams) error
 	// Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 	// route) — the cron upserts on this triple so the table grows at most

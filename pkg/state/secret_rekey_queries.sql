@@ -43,7 +43,7 @@ SELECT set_config('faas.release_secret_rekey','on',true);
 SELECT pg_advisory_xact_lock(hashtextextended('release-secret-key-retirement',0));
 
 -- name: ReadSecretEncryptionKeyUsage :one
-SELECT count(*) FILTER(WHERE kind='app')::bigint AS live_secrets,
+SELECT count(*) FILTER(WHERE kind IN ('app','project'))::bigint AS live_secrets,
  count(*) FILTER(WHERE kind='bundle')::bigint AS staged_bundles,
  count(*) FILTER(WHERE kind='deployment')::bigint AS deployment_snapshots,
  count(*) FILTER(WHERE kind IN ('capture','promotion'))::bigint AS release_captures

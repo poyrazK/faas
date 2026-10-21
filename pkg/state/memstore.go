@@ -1310,6 +1310,7 @@ type MemStore struct {
 	projectEnvironmentCloneObjectCredentials  map[string]ProjectEnvironmentCloneObjectCredentialPreparation
 	projectEnvironmentApprovals               map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs                 map[string][]ProjectEnvironmentConfig
+	projectEnvironmentSecrets                 map[string]ProjectEnvironmentSecret
 	projectEnvironmentRoutePolicies           map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies            map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion
@@ -3873,6 +3874,11 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 			delete(m.projectEnvironmentConfigs, key)
 		}
 	}
+	for key, secret := range m.projectEnvironmentSecrets {
+		if secret.ProjectID == projectID {
+			delete(m.projectEnvironmentSecrets, key)
+		}
+	}
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.ProjectID == projectID {
 			delete(m.projectEnvironmentRoutePolicies, key)
@@ -4106,6 +4112,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 		}
 	}
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
+	m.deleteProjectEnvironmentSecretsLocked(projectID, slug)
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
 			delete(m.projectEnvironmentRoutePolicies, key)

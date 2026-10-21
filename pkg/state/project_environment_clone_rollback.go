@@ -70,6 +70,7 @@ func (m *MemStore) RollbackProjectEnvironmentClone(_ context.Context, accountID,
 	m.deleteEnvironmentSecretRefsLocked("", environmentID)
 	delete(m.projectEnvironments, environmentID)
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
+	m.deleteProjectEnvironmentSecretsLocked(projectID, slug)
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
 			delete(m.projectEnvironmentRoutePolicies, key)
