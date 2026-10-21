@@ -62,6 +62,9 @@ type Message struct {
 	DashboardURL string
 	OccurredAt   time.Time
 	DedupKey     string
+	// Notes are optional lines explaining what fired, such as the route
+	// insights behind route_insights_detected (ADR-20261020161310).
+	Notes []string
 }
 
 // Target is a channel's decrypted destination.

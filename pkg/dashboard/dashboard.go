@@ -1608,6 +1608,9 @@ type AppDetailData struct {
 	// DiscoveredRoutes is the persistent, opt-in API route catalog. The
 	// dashboard keeps the rest of the app page available if this read fails.
 	DiscoveredRoutes DiscoveredRoutesView
+	// RouteInsights is the route insights panel (ADR-20261020161310); nil
+	// when the plan has no request telemetry, so no insights are evaluated.
+	RouteInsights *RouteInsightsView
 	// Alerts is the per-app (and account-wide) alert-rule snapshot
 	// (issue #396 / ADR-045, PR 4). nil means the apid dashboard
 	// query failed non-fatally (the page renders the "Alerts"
@@ -2455,6 +2458,36 @@ type DiscoveredRouteItem struct {
 	RequestCount int64
 	Contract     string
 	Policy       string
+}
+
+// RouteInsightsView is the app page's route insights panel
+// (ADR-20261020161310): active insights with their one-click fixes, and the
+// ones resolved in the last seven days.
+type RouteInsightsView struct {
+	// Available is false when the best-effort read failed.
+	Available bool
+	Active    []RouteInsightItem
+	Resolved  []RouteInsightItem
+	// CSRF is the named token the fix forms post.
+	CSRF string
+	// Flash reports the last fix: "fixed", "changed" or "error".
+	Flash       string
+	FlashDetail string
+}
+
+// RouteInsightItem is one insight; FixID and FixSummary are empty when the
+// platform has no fix to apply.
+type RouteInsightItem struct {
+	ID              string
+	KindLabel       string
+	Method          string
+	Route           string
+	Message         string
+	FirstDetectedAt string
+	ResolvedAt      string
+	FixedAt         string
+	FixID           string
+	FixSummary      string
 }
 
 // DebugPageData is the server-rendered production debugger surface for one
