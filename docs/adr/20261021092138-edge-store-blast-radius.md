@@ -1,6 +1,6 @@
 # ADR 20261021092138 · Keep the edge lane off the store type: edge store
 
-- **Status:** proposed
+- **Status:** accepted (2026-10-21)
 - **Date:** 2026-10-21
 - **Related:** ADR 20261020160744 (daemon blast radius; amends its
   decision 3 for the edge daemons), ADR-1650 (per-unit releases, selection
@@ -73,7 +73,7 @@ poyrazK/faas#5098 removes it from gatewayd-internal, which then links 213
 pool for narrow jobs: `state.NewPGRateLimitBackend` and
 `state.NewPGConcurrencyQueueAdmission`, which gatewayd-internal uses.
 
-## Decision (proposed)
+## Decision
 
 1. **An edge store.** gatewayd-internal and gatewayd-public stop linking
    `*state.PgStore` and `state.Store`.
