@@ -164,3 +164,59 @@ SELECT (SELECT retained_from <= since.at FROM financial_evidence_coverage WHERE 
 -- name: FinancialComputeAccountStrictEnabled :one
 SELECT EXISTS(SELECT 1 FROM financial_budget_policies WHERE account_id=sqlc.arg(account_id)::uuid
  AND deleted_at IS NULL AND spec->>'enabled'='true' AND spec->>'mode'='strict' AND spec->'scope'->>'kind'='account') AS enabled;
+
+-- ADR-1750, amendment 1: strict project caps.
+
+-- name: FinancialComputeProjectBookGet :one
+SELECT payload FROM financial_compute_project_books WHERE account_id=sqlc.arg(account_id)::uuid AND project_id=sqlc.arg(project_id)::uuid AND period_start=sqlc.arg(period_start)::timestamptz;
+
+-- name: FinancialComputeProjectBookPut :exec
+INSERT INTO financial_compute_project_books(account_id,project_id,period_start,period_end,payload)
+VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,sqlc.arg(period_start)::timestamptz,sqlc.arg(period_end)::timestamptz,sqlc.arg(payload)::jsonb)
+ON CONFLICT(account_id,project_id,period_start) DO UPDATE SET payload=EXCLUDED.payload;
+
+-- An unsettled attempt belongs to a project's book when it funds it, or
+-- when its app is now in the project.
+-- name: FinancialComputeProjectLeases :many
+SELECT l.payload FROM financial_compute_leases l LEFT JOIN apps a ON a.id=l.app_id
+WHERE l.account_id=sqlc.arg(account_id)::uuid AND l.settled_at IS NULL
+ AND (l.payload->>'project_id'=sqlc.arg(project_id)::uuid::text OR a.project_id=sqlc.arg(project_id)::uuid)
+ORDER BY l.id LIMIT 10001;
+
+-- name: FinancialComputeAppProject :one
+SELECT COALESCE(project_id::text,'')::text AS project_id FROM apps WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(app_id)::uuid;
+
+-- name: FinancialComputeProjectManaged :one
+SELECT EXISTS(SELECT 1 FROM apps a JOIN financial_compute_project_books b ON b.account_id=a.account_id AND b.project_id=a.project_id
+ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid) AS managed;
+
+-- name: FinancialComputeProjectActivationSafe :one
+SELECT EXISTS(SELECT 1 FROM projects WHERE id=sqlc.arg(project_id)::uuid AND account_id=sqlc.arg(account_id)::uuid)
+ AND NOT EXISTS(SELECT 1 FROM instances i JOIN apps a ON a.id=i.app_id WHERE a.project_id=sqlc.arg(project_id)::uuid AND i.state NOT IN ('stopped','parked','failed'))
+ AND NOT EXISTS(SELECT 1 FROM app_tasks t JOIN apps a ON a.id=t.app_id WHERE a.project_id=sqlc.arg(project_id)::uuid AND t.status IN ('restoring','running'))
+ AND NOT EXISTS(SELECT 1 FROM financial_compute_leases l LEFT JOIN apps a ON a.id=l.app_id WHERE l.account_id=sqlc.arg(account_id)::uuid AND l.settled_at IS NULL
+   AND (a.project_id=sqlc.arg(project_id)::uuid OR l.payload->>'project_id'=sqlc.arg(project_id)::uuid::text))
+ AND NOT EXISTS(SELECT 1 FROM instances i JOIN apps a ON a.id=i.app_id JOIN instance_billing_intervals b ON b.instance_id=i.id
+   WHERE a.project_id=sqlc.arg(project_id)::uuid AND (b.ended_at IS NULL OR b.ended_at > date_trunc('minute',clock_timestamp())-interval '1 minute'))
+ AS safe;
+
+-- name: FinancialComputeProjectSamplingReady :one
+WITH since AS (SELECT greatest(created_at,sqlc.arg(period_start)::timestamptz) AS at FROM projects
+ WHERE id=sqlc.arg(project_id)::uuid AND account_id=sqlc.arg(account_id)::uuid)
+SELECT (SELECT retained_from <= since.at FROM financial_evidence_coverage WHERE singleton)
+ AND (SELECT count(*) FROM financial_sampling_windows WHERE minute >= date_trunc('minute',since.at)
+   AND minute < date_trunc('minute',clock_timestamp()) AND compute_complete)
+   = extract(epoch FROM date_trunc('minute',clock_timestamp())-date_trunc('minute',since.at))::bigint/60 AS ready FROM since;
+
+-- Positive retained charges of the project's apps seed the project book,
+-- exactly as FinancialComputeBaseline seeds one app's.
+-- name: FinancialComputeProjectBaseline :one
+SELECT COALESCE(sum(CASE WHEN p.price IS NULL OR (p.price->>'unit_quantity')::numeric<=0 THEN 0 ELSE
+ ceil(e.quantity::numeric*(p.price->>'millicents_per_unit')::numeric/(p.price->>'unit_quantity')::numeric)
+ + CASE WHEN (p.price->>'millicents_per_unit')::numeric>0 THEN 1 ELSE 0 END END),0)::text AS amount,
+ COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='compute' OR p.price->>'currency'!='USD'
+ OR p.price->>'unit'!='mb_seconds' OR (p.price->>'unit_quantity')::numeric<=0),false)::boolean AS incomplete
+FROM financial_usage_evidence e LEFT JOIN financial_price_snapshots p
+ ON p.account_id=e.account_id AND p.version=e.price_version AND p.meter=e.meter AND p.period_start=sqlc.arg(period_start)::timestamptz
+WHERE e.account_id=sqlc.arg(account_id)::uuid AND e.attribution->>'project_id'=sqlc.arg(project_id)::text AND e.meter='compute'
+ AND e.source_start>=sqlc.arg(period_start)::timestamptz AND e.source_start<sqlc.arg(period_end)::timestamptz AND e.quantity>0;

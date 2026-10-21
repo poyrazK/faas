@@ -1,11 +1,12 @@
 from typing import Literal
 
-FinancialComputeBalanceScopeKind = Literal["account", "app", "job"]
+FinancialComputeBalanceScopeKind = Literal["account", "app", "job", "project"]
 
 FINANCIAL_COMPUTE_BALANCE_SCOPE_KIND_VALUES: set[FinancialComputeBalanceScopeKind] = {
     "account",
     "app",
     "job",
+    "project",
 }
 
 

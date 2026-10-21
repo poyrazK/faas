@@ -48,6 +48,9 @@ class FinancialComputeBalance:
     remains measured bytes."""
     app_id: UUID | Unset = UNSET
     job_id: UUID | Unset = UNSET
+    project_id: UUID | Unset = UNSET
+    """The capped project of a strict project budget (ADR-1750, amendment 1): one gross book shared by every app in
+    the project. Jobs are not covered."""
     account_id: UUID | Unset = UNSET
     scope_kind: FinancialComputeBalanceScopeKind | Unset = UNSET
     basis: FinancialComputeBalanceBasis | Unset = UNSET
@@ -87,6 +90,10 @@ class FinancialComputeBalance:
         job_id: str | Unset = UNSET
         if not isinstance(self.job_id, Unset):
             job_id = str(self.job_id)
+
+        project_id: str | Unset = UNSET
+        if not isinstance(self.project_id, Unset):
+            project_id = str(self.project_id)
 
         account_id: str | Unset = UNSET
         if not isinstance(self.account_id, Unset):
@@ -129,6 +136,8 @@ class FinancialComputeBalance:
             field_dict["app_id"] = app_id
         if job_id is not UNSET:
             field_dict["job_id"] = job_id
+        if project_id is not UNSET:
+            field_dict["project_id"] = project_id
         if account_id is not UNSET:
             field_dict["account_id"] = account_id
         if scope_kind is not UNSET:
@@ -190,6 +199,13 @@ class FinancialComputeBalance:
         else:
             job_id = UUID(_job_id)
 
+        _project_id = d.pop("project_id", UNSET)
+        project_id: UUID | Unset
+        if isinstance(_project_id, Unset):
+            project_id = UNSET
+        else:
+            project_id = UUID(_project_id)
+
         _account_id = d.pop("account_id", UNSET)
         account_id: UUID | Unset
         if isinstance(_account_id, Unset):
@@ -232,6 +248,7 @@ class FinancialComputeBalance:
             egress=egress,
             app_id=app_id,
             job_id=job_id,
+            project_id=project_id,
             account_id=account_id,
             scope_kind=scope_kind,
             basis=basis,

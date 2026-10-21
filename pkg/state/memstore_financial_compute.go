@@ -66,7 +66,7 @@ func (t *memFinancialComputeTxn) book(app string, month time.Time) (financial.Co
 	return b, nil
 }
 func (t *memFinancialComputeTxn) putBook(b financial.ComputeBook) error {
-	t.books[computeBookKey(b.AccountID, b.WorkloadKey(), b.PeriodStart)] = b
+	t.books[computeBookKey(b.AccountID, b.ScopeKey(), b.PeriodStart)] = b
 	return nil
 }
 func (t *memFinancialComputeTxn) lease(id string) (financial.ComputeLease, error) {
@@ -93,8 +93,12 @@ func (t *memFinancialComputeTxn) putLease(l financial.ComputeLease) error {
 }
 func (t *memFinancialComputeTxn) active(app string) ([]financial.ComputeLease, error) {
 	out := []financial.ComputeLease{}
+	project, isProject := financial.ComputeProjectID(app)
 	for _, l := range t.m.financialComputeLeases {
-		if l.AccountID == t.account && (app == "" || l.WorkloadKey() == app) && l.SettledAt == nil {
+		if l.AccountID != t.account || l.SettledAt != nil {
+			continue
+		}
+		if isProject && t.projectLeaseInScope(l, project) || !isProject && (app == "" || l.WorkloadKey() == app) {
 			out = append(out, l)
 		}
 	}
@@ -192,9 +196,15 @@ func (m *MemStore) AcquireFinancialCompute(ctx context.Context, r financial.Comp
 				return ErrNotFound
 			}
 		}
-		policies, _ := t.policies(r.WorkloadKey())
-		if len(strictComputePolicies(policies, r.WorkloadKey())) > 0 {
+		project, policies, err := computeWorkloadStrictPolicies(t, r.WorkloadKey())
+		if err != nil {
+			return err
+		}
+		if len(policies) > 0 {
 			if err := t.ensureAccount(policies); err != nil {
+				return err
+			}
+			if err := t.ensureProject(project, policies); err != nil {
 				return err
 			}
 			if _, err = t.book(r.WorkloadKey(), financial.ComputeMonth(t.now)); errors.Is(err, ErrNotFound) {
@@ -317,7 +327,7 @@ func (m *MemStore) FinancialComputePolicies(ctx context.Context, account, app st
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return newMemComputeTxn(m, account).policies(app)
+	return computeWorkloadPolicies(newMemComputeTxn(m, account), app)
 }
 func (m *MemStore) FinancialComputeBalance(ctx context.Context, p FinancialBudget, now time.Time) (out financial.ComputeBalance, err error) {
 	err = m.computeTransaction(ctx, p.AccountID, func(t *memFinancialComputeTxn) error { var err error; out, err = computeBalance(t, p, now); return err })
@@ -346,8 +356,9 @@ func (m *MemStore) FinancialComputeAppManaged(ctx context.Context, account, app 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	project, _ := newMemComputeTxn(m, account).workloadProject(app)
 	for _, b := range m.financialComputeBooks {
-		if b.AccountID == account && (b.WorkloadKey() == app || b.WorkloadKey() == "") {
+		if b.AccountID == account && (b.ScopeKey() == app || b.ScopeKey() == "" || project != "" && b.ProjectID == project) {
 			return true, nil
 		}
 	}
@@ -368,8 +379,13 @@ func (m *MemStore) computeMonthCoveredLocked(account, app string, at time.Time) 
 	if _, ok := m.financialComputeBooks[computeBookKey(account, app, financial.ComputeMonth(at))]; ok {
 		return true
 	}
-	policies, _ := newMemComputeTxn(m, account).policies(app)
-	for _, p := range strictComputePolicies(policies, app) {
+	t := newMemComputeTxn(m, account)
+	project, _ := t.workloadProject(app)
+	if _, ok := m.financialComputeBooks[computeBookKey(account, financial.ComputeProjectKey(project), financial.ComputeMonth(at))]; project != "" && ok {
+		return true
+	}
+	_, policies, _ := computeWorkloadStrictPolicies(t, app)
+	for _, p := range policies {
 		if p.UpdatedAt.Before(financial.ComputeMonth(at).AddDate(0, 1, 0)) {
 			return true
 		}
@@ -384,6 +400,9 @@ func (m *MemStore) FinancialComputeReady(ctx context.Context, account, app strin
 func (t *memFinancialComputeTxn) ready(app string, quiet bool) bool {
 	if job, ok := computeJobKey(app); ok {
 		return t.jobReady(job)
+	}
+	if project, ok := financial.ComputeProjectID(app); ok {
+		return t.projectReady(project, quiet)
 	}
 	if app == "" {
 		return t.accountReady()
@@ -434,6 +453,9 @@ func (t *memFinancialComputeTxn) ready(app string, quiet bool) bool {
 func (t *memFinancialComputeTxn) initialize(app string, quiet bool) error {
 	if job, ok := computeJobKey(app); ok {
 		return t.initializeJob(job)
+	}
+	if project, ok := financial.ComputeProjectID(app); ok {
+		return t.initializeProject(project, quiet)
 	}
 	if app == "" {
 		return t.initializeAccount()

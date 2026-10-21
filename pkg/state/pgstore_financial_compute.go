@@ -54,6 +54,9 @@ func (t *pgFinancialComputeTxn) book(app string, month time.Time) (financial.Com
 	if job, ok := computeJobKey(app); ok {
 		return t.jobBook(job, month)
 	}
+	if project, ok := financial.ComputeProjectID(app); ok {
+		return t.projectBook(project, month)
+	}
 	if app == "" {
 		return t.accountBook(month)
 	}
@@ -69,6 +72,9 @@ func (t *pgFinancialComputeTxn) book(app string, month time.Time) (financial.Com
 	return b, err
 }
 func (t *pgFinancialComputeTxn) putBook(b financial.ComputeBook) error {
+	if b.ProjectID != "" {
+		return t.putProjectBook(b)
+	}
 	if b.JobID != "" {
 		return t.putJobBook(b)
 	}
@@ -137,6 +143,9 @@ func decodeComputeLeases(rows [][]byte, err error) ([]financial.ComputeLease, er
 	return out, nil
 }
 func (t *pgFinancialComputeTxn) active(app string) ([]financial.ComputeLease, error) {
+	if project, ok := financial.ComputeProjectID(app); ok {
+		return t.projectLeases(project)
+	}
 	if job, ok := computeJobKey(app); ok {
 		id, _ := parsePgUUID(job)
 		return decodeComputeLeases(t.q.FinancialComputeJobLeases(t.ctx, t.db, sqlc.FinancialComputeJobLeasesParams{AccountID: t.account, JobID: id}))
@@ -236,12 +245,15 @@ func (s *PgStore) AcquireFinancialCompute(ctx context.Context, r financial.Compu
 				return ErrNotFound
 			}
 		}
-		policies, err := tx.policies(r.WorkloadKey())
+		project, policies, err := computeWorkloadStrictPolicies(tx, r.WorkloadKey())
 		if err != nil {
 			return err
 		}
-		if len(strictComputePolicies(policies, r.WorkloadKey())) > 0 {
+		if len(policies) > 0 {
 			if err := tx.ensureAccount(policies); err != nil {
+				return err
+			}
+			if err := tx.ensureProject(project, policies); err != nil {
 				return err
 			}
 			if _, err = tx.book(r.WorkloadKey(), financial.ComputeMonth(tx.now)); errors.Is(err, ErrNotFound) {
@@ -323,7 +335,11 @@ func (s *PgStore) FinancialComputeAppManaged(ctx context.Context, account, app s
 	a, _ := parsePgUUID(account)
 	p, job := computePgWorkloadIDs(app)
 	managed, err := sqlc.New().FinancialComputeAppManaged(ctx, s.pool, sqlc.FinancialComputeAppManagedParams{AccountID: a, AppID: p, JobID: job})
-	return managed.Valid && managed.Bool, err
+	if err != nil || managed.Valid && managed.Bool || !p.Valid {
+		return managed.Valid && managed.Bool, err
+	}
+	// ADR-1750, amendment 1: an app in a capped project is managed too.
+	return sqlc.New().FinancialComputeProjectManaged(ctx, s.pool, sqlc.FinancialComputeProjectManagedParams{AccountID: a, AppID: p})
 }
 func (s *PgStore) FinancialComputeNodeLeases(ctx context.Context, node string) ([]financial.ComputeLease, error) {
 	if uuid.Validate(node) != nil {
@@ -352,7 +368,7 @@ func (s *PgStore) FinancialComputePolicies(ctx context.Context, account, app str
 		return nil, ErrInvalidArgument
 	}
 	reader := &pgFinancialComputeTxn{ctx: ctx, db: s.pool, q: sqlc.New(), account: a}
-	return reader.policies(app)
+	return computeWorkloadPolicies(reader, app)
 }
 func (s *PgStore) FinancialComputeBillingSeconds(ctx context.Context, account, app, instance string, start time.Time, seconds int64) (int64, error) {
 	a, _ := parsePgUUID(account)
@@ -385,17 +401,21 @@ func (s *PgStore) FinancialComputeFloorCovered(ctx context.Context, account, app
 	if errors.Is(err, ErrNotFound) {
 		_, err = reader.book(app, financial.ComputeMonth(at))
 	}
+	project, projectErr := reader.workloadProject(app)
+	if errors.Is(err, ErrNotFound) && projectErr == nil && project != "" {
+		_, err = reader.book(financial.ComputeProjectKey(project), financial.ComputeMonth(at))
+	}
 	if err == nil {
 		return true, nil
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return false, err
 	}
-	policies, err := reader.policies(app)
+	_, policies, err := computeWorkloadStrictPolicies(reader, app)
 	if err != nil {
 		return false, err
 	}
-	for _, p := range strictComputePolicies(policies, app) {
+	for _, p := range policies {
 		if p.UpdatedAt.Before(financial.ComputeMonth(at).AddDate(0, 1, 0)) {
 			return true, nil
 		}
@@ -410,6 +430,9 @@ func (s *PgStore) FinancialComputeReady(ctx context.Context, account, app string
 func (t *pgFinancialComputeTxn) ready(app string, quiet bool) (bool, error) {
 	if job, ok := computeJobKey(app); ok {
 		return t.jobReady(job)
+	}
+	if project, ok := financial.ComputeProjectID(app); ok {
+		return t.projectReady(project, quiet)
 	}
 	if app == "" {
 		return t.accountReady()
@@ -436,6 +459,9 @@ func (t *pgFinancialComputeTxn) ready(app string, quiet bool) (bool, error) {
 func (t *pgFinancialComputeTxn) initialize(app string, quiet bool) error {
 	if job, ok := computeJobKey(app); ok {
 		return t.initializeJob(job)
+	}
+	if project, ok := financial.ComputeProjectID(app); ok {
+		return t.initializeProject(project, quiet)
 	}
 	if app == "" {
 		return t.initializeAccount()

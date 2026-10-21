@@ -109,6 +109,17 @@
     "kind": "account_identity"
   },
   {
+    "table": "financial_compute_project_books",
+    "columns": [
+      "account_id",
+      "payload",
+      "period_end",
+      "period_start",
+      "project_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "financial_compute_holds",
     "columns": [
       "account_id",

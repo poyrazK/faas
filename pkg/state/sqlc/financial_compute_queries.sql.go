@@ -252,6 +252,22 @@ func (q *Queries) FinancialComputeAppOwned(ctx context.Context, db DBTX, arg Fin
 	return owned, err
 }
 
+const financialComputeAppProject = `-- name: FinancialComputeAppProject :one
+SELECT COALESCE(project_id::text,'')::text AS project_id FROM apps WHERE account_id=$1::uuid AND id=$2::uuid
+`
+
+type FinancialComputeAppProjectParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) FinancialComputeAppProject(ctx context.Context, db DBTX, arg FinancialComputeAppProjectParams) (string, error) {
+	row := db.QueryRow(ctx, financialComputeAppProject, arg.AccountID, arg.AppID)
+	var project_id string
+	err := row.Scan(&project_id)
+	return project_id, err
+}
+
 const financialComputeBaseline = `-- name: FinancialComputeBaseline :one
 SELECT COALESCE(sum(CASE WHEN p.price IS NULL OR (p.price->>'unit_quantity')::numeric<=0 THEN 0 ELSE
  ceil(e.quantity::numeric*(p.price->>'millicents_per_unit')::numeric/(p.price->>'unit_quantity')::numeric)
@@ -621,6 +637,184 @@ SELECT EXISTS(SELECT 1 FROM compute_nodes WHERE active) AND NOT EXISTS (
 
 func (q *Queries) FinancialComputeOwnersReady(ctx context.Context, db DBTX, maxAgeSeconds float64) (pgtype.Bool, error) {
 	row := db.QueryRow(ctx, financialComputeOwnersReady, maxAgeSeconds)
+	var ready pgtype.Bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
+const financialComputeProjectActivationSafe = `-- name: FinancialComputeProjectActivationSafe :one
+SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1::uuid AND account_id=$2::uuid)
+ AND NOT EXISTS(SELECT 1 FROM instances i JOIN apps a ON a.id=i.app_id WHERE a.project_id=$1::uuid AND i.state NOT IN ('stopped','parked','failed'))
+ AND NOT EXISTS(SELECT 1 FROM app_tasks t JOIN apps a ON a.id=t.app_id WHERE a.project_id=$1::uuid AND t.status IN ('restoring','running'))
+ AND NOT EXISTS(SELECT 1 FROM financial_compute_leases l LEFT JOIN apps a ON a.id=l.app_id WHERE l.account_id=$2::uuid AND l.settled_at IS NULL
+   AND (a.project_id=$1::uuid OR l.payload->>'project_id'=$1::uuid::text))
+ AND NOT EXISTS(SELECT 1 FROM instances i JOIN apps a ON a.id=i.app_id JOIN instance_billing_intervals b ON b.instance_id=i.id
+   WHERE a.project_id=$1::uuid AND (b.ended_at IS NULL OR b.ended_at > date_trunc('minute',clock_timestamp())-interval '1 minute'))
+ AS safe
+`
+
+type FinancialComputeProjectActivationSafeParams struct {
+	ProjectID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) FinancialComputeProjectActivationSafe(ctx context.Context, db DBTX, arg FinancialComputeProjectActivationSafeParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, financialComputeProjectActivationSafe, arg.ProjectID, arg.AccountID)
+	var safe pgtype.Bool
+	err := row.Scan(&safe)
+	return safe, err
+}
+
+const financialComputeProjectBaseline = `-- name: FinancialComputeProjectBaseline :one
+SELECT COALESCE(sum(CASE WHEN p.price IS NULL OR (p.price->>'unit_quantity')::numeric<=0 THEN 0 ELSE
+ ceil(e.quantity::numeric*(p.price->>'millicents_per_unit')::numeric/(p.price->>'unit_quantity')::numeric)
+ + CASE WHEN (p.price->>'millicents_per_unit')::numeric>0 THEN 1 ELSE 0 END END),0)::text AS amount,
+ COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='compute' OR p.price->>'currency'!='USD'
+ OR p.price->>'unit'!='mb_seconds' OR (p.price->>'unit_quantity')::numeric<=0),false)::boolean AS incomplete
+FROM financial_usage_evidence e LEFT JOIN financial_price_snapshots p
+ ON p.account_id=e.account_id AND p.version=e.price_version AND p.meter=e.meter AND p.period_start=$1::timestamptz
+WHERE e.account_id=$2::uuid AND e.attribution->>'project_id'=$3::text AND e.meter='compute'
+ AND e.source_start>=$1::timestamptz AND e.source_start<$4::timestamptz AND e.quantity>0
+`
+
+type FinancialComputeProjectBaselineParams struct {
+	PeriodStart pgtype.Timestamptz
+	AccountID   pgtype.UUID
+	ProjectID   string
+	PeriodEnd   pgtype.Timestamptz
+}
+
+type FinancialComputeProjectBaselineRow struct {
+	Amount     string
+	Incomplete bool
+}
+
+// Positive retained charges of the project's apps seed the project book,
+// exactly as FinancialComputeBaseline seeds one app's.
+func (q *Queries) FinancialComputeProjectBaseline(ctx context.Context, db DBTX, arg FinancialComputeProjectBaselineParams) (FinancialComputeProjectBaselineRow, error) {
+	row := db.QueryRow(ctx, financialComputeProjectBaseline,
+		arg.PeriodStart,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.PeriodEnd,
+	)
+	var i FinancialComputeProjectBaselineRow
+	err := row.Scan(&i.Amount, &i.Incomplete)
+	return i, err
+}
+
+const financialComputeProjectBookGet = `-- name: FinancialComputeProjectBookGet :one
+
+SELECT payload FROM financial_compute_project_books WHERE account_id=$1::uuid AND project_id=$2::uuid AND period_start=$3::timestamptz
+`
+
+type FinancialComputeProjectBookGetParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+// ADR-1750, amendment 1: strict project caps.
+func (q *Queries) FinancialComputeProjectBookGet(ctx context.Context, db DBTX, arg FinancialComputeProjectBookGetParams) ([]byte, error) {
+	row := db.QueryRow(ctx, financialComputeProjectBookGet, arg.AccountID, arg.ProjectID, arg.PeriodStart)
+	var payload []byte
+	err := row.Scan(&payload)
+	return payload, err
+}
+
+const financialComputeProjectBookPut = `-- name: FinancialComputeProjectBookPut :exec
+INSERT INTO financial_compute_project_books(account_id,project_id,period_start,period_end,payload)
+VALUES($1::uuid,$2::uuid,$3::timestamptz,$4::timestamptz,$5::jsonb)
+ON CONFLICT(account_id,project_id,period_start) DO UPDATE SET payload=EXCLUDED.payload
+`
+
+type FinancialComputeProjectBookPutParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	Payload     []byte
+}
+
+func (q *Queries) FinancialComputeProjectBookPut(ctx context.Context, db DBTX, arg FinancialComputeProjectBookPutParams) error {
+	_, err := db.Exec(ctx, financialComputeProjectBookPut,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.PeriodStart,
+		arg.PeriodEnd,
+		arg.Payload,
+	)
+	return err
+}
+
+const financialComputeProjectLeases = `-- name: FinancialComputeProjectLeases :many
+SELECT l.payload FROM financial_compute_leases l LEFT JOIN apps a ON a.id=l.app_id
+WHERE l.account_id=$1::uuid AND l.settled_at IS NULL
+ AND (l.payload->>'project_id'=$2::uuid::text OR a.project_id=$2::uuid)
+ORDER BY l.id LIMIT 10001
+`
+
+type FinancialComputeProjectLeasesParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+}
+
+// An unsettled attempt belongs to a project's book when it funds it, or
+// when its app is now in the project.
+func (q *Queries) FinancialComputeProjectLeases(ctx context.Context, db DBTX, arg FinancialComputeProjectLeasesParams) ([][]byte, error) {
+	rows, err := db.Query(ctx, financialComputeProjectLeases, arg.AccountID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		items = append(items, payload)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const financialComputeProjectManaged = `-- name: FinancialComputeProjectManaged :one
+SELECT EXISTS(SELECT 1 FROM apps a JOIN financial_compute_project_books b ON b.account_id=a.account_id AND b.project_id=a.project_id
+ WHERE a.account_id=$1::uuid AND a.id=$2::uuid) AS managed
+`
+
+type FinancialComputeProjectManagedParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) FinancialComputeProjectManaged(ctx context.Context, db DBTX, arg FinancialComputeProjectManagedParams) (bool, error) {
+	row := db.QueryRow(ctx, financialComputeProjectManaged, arg.AccountID, arg.AppID)
+	var managed bool
+	err := row.Scan(&managed)
+	return managed, err
+}
+
+const financialComputeProjectSamplingReady = `-- name: FinancialComputeProjectSamplingReady :one
+WITH since AS (SELECT greatest(created_at,$1::timestamptz) AS at FROM projects
+ WHERE id=$2::uuid AND account_id=$3::uuid)
+SELECT (SELECT retained_from <= since.at FROM financial_evidence_coverage WHERE singleton)
+ AND (SELECT count(*) FROM financial_sampling_windows WHERE minute >= date_trunc('minute',since.at)
+   AND minute < date_trunc('minute',clock_timestamp()) AND compute_complete)
+   = extract(epoch FROM date_trunc('minute',clock_timestamp())-date_trunc('minute',since.at))::bigint/60 AS ready FROM since
+`
+
+type FinancialComputeProjectSamplingReadyParams struct {
+	PeriodStart pgtype.Timestamptz
+	ProjectID   pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+func (q *Queries) FinancialComputeProjectSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeProjectSamplingReadyParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, financialComputeProjectSamplingReady, arg.PeriodStart, arg.ProjectID, arg.AccountID)
 	var ready pgtype.Bool
 	err := row.Scan(&ready)
 	return ready, err

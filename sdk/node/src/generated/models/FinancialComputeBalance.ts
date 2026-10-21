@@ -11,8 +11,12 @@ export type FinancialComputeBalance = {
   initialized: boolean;
   app_id?: string;
   job_id?: string;
+  /**
+   * The capped project of a strict project budget (ADR-1750, amendment 1): one gross book shared by every app in the project. Jobs are not covered.
+   */
+  project_id?: string;
   account_id?: string;
-  scope_kind?: 'account' | 'app' | 'job';
+  scope_kind?: 'account' | 'app' | 'job' | 'project';
   basis?: 'net_usage' | 'gross_usage';
   allowance_granted_mb_seconds?: number;
   allowance_committed_mb_seconds?: number;

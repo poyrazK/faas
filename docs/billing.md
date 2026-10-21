@@ -515,7 +515,15 @@ spending. It does not establish a strict compute or full-invoice ceiling.
 ## Strict app compute candidate
 
 This implementation is local; native KVM acceptance and release review remain
-required. Configure `scope={kind:app,id:APP_ID}`, `mode=strict`,
+required.
+
+A project can be capped the same way with `scope={kind:project,id:PROJECT_ID}`:
+one limit shared by every app in the project, and when it is reached every app
+in the project is held. Jobs are not part of a project, so they need their own
+job caps. Activation needs every app in the project to be idle
+([ADR-1750, amendment 1](adr/1750-strict-app-compute-reservations.md#amendment-1-2026-10-20-strict-project-caps)).
+
+Configure `scope={kind:app,id:APP_ID}`, `mode=strict`,
 `basis=gross_usage`, `meters=[compute]`, `action=suspend_workloads`,
 `drain_seconds=0`, and `notify_millicents=[]`. A separate monitored policy can
 send spending alerts. Subscription, storage, network egress, taxes, builds and

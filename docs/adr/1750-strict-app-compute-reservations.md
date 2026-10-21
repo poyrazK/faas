@@ -102,3 +102,36 @@ skipped metal tests or cloud checks cannot promote the strict capability.
   for app caps; silently skip unsupported VM constructors.
 - **Rollback:** disable new strict policies first. Keep financial enforcement
   and recovery until every strict attempt settles; preserve financial history.
+
+## Amendment 1 (2026-10-20): strict project caps
+
+A strict budget can cap a project: `scope={kind:project,id:PROJECT_ID}`, with
+the same terms as an app cap (`gross_usage`, `meters=[compute]`,
+`suspend_workloads`, zero drain, no alert thresholds).
+
+- **One shared book.** `financial_compute_project_books` holds one book per
+  project and UTC month. Every strict attempt of an app in the project funds
+  its own app book and the project book. Both move by the same gross amounts
+  on acquire, renewal and settlement, under the account lock. The cap
+  therefore admits no more than its limit across all of the project's apps.
+  A denial holds the policy, and the hold stops every app in the project:
+  gateway admission, scheduler reconcile, vmmd and
+  `financial_app_command_held` all see the project policy.
+- **The lease records the project.** A lease stores the project it funded in
+  `project_id`, and renewal and settlement use that project. An app that
+  moves out of the project stays bounded by the old cap until its attempt
+  settles. An app that moves into a capped project without funding the
+  project stops at its next renewal, as an unbudgeted attempt does when an
+  app cap appears.
+- **Activation** needs a quiet project: no running instance, task, open
+  billing interval or unsettled attempt of any project app. It also needs
+  capable owners and complete sampling since the project or the month began.
+  The month's book starts at the project's retained gross charges, as an app
+  book does. A new month opens the book once no project attempt is
+  unsettled.
+- **Scope.** A project cap covers the project's apps. Jobs belong to no
+  project and are not covered; use job caps. Environment caps are not part of
+  this amendment. The lease request does not name an environment, so they
+  need a vmmd protocol change.
+- **Release.** Project caps are strict budgets. They go through the same
+  native acceptance before strict budgets are released to customers.

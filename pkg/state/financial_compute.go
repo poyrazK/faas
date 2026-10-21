@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -63,6 +64,9 @@ type financialComputeTxn interface {
 	allowance(time.Time) (int64, error)
 	egressPrices(time.Time) ([]FinancialPriceSnapshot, error)
 	egressOwner(string, string) (bool, error)
+	// workloadProject is an app's current project ("" for jobs and apps
+	// outside any project; ADR-1750, amendment 1).
+	workloadProject(string) (string, error)
 }
 
 func validateComputeRequest(r financial.ComputeRequest, mutate bool) bool {
@@ -144,11 +148,10 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 			return financial.ComputeLease{}, ErrConflict
 		}
 	}
-	policies, err := tx.policies(r.WorkloadKey())
+	project, policies, err := computeWorkloadStrictPolicies(tx, r.WorkloadKey())
 	if err != nil {
 		return financial.ComputeLease{}, err
 	}
-	policies = strictComputePolicies(policies, r.WorkloadKey())
 	if len(policies) > 0 {
 		for _, old := range active {
 			if old.InstanceID == r.InstanceID {
@@ -191,7 +194,11 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 	if err != nil {
 		return financial.ComputeLease{}, err
 	}
-	if err = computeFund(tx, &b, account, &l, policies, true); err != nil {
+	projectBook, err := computeProjectFundingBook(tx, &l, project, policies)
+	if err != nil {
+		return financial.ComputeLease{}, err
+	}
+	if err = computeFund(tx, &b, account, projectBook, &l, policies, true); err != nil {
 		if errors.Is(err, financial.ErrComputeBudget) {
 			// This committed negative receipt authorizes a fresh native
 			// absence audit after a lost reply or daemon restart. It grants
@@ -199,6 +206,7 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 			l.Denied = true
 			l.QuantityCommitted, l.QuantityReserved = 0, 0
 			l.EgressGranted, l.EgressGrant, l.EgressSequence = 0, 0, 0
+			l.ProjectID = ""
 			l.RunUntil = l.StartedAt
 			l.FundedUntil = l.StartedAt
 			l.SettledAt = &l.StartedAt
@@ -215,6 +223,11 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 	}
 	if account != nil {
 		if err = tx.putBook(*account); err != nil {
+			return financial.ComputeLease{}, err
+		}
+	}
+	if projectBook != nil {
+		if err = tx.putBook(*projectBook); err != nil {
 			return financial.ComputeLease{}, err
 		}
 	}
@@ -252,7 +265,7 @@ func computeCancel(tx financialComputeTxn, r financial.ComputeRequest) (financia
 	return l, tx.putLease(l)
 }
 
-func computeFund(tx financialComputeTxn, b, account *financial.ComputeBook, l *financial.ComputeLease, policies []FinancialBudget, refill bool) error {
+func computeFund(tx financialComputeTxn, b, account, project *financial.ComputeBook, l *financial.ComputeLease, policies []FinancialBudget, refill bool) error {
 	if l.FundedUntil.After(b.PeriodEnd) {
 		l.FundedUntil = b.PeriodEnd
 		l.RunUntil = b.PeriodEnd.Add(-api.FinancialComputeTeardownReserve)
@@ -276,11 +289,14 @@ func computeFund(tx financialComputeTxn, b, account *financial.ComputeBook, l *f
 	}
 	b.Reserved = without + wanted
 	appErr := computeCheckPolicies(tx, *b, policies)
-	var accountErr error
+	var accountErr, projectErr error
 	if account != nil {
 		accountErr = computeFundAccount(tx, account, l, policies, refill)
 	}
-	if err := errors.Join(appErr, accountErr); err != nil {
+	if project != nil {
+		projectErr = computeFundProject(tx, project, l, wanted, policies)
+	}
+	if err := errors.Join(appErr, accountErr, projectErr); err != nil {
 		return err
 	}
 	l.Reserved = wanted
@@ -345,21 +361,53 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 		if delta < 0 || delta > l.Reserved || b.Reserved < delta {
 			return l, financial.ErrComputeUnavailable
 		}
+		// The project book moves by the same gross amounts as the workload book.
+		projectBook, err := computeLeaseProjectBook(tx, l)
+		if err != nil {
+			return l, err
+		}
+		if projectBook != nil {
+			if projectBook.Reserved < delta {
+				return l, financial.ErrComputeUnavailable
+			}
+			projectBook.Committed += delta
+			projectBook.Reserved -= delta
+		}
 		b.Committed += delta
 		b.Reserved -= delta
 		l.Committed = spent
 		l.Reserved -= delta
 		if settle {
 			b.Reserved -= l.Reserved
+			if projectBook != nil {
+				if projectBook.Reserved < l.Reserved {
+					return l, financial.ErrComputeUnavailable
+				}
+				projectBook.Reserved -= l.Reserved
+			}
 			l.Reserved = 0
 		} else {
-			policies, err := tx.policies(l.WorkloadKey())
+			project, policies, err := computeWorkloadStrictPolicies(tx, l.WorkloadKey())
 			if err != nil {
 				return l, err
 			}
+			// An app moved into a capped project since this attempt began
+			// cannot keep running outside that project's book.
+			if project != l.ProjectID && slices.ContainsFunc(policies, func(p FinancialBudget) bool { return financial.StrictProjectCompute(p.Spec) }) {
+				return financial.ComputeLease{}, financial.ErrComputeUnavailable
+			}
+			if projectBook != nil && project != l.ProjectID {
+				// The app left the project that funds this attempt; that
+				// project's cap still bounds it until it settles.
+				leasePolicies, err := computeProjectPolicies(tx, l.ProjectID)
+				if err != nil {
+					return l, err
+				}
+				policies = append(policies, leasePolicies...)
+			}
 			l.RunUntil = now.Add(api.FinancialComputeLeaseDuration).Truncate(time.Second)
 			l.FundedUntil = l.RunUntil.Add(api.FinancialComputeTeardownReserve)
-			if err = computeFund(tx, &b, account, &l, strictComputePolicies(policies, l.WorkloadKey()), r.EgressRefill); err != nil {
+			if err = computeFund(tx, &b, account, projectBook, &l, policies, r.EgressRefill); err != nil {
 				return financial.ComputeLease{}, err
 			}
 		}
@@ -371,12 +419,17 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 				return l, err
 			}
 		}
+		if projectBook != nil {
+			if err = tx.putBook(*projectBook); err != nil {
+				return l, err
+			}
+		}
 	} else if !settle {
-		policies, err := tx.policies(l.WorkloadKey())
+		_, policies, err := computeWorkloadStrictPolicies(tx, l.WorkloadKey())
 		if err != nil {
 			return l, err
 		}
-		if len(strictComputePolicies(policies, l.WorkloadKey())) > 0 {
+		if len(policies) > 0 {
 			return financial.ComputeLease{}, financial.ErrComputeUnavailable
 		}
 		l.RunUntil = now.Add(api.FinancialComputeLeaseDuration)
@@ -404,8 +457,11 @@ func minComputeTime(a, b time.Time) time.Time {
 func computeBalance(tx financialComputeTxn, p FinancialBudget, now time.Time) (financial.ComputeBalance, error) {
 	month := financial.ComputeMonth(now)
 	out := financial.ComputeBalance{AccountID: p.AccountID, ScopeKind: p.Spec.Scope.Kind, Basis: p.Spec.Basis, AppID: p.Spec.Scope.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), ObservedAt: tx.clock()}
-	if p.Spec.Scope.Kind == "job" {
+	switch p.Spec.Scope.Kind {
+	case "job":
 		out.JobID, out.AppID = p.Spec.Scope.ID, ""
+	case "project":
+		out.ProjectID, out.AppID = p.Spec.Scope.ID, ""
 	}
 	key := financial.ComputeScopeKey(p.Spec.Scope)
 	b, err := tx.book(key, month)

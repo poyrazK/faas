@@ -12298,7 +12298,8 @@ CREATE FUNCTION public.financial_app_command_held(target_app uuid, target_deploy
  JOIN financial_compute_holds h ON h.account_id=p.account_id AND h.policy_id=p.id AND h.revision=p.revision
  WHERE a.id=target_app AND p.deleted_at IS NULL AND p.spec->>'enabled'='true'
   AND p.spec->>'mode'='strict' AND (p.spec->'scope'->>'kind'='account'
-    OR p.spec->'scope'->>'kind'='app' AND p.spec->'scope'->>'id'=a.id::text)
+    OR p.spec->'scope'->>'kind'='app' AND p.spec->'scope'->>'id'=a.id::text
+    OR p.spec->'scope'->>'kind'='project' AND p.spec->'scope'->>'id'=a.project_id::text)
   AND (p.spec->>'resume_rule'='manual' OR h.period_start=date_trunc('month',observed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))
 $$;
 
@@ -36155,6 +36156,22 @@ CREATE TABLE public.financial_compute_owners (
 
 
 --
+-- Name: financial_compute_project_books; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_project_books (
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT financial_compute_project_books_check CHECK ((period_end > period_start)),
+    CONSTRAINT financial_compute_project_books_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_compute_project_books_payload_check1 CHECK (COALESCE(((((payload ->> 'committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'committed'::text))::numeric + ((payload ->> 'reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric)), false))
+);
+
+
+--
 -- Name: financial_evidence_coverage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56929,6 +56946,14 @@ ALTER TABLE ONLY public.financial_compute_leases
 
 ALTER TABLE ONLY public.financial_compute_owners
     ADD CONSTRAINT financial_compute_owners_pkey PRIMARY KEY (node_id);
+
+
+--
+-- Name: financial_compute_project_books financial_compute_project_books_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_project_books
+    ADD CONSTRAINT financial_compute_project_books_pkey PRIMARY KEY (account_id, project_id, period_start);
 
 
 --
@@ -85844,6 +85869,14 @@ ALTER TABLE ONLY public.financial_compute_leases
 
 ALTER TABLE ONLY public.financial_compute_owners
     ADD CONSTRAINT financial_compute_owners_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_compute_project_books financial_compute_project_books_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_project_books
+    ADD CONSTRAINT financial_compute_project_books_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

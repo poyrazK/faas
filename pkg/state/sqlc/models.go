@@ -5317,6 +5317,14 @@ type FinancialComputeOwner struct {
 	EgressBudgetIncarnation   pgtype.UUID
 }
 
+type FinancialComputeProjectBook struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	Payload     []byte
+}
+
 type FinancialEvidenceCoverage struct {
 	Singleton    bool
 	RetainedFrom pgtype.Timestamptz

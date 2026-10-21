@@ -1351,6 +1351,7 @@ type Querier interface {
 	FinancialComputeAppLeases(ctx context.Context, db DBTX, arg FinancialComputeAppLeasesParams) ([][]byte, error)
 	FinancialComputeAppManaged(ctx context.Context, db DBTX, arg FinancialComputeAppManagedParams) (pgtype.Bool, error)
 	FinancialComputeAppOwned(ctx context.Context, db DBTX, arg FinancialComputeAppOwnedParams) (bool, error)
+	FinancialComputeAppProject(ctx context.Context, db DBTX, arg FinancialComputeAppProjectParams) (string, error)
 	// Positive retained charges seed admission conservatively. Corrections cannot
 	// grant execution authority, and missing contracts must fail activation.
 	FinancialComputeBaseline(ctx context.Context, db DBTX, arg FinancialComputeBaselineParams) (FinancialComputeBaselineRow, error)
@@ -1382,6 +1383,18 @@ type Querier interface {
 	FinancialComputeOwnerPut(ctx context.Context, db DBTX, arg FinancialComputeOwnerPutParams) error
 	FinancialComputeOwnerValid(ctx context.Context, db DBTX, arg FinancialComputeOwnerValidParams) (bool, error)
 	FinancialComputeOwnersReady(ctx context.Context, db DBTX, maxAgeSeconds float64) (pgtype.Bool, error)
+	FinancialComputeProjectActivationSafe(ctx context.Context, db DBTX, arg FinancialComputeProjectActivationSafeParams) (pgtype.Bool, error)
+	// Positive retained charges of the project's apps seed the project book,
+	// exactly as FinancialComputeBaseline seeds one app's.
+	FinancialComputeProjectBaseline(ctx context.Context, db DBTX, arg FinancialComputeProjectBaselineParams) (FinancialComputeProjectBaselineRow, error)
+	// ADR-1750, amendment 1: strict project caps.
+	FinancialComputeProjectBookGet(ctx context.Context, db DBTX, arg FinancialComputeProjectBookGetParams) ([]byte, error)
+	FinancialComputeProjectBookPut(ctx context.Context, db DBTX, arg FinancialComputeProjectBookPutParams) error
+	// An unsettled attempt belongs to a project's book when it funds it, or
+	// when its app is now in the project.
+	FinancialComputeProjectLeases(ctx context.Context, db DBTX, arg FinancialComputeProjectLeasesParams) ([][]byte, error)
+	FinancialComputeProjectManaged(ctx context.Context, db DBTX, arg FinancialComputeProjectManagedParams) (bool, error)
+	FinancialComputeProjectSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeProjectSamplingReadyParams) (pgtype.Bool, error)
 	FinancialComputeRetired(ctx context.Context, db DBTX, arg FinancialComputeRetiredParams) (bool, error)
 	FinancialComputeSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeSamplingReadyParams) (pgtype.Bool, error)
 	FinancialEgressBaseline(ctx context.Context, db DBTX, arg FinancialEgressBaselineParams) (FinancialEgressBaselineRow, error)
