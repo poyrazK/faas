@@ -110,8 +110,18 @@ func postgresNativeStarterPhases(t *testing.T, starter postgresstarter.Starter, 
 		}
 		// Failed-hook fallback and rolling rotation can leave only stale
 		// captures. Parking the replacement creates the next fresh init.
-		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
-			t.Fatalf("park starter: status=%d", status)
+		// apid waits 5 s for the drain and answers a slower one (the starter's
+		// before_checkpoint hook plus capture) with a retryable 503; repeating
+		// the park only waits for the same drain again.
+		for deadline := time.Now().Add(time.Minute); ; {
+			_, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil)
+			if status == http.StatusNoContent {
+				break
+			}
+			if status != http.StatusServiceUnavailable || time.Now().After(deadline) {
+				t.Fatalf("park starter: status=%d", status)
+			}
+			time.Sleep(time.Second)
 		}
 		*snapshotID = waitAfterRestoreSnapshot(t, store, *deploymentID, *snapshotID)
 	}
