@@ -57,14 +57,14 @@ type flagsMutation struct {
 
 func cmdFlagsDispatch(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl flags: missing subcommand; want list|show|inspect|account|enable|disable|allow|deny|revoke|rollout|default|set|schedule|self-serve|groups|group-add|group-remove|history|rollback")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl flags: missing subcommand; want list|show|inspect|account|enable|disable|allow|deny|revoke|rollout|default|set|schedule|ramp|self-serve|groups|group-add|group-remove|history|rollback")
 		return 2
 	}
 	handlers := map[string]func([]string) int{
 		"list": cmdFlagsList, "show": cmdFlagsShow, "inspect": cmdFlagsInspect, "account": cmdFlagsAccount,
 		"enable": cmdFlagsSwitch(true), "disable": cmdFlagsSwitch(false),
 		"allow": cmdFlagsAccountRule("allow"), "deny": cmdFlagsAccountRule("deny"), "revoke": cmdFlagsAccountRule("revoke"),
-		"rollout": cmdFlagsRollout, "default": cmdFlagsDefault, "set": cmdFlagsSet, "schedule": cmdFlagsSchedule, "self-serve": cmdFlagsSelfServe,
+		"rollout": cmdFlagsRollout, "default": cmdFlagsDefault, "set": cmdFlagsSet, "schedule": cmdFlagsSchedule, "self-serve": cmdFlagsSelfServe, "ramp": cmdFlagsRamp,
 		"groups": cmdFlagsGroups, "group-add": cmdFlagsGroupMember(true), "group-remove": cmdFlagsGroupMember(false),
 		"history": cmdFlagsHistory, "rollback": cmdFlagsRollback,
 	}
@@ -118,6 +118,13 @@ func cmdFlagsShow(args []string) int {
 	if ss := item.Definition.SelfServe; ss != nil {
 		_, _ = fmt.Fprintf(osStdout, "self_serve enabled=%t plans=%s max_subjects=%d opted_in_accounts=%d opted_in_orgs=%d opt_ins_version=%d\n",
 			ss.Enabled, strings.Join(ss.Plans, ","), ss.MaxSubjects, item.OptIns.Accounts, item.OptIns.Orgs, item.OptIns.Version)
+	}
+	for _, rule := range item.Definition.Rules {
+		if r := rule.Ramp; r != nil && rule.Rollout != nil {
+			_, _ = fmt.Fprintf(osStdout, "ramp rule=%s stage_bp=%d stages_bp=%s interval_s=%d max_5xx_bp=%d min_requests=%d on_breach=%s paused=%t reason=%q\n",
+				rule.ID, *rule.Rollout, strings.Trim(strings.Join(strings.Fields(fmt.Sprint(r.Stages)), ","), "[]"), r.IntervalSeconds,
+				r.Max5xxBasisPoints, r.MinRequests, r.OnBreach, r.Paused, r.PausedReason)
+		}
 	}
 	definition, _ := json.Marshal(item.Definition)
 	_, _ = fmt.Fprintf(osStdout, "label=%s\ncapability=%s\nadr=%s\nconsumers=%s\nattributes=%s\nlegacy_env=%s\ndefinition=%s\n",
@@ -586,12 +593,22 @@ func editedFlagsValue(list api.OperatorPlatformFlagList, key string, mutation fl
 	return "", nil, 0, fmt.Errorf("unknown platform flag %q", cleanKey)
 }
 
+func fromAPIRamp(r *api.PlatformFlagRamp) *platformflags.Ramp {
+	if r == nil {
+		return nil
+	}
+	out := platformflags.Ramp(*r)
+	out.Stages = slices.Clone(r.Stages)
+	return &out
+}
+
 func fromAPIDefinition(in api.PlatformFlagDefinition) platformflags.Definition {
 	out := platformflags.Definition{Enabled: in.Enabled, Default: in.Default}
 	for _, rule := range in.Rules {
 		out.Rules = append(out.Rules, platformflags.Rule{
 			ID: rule.ID, Accounts: slices.Clone(rule.Accounts), Orgs: slices.Clone(rule.Orgs), Group: rule.Group,
 			Plans: slices.Clone(rule.Plans), Rollout: rule.Rollout, StartsAt: rule.StartsAt, EndsAt: rule.EndsAt, Value: rule.Value,
+			Ramp: fromAPIRamp(rule.Ramp),
 		})
 	}
 	if ss := in.SelfServe; ss != nil {

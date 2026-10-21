@@ -123,6 +123,9 @@ func (s *server) checkRuntimeConfigChange(def runtimeConfigDefinition, value jso
 				if err := platformflags.ValidateTargeting(spec, flag); err != nil {
 					return nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Rule targets an attribute this flag cannot evaluate", err.Error())
 				}
+				if err := platformflags.ValidateRamps(spec, flag); err != nil {
+					return nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Flag cannot ramp automatically", err.Error())
+				}
 			}
 		}
 		return flag.Marshal(), nil

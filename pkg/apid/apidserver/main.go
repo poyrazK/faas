@@ -892,6 +892,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.consumerControls.Start(ctx, log)           // ADR-1315
 		srv.productControl.StartOverdueHolds(ctx, log) // ADR-20261018212918
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
+		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640
 		srv.startIssuesMaintenance(ctx)
 		srv.startIssueTrackerAutoSync(ctx)
 		srv.startIssueTrackerReminders(ctx)

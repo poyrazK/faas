@@ -1397,6 +1397,12 @@ const (
 	// that may opt in to one self-serve preview.
 	PlatformFlagsMaxOptInSubjects = 5000
 	PlatformFlagsMaxOptInsBytes   = 256 << 10
+	// Automatic ramps: stages per ramp and the time a stage must hold
+	// before the worker judges it.
+	PlatformFlagsMinRampStages          = 2
+	PlatformFlagsMaxRampStages          = 10
+	PlatformFlagsMinRampIntervalSeconds = 300
+	PlatformFlagsMaxRampIntervalSeconds = 7 * 24 * 3600
 )
 
 // MaxOutboundRequestsPerDay is the structural upper bound for a

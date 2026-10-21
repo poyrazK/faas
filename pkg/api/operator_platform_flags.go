@@ -11,15 +11,28 @@ import "time"
 // organization a request acts under (ADR 20261021080640).
 // StartsAt and EndsAt bound when the rule applies.
 type PlatformFlagRule struct {
-	ID       string     `json:"id"`
-	Accounts []string   `json:"accounts,omitempty"`
-	Orgs     []string   `json:"orgs,omitempty"`
-	Group    string     `json:"group,omitempty"`
-	Plans    []string   `json:"plans,omitempty"`
-	Rollout  *int       `json:"rollout,omitempty"`
-	StartsAt *time.Time `json:"starts_at,omitempty"`
-	EndsAt   *time.Time `json:"ends_at,omitempty"`
-	Value    *bool      `json:"value"`
+	ID       string            `json:"id"`
+	Accounts []string          `json:"accounts,omitempty"`
+	Orgs     []string          `json:"orgs,omitempty"`
+	Group    string            `json:"group,omitempty"`
+	Plans    []string          `json:"plans,omitempty"`
+	Rollout  *int              `json:"rollout,omitempty"`
+	StartsAt *time.Time        `json:"starts_at,omitempty"`
+	EndsAt   *time.Time        `json:"ends_at,omitempty"`
+	Ramp     *PlatformFlagRamp `json:"ramp,omitempty"`
+	Value    *bool             `json:"value"`
+}
+
+// PlatformFlagRamp advances a rollout rule stage by stage while the flag's
+// health routes stay healthy (ADR 20261021080640).
+type PlatformFlagRamp struct {
+	Stages            []int  `json:"stages"`
+	IntervalSeconds   int    `json:"interval_seconds"`
+	Max5xxBasisPoints int    `json:"max_5xx_basis_points"`
+	MinRequests       int64  `json:"min_requests"`
+	OnBreach          string `json:"on_breach"`
+	Paused            bool   `json:"paused,omitempty"`
+	PausedReason      string `json:"paused_reason,omitempty"`
 }
 
 // PlatformFlagDefinition is the stored value of a platform flag. Enabled is

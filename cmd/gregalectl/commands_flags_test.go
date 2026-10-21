@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -177,6 +178,36 @@ func TestFlagsRetireByMarksOverdueFlags(t *testing.T) {
 		if got := flagsRetireBy(tc.retireBy, now); got != tc.want {
 			t.Errorf("flagsRetireBy(%q) = %q, want %q", tc.retireBy, got, tc.want)
 		}
+	}
+}
+
+func TestFlagsRampDefinesResumesAndRemoves(t *testing.T) {
+	rollout, value := 1000, true
+	current := api.PlatformFlagDefinition{Enabled: true, Rules: []api.PlatformFlagRule{{ID: "rollout", Rollout: &rollout, Value: &value,
+		Ramp: &api.PlatformFlagRamp{Stages: []int{1000, 5000}, IntervalSeconds: 300, OnBreach: "pause", Paused: true, PausedReason: "breach"}}}}
+	run := func(extra ...string) platformflags.Rule {
+		t.Helper()
+		var write operatorConfigPatchRequest
+		server := flagsServer(t, testFlagsList(current, "operator", 4), "/v1/admin/config/platform_flag.ai_gateway", &write)
+		defer server.Close()
+		args := append([]string{"ramp", "--key", platformflags.AIGateway, "--reason", "staged release", "--trace-id", testConfigTraceID, "--yes"}, extra...)
+		if code, _, stderr := runFlagsCommand(t, server.URL, args...); code != 0 {
+			t.Fatalf("ramp %v exit = %d, stderr=%s", extra, code, stderr)
+		}
+		return decodeFlagValue(t, write.Value).Rules[0]
+	}
+	defined := run("--stages", "10,50,100", "--interval", "15m", "--max-5xx-percent", "0.5", "--on-breach", "rollback")
+	if r := defined.Ramp; r == nil || strings.Trim(fmt.Sprint(r.Stages), "[]") != "1000 5000 10000" || r.IntervalSeconds != 900 || r.Max5xxBasisPoints != 50 || r.OnBreach != "rollback" || r.Paused {
+		t.Fatalf("defined ramp = %+v", defined.Ramp)
+	}
+	if resumed := run("--resume"); resumed.Ramp == nil || resumed.Ramp.Paused || resumed.Ramp.PausedReason != "" || len(resumed.Ramp.Stages) != 2 {
+		t.Fatalf("resumed ramp = %+v", resumed.Ramp)
+	}
+	if removed := run("--remove"); removed.Ramp != nil || *removed.Rollout != 1000 {
+		t.Fatalf("removed ramp = %+v rollout %d", removed.Ramp, *removed.Rollout)
+	}
+	if _, err := parseRampOptions("10", time.Minute, 1, 0, "pause", false, false); err == nil {
+		t.Fatal("one stage must be refused")
 	}
 }
 

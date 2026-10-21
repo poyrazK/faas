@@ -2014,7 +2014,7 @@ export class OrgsService {
    * company. Previews released per account only are not listed. Requires
    * `org.view`.
    *
-   * @returns PreviewList The previews.
+   * @returns PreviewList The previews the organization can join or already joined.
    * @throws ApiError
    */
   public static listOrgPreviews({
@@ -2037,7 +2037,7 @@ export class OrgsService {
       },
       errors: {
         401: `code: unauthorized`,
-        403: `\`org_role_forbidden\`.`,
+        403: `\`org_role_forbidden\`: you are not a member of the organization.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -2053,7 +2053,7 @@ export class OrgsService {
    * for the company, if their plan is eligible. Requires
    * `org.manage_previews` (owner or admin).
    *
-   * @returns Preview The preview after joining.
+   * @returns Preview The preview after the organization joined.
    * @throws ApiError
    */
   public static joinOrgPreview({
@@ -2096,7 +2096,7 @@ export class OrgsService {
   /**
    * Leave a platform preview for the organization.
    * Removes the organization's opt-in. Requires `org.manage_previews` (owner or admin).
-   * @returns Preview The preview after leaving.
+   * @returns Preview The preview after the organization left.
    * @throws ApiError
    */
   public static leaveOrgPreview({
@@ -2125,8 +2125,8 @@ export class OrgsService {
       },
       errors: {
         401: `code: unauthorized`,
-        403: `\`org_role_forbidden\`.`,
-        404: `\`preview_not_offered\`, or the organization does not exist.`,
+        403: `\`org_role_forbidden\`: only an owner or admin can leave for the organization.`,
+        404: `\`preview_not_offered\` (not a platform preview), or the organization does not exist.`,
         409: `\`preview_org_unsupported\`.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

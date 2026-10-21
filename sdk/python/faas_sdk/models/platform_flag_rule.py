@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -10,6 +10,10 @@ from attrs import field as _attrs_field
 
 from ..models.platform_flag_rule_plans_item import PlatformFlagRulePlansItem, check_platform_flag_rule_plans_item
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.platform_flag_ramp import PlatformFlagRamp
+
 
 T = TypeVar("T", bound="PlatformFlagRule")
 
@@ -33,6 +37,11 @@ class PlatformFlagRule:
     """The rule applies from this moment (inclusive); stored in UTC."""
     ends_at: datetime.datetime | Unset = UNSET
     """The rule stops applying at this moment (exclusive); must be after starts_at."""
+    ramp: PlatformFlagRamp | Unset = UNSET
+    """Advances the rule's rollout stage by stage (ADR 20261021080640). The rollout is the current stage; apid
+    moves it on once the flag's version has held for interval_seconds and its health routes stayed under
+    max_5xx_basis_points over that window with at least min_requests requests. On a breach it pauses (and for
+    rollback returns one stage); a paused ramp waits for an operator to clear paused."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -73,6 +82,10 @@ class PlatformFlagRule:
         if not isinstance(self.ends_at, Unset):
             ends_at = self.ends_at.isoformat()
 
+        ramp: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.ramp, Unset):
+            ramp = self.ramp.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -95,11 +108,15 @@ class PlatformFlagRule:
             field_dict["starts_at"] = starts_at
         if ends_at is not UNSET:
             field_dict["ends_at"] = ends_at
+        if ramp is not UNSET:
+            field_dict["ramp"] = ramp
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.platform_flag_ramp import PlatformFlagRamp
+
         d = dict(src_dict)
         id = d.pop("id")
 
@@ -150,6 +167,13 @@ class PlatformFlagRule:
         else:
             ends_at = datetime.datetime.fromisoformat(_ends_at)
 
+        _ramp = d.pop("ramp", UNSET)
+        ramp: PlatformFlagRamp | Unset
+        if isinstance(_ramp, Unset):
+            ramp = UNSET
+        else:
+            ramp = PlatformFlagRamp.from_dict(_ramp)
+
         platform_flag_rule = cls(
             id=id,
             value=value,
@@ -160,6 +184,7 @@ class PlatformFlagRule:
             rollout=rollout,
             starts_at=starts_at,
             ends_at=ends_at,
+            ramp=ramp,
         )
 
         platform_flag_rule.additional_properties = d

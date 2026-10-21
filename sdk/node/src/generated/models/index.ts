@@ -2042,6 +2042,7 @@ export type { PlanResponse } from './PlanResponse.js';
 export type { PlanWorkload } from './PlanWorkload.js';
 export type { PlatformFlagDefinition } from './PlatformFlagDefinition.js';
 export type { PlatformFlagOptIns } from './PlatformFlagOptIns.js';
+export type { PlatformFlagRamp } from './PlatformFlagRamp.js';
 export type { PlatformFlagRule } from './PlatformFlagRule.js';
 export type { PlatformFlagSelfServe } from './PlatformFlagSelfServe.js';
 export type { PlatformTenantAccessTokenListResponse } from './PlatformTenantAccessTokenListResponse.js';

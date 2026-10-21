@@ -73,6 +73,7 @@ type Rule struct {
 	Rollout  *int       `json:"rollout,omitempty"`
 	StartsAt *time.Time `json:"starts_at,omitempty"`
 	EndsAt   *time.Time `json:"ends_at,omitempty"`
+	Ramp     *Ramp      `json:"ramp,omitempty"`
 	Value    *bool      `json:"value"`
 }
 
@@ -150,6 +151,10 @@ func NormalizeDefinition(def Definition) Definition {
 			next.Value = &value
 		}
 		next.StartsAt, next.EndsAt = utcSecond(rule.StartsAt), utcSecond(rule.EndsAt)
+		next.Ramp = cloneRamp(rule.Ramp)
+		if next.Ramp != nil {
+			next.Ramp.OnBreach = strings.ToLower(strings.TrimSpace(next.Ramp.OnBreach))
+		}
 		next.Accounts = normalizeAccounts(rule.Accounts)
 		next.Orgs = normalizeAccounts(rule.Orgs)
 		next.Plans = normalizePlans(rule.Plans)
@@ -247,6 +252,9 @@ func ValidateDefinition(def Definition, groups Groups) error {
 		}
 		if rule.Rollout != nil && (*rule.Rollout < 0 || *rule.Rollout > 10000) {
 			return fmt.Errorf("rule %q: rollout must be 0..10000 basis points", rule.ID)
+		}
+		if err := validateRamp(rule); err != nil {
+			return fmt.Errorf("rule %q: %w", rule.ID, err)
 		}
 	}
 	if s := def.SelfServe; s != nil {

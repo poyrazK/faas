@@ -85,6 +85,9 @@ type Spec struct {
 	// LegacyEnv names the environment variables read as the boot fallback
 	// before an operator has written a value.
 	LegacyEnv []string
+	// HealthRoutes are the apid route patterns whose error rate judges an
+	// automatic ramp of the flag. A flag without them refuses a ramp.
+	HealthRoutes []string
 	// Default applies when neither the environment nor an operator value is
 	// present.
 	Default Definition
@@ -103,14 +106,15 @@ var catalog = []Spec{
 		RetireBy:    "2027-01-31",
 	},
 	{
-		Key:         CustomerFlags,
-		Label:       "Customer Flags",
-		Description: "Release customer feature flags (configuration, runtime reads and rollout automation) to accounts.",
-		Capability:  "feature-flags",
-		ADR:         "ADR-377",
-		Consumers:   []string{"apid"},
-		Attributes:  []Attribute{AttributePlan, AttributeOrg},
-		LegacyEnv:   []string{"FAAS_FLAGS_ENABLED"},
+		Key:          CustomerFlags,
+		Label:        "Customer Flags",
+		Description:  "Release customer feature flags (configuration, runtime reads and rollout automation) to accounts.",
+		Capability:   "feature-flags",
+		ADR:          "ADR-377",
+		Consumers:    []string{"apid"},
+		Attributes:   []Attribute{AttributePlan, AttributeOrg},
+		LegacyEnv:    []string{"FAAS_FLAGS_ENABLED"},
+		HealthRoutes: []string{"GET /v1/projects/{slug}/environments/{environment}/flags", "PUT /v1/projects/{slug}/environments/{environment}/flags", "POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect"},
 	},
 	{
 		Key:         ApplicationAuth,
@@ -132,14 +136,15 @@ var catalog = []Spec{
 		RetireBy:    "2027-01-31",
 	},
 	{
-		Key:         ChangeTimeline,
-		Label:       "Change timeline",
-		Description: "Release the app change timeline preview (GET /v1/apps/{slug}/changes and its dashboard page) to accounts.",
-		ADR:         "ADR-751",
-		Consumers:   []string{"apid"},
-		Attributes:  []Attribute{AttributePlan, AttributeOrg},
-		LegacyEnv:   []string{"FAAS_CHANGE_TIMELINE_ENABLED"},
-		RetireBy:    "2027-01-31",
+		Key:          ChangeTimeline,
+		Label:        "Change timeline",
+		Description:  "Release the app change timeline preview (GET /v1/apps/{slug}/changes and its dashboard page) to accounts.",
+		ADR:          "ADR-751",
+		Consumers:    []string{"apid"},
+		Attributes:   []Attribute{AttributePlan, AttributeOrg},
+		LegacyEnv:    []string{"FAAS_CHANGE_TIMELINE_ENABLED"},
+		HealthRoutes: []string{"GET /v1/apps/{slug}/changes"},
+		RetireBy:     "2027-01-31",
 	},
 	{
 		Key:         AnomalyAlerts,
@@ -162,30 +167,33 @@ var catalog = []Spec{
 		RetireBy:    "2027-01-31",
 	},
 	{
-		Key:         OperationSchedules,
-		Label:       "Operation schedules",
-		Description: "Release Operation schedules to accounts: the schedule routes, and firing of their schedules. Decided by account only, because the schedule firer knows nothing else.",
-		ADR:         "ADR-20261018161833",
-		Consumers:   []string{"apid"},
-		LegacyEnv:   []string{"FAAS_OPERATION_SCHEDULES_ACCOUNTS"},
+		Key:          OperationSchedules,
+		Label:        "Operation schedules",
+		Description:  "Release Operation schedules to accounts: the schedule routes, and firing of their schedules. Decided by account only, because the schedule firer knows nothing else.",
+		ADR:          "ADR-20261018161833",
+		Consumers:    []string{"apid"},
+		LegacyEnv:    []string{"FAAS_OPERATION_SCHEDULES_ACCOUNTS"},
+		HealthRoutes: []string{"GET /v1/apps/{slug}/operation-schedules", "POST /v1/apps/{slug}/operation-schedules/{id}/cancel", "GET /v1/platform-tenant-self/customer-operation-schedules", "POST /v1/platform-tenant-self/customer-operation-schedules"},
 	},
 	{
-		Key:         OperationChildren,
-		Label:       "Child Operations",
-		Description: "Release child Operations to accounts: starting children and cascading a parent's cancellation to them. Decided by account only.",
-		ADR:         "ADR-20261018183000",
-		Consumers:   []string{"apid"},
-		LegacyEnv:   []string{"FAAS_OPERATION_CHILDREN_ACCOUNTS"},
+		Key:          OperationChildren,
+		Label:        "Child Operations",
+		Description:  "Release child Operations to accounts: starting children and cascading a parent's cancellation to them. Decided by account only.",
+		ADR:          "ADR-20261018183000",
+		Consumers:    []string{"apid"},
+		LegacyEnv:    []string{"FAAS_OPERATION_CHILDREN_ACCOUNTS"},
+		HealthRoutes: []string{"GET /v1/apps/{slug}/operations/{id}/children", "GET /v1/platform-tenant-self/customer-operations/{id}/children"},
 	},
 	{
-		Key:         ServiceMap,
-		Label:       "Service map",
-		Description: "Release the service map preview (GET /v1/service-map and its dashboard page) to accounts. The plan check for per-app metrics still applies.",
-		ADR:         "ADR-1131",
-		Consumers:   []string{"apid"},
-		Attributes:  []Attribute{AttributePlan, AttributeOrg},
-		LegacyEnv:   []string{"FAAS_SERVICE_MAP_ENABLED"},
-		RetireBy:    "2027-01-31",
+		Key:          ServiceMap,
+		Label:        "Service map",
+		Description:  "Release the service map preview (GET /v1/service-map and its dashboard page) to accounts. The plan check for per-app metrics still applies.",
+		ADR:          "ADR-1131",
+		Consumers:    []string{"apid"},
+		Attributes:   []Attribute{AttributePlan, AttributeOrg},
+		LegacyEnv:    []string{"FAAS_SERVICE_MAP_ENABLED"},
+		HealthRoutes: []string{"GET /v1/service-map"},
+		RetireBy:     "2027-01-31",
 	},
 	{
 		Key:         GuestTracing,
@@ -197,13 +205,14 @@ var catalog = []Spec{
 		LegacyEnv:   []string{"FAAS_GUEST_TRACING_ENABLED"},
 	},
 	{
-		Key:         StaticEgressIP,
-		Label:       "Static egress IP",
-		Description: "Release static egress IP management for apps to accounts.",
-		ADR:         "ADR-119",
-		Consumers:   []string{"apid"},
-		Attributes:  []Attribute{AttributePlan, AttributeOrg},
-		LegacyEnv:   []string{"FAAS_STATIC_EGRESS_IP_ENABLED"},
+		Key:          StaticEgressIP,
+		Label:        "Static egress IP",
+		Description:  "Release static egress IP management for apps to accounts.",
+		ADR:          "ADR-119",
+		Consumers:    []string{"apid"},
+		Attributes:   []Attribute{AttributePlan, AttributeOrg},
+		LegacyEnv:    []string{"FAAS_STATIC_EGRESS_IP_ENABLED"},
+		HealthRoutes: []string{"GET /v1/apps/{slug}/static-egress-ip", "PUT /v1/apps/{slug}/static-egress-ip", "DELETE /v1/apps/{slug}/static-egress-ip"},
 	},
 }
 
@@ -214,6 +223,7 @@ func Catalog() []Spec {
 		spec.Consumers = slices.Clone(spec.Consumers)
 		spec.Attributes = slices.Clone(spec.Attributes)
 		spec.LegacyEnv = slices.Clone(spec.LegacyEnv)
+		spec.HealthRoutes = slices.Clone(spec.HealthRoutes)
 		spec.Default = NormalizeDefinition(spec.Default)
 		out[i] = spec
 	}

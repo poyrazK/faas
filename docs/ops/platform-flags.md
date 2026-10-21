@@ -188,6 +188,39 @@ opt-ins.
 - `gregalectl flags show` prints the opt-in counts, and `inspect` prints
   `opt_in=account` or `opt_in=org` when an opt-in decided.
 
+## Automatic ramps
+
+A rollout can advance itself (ADR 20261021080640). Create the rollout first,
+then give it a ramp whose stages include the current percentage:
+
+```bash
+gregalectl flags rollout --key service_map --percent 1 --reason "start ramp" --yes
+gregalectl flags ramp --key service_map --stages 1,10,50,100 --interval 30m \
+  --max-5xx-percent 1 --min-requests 200 --on-breach rollback --reason "staged release" --yes
+gregalectl flags ramp --key service_map --resume --reason "fixed the regression" --yes
+gregalectl flags ramp --key service_map --remove --reason "hold at the current stage" --yes
+```
+
+Once a minute apid judges every unpaused ramp whose flag version is at least
+`interval` old. It reads the 5xx share of the flag's **health routes** from
+`apid_request_total` over that interval.
+
+- With fewer than `min-requests` requests, or without Prometheus, it holds.
+- Over the threshold it pauses, and with `rollback` it also returns one stage.
+- Otherwise it advances one stage.
+
+The write expects the flag's current version, so an operator change made
+meanwhile wins and restarts the interval. The row's revision records no actor
+and a reason naming the move. The audit log records
+`platform_flag.ramp_advance`, `ramp_pause` or `ramp_rollback` as
+`system:platform-flags-ramp`.
+
+A paused ramp waits for `--resume`. `flags show` prints each ramp's stage,
+settings and pause reason. Only flags whose catalog entry lists
+`HealthRoutes` can ramp; a ramp on any other flag is refused with `409`.
+The health series are not per cohort: a ramp judges the routes' overall
+health.
+
 ## Retiring previews
 
 A preview flag carries a `RetireBy` date in its catalog entry: the day it
@@ -253,8 +286,9 @@ that removes a group a flag still uses, with `409`.
 ## Limits
 
 At most 32 rules per flag, 1,000 accounts and 1,000 organizations per rule,
-100 groups and 5,000 accounts per group, and 5,000 opted-in accounts plus
-organizations per preview (`pkg/api/limits.go`). Larger audiences belong in
+100 groups and 5,000 accounts per group, 5,000 opted-in accounts plus
+organizations per preview, and 2 to 10 ramp stages held 5 minutes to 7 days
+each (`pkg/api/limits.go`). Larger audiences belong in
 a group, a plan constraint or a rollout.
 
 `allow`, `deny` and `revoke` take exactly one of `--account-id` or

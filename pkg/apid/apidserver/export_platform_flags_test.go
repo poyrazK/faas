@@ -1,8 +1,10 @@
 package apidserver
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
@@ -20,6 +22,14 @@ func (r *server) EnablePlatformFlagForAll(flagKey string) {
 func (r *server) SeedPlatformFlag(flagKey string, def platformflags.Definition) {
 	r.seedPlatformFlag(flagKey, def)
 }
+
+// AdvancePlatformFlagRamps runs one pass of the automatic ramp worker.
+func (r *server) AdvancePlatformFlagRamps(ctx context.Context, now time.Time) {
+	r.advancePlatformFlagRamps(ctx, now)
+}
+
+// PlatformFlagRampActor is the audit actor of automatic ramp writes.
+const PlatformFlagRampActor = platformFlagRampActor
 
 // RegisterPlatformFlagRetireBy exports the preview retire-by gauge.
 var RegisterPlatformFlagRetireBy = registerPlatformFlagRetireBy

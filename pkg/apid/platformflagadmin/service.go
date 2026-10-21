@@ -311,12 +311,22 @@ func toAPIDefinition(def platformflags.Definition) api.PlatformFlagDefinition {
 		out.Rules = append(out.Rules, api.PlatformFlagRule{
 			ID: rule.ID, Accounts: slices.Clone(rule.Accounts), Orgs: slices.Clone(rule.Orgs), Group: rule.Group,
 			Plans: slices.Clone(rule.Plans), Rollout: rule.Rollout, StartsAt: rule.StartsAt, EndsAt: rule.EndsAt, Value: rule.Value,
+			Ramp: toAPIRamp(rule.Ramp),
 		})
 	}
 	if ss := def.SelfServe; ss != nil {
 		out.SelfServe = &api.PlatformFlagSelfServe{Enabled: ss.Enabled, Plans: slices.Clone(ss.Plans), MaxSubjects: ss.MaxSubjects}
 	}
 	return out
+}
+
+func toAPIRamp(r *platformflags.Ramp) *api.PlatformFlagRamp {
+	if r == nil {
+		return nil
+	}
+	out := api.PlatformFlagRamp(*r)
+	out.Stages = slices.Clone(r.Stages)
+	return &out
 }
 
 func toAPIReceipts(receipts []state.RuntimeConfigApplyReceipt) []api.OperatorRuntimeConfigApplyReceipt {

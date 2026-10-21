@@ -53939,13 +53939,13 @@ paths:
         `org.view`.
       responses:
         '200':
-          description: The previews.
+          description: The previews the organization can join or already joined.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PreviewList' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          description: "`org_role_forbidden`."
+          description: "`org_role_forbidden`: you are not a member of the organization."
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -53963,7 +53963,7 @@ paths:
         `org.manage_previews` (owner or admin).
       responses:
         '200':
-          description: The preview after joining.
+          description: The preview after the organization joined.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Preview' }
@@ -53985,16 +53985,16 @@ paths:
       description: "Removes the organization's opt-in. Requires `org.manage_previews` (owner or admin)."
       responses:
         '200':
-          description: The preview after leaving.
+          description: The preview after the organization left.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Preview' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          description: "`org_role_forbidden`."
+          description: "`org_role_forbidden`: only an owner or admin can leave for the organization."
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '404':
-          description: "`preview_not_offered`, or the organization does not exist."
+          description: "`preview_not_offered` (not a platform preview), or the organization does not exist."
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '409':
           description: "`preview_org_unsupported`."
@@ -80825,7 +80825,26 @@ components:
         rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of the accounts the other constraints admit." }
         starts_at: { type: string, format: date-time, description: "The rule applies from this moment (inclusive); stored in UTC." }
         ends_at: { type: string, format: date-time, description: "The rule stops applying at this moment (exclusive); must be after starts_at." }
+        ramp: { $ref: '#/components/schemas/PlatformFlagRamp' }
         value: { type: boolean }
+
+    PlatformFlagRamp:
+      description: "Advances the rule's rollout stage by stage (ADR 20261021080640). The rollout is the current stage; apid moves it on once the flag's version has held for interval_seconds and its health routes stayed under max_5xx_basis_points over that window with at least min_requests requests. On a breach it pauses (and for rollback returns one stage); a paused ramp waits for an operator to clear paused."
+      type: object
+      required: [stages, interval_seconds, max_5xx_basis_points, min_requests, on_breach]
+      properties:
+        stages:
+          type: array
+          minItems: 2
+          maxItems: 10
+          description: "Strictly ascending basis points; the rollout must be one of them."
+          items: { type: integer, minimum: 1, maximum: 10000 }
+        interval_seconds: { type: integer, minimum: 300, maximum: 604800 }
+        max_5xx_basis_points: { type: integer, minimum: 0, maximum: 10000 }
+        min_requests: { type: integer, format: int64, minimum: 0 }
+        on_breach: { type: string, enum: [pause, rollback] }
+        paused: { type: boolean }
+        paused_reason: { type: string, maxLength: 500 }
 
     PlatformFlagDefinition:
       description: "Stored value of a platform flag. Enabled is the kill switch; default applies to accounts no rule matches."

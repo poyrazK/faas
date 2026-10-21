@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { PlatformFlagRamp } from './PlatformFlagRamp.js';
 /**
  * One targeting rule of a platform flag. Accounts, orgs, group, plans and rollout combine with AND; the first matching rule decides. Orgs match the organization a request acts under (ADR 20261021080640).
  */
@@ -23,6 +24,7 @@ export type PlatformFlagRule = {
    * The rule stops applying at this moment (exclusive); must be after starts_at.
    */
   ends_at?: string;
+  ramp?: PlatformFlagRamp;
   value: boolean;
 };
 

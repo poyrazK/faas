@@ -4011,6 +4011,8 @@ from .plan_workload_depends_on_conditions_additional_property import PlanWorkloa
 from .plan_workload_tier import PlanWorkloadTier
 from .platform_flag_definition import PlatformFlagDefinition
 from .platform_flag_opt_ins import PlatformFlagOptIns
+from .platform_flag_ramp import PlatformFlagRamp
+from .platform_flag_ramp_on_breach import PlatformFlagRampOnBreach
 from .platform_flag_rule import PlatformFlagRule
 from .platform_flag_rule_plans_item import PlatformFlagRulePlansItem
 from .platform_flag_self_serve import PlatformFlagSelfServe
@@ -9752,6 +9754,8 @@ __all__ = (
     "PlanWorkloadTier",
     "PlatformFlagDefinition",
     "PlatformFlagOptIns",
+    "PlatformFlagRamp",
+    "PlatformFlagRampOnBreach",
     "PlatformFlagRule",
     "PlatformFlagRulePlansItem",
     "PlatformFlagSelfServe",

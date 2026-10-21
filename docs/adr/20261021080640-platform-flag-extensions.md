@@ -56,8 +56,8 @@ Realtimed has no database pool. Rather than give it one, apid decides the realti
     - `min_requests`;
     - `on_breach`: `pause` or `rollback`;
     - `paused` and `paused_reason`, which the worker writes.
-  - **Health source.** The rule's `rollout` is the current stage. Health comes from the routes the catalog lists for the flag (`HealthRoutes`), using apid's existing `apid_request_total`/`apid_request_failures_total` series over the last interval, through apid's PromQL client. A flag without health routes refuses a ramp. With no Prometheus configured, ramps hold and the inspector says so.
-  - **The worker.** One apid replica runs it, holding a Postgres advisory lock, once a minute.
+  - **Health source.** The rule's `rollout` is the current stage. Health comes from the routes the catalog lists for the flag (`HealthRoutes`), using apid's existing `apid_request_total` series over the last interval (`code="err"` counts 5xx), through apid's PromQL client. The series are not per cohort, so a ramp judges the routes' overall health. A flag without health routes refuses a ramp. With no Prometheus configured, ramps hold and the inspector says so.
+  - **The worker.** Every apid replica runs it once a minute, as the customer Flags auto-advancer does. A stage moves only through a write that expects the flag's current version, so exactly one replica advances it; the others see a conflict and stop. That makes an advisory lock unnecessary. The stage began when the flag's current version was written (its revision time), so any operator write restarts the interval.
     - **When it acts:** for every unpaused ramp whose definition version is at least `interval_seconds` old.
     - **Holds:** with too few requests it does nothing.
     - **Breach:** it pauses, and on `rollback` also returns `rollout` to the previous stage.
