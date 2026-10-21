@@ -78,7 +78,16 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	dir := benchFixtureDir(t)
 	base := filepath.Join(dir, "bench-base.ext4")
 	layer := filepath.Join(dir, "bench-layer.ext4")
-	if err := buildV6BaseExt4(base, repoRoot(t)); err != nil {
+	// FAAS_RESTORE_BENCH_PMEM_DIR ("auto" or a directory on the base's
+	// reflink mount) boots and restores the base as the account's pmem copy,
+	// as production does by default (ADR-908). It needs Firecracker 1.16+, a
+	// guest kernel with VIRTIO_PMEM and DAX, and a reflink filesystem.
+	pmemDir := os.Getenv("FAAS_RESTORE_BENCH_PMEM_DIR")
+	buildBase := func() error { return buildV6BaseExt4(base, repoRoot(t)) }
+	if pmemDir != "" {
+		buildBase = func() error { return buildV6BaseExt4With(base, repoRoot(t), 8080, PmemBaseLabel, "-b", "4096") }
+	}
+	if err := buildBase(); err != nil {
 		t.Fatalf("build base fixture: %v", err)
 	}
 	// Production pads every app layer to its plan cap (Scale: 2 GiB) and the
@@ -127,10 +136,20 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	}
 
 	vmm := newMetalVMM(t, 30*time.Second).WithStorage(backend)
+	account := ""
+	if pmemDir != "" {
+		if !PmemBaseSupported(fcVersion) {
+			t.Skipf("Firecracker %s has no virtio-pmem", fcVersion)
+		}
+		vmm.WithPmemBase(pmemDir)
+		account = "restore-bench"
+		t.Logf("pmem base: %s", pmemDir)
+	}
 	stageBenchMountHelper(t, vmm)
 	// Warnings reach stderr so a restore that fell back to a cold boot says why.
 	warnings := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	m := NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, fcVersion, warnings, nil)
+	attachBenchResourceJournal(t, m)
 	if n := benchPreparedNetworks(t); n > 0 {
 		if err := m.EnablePreparedNetworks(context.Background(), n); err != nil {
 			t.Fatalf("enable prepared networks: %v", err)
@@ -164,7 +183,7 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	// wake does after the idle reaper has parked the app.
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance: instance, Plan: "pro", BaseKey: base, LayerKey: layer,
-		VcpuCount: 2, MemSizeMiB: memMiB,
+		VcpuCount: 2, MemSizeMiB: memMiB, AccountID: account,
 	}); err != nil {
 		t.Fatalf("prime cold boot: %v", err)
 	}
@@ -181,6 +200,10 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	t.Logf("guest: %d MiB", memMiB)
 	t.Logf("pre-boot writers this run: resolver + %d api env keys", len(apiEnv))
 
+	// FAAS_RESTORE_BENCH_TOUCH_BASE=1 bumps the base's mtime before every
+	// wake, as the node cache's LRU touch does on every read in production
+	// (storage.LocalCacheBackend.touchCacheFile).
+	touchBase := os.Getenv("FAAS_RESTORE_BENCH_TOUCH_BASE") == "1"
 	dropCaches := os.Getenv("FAAS_RESTORE_BENCH_DROP_CACHES") == "1"
 	if dropCaches {
 		t.Log("dropping page cache before every restore: faults will be served from disk")
@@ -208,11 +231,17 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 		if dropCaches {
 			dropPageCache(t)
 		}
+		if touchBase {
+			now := time.Now()
+			if err := os.Chtimes(base, now, now); err != nil {
+				t.Fatalf("touch base: %v", err)
+			}
+		}
 		started := time.Now()
 		out, err := m.Wake(ctx, WakeRequest{
 			Instance: instance, Plan: "pro", BaseKey: base, LayerKey: layer,
 			VcpuCount: 2, MemSizeMiB: memMiB, Snapshot: snap,
-			APIEnvEntries: apiEnv,
+			APIEnvEntries: apiEnv, AccountID: account,
 		})
 		if err != nil {
 			t.Fatalf("cycle %d: wake: %v", i, err)
@@ -234,6 +263,9 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 		rows[i]["wall_ms"] = ms
 	}
 
+	if pmemDir != "" {
+		logPmemCopies(t, vmm, base)
+	}
 	reportRestoreTiming(t, rows)
 	if path := os.Getenv("FAAS_RESTORE_BENCH_JSON"); path != "" {
 		writeRestoreTimingJSON(t, path, rows)
@@ -574,6 +606,46 @@ func stageBenchMountHelper(t *testing.T, v *JailerVMM) {
 	}
 	t.Cleanup(func() { _ = os.Remove(dst) })
 	v.mountHelperPath = dst
+}
+
+// logPmemCopies reports how many account copies of base exist: one when
+// wakes reuse the account's copy, one per wake when every wake clones.
+func logPmemCopies(t *testing.T, v *JailerVMM, base string) {
+	t.Helper()
+	dir, err := v.pmemBase.copyDir(base)
+	if err == nil {
+		var copies []string
+		copies, err = filepath.Glob(filepath.Join(dir, "*", "*.ext4"))
+		t.Logf("pmem copies in %s: %d", dir, len(copies))
+	}
+	if err != nil {
+		t.Logf("pmem copies: %v", err)
+	}
+}
+
+// attachBenchResourceJournal attaches the ADR-473 resource journal that
+// production vmmd always runs with, so its commits land in the measured
+// phases. production-us spends most of chroot, stage_drives and
+// stage_snapshot in those commits (~60 fsyncs per restore on the root
+// disk), and a harness without the journal reports none of it.
+// FAAS_RESTORE_BENCH_JOURNAL_DIR names a directory on the filesystem to
+// measure; unset keeps the journal off, as before.
+func attachBenchResourceJournal(t *testing.T, m *Manager) {
+	t.Helper()
+	root := os.Getenv("FAAS_RESTORE_BENCH_JOURNAL_DIR")
+	if root == "" {
+		return
+	}
+	j, err := OpenResourceJournal(filepath.Join(root, fmt.Sprintf("restore-bench-journal-%d", os.Getpid())))
+	if err != nil {
+		t.Fatalf("open resource journal: %v", err)
+	}
+	if err := m.WithResourceJournal(j); err != nil {
+		_ = j.Close()
+		t.Fatalf("attach resource journal: %v", err)
+	}
+	t.Cleanup(func() { _ = j.Close() })
+	t.Logf("resource journal: %s", root)
 }
 
 // benchPreparedNetworks reads FAAS_RESTORE_BENCH_PREPARED_NETWORKS, the
