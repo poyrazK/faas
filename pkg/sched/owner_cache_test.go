@@ -269,3 +269,45 @@ func TestOwnerCacheBootPublishesOnItsAdmissionGeneration(t *testing.T) {
 		})
 	}
 }
+
+// The gateway wakes through EnsureWake, whose coordinated selection kept the
+// cache off for every real wake (production-us 2026-10-21:
+// schedd_owner_cache_total stayed 0 on every series with FAAS_OWNER_CACHE=1).
+// A selection of the entry's own deployment is served from the entry.
+func TestOwnerCacheServesCoordinatedWakes(t *testing.T) {
+	f := newOwnerCacheFixture(t)
+	for range 2 {
+		out, err := f.e.EnsureWake(t.Context(), f.app.ID, sched.TriggerGateway)
+		if err != nil || out.Instance == nil {
+			t.Fatalf("EnsureWake: %+v, %v", out.Instance, err)
+		}
+		if err := f.e.Park(t.Context(), out.Instance.InstanceID); err != nil {
+			t.Fatalf("Park: %v", err)
+		}
+	}
+	if got := f.outcomes(); got["miss"] != 1 || got["hit"] < 2 || got["refused"] != 0 || got["selection"] != 0 {
+		t.Fatalf("owner cache outcomes = %v, want one miss and hits after it", got)
+	}
+}
+
+// A coordinated wake's selection is read fresh, but the entry it agrees with
+// can still be stale; the admission insert's generation guard refuses it.
+func TestOwnerCacheRefusesAStaleEntryForACoordinatedWake(t *testing.T) {
+	f := newOwnerCacheFixture(t)
+	f.wakeAndPark(t)
+	ram := 1024
+	if _, err := f.mem.UpdateApp(t.Context(), f.app.ID, state.UpdateAppParams{RAMMB: &ram}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := f.e.EnsureWake(t.Context(), f.app.ID, sched.TriggerGateway)
+	if err != nil || out.Instance == nil {
+		t.Fatalf("EnsureWake after a missed notification: %+v, %v", out.Instance, err)
+	}
+	ins, err := f.mem.InstanceByID(t.Context(), out.Instance.InstanceID)
+	if err != nil || ins.RAMMB != ram {
+		t.Fatalf("admitted instance RAM = %d, %v; want the current %d", ins.RAMMB, err, ram)
+	}
+	if got := f.outcomes(); got["refused"] != 1 {
+		t.Fatalf("owner cache outcomes = %v, want the stale entry refused once", got)
+	}
+}

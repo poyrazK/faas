@@ -43,8 +43,10 @@ export function useLiveRead<Row = Record<string, unknown>>(
   const key = options ? JSON.stringify([options.database, options.schema ?? '', options.read]) : null
   return useLive<Row>(connection, key, options?.initialRows, (conn) => {
     const o = latest.current!
-    return conn.query<Row>({ database: o.database, read: o.read, schema: o.schema, initialRows: o.initialRows, parse: o.parse,
-      token: () => latest.current!.token() })
+    const read = { database: o.database, read: o.read, schema: o.schema, initialRows: o.initialRows, parse: o.parse }
+    if (o.anonymous === true) return conn.query<Row>({ ...read, anonymous: true })
+    if (typeof o.serverKey === 'string') return conn.query<Row>({ ...read, serverKey: o.serverKey, subject: o.subject })
+    return conn.query<Row>({ ...read, token: () => latest.current!.token!() })
   })
 }
 

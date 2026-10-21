@@ -13,6 +13,18 @@ type EdgeRuleRecipeSuggestion struct {
 	Title  string            `json:"title"`
 	Reason string            `json:"reason"`
 	Params map[string]string `json:"params,omitempty"`
+	// Alternative is a softer recipe for the same observation: challenge
+	// browsers instead of rate-limiting or restricting by IP (ADR-831
+	// amendment 7). Absent when there is none.
+	Alternative *EdgeRuleRecipeSuggestionAlternative `json:"alternative,omitempty"`
+}
+
+// EdgeRuleRecipeSuggestionAlternative is the other recipe a suggestion can
+// be applied with, and its parameters.
+type EdgeRuleRecipeSuggestionAlternative struct {
+	Recipe string            `json:"recipe"`
+	Title  string            `json:"title"`
+	Params map[string]string `json:"params,omitempty"`
 }
 
 // EdgeRuleRecipeSuggestionsResponse is GET /v1/apps/{slug}/edge-rules/suggestions.

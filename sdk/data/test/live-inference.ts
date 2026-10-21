@@ -1,5 +1,5 @@
 import { createDataClient } from '../src/index.js'
-import { LiveConnection, liveRead, type LiveReadRow, type LiveSocket } from '../src/live/index.js'
+import { LiveConnection, liveRead, liveSocket, type LiveReadRow, type LiveSocket } from '../src/live/index.js'
 import type { Database } from './database.types.js'
 
 declare const socket: LiveSocket
@@ -24,3 +24,16 @@ if (row) {
 // Anything that is not a postgrest-js query keeps plain records.
 const untyped: LiveReadRow<string> = { anything: 1 }
 void untyped
+
+// liveSocket builds the connect option from the endpoint URL.
+new LiveConnection({ connect: liveSocket('wss://data.shop.example/__gregale/realtime/rt-1') })
+
+// One credential per live read: a token, anonymous access or a server key.
+connection.query({ database: 'db', read: 'products', anonymous: true })
+connection.query({ database: 'db', read: 'orders', serverKey: 'gdsk_x', subject: 'user-7' })
+// @ts-expect-error A read is anonymous or signed in, not both.
+connection.query({ database: 'db', read: 'products', anonymous: true, token: () => 'jwt' })
+// @ts-expect-error A subject needs a server key.
+connection.query({ database: 'db', read: 'products', token: () => 'jwt', subject: 'user-7' })
+// @ts-expect-error A read needs a credential.
+connection.query({ database: 'db', read: 'products' })

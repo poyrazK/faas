@@ -456,13 +456,14 @@ Live queries are invisible to customers until launch.
   - the OpenAPI spec and the generated Go, Node and Python SDKs (the live
     routes are in the spec-compliance and sdk-coverage `routeExclude`
     lists);
-  - customer CLI help and the CLI reference, since `gregale postgres` is
-    operator-only;
-  - the `@gregale/data` package, which neither exports nor packs
-    `dist/live` and has no README section for it.
-- **Launch** means setting `*`, then restoring the spec entries, generated
-  SDKs, the `./live` exports with the React peer dependency, and the README
-  section from commits `4196fef625` and `b860a62753`.
+  - customer CLI help and the CLI reference for `gregale postgres live`,
+    since `gregale postgres` is operator-only.
+- **Already released** (2026-10-20, Data API reads only): `gregale data-api
+  live enable|status` in customer help, and `@gregale/data/live` with
+  `./live/react` and its README section. Outside the rollout, `data-api live`
+  reports that live queries are not available.
+- **Launch** means setting `*`, then restoring the spec entries and the
+  generated SDKs.
 - Removing an account from the list hides the routes and stops new live
   subscriptions within the 30-second endpoint reconciler. Sessions already
   open keep their subscriptions until they close; disable the database's

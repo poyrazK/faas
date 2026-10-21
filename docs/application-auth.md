@@ -809,6 +809,69 @@ removed or joining turned off. A domain can be verified by only one
 organization, so an address leads to at most one. `gregale auth orgs get`
 and the dashboard's organization panel show each domain and how people join.
 
+### Service accounts
+
+Let your customers' own scripts and servers call your API, or the Data API,
+as their organization, without a person or a browser:
+
+```sh
+gregale auth config shop-auth --service-accounts on
+```
+
+A service account belongs to one organization and holds one of its roles,
+like a member, but it is not a user: it never signs in, does not count as a
+user and is not listed among members. Members whose role grants
+`members:manage` manage their organization's accounts, for example on an
+"API keys" page in your app; only owners give one the owner role:
+
+```ts
+const created = await auth.serviceAccounts.create(org.id, { name: 'CI deploys', role: 'deployer' })
+// Show created.client_id and created.client_secret once; only a hash is kept.
+await auth.serviceAccounts.addSecret(org.id, created.client_id)          // a second secret, to rotate
+await auth.serviceAccounts.revokeSecret(org.id, created.client_id, created.secret.id)
+await auth.serviceAccounts.update(org.id, created.client_id, { disabled: true })
+```
+
+You manage any organization's accounts with an admin key:
+
+```sh
+printf '%s' "$ADMIN_KEY" | gregale auth service-accounts add shop-auth --org acme --name 'CI deploys' --role deployer --admin-key-stdin
+gregale auth service-accounts list shop-auth --org acme
+```
+
+The customer's backend trades the client ID and secret for an access token
+with the OAuth client-credentials grant at `<Auth app>/auth/v1/oauth/token`
+(HTTP Basic, or `client_id` and `client_secret` in the form body). An
+optional `scope` narrows the token to some of the role's permissions. The
+SDKs cache the token until shortly before it expires:
+
+```ts
+import { createClientCredentials } from '@gregale/auth/server'
+const machine = createClientCredentials({ url: 'https://shop-auth.gregale.app', clientId, clientSecret })
+await fetch(api, { headers: { Authorization: `Bearer ${await machine.token()}` } })
+```
+
+Go has `auth.NewClientCredentials` and Python `faas_sdk.auth.ClientCredentials`.
+
+The token verifies like a person's (same issuer, audience `authenticated`,
+600 seconds) and carries `service_account: true`, the account's ID as `sub`,
+its organization in `org_id`, `org_slug`, `org_role` and `org_permissions`,
+and `scope` when narrowed. Your API tells it from a person with the
+verifiers' `serviceAccount` (`ServiceAccount` in Go, `service_account` in
+Python). `authorize()` grants it its role's permissions in its own
+organization, in row-level security, storage and the SDKs, and stops at once
+when the account is disabled or deleted or its secret revoked; edge-only JWT
+checks honour that when the token expires. Policies written for people
+(`auth.uid() = owner_id`, `session_active()`) never match it. On the Auth
+host the token reaches only `/authz/v1/authorize` and `/authz/v1/storage/sign`.
+
+An organization holds at most 50 service accounts, each with at most two live
+secrets; a secret may expire after 1 to 3650 days. An account gets at most 60
+tokens a minute, and an address that fails 60 times in a minute is refused
+until the next. The organization's audit log records every change. Turning
+the setting off stops new tokens; those already issued last until they
+expire.
+
 ## Authorize anywhere with one function
 
 Name resources `org/<organization id>/<kind>/<name>`. `gregale_auth.authorize`

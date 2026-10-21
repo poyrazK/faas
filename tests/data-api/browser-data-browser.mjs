@@ -14,7 +14,7 @@ export async function browserDataBrowser(url){
  const apiHeaders={Authorization:'Bearer '+session.identities.alice.token,'Content-Type':'application/json','Content-Profile':'api',Prefer:'return=representation'}
 
  await browserInspector(url,async evaluate=>{
-  const until=expression=>waitUntil(evaluate,expression,async()=>'Data browser did not finish the requested action: '+await evaluate("document.querySelector('#data-status').textContent+' / '+document.querySelector('#access-status').textContent+' / '+document.querySelector('#access-results').textContent+' / '+document.querySelector('#csv-status').textContent+' / '+document.querySelector('#csv-progress').textContent"))
+  const until=expression=>waitUntil(evaluate,expression,async()=>'Data browser did not finish the requested action: '+await evaluate("document.querySelector('#data-status').textContent+' / '+document.querySelector('#access-status').textContent+' / '+document.querySelector('#access-results').textContent+' / '+document.querySelector('#csv-status').textContent+' / '+document.querySelector('#csv-progress').textContent+' / bulk: '+document.querySelector('#bulk-status').textContent+' / preflight: '+document.querySelector('#bulk-preflight-status').textContent"))
   await until("document.querySelector('#resource')?.options.length>0")
   await evaluate(`document.querySelector('#resource').value=JSON.stringify(['tables','api.notes']);document.querySelector('#resource').dispatchEvent(new Event('change'));
    document.querySelector('#identity').value='alice';document.querySelector('#identity').dispatchEvent(new Event('change'));

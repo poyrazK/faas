@@ -38,9 +38,6 @@ func changedEnvironmentGitSource(source EnvironmentGitSource, update Environment
 	if update.Suspended != nil {
 		source.Suspended = *update.Suspended
 	}
-	if source.Spec.Provider == "gitlab" && (source.Spec.Mode != "report" || source.Spec.Prune) {
-		return source, ErrInvalidArgument
-	}
 	return source, nil
 }
 
@@ -101,6 +98,9 @@ func (s *PgStore) UpdateEnvironmentGitSource(ctx context.Context, accountID, sou
 			if err := q.EnqueueEnvironmentGitOps(ctx, tx, sqlc.EnqueueEnvironmentGitOpsParams{SourceID: row.ID, Generation: row.Generation, NextAttemptAt: gitOpsTime(time.Now())}); err != nil {
 				return err
 			}
+		}
+		if err := pgEnvironmentGitRolloutNotification(ctx, tx, sourceID, "", nil, time.Now().UTC()); err != nil {
+			return err
 		}
 		return recordGitOpsEvent(ctx, tx, sourceID, accountID, "control", update)
 	})

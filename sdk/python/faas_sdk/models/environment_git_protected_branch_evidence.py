@@ -18,7 +18,6 @@ class EnvironmentGitProtectedBranchEvidence:
 
     qualified: bool
     profile: str
-    installation_id: int
     repository_id: int
     repository: str
     branch: str
@@ -28,14 +27,14 @@ class EnvironmentGitProtectedBranchEvidence:
     checked_at: datetime.datetime
     reason: str | Unset = UNSET
     """Protected branch check failure reason; excluded from durable approval evidence."""
+    installation_id: int | Unset = UNSET
+    """GitHub App installation ID; omitted for GitLab OAuth sources."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         qualified = self.qualified
 
         profile = self.profile
-
-        installation_id = self.installation_id
 
         repository_id = self.repository_id
 
@@ -53,13 +52,14 @@ class EnvironmentGitProtectedBranchEvidence:
 
         reason = self.reason
 
+        installation_id = self.installation_id
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
                 "qualified": qualified,
                 "profile": profile,
-                "installation_id": installation_id,
                 "repository_id": repository_id,
                 "repository": repository,
                 "branch": branch,
@@ -71,6 +71,8 @@ class EnvironmentGitProtectedBranchEvidence:
         )
         if reason is not UNSET:
             field_dict["reason"] = reason
+        if installation_id is not UNSET:
+            field_dict["installation_id"] = installation_id
 
         return field_dict
 
@@ -80,8 +82,6 @@ class EnvironmentGitProtectedBranchEvidence:
         qualified = d.pop("qualified")
 
         profile = d.pop("profile")
-
-        installation_id = d.pop("installation_id")
 
         repository_id = d.pop("repository_id")
 
@@ -99,10 +99,11 @@ class EnvironmentGitProtectedBranchEvidence:
 
         reason = d.pop("reason", UNSET)
 
+        installation_id = d.pop("installation_id", UNSET)
+
         environment_git_protected_branch_evidence = cls(
             qualified=qualified,
             profile=profile,
-            installation_id=installation_id,
             repository_id=repository_id,
             repository=repository,
             branch=branch,
@@ -111,6 +112,7 @@ class EnvironmentGitProtectedBranchEvidence:
             required_review_count=required_review_count,
             checked_at=checked_at,
             reason=reason,
+            installation_id=installation_id,
         )
 
         environment_git_protected_branch_evidence.additional_properties = d

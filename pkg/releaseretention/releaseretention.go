@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -35,8 +36,10 @@ type candidate struct {
 	modTime time.Time
 }
 
-// Prune removes old release directories while preserving the active release
-// and keepPrevious newest inactive releases. Only direct children named as a
+// Prune removes old release directories while preserving the active release,
+// keepPrevious newest inactive releases and the protected release ids: the
+// deploy controller protects the release a rollback of the active one
+// restores, however old it is. Only direct children named as a
 // 40-character lowercase Git SHA are eligible. Unknown files, symlinks, and
 // legacy/non-SHA directories are left untouched.
 //
@@ -44,7 +47,7 @@ type candidate struct {
 // malformed or points outside releasesRoot, the function fails closed. The
 // active target is re-read before each deletion so a concurrent install cannot
 // cause the newly active release to be removed.
-func Prune(releasesRoot, currentPath string, keepPrevious int) (Report, error) {
+func Prune(releasesRoot, currentPath string, keepPrevious int, protected ...string) (Report, error) {
 	if strings.TrimSpace(releasesRoot) == "" {
 		return Report{}, errors.New("releaseretention: empty releases root")
 	}
@@ -112,7 +115,7 @@ func Prune(releasesRoot, currentPath string, keepPrevious int) (Report, error) {
 		// release it was built over, and gregalectl doctor verifies those
 		// canonical binaries in that release's own directory. Keep it while
 		// it is the active release's base.
-		if item.id == base {
+		if item.id == base || slices.Contains(protected, item.id) {
 			report.Kept = append(report.Kept, item.id)
 			continue
 		}

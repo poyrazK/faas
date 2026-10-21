@@ -122,8 +122,10 @@ func (s EdgeRuleRecipeSuggestionSignals) authSuggestions() []EdgeRuleRecipeSugge
 		if r.ErrorRequests > 0 {
 			reason += fmt.Sprintf(", %d%% of them failed", r.ErrorRequests*100/max(r.Requests, 1))
 		}
-		out = append(out, suggestion(EdgeRuleRecipeRateLimitPath, map[string]string{"path": r.Path, "methods": "POST"},
-			reason+". A per-IP limit slows credential stuffing without affecting normal sign-ins."))
+		sg := suggestion(EdgeRuleRecipeRateLimitPath, map[string]string{"path": r.Path, "methods": "POST"},
+			reason+". A per-IP limit slows credential stuffing without affecting normal sign-ins.")
+		sg.Alternative = s.challengeAlternative(r.Path)
+		out = append(out, sg)
 	}
 	return out
 }
@@ -140,6 +142,7 @@ func (s EdgeRuleRecipeSuggestionSignals) adminSuggestion() *EdgeRuleRecipeSugges
 	}
 	sg := suggestion(EdgeRuleRecipeAllowIPsOnly, map[string]string{"path": "/admin/**"},
 		fmt.Sprintf("/admin received %d requests in %s and is open to every IP. Limit it to your own addresses.", requests, s.window()))
+	sg.Alternative = s.challengeAlternative("/admin/**")
 	return &sg
 }
 
@@ -196,6 +199,16 @@ func (s EdgeRuleRecipeSuggestionSignals) scannerSuggestion() *EdgeRuleRecipeSugg
 	}
 	sg := suggestion(EdgeRuleRecipeBlockScannerPaths, params, reason)
 	return &sg
+}
+
+// challengeAlternative offers challenge-path on path, unless an enabled
+// challenge rule already covers it.
+func (s EdgeRuleRecipeSuggestionSignals) challengeAlternative(path string) *EdgeRuleRecipeSuggestionAlternative {
+	if s.pathCovered("challenge", strings.TrimSuffix(path, "/**"), EdgeRuleRecipeChallengePath) {
+		return nil
+	}
+	recipe, _ := EdgeRuleRecipeByID(EdgeRuleRecipeChallengePath)
+	return &EdgeRuleRecipeSuggestionAlternative{Recipe: recipe.ID, Title: recipe.Title, Params: map[string]string{"path": path}}
 }
 
 func (s EdgeRuleRecipeSuggestionSignals) recipeAdded(id string) bool {

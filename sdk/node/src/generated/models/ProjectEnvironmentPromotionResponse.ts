@@ -8,6 +8,10 @@ import type { ProjectEnvironmentPromotionWorkloadResponse } from './ProjectEnvir
  * Result of a guarded project environment promotion.
  */
 export type ProjectEnvironmentPromotionResponse = {
+  /**
+   * A running health-gated promotion has been accepted and has not completed cutover and verification.
+   */
+  status?: 'running' | 'succeeded' | 'failed';
   promotion_id: string;
   project_slug: string;
   from_environment: string;

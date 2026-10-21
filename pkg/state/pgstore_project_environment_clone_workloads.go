@@ -163,6 +163,14 @@ func captureCloneWorkloadDB(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 	if snapshot.Artifact.AppID != appID || snapshot.Artifact.Scope != scope {
 		return snapshot, ErrConflict
 	}
+	hasReleasePin, err := q.HasDeploymentReleaseEnvironmentSnapshot(ctx, tx, snapshot.Artifact.ID)
+	if err != nil {
+		return snapshot, err
+	}
+	if hasReleasePin {
+		return snapshot, ErrReleaseConfigurationTransferUnsupported
+	}
+
 	config, err := readCloneProjectConfigDB(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment)
 	if err != nil {
 		return snapshot, err
