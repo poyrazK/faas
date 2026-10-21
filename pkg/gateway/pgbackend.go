@@ -1999,7 +1999,8 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 //
 // Walks every per-deployment targetSet under the app's picker —
 // we don't know which bucket owns the instance without an index.
-// If the picker is empty after the walk, the picker is dropped.
+// If the picker is empty after the walk and its weights did not come
+// from the store, the picker is dropped.
 // Per-bucket targetSets are preserved even when their entries
 // become empty (cold deployment under non-zero weight); only the
 // picker-level drop happens here. The per-deployment weight
@@ -2047,7 +2048,11 @@ func (b *PGBackend) removeInstance(appID, instanceID string, quarantine bool) {
 	for _, set := range picker.sets {
 		totalRemaining += set.remove(instanceID)
 	}
-	if totalRemaining == 0 {
+	// An empty picker keeps weights read from the store: deployment_changed
+	// keeps them current, and a target recorded later (a thaw or restore
+	// another request is waiting for) is routable only through them.
+	// Without weights, HealthyCount and Pick never see it.
+	if totalRemaining == 0 && !picker.weightsAuthoritative {
 		delete(b.appsPicker, appID)
 	}
 	b.tgtMu.Unlock()

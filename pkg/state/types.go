@@ -7989,6 +7989,12 @@ const (
 	// Limits.EdgeRulesWAFPerApp (Free 0 / Hobby 0 / Pro 5 / Scale 20). See
 	// migrations/20261009172820417_edge_rules_kind_waf.sql.
 	EdgeRuleKindWAF EdgeRuleKind = "waf"
+	// EdgeRuleKindChallenge asks browsers on matched routes to solve a
+	// proof of work and carry a signed pass before the request reaches the
+	// app (ADR-831 amendment 7). Quota via Limits.EdgeRulesChallengePerApp
+	// (Free 0 / Hobby 3 / Pro 10 / Scale 25). See
+	// migrations/20261019134529781_edge_rules_kind_challenge.sql.
+	EdgeRuleKindChallenge EdgeRuleKind = "challenge"
 )
 
 // IsValid reports whether k is a closed-set kind. New kinds land via
@@ -8002,7 +8008,7 @@ func (k EdgeRuleKind) IsValid() bool {
 		EdgeRuleKindMaintenance, EdgeRuleKindThrottle, EdgeRuleKindGeo,
 		EdgeRuleKindBudget, EdgeRuleKindCache, EdgeRuleKindRespond,
 		EdgeRuleKindRetry, EdgeRuleKindCircuitBreaker, EdgeRuleKindAsync,
-		EdgeRuleKindWAF:
+		EdgeRuleKindWAF, EdgeRuleKindChallenge:
 		return true
 	}
 	return false
@@ -8452,6 +8458,16 @@ type EdgeRuleAction struct {
 	Async *EdgeRuleAsyncAction `json:"async,omitempty"`
 	// WAF carries the kind=waf scoring knobs (ADR-831 step 1).
 	WAF *EdgeRuleWAFAction `json:"waf,omitempty"`
+	// Challenge carries the kind=challenge work and pass knobs (ADR-831
+	// amendment 7).
+	Challenge *EdgeRuleChallengeAction `json:"challenge,omitempty"`
+}
+
+// EdgeRuleChallengeAction is the stored kind=challenge payload. Values are
+// the effective ones written by api.EdgeRuleChallengeAction.Validate.
+type EdgeRuleChallengeAction struct {
+	Difficulty     int `json:"difficulty,omitempty"`
+	PassTTLSeconds int `json:"pass_ttl_seconds,omitempty"`
 }
 
 // EdgeRuleWAFAction is the stored kind=waf payload (ADR-831 step 1). Values

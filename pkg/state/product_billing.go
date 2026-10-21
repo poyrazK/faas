@@ -27,6 +27,7 @@ type ProductBillingStore interface {
 	ReviewProductBilling(context.Context, ProductBillingScope) (api.ProductBillingReview, error)
 	ListProductBillingReceipts(context.Context, ProductBillingScope, string) (api.ProductBillingReceipts, error)
 	ListProductBillingDocuments(context.Context, ProductBillingScope, string) (api.ProductBillingDocuments, error)
+	GetProductBillingDocument(context.Context, ProductBillingScope, string) (api.ProductBillingDocument, error)
 	FinalizeProductBilling(context.Context, ProductBillingScope, string) (api.ProductBillingDocument, error)
 	WaiveProductReceipt(context.Context, ProductBillingScope, string, string) (api.ProductReceiptEvidence, error)
 	CreditProductReceipt(context.Context, ProductBillingScope, api.ProductCreditRequest) (api.ProductBillingDocument, error)

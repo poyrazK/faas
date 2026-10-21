@@ -117,6 +117,11 @@ var routeExclude = map[string]bool{
 	"GET /v1/apps/{slug}/entities/session-connect":                           true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
 	"GET /v1/apps/{slug}/product/billing/documents":                          true,
 	"GET /v1/apps/{slug}/product/billing/documents/{document}/handoff":       true,
+	"GET /v1/apps/{slug}/product/billing/documents/{document}/invoice":       true,
+	"GET /v1/apps/{slug}/product/billing/overdue-policy":                     true,
+	"PUT /v1/apps/{slug}/product/billing/overdue-policy":                     true,
+	"DELETE /v1/apps/{slug}/product/billing/overdue-policy":                  true,
+	"GET /v1/apps/{slug}/product/billing/overdue-holds":                      true,
 	"GET /v1/apps/{slug}/product/billing/receipts":                           true,
 	"POST /v1/apps/{slug}/product/onboarding/workspaces":                     true,
 	"POST /v1/apps/{slug}/product/onboarding/preview":                        true,
@@ -167,6 +172,8 @@ var routeExclude = map[string]bool{
 	"POST /v1/apps/{slug}/product/plan-policy/preview":                       true,
 	"PUT /v1/apps/{slug}/product/plan-policy":                                true,
 	"GET /v1/product-control/customer/{slug}/plans":                          true,
+	"GET /v1/product-control/customer/{slug}/billing-details":                true,
+	"PUT /v1/product-control/customer/{slug}/billing-details":                true,
 	"POST /v1/product-control/customer/{slug}/plans/preview":                 true,
 	"POST /v1/product-control/customer/{slug}/plans/confirm":                 true,
 	"GET /v1/product-control/customer/{slug}/plans/changes":                  true,
@@ -180,6 +187,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/product-control/customer/{slug}/billing":                        true,
 	"POST /v1/apps/{slug}/product/billing/credits":                           true,
 	"POST /v1/apps/{slug}/product/billing/documents/{document}/handoff":      true,
+	"POST /v1/apps/{slug}/product/billing/documents/{document}/invoice":      true,
 	"POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive":        true,
 	"POST /v1/apps/{slug}/product/billing/statements/finalize":               true,
 	// ADR-1701: internal Product Control pilot; mirror spec compliance exclusions.

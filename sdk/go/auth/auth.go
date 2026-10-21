@@ -101,8 +101,23 @@ type Claims struct {
 	// user (impersonation): who opened it, such as "admin:0A1B2C3D".
 	// Refuse actions the person must take themselves.
 	Actor string
+	// ServiceAccount is set when the token belongs to an organization's
+	// service account (the client-credentials grant), not a person; nil
+	// otherwise. Subject is then the account's ID, Organization the
+	// account's, and Scopes the permissions the token was narrowed to.
+	// Authorize applies the account's role and refuses as soon as the
+	// account or its secret is revoked; Verify alone accepts the token
+	// until it expires.
+	ServiceAccount *ServiceAccount
 	// Raw holds every claim, including ones this type does not name.
 	Raw map[string]json.RawMessage
+}
+
+// ServiceAccount names a service account's token: the account and the
+// secret it was issued for.
+type ServiceAccount struct {
+	ID       string
+	SecretID string
 }
 
 // Organization is a session's active organization, the user's role in it
@@ -266,8 +281,10 @@ func (c *Client) claims(segment string) (*Claims, error) {
 		Act         struct {
 			Sub string `json:"sub"`
 		} `json:"act"`
-		AppMetadata  map[string]any `json:"app_metadata"`
-		UserMetadata map[string]any `json:"user_metadata"`
+		ServiceAccount bool           `json:"service_account"`
+		SecretID       string         `json:"secret_id"`
+		AppMetadata    map[string]any `json:"app_metadata"`
+		UserMetadata   map[string]any `json:"user_metadata"`
 	}
 	if decodeSegment(segment, &raw) != nil || decodeSegment(segment, &p) != nil {
 		return nil, fmt.Errorf("%w: malformed claims", ErrInvalidToken)
@@ -293,6 +310,9 @@ func (c *Client) claims(segment string) (*Claims, error) {
 		claims.IssuedAt = unix(*p.Iat)
 	}
 	claims.Actor = p.Act.Sub
+	if p.ServiceAccount && p.SecretID != "" {
+		claims.ServiceAccount = &ServiceAccount{ID: p.Sub, SecretID: p.SecretID}
+	}
 	if p.OrgID != "" && p.OrgSlug != "" && p.OrgRole != "" {
 		claims.Organization = &Organization{ID: p.OrgID, Slug: p.OrgSlug, Role: p.OrgRole, Permissions: p.OrgPerms}
 	}

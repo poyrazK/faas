@@ -76,6 +76,40 @@ func (q *Queries) ClaimUsageReport(ctx context.Context, db DBTX, arg ClaimUsageR
 	return result.RowsAffected(), nil
 }
 
+const deleteAccessConfig = `-- name: DeleteAccessConfig :execrows
+DELETE FROM data_api_access_configs c USING apps a
+ WHERE c.app_id=$1::text::uuid AND a.id=c.app_id AND a.account_id=$2::text::uuid
+`
+
+type DeleteAccessConfigParams struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) DeleteAccessConfig(ctx context.Context, db DBTX, arg DeleteAccessConfigParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteAccessConfig, arg.AppID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getAccessConfig = `-- name: GetAccessConfig :one
+SELECT config,reported_at FROM data_api_access_configs WHERE app_id=$1::text::uuid
+`
+
+type GetAccessConfigRow struct {
+	Config     []byte
+	ReportedAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetAccessConfig(ctx context.Context, db DBTX, appID string) (GetAccessConfigRow, error) {
+	row := db.QueryRow(ctx, getAccessConfig, appID)
+	var i GetAccessConfigRow
+	err := row.Scan(&i.Config, &i.ReportedAt)
+	return i, err
+}
+
 const listUsageHours = `-- name: ListUsageHours :many
 SELECT hour,user_requests,anonymous_requests,server_requests,rejected_requests,error_requests,capped_requests,rows_returned,response_bytes
  FROM data_api_usage_hourly
@@ -191,6 +225,22 @@ func (q *Queries) PruneUsageReports(ctx context.Context, db DBTX, arg PruneUsage
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const upsertAccessConfig = `-- name: UpsertAccessConfig :exec
+INSERT INTO data_api_access_configs (app_id,config,reported_at)
+ VALUES ($1::text::uuid,$2::jsonb,now())
+ ON CONFLICT (app_id) DO UPDATE SET config=EXCLUDED.config, reported_at=EXCLUDED.reported_at
+`
+
+type UpsertAccessConfigParams struct {
+	AppID  string
+	Config []byte
+}
+
+func (q *Queries) UpsertAccessConfig(ctx context.Context, db DBTX, arg UpsertAccessConfigParams) error {
+	_, err := db.Exec(ctx, upsertAccessConfig, arg.AppID, arg.Config)
+	return err
 }
 
 const usageTotals = `-- name: UsageTotals :one
