@@ -8757,6 +8757,24 @@ gregale deployment advance DEPLOYMENT_UUID --expected-step 1
 gregale deployment advance v42 --app my-api --expected-step 1
 ```
 
+### deployment diff
+
+Show what changed between a release and the one before it: code, config keys, packages, runtime settings, release command (ADR-20261021101117)
+
+`gregale deployment diff [--against <ID|vN>] [--app <SLUG>] <id|vN>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--against <ID|vN>` | release to compare with (default: the release that served before it) |  |
+| `--app <SLUG>` | app slug, to resolve vN revisions |  |
+
+Examples:
+
+```sh
+gregale deployment diff v42 --app my-api
+gregale deployment diff v42 --against v38 --app my-api
+```
+
 ### deployment summary
 
 Show the release diff and rollback target

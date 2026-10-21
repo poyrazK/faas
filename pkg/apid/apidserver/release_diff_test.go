@@ -97,8 +97,9 @@ func TestReleaseDiffComparesWithTheReleaseThatServedBefore(t *testing.T) {
 		http.StatusNotFound, api.CodeNotFound)
 
 	// The app's first release has nothing to compare with.
-	rec = guardDo(t, e, http.MethodGet, "/v1/deployments/"+served.ID+"/diff", nil, &diff)
-	if rec.Code != http.StatusOK || diff.From != nil || diff.Summary != "first release" {
+	var first api.ReleaseDiff
+	rec = guardDo(t, e, http.MethodGet, "/v1/deployments/"+served.ID+"/diff", nil, &first)
+	if rec.Code != http.StatusOK || first.From != nil || first.Summary != "first release" {
 		t.Fatalf("first release = %d %s", rec.Code, rec.Body)
 	}
 }

@@ -2,6 +2,7 @@ package releasediff
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -160,7 +161,7 @@ func TestParseSBOMAndPackageLimits(t *testing.T) {
 	if !reflect.DeepEqual(pkgs, want) {
 		t.Fatalf("packages = %+v", pkgs)
 	}
-	if _, err := ParseSBOM(strings.NewReader(sbom), 10); err != ErrSBOMTooLarge {
+	if _, err := ParseSBOM(strings.NewReader(sbom), 10); !errors.Is(err, ErrSBOMTooLarge) {
 		t.Fatalf("oversized SBOM err = %v", err)
 	}
 	var many []Package
