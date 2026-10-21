@@ -10,6 +10,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// adr: 20261021154511
+func TestProductPlanFeesPostgres(t *testing.T) {
+	s := newPgStore(t)
+	productPlanFeesContract(t, s, func(account, app, tenant, revision, plan string, first bool, at time.Time) {
+		if _, err := s.pool.Exec(t.Context(), `INSERT INTO product_control_plan_history(account_id,app_id,tenant_id,revision,plan,first_assignment,effective_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7)`, account, app, tenant, revision, plan, first, at); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func productBillingPGFixture(t *testing.T, s *PgStore) productBillingFixture {
 	t.Helper()
 	insert, settle := productBillingPGWriters(t, s)

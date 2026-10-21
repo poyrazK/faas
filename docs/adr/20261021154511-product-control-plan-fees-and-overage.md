@@ -11,7 +11,7 @@
     - The default, 0, keeps today's pricing.
   - **Price at admission.** The receipt stores the price of its own start, 0 or the unit price, as it stores the unit price today. Usage, statements, credits, explanations, run details and invoices therefore keep summing receipt prices.
     - A credit is still capped at its run's price, so an included run has nothing to credit.
-    - Statements and invoices show included runs as their own no-charge line, "included successful … runs", as runs of a free feature already appear.
+    - Statements and invoices show included runs as their own line at price 0 ("… included at no charge" on invoices), as runs of a free feature already appear.
     - A statement that charges nothing is not exported. Billing runs already skip such statements.
   - **Consent.** When a grant includes starts, the quote also binds the price of the customer's next start.
     - If another start uses the last included start first, the confirmation fails with 409 `product_quote_changed`, and the customer is shown the new price. Nothing is charged at a price the customer did not see.

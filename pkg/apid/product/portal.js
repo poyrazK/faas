@@ -27,6 +27,11 @@
   function clearResult() { resultRequest++; $('result').hidden = true; $('result').replaceChildren(); }
   $('billing-period').value = new Date().toISOString().slice(0, 7);
   function clearBilling() { billingRequest++; billingCursor = ''; billingPeriod = ''; $('billing-documents').replaceChildren(); $('billing-summary').textContent = 'Choose a month to review finalized charges and credit notes.'; $('billing-more').hidden = true; }
+  // A month's plan fee (ADR-20261021154511).
+  function feeText(fee, currency) {
+    const from = typeof fee.prorated_from === 'string' ? ` prorated from ${fee.prorated_from.slice(0, 10)}` : '';
+    return `the monthly fee for plan ${fee.plan}, ${amount(fee.amount_millicents, currency)}${from}`;
+  }
   async function loadBilling(next = false, check = () => {}) {
     if (!allowed('view_billing')) throw new Error('Your role does not include billing access.');
     const generation = epoch, request = ++billingRequest, period = next ? billingPeriod : $('billing-period').value;
@@ -36,12 +41,14 @@
     catch (error) { if (request !== billingRequest || generation !== epoch) return; throw error; }
     current(generation); check(); if (request !== billingRequest) return;
     const review = data.review; billingPeriod = period; billingCursor = data.documents.next_cursor || '';
-    $('billing-summary').textContent = review.finalized ? `${period} · Finalized charges ${amount(review.finalized.amount_millicents, review.currency)}. Credit notes reduce these charges.` : `${period} · Provisional charges ${amount(review.amount_millicents, review.currency)} · ${review.unresolved} unresolved runs. ${review.closed ? 'Awaiting finalization by your product team.' : 'This month is still open.'}`;
+    const fee = review.fees?.[0] ? ` including ${feeText(review.fees[0], review.currency)}` : '';
+    $('billing-summary').textContent = review.finalized ? `${period} · Finalized charges ${amount(review.finalized.amount_millicents, review.currency)}. Credit notes reduce these charges.` : `${period} · Provisional charges ${amount(review.amount_millicents, review.currency)}${fee} · ${review.unresolved} unresolved runs. ${review.closed ? 'Awaiting finalization by your product team.' : 'This month is still open.'}`;
     $('billing-documents').replaceChildren();
     for (const doc of data.documents.documents) {
       const row = node('li', `${doc.kind === 'credit_note' ? 'Credit note' : 'Finalized statement'} · ${amount(doc.amount_millicents, doc.currency)} · ${doc.id}`);
       if (doc.reason) row.append(node('p', doc.reason));
       if (doc.snapshot) for (const line of doc.snapshot.lines) row.append(node('p', `${line.feature} · ${line.succeeded} charged successes · ${line.waived} waived · ${amount(line.amount_millicents, doc.currency)}`));
+      for (const charge of doc.snapshot?.fees || []) row.append(node('p', feeText(charge, doc.currency)));
       if (doc.invoice) row.append(...invoiceNodes(doc.invoice));
       $('billing-documents').append(row);
     }

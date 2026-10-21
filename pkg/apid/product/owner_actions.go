@@ -134,7 +134,7 @@ func (s *Service) reviewOwnerPlan(r *http.Request, c *ownerContext, a *ownerActi
 	a.ID, a.Hash, a.Revision, a.Organization = uuid.NewString(), p.Hash, p.After.Revision, p.After.AuthOrganizationID
 	confirmation := c.data.Confirmation
 	confirmation.Title = "Confirm customer plan"
-	confirmation.Description = "Apply these terms immediately to future admissions. Monthly starts already used do not reset. Accepted runs retain their original prices and access. No subscription proration is performed."
+	confirmation.Description = "Apply these terms immediately to future admissions. Monthly starts already used do not reset. Accepted runs retain their original prices and access. This month's fee is the highest of the plans held this month, so a lower fee applies from next month."
 	beforePlan, beforeRevision, beforeAccess := "Unassigned", "—", "No access"
 	if p.Before != nil {
 		beforePlan = p.Before.Plan
@@ -148,7 +148,13 @@ func (s *Service) reviewOwnerPlan(r *http.Request, c *ownerContext, a *ownerActi
 	if p.After.Suspended {
 		afterAccess = "Suspended"
 	}
-	confirmation.Details = []dashboard.ProductControlComparison{{Feature: "Plan", Before: beforePlan, After: p.After.Plan}, {Feature: "Revision", Before: beforeRevision, After: p.After.Revision}, {Feature: "Product access", Before: beforeAccess, After: afterAccess}, {Feature: "Auth organization (preserved for existing customers)", After: p.After.AuthOrganizationID}}
+	beforeFee := "—"
+	if p.Before != nil && p.BeforeCatalog != nil {
+		beforeFee = ownerPlanFee(*p.BeforeCatalog, p.Before.Plan)
+	}
+	confirmation.Details = []dashboard.ProductControlComparison{{Feature: "Plan", Before: beforePlan, After: p.After.Plan}, {Feature: "Revision", Before: beforeRevision, After: p.After.Revision},
+		{Feature: "Monthly fee", Before: beforeFee, After: ownerPlanFee(p.Catalog, p.After.Plan)},
+		{Feature: "Product access", Before: beforeAccess, After: afterAccess}, {Feature: "Auth organization (preserved for existing customers)", After: p.After.AuthOrganizationID}}
 	names := map[string]bool{}
 	for name := range p.Catalog.Spec.Features {
 		names[name] = true
@@ -182,6 +188,15 @@ func (s *Service) reviewOwnerPlan(r *http.Request, c *ownerContext, a *ownerActi
 		confirmation.Details = append(confirmation.Details, dashboard.ProductControlComparison{Feature: name, Before: before, After: after})
 	}
 	return nil
+}
+
+// ownerPlanFee describes a plan's monthly fee (ADR-20261021154511).
+func ownerPlanFee(catalog api.ProductCatalog, plan string) string {
+	fee := catalog.Spec.Plans[plan].MonthlyFeeMillicents
+	if fee == 0 {
+		return "None"
+	}
+	return ownerMoney(catalog.Spec.Currency, fee) + " / UTC month"
 }
 
 func ownerGrantDescription(catalog api.ProductCatalog, customer api.ProductCustomer, feature string) string {

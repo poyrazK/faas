@@ -44,6 +44,9 @@ type ProductPlanTerms struct {
 	Revision string                    `json:"revision"`
 	Currency string                    `json:"currency"`
 	Features []ProductPlanFeatureTerms `json:"features"`
+	// MonthlyFeeMillicents is the plan's monthly fee (ADR-20261021154511);
+	// omitted when zero, so earlier previews hash as before.
+	MonthlyFeeMillicents int64 `json:"monthly_fee_millicents,omitempty"`
 }
 
 type ProductPlanOptions struct {

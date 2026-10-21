@@ -97,7 +97,11 @@
       for (const name of [...new Set([...before.keys(), ...after.keys()])].sort()) {
         const row = node('tr'); row.append(node('th', (after.get(name) || before.get(name)).label), node('td', describe(before.get(name), preview.before.currency)), node('td', describe(after.get(name), preview.after.currency))); table.append(row);
       }
-      container.append(table, node('p', 'The change applies immediately to future starts. Existing runs retain their agreed prices. A lower allowance can leave no starts remaining until the next UTC month.'));
+      // A month owes the highest fee among the plans held in it (ADR-20261021154511).
+      const fee = terms => terms.monthly_fee_millicents > 0 ? `${this.host.amount(terms.monthly_fee_millicents, terms.currency)} per month` : 'No monthly fee';
+      const fees = node('tr'); fees.append(node('th', 'Monthly fee'), node('td', fee(preview.before)), node('td', fee(preview.after))); table.append(fees);
+      const feeNote = preview.before.monthly_fee_millicents > 0 || preview.after.monthly_fee_millicents > 0 ? ' This month is charged the higher of the two monthly fees; a lower fee applies from next month.' : '';
+      container.append(table, node('p', `The change applies immediately to future starts. Existing runs retain their agreed prices. A lower allowance can leave no starts remaining until the next UTC month.${feeNote}`));
     }
     async confirm() {
       const generation = this.host.epoch(), selected = this.preview;

@@ -471,6 +471,9 @@ func statementInvoiceItems(inv billing.StatementInvoice) []statementInvoiceItem 
 		switch {
 		case line.Credit:
 			description = "Prepaid credit applied"
+		case line.Fee == state.StatementFeeBase && line.Label != "":
+			// A Product Control plan fee names its plan (ADR-20261021154511).
+			description = line.Label
 		case line.Fee == state.StatementFeeBase:
 			description = "Monthly base fee"
 		case line.Fee == state.StatementFeeMinimum && line.AmountMillicents < 0:

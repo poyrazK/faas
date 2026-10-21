@@ -60,9 +60,9 @@ type Service struct {
 	PlanPricingEnabled func() bool
 }
 
-// errPlanPricingUnavailable refuses a catalog with included starts until
-// the release gate is on: a previous apid release would ignore them and
-// charge every start (ADR-20261021154511).
+// errPlanPricingUnavailable refuses a catalog with plan fees or included
+// starts until the release gate is on: a previous apid release would ignore
+// them (ADR-20261021154511).
 var errPlanPricingUnavailable = fmt.Errorf("%w: plan pricing is not enabled", state.ErrConflict)
 
 func (s *Service) checkPlanPricing(spec api.ProductCatalogSpec) error {
@@ -410,7 +410,7 @@ func respond(w http.ResponseWriter, value any, err error) {
 		api.WriteProblem(w, api.ErrValidation("invalid product catalog, customer assignment or usage selector"))
 	case errors.Is(err, errPlanPricingUnavailable):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProductPlanPricingUnavailable, "Plan pricing unavailable",
-			"included starts are released by the operator's product_control_plan_pricing_enabled setting; publish the catalog without them"))
+			"plan fees and included starts are released by the operator's product_control_plan_pricing_enabled setting; publish the catalog without them"))
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "product_configuration_conflict", "Product configuration conflict", "the requested change conflicts with the retained product configuration"))
 	case errors.Is(err, state.ErrProductBindingUnavailable):

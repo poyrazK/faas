@@ -76,7 +76,7 @@ func productPlanFeatures(v productPlanView) []string {
 
 func productPlanTerms(c api.ProductCatalog, name string, starts map[string]int64) api.ProductPlanTerms {
 	p := c.Spec.Plans[name]
-	out := api.ProductPlanTerms{Plan: name, Label: p.Label, Revision: c.Revision, Currency: c.Spec.Currency, Features: []api.ProductPlanFeatureTerms{}}
+	out := api.ProductPlanTerms{Plan: name, Label: p.Label, Revision: c.Revision, Currency: c.Spec.Currency, Features: []api.ProductPlanFeatureTerms{}, MonthlyFeeMillicents: p.MonthlyFeeMillicents}
 	for feature, grant := range p.Features {
 		out.Features = append(out.Features, api.ProductPlanFeatureTerms{Name: feature, Label: c.Spec.Features[feature].Label, MonthlyStarts: grant.MonthlyStarts, UnitPriceMillicents: grant.UnitPriceMillicents, Starts: starts[feature], RemainingStarts: max(0, grant.MonthlyStarts-starts[feature]),
 			IncludedStarts: grant.IncludedStarts})

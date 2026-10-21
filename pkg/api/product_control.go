@@ -52,6 +52,10 @@ type ProductResolvedBinding struct {
 type ProductPlan struct {
 	Label    string                         `json:"label"`
 	Features map[string]ProductFeatureGrant `json:"features"`
+	// MonthlyFeeMillicents is charged once for each UTC month a customer
+	// holds the plan (ADR-20261021154511). Omitted when zero, so existing
+	// catalog revisions hash as before.
+	MonthlyFeeMillicents int64 `json:"monthly_fee_millicents,omitempty"`
 }
 
 type ProductFeatureGrant struct {
