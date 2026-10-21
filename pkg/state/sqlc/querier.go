@@ -1717,6 +1717,8 @@ type Querier interface {
 	// the app_id tenant boundary. Prefer an exact row-id match if a future trace
 	// value happens to equal another row's UUID text.
 	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIdentifierParams) (GetRequestTelemetryByAppAndIdentifierRow, error)
+	// One insight of an app, for applying its fix.
+	GetRouteInsight(ctx context.Context, db DBTX, arg GetRouteInsightParams) (GetRouteInsightRow, error)
 	// Route priorities (ADR-978). apid owns the rows; gatewayd-internal reads them.
 	GetRoutePriorities(ctx context.Context, db DBTX, arg GetRoutePrioritiesParams) (GetRoutePrioritiesRow, error)
 	GetRuntimeRelease(ctx context.Context, db DBTX, id string) (RuntimeRelease, error)
@@ -3669,6 +3671,10 @@ type Querier interface {
 	MarkManagedPostgresCreationCleanup(ctx context.Context, db DBTX, arg MarkManagedPostgresCreationCleanupParams) (ManagedPostgresCreationReceipt, error)
 	MarkProjectEnvironmentCloneObjectManifestEntryCopied(ctx context.Context, db DBTX, arg MarkProjectEnvironmentCloneObjectManifestEntryCopiedParams) (int64, error)
 	MarkPromotionMigrationDestroyed(ctx context.Context, db DBTX, promotionID string) error
+	// Resolve a route's active insights of the given kinds with the fix that
+	// resolved them (ADR-20261020161310). The webhook trigger reports each as
+	// resolved.
+	MarkRouteInsightsFixed(ctx context.Context, db DBTX, arg MarkRouteInsightsFixedParams) (int64, error)
 	MarkTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkTriggerRecordDeadLetterParams) error
 	MarkTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkTriggerRecordRetryParams) error
 	MarkTriggerRecordSucceeded(ctx context.Context, db DBTX, id pgtype.UUID) error
@@ -5403,6 +5409,10 @@ type Querier interface {
 	// Apps that ran in the window, with their account; an app that stayed parked
 	// has nothing to report.
 	RouteInsightCandidateApps(ctx context.Context, db DBTX, arg RouteInsightCandidateAppsParams) ([]RouteInsightCandidateAppsRow, error)
+	// An app's active insights that became active at or after since, newest
+	// first, for the route_insights_detected alert metric. total counts every
+	// match, not only the rows returned.
+	RouteInsightsDetectedSince(ctx context.Context, db DBTX, arg RouteInsightsDetectedSinceParams) ([]RouteInsightsDetectedSinceRow, error)
 	// Evaluate the full request-time identity population in bounded route windows.
 	// Only five cohorts and one hundred recovery identities per route are returned;
 	// full verdict and distinct counts are computed before either output cap.
@@ -5925,7 +5935,10 @@ type Querier interface {
 	// DO UPDATE, debug_regression_observations.* is the row before this update.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
 	// Record an observed insight. A new or resolved insight (re)opens with this
-	// observation as its first detection; an active one only refreshes.
+	// observation as its first detection; an active one only refreshes. An
+	// insight a fix resolved after refix_before stays resolved: its evidence
+	// window still holds observations from before the fix
+	// (ADR-20261020161310).
 	UpsertRouteInsight(ctx context.Context, db DBTX, arg UpsertRouteInsightParams) error
 	UpsertSLOHour(ctx context.Context, db DBTX, arg UpsertSLOHourParams) error
 	UpsertTenantWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertTenantWorkflowScheduleCursorParams) (PlatformTenantWorkflowScheduleCursor, error)

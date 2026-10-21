@@ -14871,6 +14871,8 @@
       "app_id",
       "evidence",
       "first_detected_at",
+      "fix_action",
+      "fixed_at",
       "id",
       "kind",
       "last_detected_at",
