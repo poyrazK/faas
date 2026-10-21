@@ -142,7 +142,7 @@ func (m *MemStore) ApplyProductOnboarding(_ context.Context, account, app string
 	if d.onboardings == nil {
 		d.onboardings = map[string]productMemoryOnboarding{}
 	}
-	d.customers[app+"/"+tenant.ID] = receipt.Customer
+	m.assignProductCustomerLocked(account, app, receipt.Customer)
 	d.onboardings[receipt.ID] = productMemoryOnboarding{account: account, app: app, fingerprint: fingerprint, receipt: receipt}
 	return cloneProductBilling(receipt), nil
 }

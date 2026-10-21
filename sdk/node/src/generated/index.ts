@@ -986,6 +986,7 @@ export type { FinancialAppCostsResponse } from './models/FinancialAppCostsRespon
 export type { FinancialAppMeterCosts } from './models/FinancialAppMeterCosts.js';
 export type { FinancialAttribution } from './models/FinancialAttribution.js';
 export type { FinancialBudgetAlert } from './models/FinancialBudgetAlert.js';
+export type { FinancialBudgetChannelsResponse } from './models/FinancialBudgetChannelsResponse.js';
 export type { FinancialBudgetEvaluation } from './models/FinancialBudgetEvaluation.js';
 export type { FinancialBudgetHistoryResponse } from './models/FinancialBudgetHistoryResponse.js';
 export type { FinancialBudgetListResponse } from './models/FinancialBudgetListResponse.js';
@@ -2266,6 +2267,9 @@ export type { ProjectEnvironmentSecretCellResponse } from './models/ProjectEnvir
 export type { ProjectEnvironmentSecretChangeResponse } from './models/ProjectEnvironmentSecretChangeResponse.js';
 export type { ProjectEnvironmentSecretResponse } from './models/ProjectEnvironmentSecretResponse.js';
 export type { ProjectEnvironmentSharedResourceResponse } from './models/ProjectEnvironmentSharedResourceResponse.js';
+export type { ProjectEnvironmentSharedSecret } from './models/ProjectEnvironmentSharedSecret.js';
+export type { ProjectEnvironmentSharedSecretResponse } from './models/ProjectEnvironmentSharedSecretResponse.js';
+export type { ProjectEnvironmentSharedSecretsResponse } from './models/ProjectEnvironmentSharedSecretsResponse.js';
 export type { ProjectEnvironmentStateResponse } from './models/ProjectEnvironmentStateResponse.js';
 export type { ProjectEnvironmentStateWorkloadResponse } from './models/ProjectEnvironmentStateWorkloadResponse.js';
 export type { ProjectEnvironmentVariableChangeResponse } from './models/ProjectEnvironmentVariableChangeResponse.js';
@@ -2609,6 +2613,9 @@ export type { RouteHealthStatusCounts } from './models/RouteHealthStatusCounts.j
 export type { RouteHealthTransitionWebhookPayload } from './models/RouteHealthTransitionWebhookPayload.js';
 export type { RouteHealthWindowEvidence } from './models/RouteHealthWindowEvidence.js';
 export type { RouteInsight } from './models/RouteInsight.js';
+export type { RouteInsightFix } from './models/RouteInsightFix.js';
+export type { RouteInsightFixRequest } from './models/RouteInsightFixRequest.js';
+export type { RouteInsightFixResponse } from './models/RouteInsightFixResponse.js';
 export type { RouteInsightsResponse } from './models/RouteInsightsResponse.js';
 export type { RouteLifecycleApproval } from './models/RouteLifecycleApproval.js';
 export type { RouteLifecycleHistoryApproval } from './models/RouteLifecycleHistoryApproval.js';
@@ -2780,6 +2787,7 @@ export type { SetBindingReleasePolicyRequest } from './models/SetBindingReleaseP
 export type { SetCanaryRouteGateRequest } from './models/SetCanaryRouteGateRequest.js';
 export type { SetDeploymentAliasRequest } from './models/SetDeploymentAliasRequest.js';
 export type { SetEnvironmentRouteBudgetsRequest } from './models/SetEnvironmentRouteBudgetsRequest.js';
+export type { SetFinancialBudgetChannelsRequest } from './models/SetFinancialBudgetChannelsRequest.js';
 export type { SetGraceWindowRequest } from './models/SetGraceWindowRequest.js';
 export type { SetMCPReadinessFallbackRequest } from './models/SetMCPReadinessFallbackRequest.js';
 export type { SetMCPReadinessPagerDutyAcknowledgementsRequest } from './models/SetMCPReadinessPagerDutyAcknowledgementsRequest.js';
@@ -2795,6 +2803,7 @@ export type { SetPlatformTenantCredentialPolicyRequest } from './models/SetPlatf
 export type { SetPlatformTenantHostnamePolicyRequest } from './models/SetPlatformTenantHostnamePolicyRequest.js';
 export type { SetPlatformTenantRequestBudgetRequest } from './models/SetPlatformTenantRequestBudgetRequest.js';
 export type { SetPlatformTenantStatusRequest } from './models/SetPlatformTenantStatusRequest.js';
+export type { SetProjectEnvironmentSharedSecretRequest } from './models/SetProjectEnvironmentSharedSecretRequest.js';
 export type { SetQueueBindingReleasePolicyRequest } from './models/SetQueueBindingReleasePolicyRequest.js';
 export type { SetRouteHealthGateRequest } from './models/SetRouteHealthGateRequest.js';
 export type { SetRouteMonitorRequest } from './models/SetRouteMonitorRequest.js';

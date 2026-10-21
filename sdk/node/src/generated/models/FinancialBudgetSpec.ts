@@ -17,9 +17,9 @@ export type FinancialBudgetSpec = {
    */
   currency: 'USD' | 'EUR';
   /**
-   * Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only.
+   * Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only. object_storage (ADR-20261020160000) is priced from the live object-storage estimate and only monitored account budgets may select it.
    */
-  meters: Array<'compute' | 'egress'>;
+  meters: Array<'compute' | 'egress' | 'object_storage'>;
   /**
    * Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross usage.
    */

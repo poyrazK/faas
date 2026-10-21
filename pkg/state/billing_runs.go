@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Billing run vocabulary (ADR-1503).
@@ -469,6 +470,23 @@ func (m *MemStore) discoverProductCustomersLocked(run BillingRun, add func(Billi
 		}
 		if tenant, ok := m.platformTenants[r.tenant]; ok && tenant.AccountID == run.AccountID {
 			add(BillingRunItem{SourceKind: StatementSourceProductControl, SourceID: tenant.ID, AppID: r.app,
+				ExternalRef: tenant.ExternalRef, Outcome: BillingRunItemPending})
+		}
+	}
+	// A customer whose month owes a plan fee is billed without runs too
+	// (ADR-20261021154511).
+	for key, entries := range d.planHistory {
+		app, tenantID, _ := strings.Cut(key, "/")
+		if len(entries) == 0 || entries[0].account != run.AccountID || d.heads[app] == "" {
+			continue
+		}
+		scope := ProductBillingScope{AccountID: run.AccountID, AppID: app, TenantID: tenantID, Period: period}
+		fee := productMonthFee(m.productMonthPlansLocked(scope), period, func(revision string) (api.ProductCatalog, bool) {
+			c, ok := d.revisions[app+"/"+revision]
+			return c, ok
+		})
+		if tenant, ok := m.platformTenants[tenantID]; ok && fee != nil && tenant.AccountID == run.AccountID {
+			add(BillingRunItem{SourceKind: StatementSourceProductControl, SourceID: tenant.ID, AppID: app,
 				ExternalRef: tenant.ExternalRef, Outcome: BillingRunItemPending})
 		}
 	}

@@ -1244,9 +1244,12 @@ without re-running the build.
   every catalog row must have non-empty Title/Hint/Fix (and
   Hint ≤200 bytes, Why ≤512 bytes).
 - `cmd/gregale/lint_tripwires_test.go::TestLintTripwire_NoGlyphLiteralOutsideOutput` —
-  every customer-facing glyph (`✓ ✗ → ! — 💡 ┌─ │ └─`) is
+  every customer-facing glyph (`✓ ✗ → ! — ┌─ │ └─`) is
   centralised in `cmd/gregale/output.go`; no other file may
   use them verbatim.
+- `cmd/gregale/lint_tripwires_test.go::TestLintTripwire_NoEmojiInCLIOutput` —
+  no CLI string literal carries an emoji (UX spec §3.2). The hint
+  row renders as plain `hint:`.
 - `cmd/gregale/lint_tripwires_test.go::TestLintTripwire_NoLiteralDocsDomainEverywhere` —
   every docs URL routes through `wire.DocsHost`.
 

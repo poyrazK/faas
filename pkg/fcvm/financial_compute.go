@@ -73,7 +73,7 @@ func (m *Manager) beginFinancialCompute(ctx context.Context, req WakeRequest, fl
 		// and a fresh ID keeps a later wake of a reused instance unfenced.
 		attempt = uuid.NewString()
 	}
-	r := financial.ComputeRequest{AttemptID: attempt, Fenced: fenced, LeaseID: uuid.NewString(), Fence: uuid.NewString(), RequestID: uuid.NewString(), AccountID: req.AccountID, AppID: req.AppID, InstanceID: req.Instance, NodeID: m.computeNode, Incarnation: m.computeIncarnation, BillableMB: api.BillableRAMMBWithSidecars(req.MemSizeMiB, mbs)}
+	r := financial.ComputeRequest{AttemptID: attempt, Fenced: fenced, LeaseID: uuid.NewString(), Fence: uuid.NewString(), RequestID: uuid.NewString(), AccountID: req.AccountID, AppID: req.AppID, InstanceID: req.Instance, DeploymentID: req.DeploymentID, NodeID: m.computeNode, Incarnation: m.computeIncarnation, BillableMB: api.BillableRAMMBWithSidecars(req.MemSizeMiB, mbs)}
 	return m.beginComputeRequest(ctx, r, flight)
 }
 

@@ -68,3 +68,34 @@
 - **Rollback:** Clear `faas_workload_identity_source_dir` and delete the
   files; the next converge removes both drop-ins and issuance returns to
   `identity_not_configured`.
+
+## Amendment 2026-10-17 — tokens for booting instances
+
+vmmd minted a token only for an instance in its live map, which an instance
+enters when its boot returns. A guest's workload starts well before that: a
+worker is RUNNING only after guest-init has watched it for the whole
+`api.CharacterizationDeadline` (10 s). On n2 (`TestWorkerScaleFromZeroMetal`)
+a worker pool scaling from zero had its consumer process up about 2 s after
+the send, then refused every token request for about 10 s; the first lease
+came at a median 11.9 s, and 10 s of that was the window.
+
+vmmd now mints for an instance that is live or still booting
+(`fcvm.Manager.WorkloadTokenIdentity`). A wake fixes the app and account when
+it takes the lease, before the guest starts, and the token carries the same
+claims it would carry once the instance is live. Qualification restores record
+no identity and still get none. apid already accepts a `gregale:queues` token
+for an instance in `waking` or `cold_booting`, and refuses it once the
+instance leaves the live states, so a consumer whose boot fails cannot lease
+with the token it took. A token for another audience stays valid for its
+five-minute TTL either way; the code that asked for it is the app's own,
+booting or not.
+
+Only the token endpoint changes. The outbound relay (ADR-989) and in-guest
+event publishing still resolve live instances only.
+
+Measured on n2 with the same test after the change: the first lease came at a
+median 2.0 s (1.9–2.2 s over five cycles), about 1.7 s after the boot
+started, while RUNNING still came at 11.9 s. The test now fails if any worker
+takes its token after it is RUNNING. A burst still boots workers one at a
+time (first leases at 2.0, 13.9 and 25.6 s for three workers), because the
+pool admits the next worker only when the previous boot returns.

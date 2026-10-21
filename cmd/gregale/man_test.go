@@ -1,5 +1,5 @@
-// man_test.go — Tier A8.1 / ADR-083 follow-up. The Levenshtein-1
-// suggestion surface lives in man.go (suggestCommand + levenshtein);
+// man_test.go — Tier A8.1 / ADR-083 follow-up. The edit-distance
+// suggestion surface lives in man.go (suggestCommand + editDistance);
 // these tests pin both the helper and the integration with cmdMan.
 //
 // Tier A8 (PR #752) shipped `gregale man <command>` and the
@@ -18,14 +18,12 @@ import (
 	"testing"
 )
 
-// TestLevenshtein_KnownPairs pins the DP table for a few canonical
-// inputs. The helper is hot (one call per cell of the table) and
-// the algorithm is well-known, but pinning specific inputs catches
-// regressions in the row-swap (prev/cur) or the cost assignment.
-// Reference: an out-of-tree Python oracle (linked in the PR
-// description) reproduces each expected value by hand-tracing the
-// DP table; the test values were cross-checked against it.
-func TestLevenshtein_KnownPairs(t *testing.T) {
+// TestEditDistance_KnownPairs pins the DP table for a few canonical
+// inputs. The algorithm is well-known, but pinning specific inputs
+// catches regressions in the row rotation or the cost assignment.
+// editDistance is optimal string alignment, so a swap of adjacent
+// letters costs one edit where plain Levenshtein charges two.
+func TestEditDistance_KnownPairs(t *testing.T) {
 	cases := []struct {
 		a, b string
 		want int
@@ -38,16 +36,21 @@ func TestLevenshtein_KnownPairs(t *testing.T) {
 		{"abc", "abcd", 1},
 		{"apps", "aps", 1},       // deletion
 		{"apps", "app", 1},       // deletion
-		{"apps", "apsp", 2},      // same length, two subs
+		{"apps", "apsp", 1},      // adjacent swap
+		{"deplyo", "deploy", 1},  // adjacent swap at the end
+		{"naem", "name", 1},      // adjacent swap of the last two
+		{"ab", "ba", 1},          // whole-string swap
+		{"abc", "ca", 3},         // OSA edits each substring once (true Damerau: 2)
+		{"apps", "sppa", 2},      // swap is adjacent only: two subs
 		{"apps", "appss", 1},     // insertion
-		{"kitten", "sitting", 3}, // canonical Levenshtein example
+		{"kitten", "sitting", 3}, // canonical Levenshtein example (no swaps)
 		{"gregale", "gregales", 1},
 		{"gregale", "Gregale", 1}, // case-sensitive
 	}
 	for _, tc := range cases {
-		got := main.Levenshtein(tc.a, tc.b)
+		got := main.EditDistance(tc.a, tc.b)
 		if got != tc.want {
-			t.Errorf("levenshtein(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
+			t.Errorf("editDistance(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
 		}
 	}
 }

@@ -713,12 +713,19 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	// in vmmdgrpc.Logs consults MD as the runtime source; the
 	// proto field is the documentation seam.
 	fields, _ := wire.FromContext(ctx)
-	// vmmd takes a cold boot's deployment from this metadata (the request has
-	// no field for it); without it the booting guest cannot register its
-	// secret-reload process (ADR-508). Deploy prime boots carry no wake
-	// correlation, so fall back to the spec's deployment.
+	// A boot without wake correlation (the deploy prime) still names its
+	// app, deployment and instance: vmmd reads the deployment from this
+	// metadata, records a worker deployment as proven by it (ADR-20261018101500)
+	// and lets the booting guest register its secret-reload process (ADR-508).
+	// Wake events stay keyed on the wake id, which is not filled in here.
+	if fields.AppID == "" {
+		fields.AppID = app.AppID
+	}
 	if fields.DeploymentID == "" {
 		fields.DeploymentID = app.DeploymentID
+	}
+	if fields.InstanceID == "" {
+		fields.InstanceID = instance
 	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	boot := c.cli.CreateColdBoot
@@ -1671,6 +1678,18 @@ func (c *VMMClient) CancelLiveMigration(ctx context.Context, _, instanceID, leas
 		return liftErr(err)
 	}
 	return nil
+}
+
+// CancelFunctionMigrationSource preserves the physical rollback outcome.
+func (c *VMMClient) CancelFunctionMigrationSource(ctx context.Context, _ string, id, token string) (bool, error) {
+	response, err := c.cli.CancelLiveMigration(ctx, &vmmdpb.CancelLiveMigrationRequest{InstanceId: id, LeaseToken: token})
+	if err != nil {
+		return false, liftErr(err)
+	}
+	if response.GetSourceProtocolVersion() != fcvm.FunctionMigrationSourceProtocolVersion {
+		return false, state.ErrMigrationCommitUnresolved
+	}
+	return response.GetSourceRetired(), nil
 }
 
 // Ping implements VMM. Wire-level liveness probe (issue #97 /

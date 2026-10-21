@@ -83,6 +83,17 @@ budgets in production. Apply additive migrations to those fixtures and run
 matching scheduler, gateway, VMMD and meter binaries with native process
 recovery and current financial owners on every active node.
 
+Strict activation is gated by the `strict_budgets` platform flag (ADR-1750).
+Release it to the fixture account first:
+
+```bash
+gregalectl flags enable --key strict_budgets --reason "strict acceptance fixtures" --yes
+gregalectl flags allow  --key strict_budgets --account-id <fixture-account> --reason "strict acceptance" --yes
+```
+
+Withdraw it afterwards with `flags revoke`. Fixture budgets that are already
+enabled keep enforcing until they are disabled.
+
 1. Activate app-scoped strict gross compute `suspend_workloads`, zero drain,
    empty alert thresholds. Refuse busy apps, incomplete evidence and old owners.
 2. Race cold starts across two nodes and deployments. Check all policy limits,

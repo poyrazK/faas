@@ -164,14 +164,11 @@ func RenderDocsRow(w io.Writer, url string) {
 }
 
 // RenderHintRow is the error-explanations cluster (spec §6.4
-// amendment 1) hint renderer. Emits a single-line "💡 hint: <hint>"
-// row between Detail and Why in the APIError render. The 💡
-// glyph is in the central glyph table that the tripwire
-// TestLintTripwire_NoGlyphLiteralOutsideOutput pins to output.go
-// (lint_tripwires_test.go:138) — no other file in the package
-// may use 💡 verbatim. When Enabled() is false the row collapses
-// to "  hint: <hint>" so script consumers that grep on the
-// literal "hint:" still match.
+// amendment 1) hint renderer. Emits a single-line "hint: <hint>"
+// row between Detail and Why in the APIError render. The row has no
+// glyph in either mode: UX §3.2 allows only ✓ ✗ → ! and no emoji,
+// and none of those four means "hint". Script consumers that grep on
+// the literal "hint:" match the same text in pipes and terminals.
 //
 // The hint is the single short next-action line from the
 // pkg/whycopy catalog — one line, ≤200 bytes (the CLI tripwire in
@@ -179,10 +176,6 @@ func RenderDocsRow(w io.Writer, url string) {
 // ceiling on the catalog side, so this renderer never has to
 // truncate).
 func RenderHintRow(w io.Writer, hint string) {
-	if Enabled() {
-		_, _ = fmt.Fprintf(w, "  💡 hint: %s\n", hint)
-		return
-	}
 	_, _ = fmt.Fprintf(w, "  hint: %s\n", hint)
 }
 

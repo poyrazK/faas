@@ -244,6 +244,8 @@ func Run(t *testing.T, open Open) {
 		{"scoped_runtime_changes_preserve_neighbor_snapshots", testScopedRuntimeChangesPreserveNeighborSnapshots},
 		{"project_config_reaches_runtime_values", testProjectConfigReachesRuntimeValues},
 		{"project_config_change_invalidates_member_snapshots", testProjectConfigChangeInvalidatesMemberSnapshots},
+		{"project_secrets_reach_runtime_values", testProjectSecretsReachRuntimeValues},
+		{"project_secret_change_invalidates_member_snapshots", testProjectSecretChangeInvalidatesMemberSnapshots},
 		{"runtime_input_receipts_are_immutable_and_preserved_in_snapshots", testRuntimeInputReceipts},
 		{"runtime_input_receipts_check_secret_versions", testRuntimeInputReceiptSecretVersions},
 		{"runtime_input_receipts_preserve_sidecar_secret_access", testRuntimeInputReceiptSidecarSecretAccess},

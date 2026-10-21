@@ -56,8 +56,8 @@ func (s *Service) decideApproval(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrCapacity("operation approval store unavailable"))
 		return
 	}
-	var req api.OperationApprovalRequest
-	if !DecodeOperationBody(w, r, &req, api.OperationApprovalBodyMaxBytes) {
+	req, ok := decodeApprovalDecision(w, r, acct.ID)
+	if !ok {
 		return
 	}
 	actor := api.OperationApprovalActor{Kind: kind, ID: acct.ID}
@@ -65,13 +65,27 @@ func (s *Service) decideApproval(w http.ResponseWriter, r *http.Request, acct st
 		actor.ID = principal.Key.ID
 	}
 	got, err := store.DecideOperationApproval(r.Context(), state.OperationApprovalInput{AccountID: acct.ID, PlatformTenantID: tenant, OperationID: op.ID,
-		Step: r.PathValue("step"), ApproverKind: kind, ExpectedGeneration: req.ExpectedGeneration, Decision: req.Decision, Comment: req.Comment, Actor: actor})
+		Step: r.PathValue("step"), ApproverKind: kind, ExpectedGeneration: req.ExpectedGeneration, Decision: req.Decision, Comment: req.Comment, Actor: actor, Input: req.Input})
 	if err != nil {
 		writeOperationApprovalError(w, err)
 		return
 	}
 	s.Host.EmitAudit(r.Context(), "app.operation_approval_decided", &acct.ID, map[string]any{"operation_id": op.ID, "step": r.PathValue("step"), "decision": req.Decision, "approver": kind})
 	httpkit.WriteJSON(w, http.StatusOK, got.OperationResponse)
+}
+
+// decodeApprovalDecision reads a decision. Only accounts in the approval
+// input rollout may send input (ADR-20261019001500); for the rest the public
+// request type rejects it as an unknown field.
+func decodeApprovalDecision(w http.ResponseWriter, r *http.Request, accountID string) (api.OperationApprovalInputRequest, bool) {
+	if api.OperationApprovalInputsEnabled(accountID) {
+		var req api.OperationApprovalInputRequest
+		ok := DecodeOperationBody(w, r, &req, api.OperationApprovalBodyMaxBytes+api.OperationApprovalInputMaxBytes)
+		return req, ok
+	}
+	var req api.OperationApprovalRequest
+	ok := DecodeOperationBody(w, r, &req, api.OperationApprovalBodyMaxBytes)
+	return api.OperationApprovalInputRequest{ExpectedGeneration: req.ExpectedGeneration, Decision: req.Decision, Comment: req.Comment}, ok
 }
 
 func writeOperationApprovalError(w http.ResponseWriter, err error) {

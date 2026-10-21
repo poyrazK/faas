@@ -321,6 +321,10 @@ type MemStore struct {
 	financialBudgetEvaluations                 map[string]financialBudgetMemoryEvaluation
 	financialBudgetAlerts                      map[string]FinancialBudgetAlertDelivery
 	financialBudgetStops                       map[string]FinancialBudgetStop
+	financialBudgetChannels                    map[string][]string                            // policy id → channel ids (ADR-20261019193500)
+	financialBudgetChannelDeliveries           map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
+	financialBudgetProjections                 map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
+	financialObjectStorageEstimates            map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
 	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
 	financialComputeBooks                      map[string]financialComputeBook
 	financialComputeLeases                     map[string]financialComputeLease
@@ -631,10 +635,13 @@ type MemStore struct {
 	// migrationLeases mirrors the durable source-side migration lease table.
 	// It lets vmmd migration tests exercise restart-safe lease semantics without
 	// requiring Postgres.
-	migrationLeases       map[string]MigrationLease // lease_token → lease
-	migrationSources      map[string]MigrationSource
-	migrationAdmissions   map[string]MigrationAdmission
-	migrationResumeFences map[string]bool
+	migrationLeases               map[string]MigrationLease
+	functionMigrationSources      map[string]FunctionMigrationSource      // instance_id → source
+	functionMigrationPermissions  map[string]functionMigrationPermissions // lease_token → permissions
+	functionMigrationDestinations map[string]FunctionMigrationDestination // lease_token → immutable destination epoch
+	migrationSources              map[string]MigrationSource
+	migrationAdmissions           map[string]MigrationAdmission
+	migrationResumeFences         map[string]bool
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
@@ -1159,7 +1166,7 @@ type MemStore struct {
 	// (migration 00050, issue #259).
 	invoices               map[string]Invoice
 	invoiceRefunds         map[string]InvoiceRefund
-	billingUsageDeliveries map[string]struct{}
+	billingUsageDeliveries map[string]billingUsageDelivery
 	// objectStorageBilling is the in-memory mirror of the finalized
 	// object-storage month-close ledger.
 	objectStorageBilling           map[string]ObjectStorageBillingRecord
@@ -1310,6 +1317,7 @@ type MemStore struct {
 	projectEnvironmentCloneObjectCredentials  map[string]ProjectEnvironmentCloneObjectCredentialPreparation
 	projectEnvironmentApprovals               map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs                 map[string][]ProjectEnvironmentConfig
+	projectEnvironmentSecrets                 map[string]ProjectEnvironmentSecret
 	projectEnvironmentRoutePolicies           map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies            map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion
@@ -1814,7 +1822,7 @@ func NewMemStore() *MemStore {
 		// PR B writes via UpsertInvoice (webhook ingestion).
 		invoices:                       map[string]Invoice{},
 		invoiceRefunds:                 map[string]InvoiceRefund{},
-		billingUsageDeliveries:         map[string]struct{}{},
+		billingUsageDeliveries:         map[string]billingUsageDelivery{},
 		objectStorageBilling:           map[string]ObjectStorageBillingRecord{},
 		objectStorageBillingDeliveries: map[string]ObjectStorageBillingDelivery{},
 		// accountCredits starts empty; the operator-only
@@ -3873,6 +3881,11 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 			delete(m.projectEnvironmentConfigs, key)
 		}
 	}
+	for key, secret := range m.projectEnvironmentSecrets {
+		if secret.ProjectID == projectID {
+			delete(m.projectEnvironmentSecrets, key)
+		}
+	}
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.ProjectID == projectID {
 			delete(m.projectEnvironmentRoutePolicies, key)
@@ -4106,6 +4119,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 		}
 	}
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
+	m.deleteProjectEnvironmentSecretsLocked(projectID, slug)
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
 			delete(m.projectEnvironmentRoutePolicies, key)
@@ -6252,6 +6266,9 @@ func (m *MemStore) MarkInstanceMigrating(ctx context.Context, instanceID, curren
 	if ins.NodeID != currentNodeID || ins.State != string(StateRunning) {
 		return ErrConflict
 	}
+	if err := m.markFunctionMigrationSourceLocked(ctx, ins, leaseToken); err != nil {
+		return err
+	}
 	ins.State = string(StateMigrating)
 	ins.LeaseToken = leaseToken
 	now := time.Now().UTC()
@@ -6370,6 +6387,9 @@ func (m *MemStore) ListExpiredMigrations(_ context.Context, maxPerTick int, olde
 	var out []Instance
 	for _, ins := range m.instances {
 		if ins.State != string(StateMigrating) || ins.LeaseToken == "" {
+			continue
+		}
+		if _, tracked := m.functionMigrationSources[ins.ID]; tracked {
 			continue
 		}
 		if !cutoff.IsZero() && (ins.MigrationStartedAt == nil || ins.MigrationStartedAt.After(cutoff)) {
@@ -17057,7 +17077,7 @@ func (m *MemStore) ComputeNodeByName(_ context.Context, name string) (ComputeNod
 func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var used int64
+	used := m.functionMigrationNodeUsageLocked(nodeID).RAM
 	for _, ins := range m.instances {
 		if ins.NodeID != nodeID {
 			continue
@@ -17138,6 +17158,11 @@ func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs
 	for _, r := range m.migrationSources {
 		if _, ok := wanted[r.SourceNodeID]; ok {
 			used[r.SourceNodeID] += m.migrationSourceCostLocked(r, true).CPU
+		}
+	}
+	for node := range wanted {
+		if c := m.functionMigrationNodeUsageLocked(node); c.CPU != 0 {
+			used[node] += c.CPU
 		}
 	}
 	return used, nil
@@ -19960,6 +19985,15 @@ func (m *MemStore) UsageWindows(_ context.Context, start, end time.Time) ([]Usag
 	return out, nil
 }
 
+// billingUsageDelivery is one MemStore receipt; the first recorded quantity
+// wins, as in billing_usage_deliveries.
+type billingUsageDelivery struct {
+	provider, accountID string
+	meter               BillingMeter
+	hour                time.Time
+	quantity            int64
+}
+
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
 	return provider + "\x00" + accountID + "\x00" + string(meter) + "\x00" + hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
 }
@@ -20039,7 +20073,10 @@ func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.billingUsageDeliveries[billingUsageDeliveryKey(provider, accountID, meter, windowStart)] = struct{}{}
+	key := billingUsageDeliveryKey(provider, accountID, meter, windowStart)
+	if _, exists := m.billingUsageDeliveries[key]; !exists { // Postgres: ON CONFLICT DO NOTHING
+		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity}
+	}
 	return nil
 }
 
@@ -23376,6 +23413,26 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for key, alert := range m.financialBudgetAlerts {
 		if alert.AccountID == id {
 			delete(m.financialBudgetAlerts, key)
+		}
+	}
+	for key, d := range m.financialBudgetChannelDeliveries {
+		if d.Alert.AccountID == id {
+			delete(m.financialBudgetChannelDeliveries, key)
+		}
+	}
+	for key, a := range m.financialBudgetProjections {
+		if a.AccountID == id {
+			delete(m.financialBudgetProjections, key)
+		}
+	}
+	for key, e := range m.financialObjectStorageEstimates {
+		if e.AccountID == id {
+			delete(m.financialObjectStorageEstimates, key)
+		}
+	}
+	for key := range m.financialBudgetChannels {
+		if p, ok := m.financialBudgets[key]; !ok || p.AccountID == id {
+			delete(m.financialBudgetChannels, key)
 		}
 	}
 	for key, stop := range m.financialBudgetStops {

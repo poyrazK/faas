@@ -17,6 +17,7 @@ import (
 // cannot invalidate funding that the API has already reported as reserved.
 func TestFinancialComputeActivationAndBalances(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanHobby)
+	releaseStrictBudgets(e)
 	store := *e.Store()
 	account := (*e.Acct()).ID
 	app, err := store.CreateApp(t.Context(), state.App{AccountID: account, Slug: "strict-compute-api", RAMMB: 128, MaxConcurrency: 1})

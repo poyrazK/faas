@@ -1954,8 +1954,10 @@ from .financial_app_costs_response_currency import FinancialAppCostsResponseCurr
 from .financial_app_meter_costs import FinancialAppMeterCosts
 from .financial_attribution import FinancialAttribution
 from .financial_budget_alert import FinancialBudgetAlert
+from .financial_budget_alert_kind import FinancialBudgetAlertKind
 from .financial_budget_alert_last_error import FinancialBudgetAlertLastError
 from .financial_budget_alert_state import FinancialBudgetAlertState
+from .financial_budget_channels_response import FinancialBudgetChannelsResponse
 from .financial_budget_evaluation import FinancialBudgetEvaluation
 from .financial_budget_history_response import FinancialBudgetHistoryResponse
 from .financial_budget_list_response import FinancialBudgetListResponse
@@ -4435,6 +4437,9 @@ from .project_environment_secret_response_managed_by import ProjectEnvironmentSe
 from .project_environment_shared_resource_response import ProjectEnvironmentSharedResourceResponse
 from .project_environment_shared_resource_response_kind import ProjectEnvironmentSharedResourceResponseKind
 from .project_environment_shared_resource_response_ownership import ProjectEnvironmentSharedResourceResponseOwnership
+from .project_environment_shared_secret import ProjectEnvironmentSharedSecret
+from .project_environment_shared_secret_response import ProjectEnvironmentSharedSecretResponse
+from .project_environment_shared_secrets_response import ProjectEnvironmentSharedSecretsResponse
 from .project_environment_state_response import ProjectEnvironmentStateResponse
 from .project_environment_state_response_release_set_status import ProjectEnvironmentStateResponseReleaseSetStatus
 from .project_environment_state_workload_response import ProjectEnvironmentStateWorkloadResponse
@@ -5017,6 +5022,11 @@ from .route_health_window_evidence_latency_status import RouteHealthWindowEviden
 from .route_health_window_evidence_status import RouteHealthWindowEvidenceStatus
 from .route_insight import RouteInsight
 from .route_insight_evidence import RouteInsightEvidence
+from .route_insight_fix import RouteInsightFix
+from .route_insight_fix_action import RouteInsightFixAction
+from .route_insight_fix_request import RouteInsightFixRequest
+from .route_insight_fix_response import RouteInsightFixResponse
+from .route_insight_fix_response_cache_purge import RouteInsightFixResponseCachePurge
 from .route_insight_kind import RouteInsightKind
 from .route_insight_state import RouteInsightState
 from .route_insights_response import RouteInsightsResponse
@@ -5378,6 +5388,7 @@ from .set_commit_source_enabled_body import SetCommitSourceEnabledBody
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_environment_route_budgets_request import SetEnvironmentRouteBudgetsRequest
 from .set_environment_route_budgets_scope import SetEnvironmentRouteBudgetsScope
+from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
 from .set_mcp_readiness_fallback_request import SetMCPReadinessFallbackRequest
 from .set_mcp_readiness_fallback_request_provider import SetMCPReadinessFallbackRequestProvider
@@ -5404,6 +5415,7 @@ from .set_platform_tenant_hostname_policy_request import SetPlatformTenantHostna
 from .set_platform_tenant_request_budget_request import SetPlatformTenantRequestBudgetRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
 from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
+from .set_project_environment_shared_secret_request import SetProjectEnvironmentSharedSecretRequest
 from .set_queue_binding_release_policy_request import SetQueueBindingReleasePolicyRequest
 from .set_route_health_gate_request import SetRouteHealthGateRequest
 from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
@@ -7861,8 +7873,10 @@ __all__ = (
     "FinancialAppMeterCosts",
     "FinancialAttribution",
     "FinancialBudgetAlert",
+    "FinancialBudgetAlertKind",
     "FinancialBudgetAlertLastError",
     "FinancialBudgetAlertState",
+    "FinancialBudgetChannelsResponse",
     "FinancialBudgetEvaluation",
     "FinancialBudgetHistoryResponse",
     "FinancialBudgetListResponse",
@@ -10112,6 +10126,9 @@ __all__ = (
     "ProjectEnvironmentSharedResourceResponse",
     "ProjectEnvironmentSharedResourceResponseKind",
     "ProjectEnvironmentSharedResourceResponseOwnership",
+    "ProjectEnvironmentSharedSecret",
+    "ProjectEnvironmentSharedSecretResponse",
+    "ProjectEnvironmentSharedSecretsResponse",
     "ProjectEnvironmentStateResponse",
     "ProjectEnvironmentStateResponseReleaseSetStatus",
     "ProjectEnvironmentStateWorkloadResponse",
@@ -10680,6 +10697,11 @@ __all__ = (
     "RouteHealthWindowEvidenceStatus",
     "RouteInsight",
     "RouteInsightEvidence",
+    "RouteInsightFix",
+    "RouteInsightFixAction",
+    "RouteInsightFixRequest",
+    "RouteInsightFixResponse",
+    "RouteInsightFixResponseCachePurge",
     "RouteInsightKind",
     "RouteInsightsResponse",
     "RouteInsightState",
@@ -11037,6 +11059,7 @@ __all__ = (
     "SetDeploymentAliasRequest",
     "SetEnvironmentRouteBudgetsRequest",
     "SetEnvironmentRouteBudgetsScope",
+    "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
     "SetMCPReadinessFallbackRequest",
     "SetMCPReadinessFallbackRequestProvider",
@@ -11059,6 +11082,7 @@ __all__ = (
     "SetPlatformTenantRequestBudgetRequest",
     "SetPlatformTenantStatusRequest",
     "SetPlatformTenantStatusRequestStatus",
+    "SetProjectEnvironmentSharedSecretRequest",
     "SetQueueBindingReleasePolicyRequest",
     "SetRouteHealthGateRequest",
     "SetRouteHealthGateRequestMode",

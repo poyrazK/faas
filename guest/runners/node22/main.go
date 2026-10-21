@@ -45,11 +45,16 @@ func main() {
 	if _, err := os.Stat(*handlerPath); err != nil {
 		log.Fatalf("node22 runner: handler not found at %s: %v", *handlerPath, err)
 	}
+	execution := internal.QualifiedExecutionRuntime()
 	prewarmCtx, cancelPrewarm := context.WithTimeout(context.Background(), 30*time.Second)
-	if _, err := workerpool.PrewarmIfSupported(prewarmCtx, workerpool.Spec{
+	if _, err := workerpool.PrewarmIfSupported(prewarmCtx, execution.WorkerSpec(workerpool.Spec{
 		Executable: nodeBinary(), Args: []string{*handlerPath},
 		Env: append(os.Environ(), "FAAS_RUNTIME=node22"), HandlerPath: *handlerPath,
-	}); err != nil {
+	})); err != nil {
+		if execution != nil {
+			cancelPrewarm()
+			log.Fatalf("node22 runner: qualified handler prewarm failed: %v", err)
+		}
 		log.Printf("node22 runner: handler prewarm unavailable: %v", err)
 	}
 	cancelPrewarm()
@@ -73,7 +78,7 @@ func main() {
 	// after the handler's response envelope is parsed.
 	signal := internal.NewRunnerSignal("node22", time.Now())
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		handle(w, r, *handlerPath, signal, tailWaitSec, tailPipePath)
+		handle(w, r, *handlerPath, signal, tailWaitSec, tailPipePath, execution)
 	})
 
 	// Issue #460 / ADR-053 (PR-C): PORT env var carries the
@@ -106,9 +111,14 @@ func main() {
 // handle runs one request through the customer's handler via the shared
 // runner core (internal.Serve): a complete §4.9 response, or a streamed one
 // flushed frame by frame (ADR-999).
-func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *internal.RunnerSignal, tailWaitSec int, tailPipePath string) {
+func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *internal.RunnerSignal, tailWaitSec int, tailPipePath string, executions ...*internal.ExecutionRuntime) {
+	var execution *internal.ExecutionRuntime
+	if len(executions) > 0 {
+		execution = executions[0]
+	}
 	internal.Serve(w, r, internal.ServeConfig{
-		Runtime: "node22",
+		Runtime:   "node22",
+		Execution: execution,
 		Spec: workerpool.Spec{
 			Executable: nodeBinary(), Args: []string{handlerPath},
 			Env: append(os.Environ(), "FAAS_RUNTIME="+"node22"), HandlerPath: handlerPath,

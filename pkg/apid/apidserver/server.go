@@ -1430,6 +1430,7 @@ func newServerWithDeps(
 	s.productControl.DocumentInvoice = s.statementInvoices.ProductStatementInvoice
 	s.productControl.BillingDetails = s.statementInvoices.PaddleBillingDetails
 	s.productControl.PutBillingDetails = s.statementInvoices.PutPaddleBillingDetails
+	s.productControl.PlanPricingEnabled = func() bool { return s.runtimeBool(runtimeConfigProductControlPlanPricing, false) }
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
@@ -2102,9 +2103,24 @@ func (s *server) handler() http.Handler {
 	// ADR-20261017100853: a customer resumes its own waiting Operations.
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/{id}/signals", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.SignalPlatformTenantSelfOperation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operation-signals", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.SignalPlatformTenantSelfOperationsBySubject)))
+	// ADR-20261019001500: approval input forms, gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS.
+	mux.HandleFunc("PUT /v1/apps/{slug}/operation-approval-forms", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.PutOperationApprovalForm))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operation-approval-forms", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.ListOperationApprovalForms))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/operation-approval-forms/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.DeleteOperationApprovalForm))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/approvals/{step}/form", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.GetOwnedOperationApprovalForm))))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}/form", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.GetPlatformTenantSelfOperationApprovalForm)))
+	// ADR-20261018210500: per-customer Operation concurrency, gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS.
+	mux.HandleFunc("PUT /v1/apps/{slug}/operation-concurrency", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.PutOperationConcurrencyPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operation-concurrency", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.GetOperationConcurrency))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/operation-concurrency/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.DeleteOperationConcurrencyPolicy))))
+	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operation-queue", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.GetPlatformTenantSelfOperationQueue)))
 	// ADR-20261018183000: child Operations, gated by FAAS_OPERATION_CHILDREN_ACCOUNTS.
 	mux.Handle("POST /v1/runtime/operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.StartRuntimeChildOperation)))
 	mux.Handle("GET /v1/runtime/operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.ListRuntimeOperationChildren)))
+	mux.Handle("POST /v1/runtime/job-operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.StartRuntimeJobChildOperation)))
+	mux.Handle("GET /v1/runtime/job-operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.ListRuntimeJobOperationChildren)))
+	mux.Handle("POST /v1/runtime/workflow-operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.StartRuntimeWorkflowChildOperation)))
+	mux.Handle("GET /v1/runtime/workflow-operations/{id}/children", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.ListRuntimeWorkflowOperationChildren)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/{id}/children", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.ListPlatformTenantSelfOperationChildren)))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/children", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.ListOwnedOperationChildren))))
 	// ADR-20261018161833: Operation schedules, gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS.
@@ -2534,6 +2550,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/routes/advice", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteAdvice))))
 	mux.HandleFunc("GET /v1/apps/{slug}/routes/awake", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteAwake))))
 	mux.HandleFunc("GET /v1/apps/{slug}/routes/insights", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRouteInsights))))
+	mux.HandleFunc("POST /v1/apps/{slug}/routes/insights/{id}/fix", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.fixRouteInsight)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/service-wake-ahead", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getServiceWakeAhead))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/service-wake-ahead", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putServiceWakeAhead))))
 	mux.HandleFunc("GET /v1/apps/{slug}/route-priorities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRoutePriorities))))
@@ -3254,6 +3271,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/config", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentConfig))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/config", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentConfig)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/config/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.diffProjectEnvironmentConfig))))
+	// ADR-1139: secrets shared by every service of a project environment.
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/secrets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.projectSecrets().List))))
+	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/secrets/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.projectSecrets().Set))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.projectSecrets().Rotate))))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/secrets/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesSecretsWriteSurface...)(s.projectSecrets().Delete))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/promotion-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewProjectEnvironmentPromotionSecrets))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/promotion-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewProjectEnvironmentPromotion))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.approveProjectEnvironment)))))
@@ -4319,6 +4341,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/billing/budgets/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireFinancialBudgetIdempotency(s.updateFinancialBudget)))))
 	mux.HandleFunc("DELETE /v1/billing/budgets/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireFinancialBudgetIdempotency(s.deleteFinancialBudget)))))
 	mux.HandleFunc("GET /v1/billing/budgets/{id}/revisions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.listFinancialBudgetRevisions))))
+	mux.HandleFunc("GET /v1/billing/budgets/{id}/channels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.getFinancialBudgetChannels))))
+	mux.HandleFunc("PUT /v1/billing/budgets/{id}/channels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireFinancialBudgetIdempotency(s.setFinancialBudgetChannels)))))
 	mux.HandleFunc("POST /v1/invoices/{id}/refresh", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postInvoiceRefresh))))
 	mux.HandleFunc("POST /v1/invoices/backfill", s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.postInvoiceHistoryBackfill))))
 
@@ -4887,6 +4911,8 @@ func (s *server) handler() http.Handler {
 	// Issue #248 slice C: app-detail rollback form. It uses a dedicated
 	// named CSRF cookie and the same rollback core as the REST endpoint.
 	mux.Handle("POST /dashboard/apps/{slug}/rollback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRollback))))
+	// ADR-20261020161310: the route insights panel's "Apply fix" form.
+	mux.Handle("POST /dashboard/apps/{slug}/routes/insights/{id}/fix", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRouteInsightFix))))
 	// ADR-117 §Production-ready follow-on, C4 — dashboard-side
 	// retry form handler. The form is <form method="POST"> (not
 	// XHR), so the endpoint takes the CSRF sealed-envelope path

@@ -22,15 +22,8 @@ func (m *MemStore) StartChildOperation(_ context.Context, in OperationChildStart
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	data := m.operationMemoryLocked()
-	parent, exists := data.operations[in.ParentID]
-	if !exists || parent.AccountID != in.Authority.AccountID {
-		return OperationChild{}, false, ErrNotFound
-	}
-	inv, exists := m.invocations[in.Authority.InvocationID]
-	if !exists {
-		return OperationChild{}, false, ErrNotFound
-	}
-	if err := ValidateOperationExecutionAuthority(parent, inv, in.Authority, time.Now().UTC()); err != nil {
+	parent, err := m.lockedChildParent(in)
+	if err != nil {
 		return OperationChild{}, false, err
 	}
 	_, isChild := data.childParents[parent.ID]
@@ -74,6 +67,34 @@ func (m *MemStore) StartChildOperation(_ context.Context, in OperationChildStart
 	return OperationChild{Key: in.Request.Key, Operation: child}, true, nil
 }
 
+// lockedChildParent checks the presented proof against the parent's current
+// execution.
+func (m *MemStore) lockedChildParent(in OperationChildStart) (Operation, error) {
+	if in.WorkflowAuthority != nil {
+		parent, _, _, err := m.workflowOperationAuthorityLocked(in.ParentID, *in.WorkflowAuthority, false)
+		if err == nil && parent.AccountID != in.accountID() {
+			err = ErrNotFound
+		}
+		return parent, err
+	}
+	if in.JobAuthority != nil {
+		parent, _, err := m.jobOperationAuthorityLocked(in.ParentID, *in.JobAuthority)
+		if err == nil && parent.AccountID != in.accountID() {
+			err = ErrNotFound
+		}
+		return parent, err
+	}
+	parent, exists := m.operationMemoryLocked().operations[in.ParentID]
+	if !exists || parent.AccountID != in.accountID() {
+		return Operation{}, ErrNotFound
+	}
+	inv, exists := m.invocations[in.Authority.InvocationID]
+	if !exists {
+		return Operation{}, ErrNotFound
+	}
+	return parent, ValidateOperationExecutionAuthority(parent, inv, in.Authority, time.Now().UTC())
+}
+
 func (m *MemStore) OperationChildren(ctx context.Context, accountID, tenantID, parentID string) ([]OperationChild, error) {
 	if _, err := m.OperationByID(ctx, accountID, tenantID, parentID); err != nil {
 		return nil, err
@@ -98,4 +119,60 @@ func (m *MemStore) OperationChildren(ctx context.Context, accountID, tenantID, p
 		}
 	}
 	return out, nil
+}
+
+func (m *MemStore) OperationChildSettlements(_ context.Context, limit int) ([]OperationChildSettlement, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data := m.operationMemoryLocked()
+	out := []OperationChildSettlement{}
+	for _, op := range data.operations {
+		if op.State != api.OperationWaiting || op.Waiting == nil || op.Waiting.Kind != api.OperationWaitEvent || op.Waiting.Event != api.OperationChildrenSettledEvent {
+			continue
+		}
+		if m.workflowEventNamedLocked(op.WorkflowRunID, api.OperationChildrenSettledEvent) {
+			continue // signalled; the scheduler has yet to resume it
+		}
+		settled, counts, ready := true, api.OperationChildrenSettled{}, op.UpdatedAt
+		for _, row := range data.children[op.ID] {
+			child := data.operations[row.child]
+			counts.Total++
+			if child.UpdatedAt.After(ready) {
+				ready = child.UpdatedAt
+			}
+			switch child.State {
+			case api.OperationSucceeded:
+				counts.Succeeded++
+			case api.OperationFailed:
+				counts.Failed++
+			case api.OperationCancelled:
+				counts.Cancelled++
+			default:
+				settled = false
+			}
+		}
+		if settled {
+			out = append(out, OperationChildSettlement{AccountID: op.AccountID, ParentID: op.ID, Children: counts, ReadySince: ready})
+		}
+	}
+	// Oldest first, as the Postgres store returns them.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].ReadySince.Equal(out[j].ReadySince) {
+			return out[i].ReadySince.Before(out[j].ReadySince)
+		}
+		return out[i].ParentID < out[j].ParentID
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *MemStore) workflowEventNamedLocked(runID, name string) bool {
+	for _, event := range m.workflowEvents[runID] {
+		if event.EventName == name {
+			return true
+		}
+	}
+	return false
 }

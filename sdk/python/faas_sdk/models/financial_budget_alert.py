@@ -8,6 +8,7 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.financial_budget_alert_kind import FinancialBudgetAlertKind, check_financial_budget_alert_kind
 from ..models.financial_budget_alert_last_error import (
     FinancialBudgetAlertLastError,
     check_financial_budget_alert_last_error,
@@ -39,6 +40,9 @@ class FinancialBudgetAlert:
     state: FinancialBudgetAlertState
     attempts: int
     next_attempt_at: datetime.datetime
+    kind: FinancialBudgetAlertKind | Unset = UNSET
+    """Absent for a crossed threshold. projection marks a projected-overrun alert (ADR-20261019193500), whose
+    threshold_millicents is the limit."""
     delivered_at: datetime.datetime | Unset = UNSET
     last_error: FinancialBudgetAlertLastError | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -57,6 +61,10 @@ class FinancialBudgetAlert:
         attempts = self.attempts
 
         next_attempt_at = self.next_attempt_at.isoformat()
+
+        kind: str | Unset = UNSET
+        if not isinstance(self.kind, Unset):
+            kind = self.kind
 
         delivered_at: str | Unset = UNSET
         if not isinstance(self.delivered_at, Unset):
@@ -79,6 +87,8 @@ class FinancialBudgetAlert:
                 "next_attempt_at": next_attempt_at,
             }
         )
+        if kind is not UNSET:
+            field_dict["kind"] = kind
         if delivered_at is not UNSET:
             field_dict["delivered_at"] = delivered_at
         if last_error is not UNSET:
@@ -105,6 +115,13 @@ class FinancialBudgetAlert:
 
         next_attempt_at = datetime.datetime.fromisoformat(d.pop("next_attempt_at"))
 
+        _kind = d.pop("kind", UNSET)
+        kind: FinancialBudgetAlertKind | Unset
+        if isinstance(_kind, Unset):
+            kind = UNSET
+        else:
+            kind = check_financial_budget_alert_kind(_kind)
+
         _delivered_at = d.pop("delivered_at", UNSET)
         delivered_at: datetime.datetime | Unset
         if isinstance(_delivered_at, Unset):
@@ -127,6 +144,7 @@ class FinancialBudgetAlert:
             state=state,
             attempts=attempts,
             next_attempt_at=next_attempt_at,
+            kind=kind,
             delivered_at=delivered_at,
             last_error=last_error,
         )

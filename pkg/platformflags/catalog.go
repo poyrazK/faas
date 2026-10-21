@@ -38,6 +38,7 @@ const (
 	ChangeTimeline       = "change_timeline"
 	AnomalyAlerts        = "anomaly_alerts"
 	TriggerBatchDelivery = "trigger_batch_delivery"
+	StrictBudgets        = "strict_budgets"
 )
 
 // Spec declares one platform flag. Adding a flag is a code change: the
@@ -123,6 +124,13 @@ var catalog = []Spec{
 		ADR:         "ADR-1321",
 		Consumers:   []string{"apid"},
 		LegacyEnv:   []string{"FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED"},
+	},
+	{
+		Key:         StrictBudgets,
+		Label:       "Strict budgets",
+		Description: "Release strict (suspend_workloads) compute and egress budgets to accounts. Off by default until native acceptance passes. Strict budgets that are already enabled keep enforcing and stay editable while it is off; only creating or enabling one is refused.",
+		ADR:         "ADR-1750",
+		Consumers:   []string{"apid"},
 	},
 }
 

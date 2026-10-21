@@ -7920,7 +7920,14 @@ SELECT (SELECT values_json FROM deployment_release_secret_snapshots WHERE deploy
         FROM project_environment_config_versions c
         WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
-        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
+        ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config,
+    owner.project_id,
+    -- ADR-1139: the project environment secrets the deployment inherits.
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('key',p.key,'ciphertext',encode(p.ciphertext,'base64'),'kid',p.kid,
+        'value_hash',p.value_hash,'secret_version',p.secret_version,'created_at',p.created_at,'updated_at',p.updated_at) ORDER BY p.key)
+        FROM project_environment_secrets p
+        WHERE owner.project_id IS NOT NULL AND p.account_id=owner.account_id AND p.project_id=owner.project_id
+            AND p.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END),'[]'::jsonb)::jsonb AS project_secrets
 FROM owner;
 
 -- name: LockRuntimeConfigWorkloadSpec :many
@@ -10203,7 +10210,7 @@ SELECT r.receipt::jsonb AS receipt,coalesce(i.state IN ('running','snapshotting'
  AND r.receipt->'binding'->>'node_id'=i.node_id::text
  AND r.receipt->'binding'->>'incarnation'=n.vmmd_incarnation::text
  AND (r.receipt->'binding'->>'protocol_version')::integer<=n.vmmd_admission_protocol
- AND r.receipt->'binding'->>'captured_input_hash'=a.native_input_hash
+ AND r.receipt->'binding'->>'captured_input_hash'=application_standard_native_input_hash(a.input_snapshot,i.node_id)
  AND r.receipt->>'netns'=i.netns AND r.receipt->>'host_ip'=host(i.host_ip)
  AND r.receipt->>'lease_uid'=i.guest_uid::text AND r.receipt->>'paused'='false'
  AND (i.application_standard_promotion_token IS NULL OR p.parent_token=b.token),false)::boolean AS valid
@@ -10211,7 +10218,7 @@ FROM instances i JOIN instance_application_standard_admissions a ON a.instance_i
 JOIN instance_application_standard_boots b ON b.token=i.application_standard_boot_token AND b.instance_id=i.id
 LEFT JOIN instance_application_standard_promotions p ON p.token=i.application_standard_promotion_token AND p.instance_id=i.id
 JOIN compute_nodes n ON n.id=i.node_id
-CROSS JOIN LATERAL (SELECT CASE WHEN i.application_standard_promotion_token IS NULL THEN b.receipt ELSE p.receipt END AS receipt) r
+CROSS JOIN LATERAL (SELECT coalesce(function_migration_runtime_receipt(i.id,i.node_id,i.wake_id),CASE WHEN i.application_standard_promotion_token IS NULL THEN b.receipt ELSE p.receipt END) AS receipt) r
 WHERE i.id=sqlc.arg(instance_id)::uuid;
 
 -- Private diagnostic: current parent/control/artifact fences are nonwaiting.
@@ -16955,6 +16962,9 @@ SELECT t.* FROM job_tasks t JOIN customer_operations o ON o.job_run_id=t.run_id
  JOIN job_runs r ON r.id=t.run_id JOIN jobs j ON j.id=r.job_id
  WHERE t.task_index=0 AND t.status='queued' AND o.state='accepted' AND j.status='active'
  AND r.image_storage_key_snapshot IS NOT NULL
+ -- ADR-20261018210500: an Operation held by a per-customer concurrency
+ -- policy waits until apid's releaser removes its queue row.
+ AND NOT EXISTS (SELECT 1 FROM customer_operation_queue q WHERE q.operation_id=o.id)
  ORDER BY t.created_at LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: CustomerOperationJobHasOrdinaryActiveTasks :one

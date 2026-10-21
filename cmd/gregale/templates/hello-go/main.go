@@ -1,7 +1,7 @@
 // hello-gregale: minimal stdlib HTTP handler for gregale.
 //
-// Listens on :8080 (the port guest-init forwards to). No external deps
-// so the build is fast and the binary is tiny.
+// Listens on $PORT, which Gregale sets for every app (8080 when run
+// locally). No external deps so the build is fast and the binary is tiny.
 package main
 
 import (
@@ -19,10 +19,10 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	// Use http.Server with explicit timeouts so a slowloris-style
-	// client can't pin the guest's idle timeout. 60s is well above
-	// guest-init's max request budget and matches the platform's
-	// normal tail behaviour.
+	// Use http.Server with explicit timeouts so a slow client that
+	// trickles its request can't keep the app from going idle. 60s
+	// leaves room for slow handlers while still closing stuck
+	// connections.
 	srv := &http.Server{
 		Addr:              ":" + port,
 		Handler:           mux,
