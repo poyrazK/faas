@@ -703,3 +703,32 @@ stands; this amendment fixes the details and changes one rule.
   (ADR-20261020105000).
 - **Still not in this step:** raising the difficulty under attack, and an
   alternative for clients without JavaScript.
+
+### Amendment 7 follow-up (2026-10-21): challenge outcomes as security events
+
+An enforced challenge rule's plain matches said only that a request
+matched, not what the gateway did with it. Its outcomes are now ADR-964
+security events, the way amendment 5 made WAF detections events. For
+enforced rules this supersedes the **Events** bullet of the visibility
+follow-up above:
+
+- **Outcomes.** `challenged` (the page served to a browser navigation),
+  `rejected` (a request that is not a navigation, answered 403
+  `challenge_required`), `solved` (a solution that earned a pass) and
+  `failed` (a solution answered 403: a forged, foreign or unreadable token,
+  or work short of the difficulty). `solved` and `failed` events carry the
+  rule named in the token once it opens, else the host's rule.
+- **Not events.** A pass presented and a verified credential bypassed stay
+  metric-only (`passed`, `bypassed`): every returning visitor would produce
+  one. An expired token is not a failure; the browser is sent back for a
+  fresh challenge, which records its own `challenged` event.
+- **Matches.** An enforced challenge rule's matches are still counted
+  (ADR-960) but no longer sampled as `matched` events, which the outcomes
+  replace. A log-mode rule never acts, so its matches stay `logged` events:
+  the dry run shows who would have been challenged.
+- **Budget.** Outcome events draw on the per-rule budget WAF detections
+  use, 10 per rule per minute per gateway, separate from match sampling.
+- **Storage.** `edge_rule_events_outcome_check` gains the four outcomes in
+  an online replacement that keeps its name (added NOT VALID under a
+  temporary name, validated, swapped). The read API, `gregale edge-rules
+  events --outcome` and the dashboard filter accept them.

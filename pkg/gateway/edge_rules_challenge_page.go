@@ -3,8 +3,10 @@ package gateway
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"html/template"
+	"html"
+	"io"
 	"net/http"
+	"strconv"
 )
 
 // challengeSolverJS finds a decimal counter for which
@@ -74,24 +76,60 @@ if (typeof document !== "undefined") {
 }
 `
 
-// challengePage keeps the solver in the template source, which html/template
-// trusts, so no request data is ever marked as safe script.
-var challengePage = template.Must(template.New("challenge").Parse(`<!doctype html>
+// challengePageParts is the page around its values, every one of them a
+// double-quoted attribute value, where escaping &, <, >, " and ' is
+// complete. The solver script and the style are constants, so no request
+// data can become script.
+//
+// Not html/template: executing a template reaches text/template's reflective
+// field lookup (reflect.Value.MethodByName), which makes the linker keep
+// every exported method of every type converted to an interface. That put
+// all 4,169 *state.PgStore methods into gatewayd-internal, so any store
+// change rebuilt the edge lane (docs/adr/20261020160744-daemon-blast-radius.md,
+// finding 7; scripts/ci/daemon_deps.json keeps templates out of daemons).
+var challengePageParts = [...]string{
+	`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>Checking your browser</title>
-<style nonce="{{.Nonce}}">body{font:16px/1.5 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;color:#1f2328;background:#fff}
+<style nonce="`, // nonce
+	`">body{font:16px/1.5 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;color:#1f2328;background:#fff}
 main{max-width:28rem;padding:1.5rem;text-align:center}@media (prefers-color-scheme:dark){body{color:#e6edf3;background:#0d1117}}</style>
 </head><body><main>
 <h1>Checking your browser</h1>
 <p>This site asks your browser to do a short calculation before loading. It takes a moment and happens once.</p>
 <noscript><p>Turn on JavaScript to continue to this site.</p></noscript>
-<form id="gregale-challenge" method="post" action="{{.Action}}" data-token="{{.Token}}" data-difficulty="{{.Difficulty}}">
-<input type="hidden" name="token" value="{{.Token}}"><input type="hidden" name="counter" value="">
-<input type="hidden" name="return" value="{{.Return}}"></form>
-</main><script nonce="{{.Nonce}}">` + challengeSolverJS + `</script></body></html>
-`))
+<form id="gregale-challenge" method="post" action="`, // action
+	`" data-token="`,      // token
+	`" data-difficulty="`, // difficulty
+	`">
+<input type="hidden" name="token" value="`, // token
+	`"><input type="hidden" name="counter" value="">
+<input type="hidden" name="return" value="`, // return
+	`"></form>
+</main><script nonce="`, // nonce
+	`">` + challengeSolverJS + `</script></body></html>
+`,
+}
+
+// renderChallengePage writes the page for d.
+func renderChallengePage(w io.Writer, d challengePageData) error {
+	p := challengePageParts
+	values := [...]string{d.Nonce, d.Action, d.Token, strconv.Itoa(d.Difficulty), d.Token, d.Return, d.Nonce}
+	n := len(p[len(p)-1])
+	for i, v := range values {
+		n += len(p[i]) + len(v)
+	}
+	b := make([]byte, 0, n+64)
+	for i, v := range values {
+		b = append(b, p[i]...)
+		b = append(b, html.EscapeString(v)...)
+	}
+	b = append(b, p[len(p)-1]...)
+	_, err := w.Write(b)
+	return err
+}
 
 type challengePageData struct {
 	Nonce, Action, Token, Return string
@@ -116,7 +154,7 @@ func writeChallengePage(w http.ResponseWriter, r *http.Request, token string, di
 	if r.Method == http.MethodHead {
 		return
 	}
-	_ = challengePage.Execute(w, challengePageData{
+	_ = renderChallengePage(w, challengePageData{
 		Nonce: nonce, Action: ChallengeSolvePath, Token: token, Difficulty: difficulty,
 		Return: safeReturnPath(r.URL.RequestURI()),
 	})

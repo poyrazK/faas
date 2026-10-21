@@ -176,8 +176,23 @@ def report(base_ref, head_ref, root=".", config_path=au.DEFAULT_CONFIG, measure=
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def rows(rep, names):
+    """Table rows for names, in report order: changed code first."""
+    order = {"added": 0, "removed": 0, "changed": 0, "lines": 1, "same": 2, None: 3}
+    out = ["| binary | lane | code | first changed inputs |", "| --- | --- | --- | --- |"]
+    for name in sorted(names, key=lambda n: (order[rep["binaries"][n]["code"]], n)):
+        b = rep["binaries"][name]
+        more = f" (+{b['reason_count'] - len(b['reasons'])} more)" if b["reason_count"] > len(b["reasons"]) else ""
+        reasons = ", ".join(f"`{r}`" for r in b["reasons"]) + more
+        out.append(f"| {name} | {b['lane']} | {b['code'] or 'not built'} | {reasons} |")
+    return out
+
+
 def markdown(rep):
-    """The pull-request comment / job summary for a report."""
+    """The pull-request comment / job summary for a report. The binaries
+    whose code changes come first; the rest of the closure, rebuilt with
+    the same code, is folded away: a table of every closure binary made
+    most changes look like they touch a dozen daemons."""
     total = len(rep["binaries"])
     lines = [MARKER, "## Release binaries this change rebuilds", ""]
     span = f"`{rep['merge_base'][:12]}..{rep['head'][:12]}`, {rep['changed_paths']} changed paths"
@@ -186,26 +201,27 @@ def markdown(rep):
         return "\n".join(lines) + "\n"
     shipped = f"the per-unit release ships **{len(rep['closure'])} of {total}** (import closure)"
     if rep["code"] is None:
-        lines += [f"{span}: {shipped}; code was not measured.", ""]
+        lines += [f"{span}: {shipped}; code was not measured.", ""] + rows(rep, rep["closure"])
     else:
-        only_lines = f" ({len(rep['lines'])} more differ only in line tables)" if rep["lines"] else ""
-        lines += [f"{span}: the code of **{len(rep['code'])} of {total}** release binaries changes{only_lines}; "
-                  f"{shipped}.", ""]
-    lines += ["| binary | lane | code | first changed inputs |", "| --- | --- | --- | --- |"]
-    order = {"added": 0, "removed": 0, "changed": 0, "lines": 1, "same": 2, None: 3}
-    for name, b in sorted(rep["binaries"].items(), key=lambda kv: (order[kv[1]["code"]], kv[0])):
-        if not b["closure"]:
-            continue
-        more = f" (+{b['reason_count'] - len(b['reasons'])} more)" if b["reason_count"] > len(b["reasons"]) else ""
-        reasons = ", ".join(f"`{r}`" for r in b["reasons"]) + more
-        lines.append(f"| {name} | {b['lane']} | {b['code'] or 'not built'} | {reasons} |")
+        changed = [n for n in rep["closure"] if n in set(rep["code"])]
+        if changed:
+            lines += [f"{span}: the code of **{len(changed)} of {total}** release binaries changes: "
+                      f"{', '.join(changed)}.", ""] + rows(rep, changed)
+        else:
+            lines += [f"{span}: no release binary's code changes."]
+        same = [n for n in rep["closure"] if n not in set(changed)]
+        if same:
+            only_lines = sum(1 for n in same if rep["binaries"][n]["code"] == "lines")
+            moved = f", {only_lines} with moved line numbers only" if only_lines else ""
+            lines += ["", f"<details><summary>{len(same)} more rebuilt with the same code{moved}: "
+                      "a unit release does not restart them</summary>", ""] + rows(rep, same) + ["", "</details>"]
     lines += ["", "Code is the binary's bytes built with the release flags, one version stamp and an empty Go "
               "build ID (the build ID hashes every linked package, so it changes with the closure). `lines`: "
               f"only `{LINE_TABLE}` (and the addresses after it) differs, so the binary runs the same code "
-              "and only stack-trace line numbers move. Binaries outside the table have the same inputs at both commits. A per-unit release "
-              "restarts a control-plane or edge daemon only on a host that runs other code than the release's "
-              "(`scripts/ci/affected_units.py --code`, ADR-1650 \"Selection by code\"), so `same` and `lines` "
-              "binaries do not restart; a full release restarts every binary."]
+              "and only stack-trace line numbers move. Binaries outside the tables have the same inputs at both "
+              "commits. A per-unit release restarts a control-plane or edge daemon only on a host that runs other "
+              "code than the release's (`scripts/ci/affected_units.py --code`, ADR-1650 \"Selection by code\"); "
+              "`shared` and `compute` binaries wait for a full release, which restarts every binary."]
     return "\n".join(lines) + "\n"
 
 

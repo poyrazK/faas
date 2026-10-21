@@ -108,6 +108,12 @@ def sample_report(code):
     return br.assemble(base, base, "m" * 40, ["pkg/api/api.go"], closure, code, lanes)
 
 
+def table_names(md):
+    """The binary column of the table rows in md."""
+    return [line.split(" | ")[0][2:] for line in md.splitlines()
+            if line.startswith("| ") and "---" not in line and not line.startswith("| binary |")]
+
+
 class ReportTest(unittest.TestCase):
     def test_assemble(self):
         rep = sample_report({"apid": "changed", "meterd": "lines"})
@@ -126,21 +132,29 @@ class ReportTest(unittest.TestCase):
         self.assertIsNone(rep["lines"])
         self.assertIsNone(rep["binaries"]["apid"]["code"])
 
-    def test_markdown_lists_closure_binaries_changed_first(self):
+    def test_markdown_shows_changed_code_and_folds_the_rest(self):
         md = br.markdown(sample_report({"apid": "same", "meterd": "changed"}))
         self.assertTrue(md.startswith(br.MARKER + "\n"))
-        self.assertIn("the code of **1 of 3** release binaries changes;", md)
-        self.assertIn("ships **2 of 3**", md)
-        rows = [line for line in md.splitlines() if line.startswith("| ") and "---" not in line][1:]
-        self.assertEqual([r.split(" | ")[0] for r in rows], ["| meterd", "| apid"])
-        self.assertIn("(+1 more)", rows[0])
+        self.assertIn("the code of **1 of 3** release binaries changes: meterd.", md)
+        head, folded = md.split("<details>")
+        self.assertEqual(table_names(head), ["meterd"])
+        self.assertIn("(+1 more)", head)
+        self.assertIn("<summary>1 more rebuilt with the same code: a unit release does not restart them</summary>",
+                      folded)
+        self.assertEqual(table_names(folded), ["apid"])
         self.assertNotIn("vmmd", md)
 
     def test_markdown_counts_line_table_only_binaries(self):
         md = br.markdown(sample_report({"apid": "lines", "meterd": "changed"}))
-        self.assertIn("changes (1 more differ only in line tables);", md)
-        rows = [line for line in md.splitlines() if line.startswith("| ") and "---" not in line][1:]
-        self.assertEqual([r.split(" | ")[2] for r in rows], ["changed", "lines"])
+        self.assertIn("1 more rebuilt with the same code, 1 with moved line numbers only:", md)
+        self.assertEqual(table_names(md.split("<details>")[1]), ["apid"])
+
+    def test_markdown_when_no_code_changes(self):
+        md = br.markdown(sample_report({"apid": "same", "meterd": "lines"}))
+        self.assertIn("no release binary's code changes.", md)
+        head, folded = md.split("<details>")
+        self.assertEqual(table_names(head), [])
+        self.assertEqual(table_names(folded), ["meterd", "apid"])
 
     def test_markdown_without_changes(self):
         rep = sample_report({})
@@ -148,7 +162,10 @@ class ReportTest(unittest.TestCase):
         self.assertIn("no release binary's inputs changed", br.markdown(rep))
 
     def test_markdown_without_builds(self):
-        self.assertIn("code was not measured", br.markdown(sample_report(None)))
+        md = br.markdown(sample_report(None))
+        self.assertIn("code was not measured", md)
+        self.assertNotIn("<details>", md)
+        self.assertEqual(table_names(md), ["apid", "meterd"])
 
 
 class RepositoryContractTest(unittest.TestCase):

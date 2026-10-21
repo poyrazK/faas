@@ -71,6 +71,18 @@ Six findings explain the table.
    migration file of #5052 is in meterd's and imaged's binaries, so both
    ran changed bytes for a query neither runs.
 
+7. **Daemon code reached the same lookup through templates of its own**
+   (added 2026-10-21). With `grpcnotrace`, gatewayd-internal still linked
+   all 4,169 `*PgStore` methods: `pkg/gateway` rendered its challenge page
+   with `html/template`, whose `Execute` reaches `text/template`'s
+   `evalField` and `MethodByName`. apid does the same through
+   `pkg/dashboard.Render`. A one-line store fix therefore rewrote
+   gatewayd-internal and redeployed the edge lane, canary and followers.
+   Without that `Execute`, gatewayd-internal links 213 `*PgStore` methods
+   and its unstripped binary shrinks from 162 MB to 76 MB. No other daemon
+   reaches it: `-ldflags=-dumpdep` on the 16 lane and main compute daemons,
+   and no other daemon imports a template package of its own.
+
 What stays: a line inserted above a function shifts the line numbers that
 every binary linking later functions of the same file carries in
 `.gopclntab`. Those binaries run the same code; the report lists them as
@@ -94,7 +106,11 @@ the 70,000-line generated `queries.sql.go`, above queries vmmd runs.
    under its old names. `scripts/ci/daemon_deps.json` lists the packages a
    release binary must not link (`make daemon-deps-check`, ci-light), with
    `golang.org/x/net/trace` forbidden in every daemon so finding 4 cannot
-   return through a new import.
+   return through a new import. Since finding 7, `html/template` and
+   `text/template` are forbidden in every daemon but apid, whose dashboard
+   uses them; libraries that only parse a template (goose) or serve a debug
+   page no daemon mounts (`net/rpc`) may import them. Daemon pages escape
+   their values with `html.EscapeString`.
 3. **No blanket narrowing of `pkg/state` per daemon.** Finding 5 measured it
    at zero effect. The test-store rules in CLAUDE.md stand; new code may
    still take a small interface where that makes a fake easier.
