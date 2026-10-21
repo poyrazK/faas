@@ -79400,6 +79400,45 @@ components:
         version: { type: integer, enum: [1] }
         report_id: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
         hours: { type: array, maxItems: 48, items: { $ref: '#/components/schemas/DataAPIUsageHour' } }
+        access: { $ref: '#/components/schemas/DataAPIAccessConfig' }
+    DataAPIAccessConfig:
+      description: Access settings the runtime reports for live reads without a user token, sent after start and hourly. It replaces the stored settings; turning usage reporting off forgets them. Holds key hashes, never keys.
+      type: object
+      additionalProperties: false
+      required: [version, schemas]
+      properties:
+        version: { type: integer, enum: [1] }
+        schemas: { type: array, minItems: 1, maxItems: 8, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$' } }
+        auth: { $ref: '#/components/schemas/DataAPIUserAuth' }
+        public_read: { type: array, maxItems: 64, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}\.[A-Za-z_][A-Za-z0-9_]{0,62}$' } }
+        server_keys: { type: array, maxItems: 2, items: { $ref: '#/components/schemas/DataAPIServerKey' } }
+    DataAPIUserAuth:
+      description: The issuer, JWKS URL and audience the Data API verifies user tokens against. Live reads verify user tokens with the same settings.
+      type: object
+      additionalProperties: false
+      required: [issuer, jwks_url, audience]
+      properties:
+        issuer: { type: string, format: uri, maxLength: 2048 }
+        jwks_url: { type: string, format: uri, maxLength: 2048 }
+        audience: { type: string, minLength: 1, maxLength: 256 }
+    DataAPIServerKey:
+      description: One server-key rotation slot as the runtime reports it, the SHA-256 of the key and any permissions.
+      type: object
+      additionalProperties: false
+      required: [slot, sha256]
+      properties:
+        slot: { type: string, enum: [a, b] }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        permissions: { $ref: '#/components/schemas/DataAPIServerKeyPermissionSet' }
+    DataAPIServerKeyPermissionSet:
+      description: Narrows a server key. Absent fields keep full access; live reads use relations and subjects.
+      type: object
+      additionalProperties: false
+      properties:
+        access: { type: string, enum: [read, write] }
+        relations: { type: array, maxItems: 64, items: { type: string } }
+        rpcs: { type: array, maxItems: 64, items: { type: string } }
+        subjects: { type: boolean }
     DataAPIUsageMonthToDate:
       description: Admitted requests in the current UTC calendar month, all and anonymous, which owner caps compare against.
       type: object
@@ -85650,7 +85689,7 @@ components:
     EdgeProtectionResponse:
       description: Edge rejection counts for one app over a range.
       type: object
-      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf]
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge]
       properties:
         app_id: { type: string }
         range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
@@ -85678,7 +85717,7 @@ components:
             type: object
             required: [gate, status, count]
             properties:
-              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf] }
+              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge] }
               status: { type: string, enum: ['401', '403', '413', '429', '503', other] }
               count: { type: integer, format: int64, minimum: 0 }
         waf:
@@ -85711,6 +85750,17 @@ components:
                 properties:
                   name: { type: string, description: CRS rule ID. }
                   count: { type: integer, format: int64, minimum: 0 }
+        challenge:
+          type: object
+          description: kind=challenge decisions (ADR-831 amendment 7); its 403s also appear in rejections under gate challenge.
+          required: [issued, solved, rejected, passed, bypassed, invalid]
+          properties:
+            issued: { type: integer, format: int64, minimum: 0, description: "Challenge pages served to browser navigations." }
+            solved: { type: integer, format: int64, minimum: 0, description: "Passes earned by solving the proof of work." }
+            rejected: { type: integer, format: int64, minimum: 0, description: "Non-navigation requests answered 403 challenge_required." }
+            passed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a pass from an earlier solve." }
+            bypassed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a verified API key, consumer key or JWT." }
+            invalid: { type: integer, format: int64, minimum: 0, description: "Solutions refused: wrong work or an expired token." }
 
     PreAuthEnforcementSuggestion:
       description: |
@@ -104129,6 +104179,19 @@ components:
         params:
           type: object
           description: Recipe parameters to add it with; required parameters not listed must be supplied.
+          additionalProperties: { type: string }
+        alternative: { $ref: '#/components/schemas/EdgeRuleRecipeSuggestionAlternative' }
+
+    EdgeRuleRecipeSuggestionAlternative:
+      description: A softer recipe for the same observation, such as challenging browsers instead of rate-limiting (ADR-831 amendment 7).
+      type: object
+      required: [recipe, title]
+      properties:
+        recipe: { type: string, description: Recipe id of the alternative (ADR-986). }
+        title: { type: string, description: The alternative recipe's title. }
+        params:
+          type: object
+          description: Parameters to add the alternative with.
           additionalProperties: { type: string }
 
     EdgeRuleSetVersionResponse:

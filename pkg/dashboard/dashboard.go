@@ -3846,6 +3846,9 @@ type EdgeRuleSuggestionView struct {
 	Hidden  []EdgeRuleSuggestionField
 	Inputs  []EdgeRuleRecipeParamView
 	Blocked string
+	// Alternative is a softer recipe for the same observation, such as a
+	// challenge instead of a rate limit (ADR-831 amendment 7).
+	Alternative *EdgeRuleSuggestionView
 }
 
 // EdgeRuleSuggestionField is one pre-filled recipe parameter.

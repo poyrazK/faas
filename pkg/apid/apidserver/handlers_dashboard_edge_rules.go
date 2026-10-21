@@ -641,6 +641,9 @@ func dashboardEdgeRuleRecipes(rules []state.EdgeRule, plan api.Plan) []dashboard
 		if recipe.Kind == string(state.EdgeRuleKindIP) && !limits.EdgeRulesIPAllowed {
 			view.Blocked = "Available on the Hobby plan and above, which include IP edge rules."
 		}
+		if recipe.Kind == string(state.EdgeRuleKindChallenge) && limits.EdgeRulesChallengePerApp == 0 {
+			view.Blocked = "Available on the Hobby plan and above, which include challenge rules."
+		}
 		out = append(out, view)
 	}
 	return out
@@ -746,16 +749,26 @@ func (s *server) dashboardEdgeRuleSuggestions(ctx context.Context, log *slog.Log
 	}
 	out := make([]dashboard.EdgeRuleSuggestionView, 0, len(suggestions.Suggestions))
 	for _, sg := range suggestions.Suggestions {
-		recipe := byID[sg.Recipe]
-		view := dashboard.EdgeRuleSuggestionView{Recipe: sg.Recipe, Title: sg.Title, Reason: sg.Reason, Blocked: recipe.Blocked}
-		for _, p := range recipe.Params {
-			if v, ok := sg.Params[p.Name]; ok {
-				view.Hidden = append(view.Hidden, dashboard.EdgeRuleSuggestionField{Name: p.Name, Value: v})
-			} else if p.Required {
-				view.Inputs = append(view.Inputs, p)
-			}
+		view := dashboardSuggestionView(byID[sg.Recipe], sg.Title, sg.Reason, sg.Params)
+		if alt := sg.Alternative; alt != nil {
+			altView := dashboardSuggestionView(byID[alt.Recipe], alt.Title, "", alt.Params)
+			view.Alternative = &altView
 		}
 		out = append(out, view)
 	}
 	return out
+}
+
+// dashboardSuggestionView is one recipe form: suggested parameters ride as
+// hidden fields, required ones the suggestion cannot fill become inputs.
+func dashboardSuggestionView(recipe dashboard.EdgeRuleRecipeView, title, reason string, params map[string]string) dashboard.EdgeRuleSuggestionView {
+	view := dashboard.EdgeRuleSuggestionView{Recipe: recipe.ID, Title: title, Reason: reason, Blocked: recipe.Blocked}
+	for _, p := range recipe.Params {
+		if v, ok := params[p.Name]; ok {
+			view.Hidden = append(view.Hidden, dashboard.EdgeRuleSuggestionField{Name: p.Name, Value: v})
+		} else if p.Required {
+			view.Inputs = append(view.Inputs, p)
+		}
+	}
+	return view
 }

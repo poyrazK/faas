@@ -622,6 +622,7 @@ var dtoExclude = map[string]bool{
 	"EdgeRuleEventsQuery": true,
 	// Edge-protection summary parts are inline objects of
 	// EdgeProtectionResponse in the spec, not named schemas.
+	"EdgeProtectionChallenge": true,
 	"EdgeProtectionCount":     true,
 	"EdgeProtectionPreAuth":   true,
 	"EdgeProtectionRejection": true,
@@ -1454,6 +1455,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_runtime_connections.go"), // ADR-1730 private runtime reporting.
 		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"),   // ADR-650 read-only shared database planning DTOs.
 		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
+		filepath.Join(root, "pkg", "api", "data_api_access.go"),              // ADR-20261016151947 access settings for live reads without a token.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "compose_process.go"), // ADR-1337 Compose process overrides for prebuilt images.
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),

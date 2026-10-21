@@ -5136,6 +5136,15 @@ var cliCommands = []cliCommand{
 				{Name: "since", Value: "DURATION", Short: "lookback such as 24h, 7d or 30d (default 7d, max 90d)"},
 				{Name: "granularity", Value: "hour|day", Short: "bucket size (hour covers at most 48h)", ClosedSet: []string{"hour", "day"}},
 			}, Examples: []string{"gregale data-api usage shop-data --since 30d"}},
+			{Name: "live", Short: "Live reads: results that stay current over a realtime connection", Subcommands: []cliSub{
+				{Name: "enable", Short: "Enable live queries on the database, usage reporting and a live-only realtime endpoint", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope of the Data API's database binding"},
+					{Name: "no-restart", Short: "store settings without a fresh restart"},
+				}, Examples: []string{"gregale data-api live enable shop-data"}},
+				{Name: "status", Short: "Show what live reads need and the WebSocket URL", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "scope", Value: "SCOPE", Short: "environment scope of the Data API's database binding"},
+				}},
+			}},
 			{Name: "server-key", Short: "Manage server keys for trusted backends (RLS still applies)", Subcommands: []cliSub{
 				{Name: "create", Short: "Generate a key, store its hash in a free slot and show the key once", Positionals: []string{"<name>"}, Flags: []cliFlag{
 					{Name: "read-only", Short: "allow only GET and HEAD; RPCs need --rpcs"},

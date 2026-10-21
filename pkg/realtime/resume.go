@@ -194,6 +194,10 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 			m.handleLive(ctx, c, data, subscription)
 			continue
 		}
+		if c.liveOnly {
+			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "live_only_connection"})
+			continue
+		}
 		var frame resumeClientFrame
 		if err := json.Unmarshal(data, &frame); err != nil {
 			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "invalid_frame"})
