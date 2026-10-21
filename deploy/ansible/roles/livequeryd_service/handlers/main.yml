@@ -1,0 +1,18 @@
+---
+- name: livequeryd_service — daemon-reload
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen:
+    - restart faas-livequeryd
+    - restart faas-apid for live queries
+
+- name: livequeryd_service — try-restart faas-livequeryd
+  ansible.builtin.command: systemctl try-restart faas-livequeryd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-livequeryd
+  when: faas_livequeryd_enabled | bool
+
+- name: livequeryd_service — try-restart faas-apid
+  ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-apid for live queries

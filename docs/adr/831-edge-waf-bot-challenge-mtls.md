@@ -622,3 +622,113 @@ Proposed, for the product owner to decide (only finding 2 is built):
 8. On that node, also try a CPUWeight for gatewayd-internal above the
    tenant slice, in a slice of its own so builder VMs keep their place
    below tenants.
+
+## Amendment 7: `kind=challenge` as built (2026-10-15)
+
+Built as a preview at the product owner's request, ahead of the sequencing
+gate above (step 2 was to wait for `waf` beta). Section 2's mechanism
+stands; this amendment fixes the details and changes one rule.
+
+- **Action.** `difficulty` is the number of leading zero bits the browser
+  must find in a SHA-256 hash: 10 to 22, default 16 (about 65,000 hashes,
+  tens to a few hundred milliseconds in a browser). `pass_ttl_seconds` is
+  how long a solved challenge lasts: 300 to 86,400, default 3,600. Both
+  bounds live in `pkg/api/limits.go`.
+- **Dry run.** A rule in log mode (ADR-960) records every request it would
+  challenge and acts on none. There is no separate observe mode.
+- **Placement.** After `require_authn` and `public_auth`, before `respond`
+  and before any wake or admission. A request with a verified API key,
+  consumer key or JWT subject bypasses the challenge. Unverified
+  credentials do not: a bot could otherwise send a junk `Authorization`
+  header to skip it.
+- **No Accept bypass (changes section 2).** Section 2 let non-HTML `Accept`
+  headers bypass the challenge. Any client can send `Accept:
+  application/json` and still receive the page, so that bypass would void
+  the protection. Instead a matched request without a valid pass gets:
+  - for a navigation (GET or HEAD, with `Sec-Fetch-Mode: navigate` or an
+    `Accept` naming `text/html`), a 403 HTML page that does the work;
+  - for anything else, a 403 problem with code `challenge_required`.
+  API clients are kept out by verified identity and by the rule's scope
+  (host, path, methods and ADR-973 conditions), not by a header they
+  choose.
+- **Work.** The page carries a signed challenge token: app, random nonce,
+  difficulty, pass lifetime and a five-minute expiry. The browser finds a
+  counter for which `SHA-256(token + ":" + counter)` starts with
+  `difficulty` zero bits, then posts the token, the counter and the page's
+  path to `/.well-known/gregale-challenge` on the same host. The gateway
+  checks the signature, expiry, binding, work and return path (a relative
+  path on the same host), sets the pass and redirects back with 303. The
+  endpoint acts only on hosts with a challenge rule; elsewhere the path
+  belongs to the app. Without JavaScript the page says JavaScript is
+  required.
+- **Pass.** A cookie `gregale_challenge` (HttpOnly, Secure, SameSite=Lax,
+  path `/`, host-only) holding the app and expiry, signed with HMAC-SHA256
+  over those and the client's address prefix (/24 for IPv4, /48 for IPv6)
+  and a hash of its User-Agent. One pass covers every challenge rule of
+  the app on that host. The key is derived from the session key every
+  gateway already shares (`FAAS_SESSION_KEY`); rotating it ends all
+  passes.
+- **Cost and state.** Checking a pass is one HMAC; checking a solution is
+  one HMAC and one SHA-256. The gateway keeps no state. A token can be
+  reused within its five minutes from the same address prefix and
+  User-Agent, which only earns that client another pass.
+- **Signals.** `gateway_edge_challenge_total{app,outcome}` with outcomes
+  `passed`, `bypassed`, `issued`, `rejected`, `solved` and `invalid`. Both
+  403 responses also count in `gateway_edge_rejections_total{kind="challenge"}`.
+- **Plan gating.** Hobby and above, as section 2 proposed:
+  `EdgeRulesChallengePerApp` is Free 0, Hobby 3, Pro 10, Scale 25.
+- **Suggested rule.** Match the browser routes with `verified_bot missing`
+  (ADR-973), so real search crawlers are never challenged.
+- **Not in this step.** Security events (ADR-964) for challenge outcomes, a
+  challenge section in the edge-protection summary, raising the difficulty
+  under attack, and an alternative for clients without JavaScript.
+
+### Amendment 7 follow-up (2026-10-21): visibility and adoption
+
+- **Summary.** The edge-protection summary (`GET .../edge-protection`,
+  dashboard, `gregale edge-rules summary`) gains a `challenge` section from
+  `gateway_edge_challenge_total`: pages issued, solved, non-browser requests
+  rejected, requests passed on an earlier solve, verified clients bypassed,
+  and invalid or expired solutions. `challenge` joins the rejection gates.
+- **Events.** Matches of challenge rules already record hit counts and
+  sampled security events (ADR-960/964) through the shared match path, in
+  both modes; outcomes beyond the match live in the summary.
+- **Simulator.** The edge-rule trace evaluates `challenge` after `validate`
+  and before `respond`, as the gateway does: a browser navigation shows the
+  challenge page, anything else 403 `challenge_required`, both marked
+  incomplete because a pass or verified credential is not collected. The
+  navigation test is shared (`api.EdgeChallengeNavigation`).
+- **Adoption.** Protection recipe `challenge-path` (ADR-986) and a
+  challenge alternative on sign-in and `/admin` suggestions
+  (ADR-20261020105000).
+- **Still not in this step:** raising the difficulty under attack, and an
+  alternative for clients without JavaScript.
+
+### Amendment 7 follow-up (2026-10-21): challenge outcomes as security events
+
+An enforced challenge rule's plain matches said only that a request
+matched, not what the gateway did with it. Its outcomes are now ADR-964
+security events, the way amendment 5 made WAF detections events. For
+enforced rules this supersedes the **Events** bullet of the visibility
+follow-up above:
+
+- **Outcomes.** `challenged` (the page served to a browser navigation),
+  `rejected` (a request that is not a navigation, answered 403
+  `challenge_required`), `solved` (a solution that earned a pass) and
+  `failed` (a solution answered 403: a forged, foreign or unreadable token,
+  or work short of the difficulty). `solved` and `failed` events carry the
+  rule named in the token once it opens, else the host's rule.
+- **Not events.** A pass presented and a verified credential bypassed stay
+  metric-only (`passed`, `bypassed`): every returning visitor would produce
+  one. An expired token is not a failure; the browser is sent back for a
+  fresh challenge, which records its own `challenged` event.
+- **Matches.** An enforced challenge rule's matches are still counted
+  (ADR-960) but no longer sampled as `matched` events, which the outcomes
+  replace. A log-mode rule never acts, so its matches stay `logged` events:
+  the dry run shows who would have been challenged.
+- **Budget.** Outcome events draw on the per-rule budget WAF detections
+  use, 10 per rule per minute per gateway, separate from match sampling.
+- **Storage.** `edge_rule_events_outcome_check` gains the four outcomes in
+  an online replacement that keeps its name (added NOT VALID under a
+  temporary name, validated, swapped). The read API, `gregale edge-rules
+  events --outcome` and the dashboard filter accept them.

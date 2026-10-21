@@ -25,10 +25,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/leaser"
 )
 
-// migrationLeaser wraps *migrationTracker as sched.Leaser[any].
+// migrationLeaser wraps *migrationTracker as leaser.Leaser[any].
 // Per-instance state lives in the tracker; the Leaser methods
 // map Acquire → tracker.put, Lookup → tracker.get, Release →
 // tracker.delete. Renew is a no-op for the in-memory tracker
@@ -42,7 +42,7 @@ type migrationLeaser struct {
 // NewMigrationLeaser returns the hot-cache lease adapter. Production vmmd
 // pairs it with state.MigrationLeaseStore through Server.WithMigrationStore;
 // unit-test callers can continue to use the cache by itself.
-func NewMigrationLeaser(tracker *migrationTracker) sched.Leaser[any] {
+func NewMigrationLeaser(tracker *migrationTracker) leaser.Leaser[any] {
 	return &migrationLeaser{tracker: tracker}
 }
 
@@ -52,7 +52,7 @@ func NewMigrationLeaser(tracker *migrationTracker) sched.Leaser[any] {
 // callers that need the lease token can read it back. Today the
 // sched lease API doesn't surface the handle; the migration
 // path reads leaseToken via a separate field.
-func (l *migrationLeaser) Acquire(ctx context.Context, key string, policy sched.LeasePolicy, ownerID string) (sched.LeaseToken, any, error) {
+func (l *migrationLeaser) Acquire(ctx context.Context, key string, policy leaser.Policy, ownerID string) (leaser.Token, any, error) {
 	if err := policy.Validate(); err != nil {
 		return "", nil, err
 	}
@@ -68,41 +68,41 @@ func (l *migrationLeaser) Acquire(ctx context.Context, key string, policy sched.
 	if err := l.tracker.put(m); err != nil {
 		return "", nil, err
 	}
-	return sched.LeaseToken(m.leaseToken), m, nil
+	return leaser.Token(m.leaseToken), m, nil
 }
 
 // Renew verifies the in-memory entry. Migration leases use a fixed TTL from
 // Phase 1 rather than extending a paused-VM lease; durable expiry cleanup is
 // the recovery path after a restart.
-func (l *migrationLeaser) Renew(ctx context.Context, token sched.LeaseToken, ownerID string, ttl time.Duration) error {
+func (l *migrationLeaser) Renew(ctx context.Context, token leaser.Token, ownerID string, ttl time.Duration) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	m, ok := l.tracker.findByLeaseToken(string(token))
 	if ok {
 		if time.Now().UTC().After(m.leaseExpiresAt) {
-			return sched.ErrLeaseExpired
+			return leaser.ErrExpired
 		}
 		return nil
 	}
-	return sched.ErrLeaseNotFound
+	return leaser.ErrNotFound
 }
 
 // Release deletes the tracker entry. Idempotent: a second
-// Release on the same token returns sched.ErrLeaseNotFound,
-// which the sched.Leaser contract explicitly tolerates.
-func (l *migrationLeaser) Release(ctx context.Context, token sched.LeaseToken, ownerID string) error {
+// Release on the same token returns leaser.ErrNotFound,
+// which the leaser.Leaser contract explicitly tolerates.
+func (l *migrationLeaser) Release(ctx context.Context, token leaser.Token, ownerID string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.tracker.deleteByLeaseToken(string(token)) {
 		return nil
 	}
-	return sched.ErrLeaseNotFound
+	return leaser.ErrNotFound
 }
 
 // Lookup is the read-only audit/idempotency check. Returns the
 // instance key, lease_expires_at, owner_id, and ok=true if the
 // token is still held.
-func (l *migrationLeaser) Lookup(ctx context.Context, token sched.LeaseToken) (key string, expiresAt time.Time, ownerID string, ok bool, err error) {
+func (l *migrationLeaser) Lookup(ctx context.Context, token leaser.Token) (key string, expiresAt time.Time, ownerID string, ok bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	m, found := l.tracker.findByLeaseToken(string(token))

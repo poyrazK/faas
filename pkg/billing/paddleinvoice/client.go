@@ -149,11 +149,14 @@ type Item struct {
 }
 
 // TransactionParams describe a draft manually collected transaction.
+// PaymentTermsDays is the payment window once it is billed; zero uses
+// PaymentTermsDays.
 type TransactionParams struct {
-	CustomerID string
-	Currency   string
-	Items      []Item
-	CustomData map[string]string
+	CustomerID       string
+	Currency         string
+	Items            []Item
+	CustomData       map[string]string
+	PaymentTermsDays int
 }
 
 type transactionData struct {
@@ -222,7 +225,7 @@ func (c *Client) CreateTransaction(ctx context.Context, key string, p Transactio
 		"customer_id":     p.CustomerID,
 		"currency_code":   strings.ToUpper(p.Currency),
 		"collection_mode": "manual",
-		"billing_details": map[string]any{"payment_terms": map[string]any{"interval": "day", "frequency": PaymentTermsDays}},
+		"billing_details": map[string]any{"payment_terms": map[string]any{"interval": "day", "frequency": termsDays(p.PaymentTermsDays)}},
 		"custom_data":     p.CustomData,
 	}
 	items := make([]item, 0, len(p.Items))
@@ -246,6 +249,42 @@ func (c *Client) CreateTransaction(ctx context.Context, key string, p Transactio
 		return "", err
 	}
 	return out.Data.ID, nil
+}
+
+func termsDays(days int) int {
+	if days < 1 {
+		return PaymentTermsDays
+	}
+	return days
+}
+
+// ErrNoAddress reports a customer without an active address, which Paddle
+// needs before it bills a transaction (ADR-20261019100333).
+var ErrNoAddress = errors.New("paddle customer has no active address")
+
+// CustomerAddress returns the ID of the customer's newest active address.
+func (c *Client) CustomerAddress(ctx context.Context, key, customerID string) (string, error) {
+	address, ok, err := c.ActiveAddress(ctx, key, customerID)
+	if err != nil {
+		return "", err
+	}
+	if !ok || address.ID == "" {
+		return "", ErrNoAddress
+	}
+	return address.ID, nil
+}
+
+// BillTransaction issues a draft or ready manually collected transaction:
+// Paddle gives it an invoice number, emails it to the customer and starts
+// its payment terms (ADR-20261019100333). A non-empty businessID puts the
+// customer's business and tax identifier on the invoice
+// (ADR-20261020120000).
+func (c *Client) BillTransaction(ctx context.Context, key, transactionID, addressID, businessID string) error {
+	body := map[string]any{"address_id": addressID, "status": "billed"}
+	if businessID != "" {
+		body["business_id"] = businessID
+	}
+	return c.do(ctx, key, http.MethodPatch, "/transactions/"+url.PathEscape(transactionID), body, nil)
 }
 
 // TransactionState is a transaction's payment state (ADR-1504).

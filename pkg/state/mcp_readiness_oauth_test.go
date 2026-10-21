@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"errors"
@@ -9,42 +9,43 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMCPReadinessOAuthStore(t *testing.T) {
-	check := func(t *testing.T, s Store) {
+	check := func(t *testing.T, s state.Store) {
 		ctx := t.Context()
 		account, err := s.CreateAccount(ctx, "readiness-oauth@example.com", api.PlanPro)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app, err := s.CreateApp(ctx, App{AccountID: account.ID, Slug: "readiness-oauth", Type: AppTypeApp, Status: AppActive})
+		app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "readiness-oauth", Type: state.AppTypeApp, Status: state.AppActive})
 		if err != nil {
 			t.Fatal(err)
 		}
-		stable, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:stable"})
+		stable, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:stable"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err = s.MarkDeploymentLive(ctx, stable.ID); err != nil {
 			t.Fatal(err)
 		}
-		candidate, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:candidate", TrafficPercentExplicit: true, TrafficPercent: 0})
+		candidate, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate", TrafficPercentExplicit: true, TrafficPercent: 0})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err = s.MarkDeploymentLive(ctx, candidate.ID); err != nil {
 			t.Fatal(err)
 		}
-		catalog := s.(MCPCatalogMonitorStore)
-		observers := s.(MCPCatalogObserverStore)
-		oauth := s.(MCPReadinessOAuthStore)
-		readiness := s.(MCPReadinessStore)
+		catalog := s.(state.MCPCatalogMonitorStore)
+		observers := s.(state.MCPCatalogObserverStore)
+		oauth := s.(state.MCPReadinessOAuthStore)
+		readiness := s.(state.MCPReadinessStore)
 		cfg := api.MCPCatalogMonitorConfig{Role: "reader", Revision: uuid.NewString(), Enabled: true, FreshnessSeconds: 300, Observer: &api.MCPCatalogObserverConfig{Enabled: true, IntervalSeconds: 60, TimeoutSeconds: 5, Endpoint: "/mcp", OAuth: &api.MCPCatalogObserverOAuthConfig{Guided: true, AuthorizationEndpoint: "https://provider.example/authorize", TokenEndpoint: "https://provider.example/token", ClientID: "reader-client"}}}
 		if _, err = catalog.ConfigureMCPCatalogMonitor(ctx, account.ID, app.ID, cfg); err != nil {
 			t.Fatal(err)
 		}
-		job, err := observers.ClaimMCPCatalogObserver(ctx, MCPCatalogObserverJob{AccountID: account.ID, AppID: app.ID, Role: "reader", Snapshot: api.MCPCatalogMonitorSnapshot{Config: cfg}})
+		job, err := observers.ClaimMCPCatalogObserver(ctx, state.MCPCatalogObserverJob{AccountID: account.ID, AppID: app.ID, Role: "reader", Snapshot: api.MCPCatalogMonitorSnapshot{Config: cfg}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,10 +77,10 @@ func TestMCPReadinessOAuthStore(t *testing.T) {
 		if err != nil {
 			t.Fatal("credential claim should ignore future catalog schedule", err)
 		}
-		if _, err = oauth.ClaimMCPReadinessOAuth(ctx, account.ID, app.ID, ref, "/mcp"); !errors.Is(err, ErrMCPReadinessOAuthBusy) {
+		if _, err = oauth.ClaimMCPReadinessOAuth(ctx, account.ID, app.ID, ref, "/mcp"); !errors.Is(err, state.ErrMCPReadinessOAuthBusy) {
 			t.Fatal("connection lease duplicated", err)
 		}
-		if _, err = observers.ClaimMCPCatalogObserver(ctx, job); !errors.Is(err, ErrMCPCatalogMonitorChanged) {
+		if _, err = observers.ClaimMCPCatalogObserver(ctx, job); !errors.Is(err, state.ErrMCPCatalogMonitorChanged) {
 			t.Fatal("catalog observer stole credential lease", err)
 		}
 		auth.Ciphertext = []byte("rotated opaque grant")
@@ -103,14 +104,14 @@ func TestMCPReadinessOAuthStore(t *testing.T) {
 		if err = observers.SaveMCPCatalogObserverOAuth(ctx, lease, auth); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = readiness.RecordMCPReadiness(ctx, subject, evidence); !errors.Is(err, ErrConflict) {
+		if _, err = readiness.RecordMCPReadiness(ctx, subject, evidence); !errors.Is(err, state.ErrConflict) {
 			t.Fatal("connection changed during probe was accepted", err)
 		}
-		if _, err = s.UpdateDeploymentTraffic(ctx, candidate.ID, 20); !IsMCPReadinessRequired(err) {
+		if _, err = s.UpdateDeploymentTraffic(ctx, candidate.ID, 20); !state.IsMCPReadinessRequired(err) {
 			t.Fatal("changed connection reused old proof", err)
 		}
-		if pg, ok := s.(*PgStore); ok {
-			if _, err = pg.pool.Exec(ctx, `UPDATE deployments SET traffic_percent=20 WHERE id=$1`, candidate.ID); !IsMCPReadinessRequired(err) {
+		if pg, ok := s.(*state.PgStore); ok {
+			if _, err = (*pg.Pool()).Exec(ctx, `UPDATE deployments SET traffic_percent=20 WHERE id=$1`, candidate.ID); !state.IsMCPReadinessRequired(err) {
 				t.Fatal("raw traffic update bypassed connection fence", err)
 			}
 		}
@@ -125,13 +126,13 @@ func TestMCPReadinessOAuthStore(t *testing.T) {
 		if view.ObserverStatus.NextCheckAt == nil || !view.ObserverStatus.NextCheckAt.Equal(next) {
 			t.Fatal("readiness credential use changed catalog cadence")
 		}
-		if _, err = oauth.ClaimMCPReadinessOAuth(ctx, account.ID, app.ID, ref, "/mcp"); !errors.Is(err, ErrMCPReadinessOAuthReconnect) {
+		if _, err = oauth.ClaimMCPReadinessOAuth(ctx, account.ID, app.ID, ref, "/mcp"); !errors.Is(err, state.ErrMCPReadinessOAuthReconnect) {
 			t.Fatal("revoked grant not surfaced", err)
 		}
-		if _, err = oauth.ClaimMCPReadinessOAuth(ctx, account.ID, app.ID, ref, "/other"); !errors.Is(err, ErrMCPReadinessOAuthChanged) {
+		if _, err = oauth.ClaimMCPReadinessOAuth(ctx, account.ID, app.ID, ref, "/other"); !errors.Is(err, state.ErrMCPReadinessOAuthChanged) {
 			t.Fatal("connection allowed another endpoint", err)
 		}
-		if _, err = oauth.ClaimMCPReadinessOAuth(ctx, uuid.NewString(), app.ID, ref, "/mcp"); !errors.Is(err, ErrNotFound) {
+		if _, err = oauth.ClaimMCPReadinessOAuth(ctx, uuid.NewString(), app.ID, ref, "/mcp"); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("foreign account obtained a credential lease", err)
 		}
 
@@ -143,8 +144,8 @@ func TestMCPReadinessOAuthStore(t *testing.T) {
 		if _, err = catalog.ConfigureMCPCatalogMonitor(ctx, account.ID, app.ID, cfg); err != nil {
 			t.Fatal(err)
 		}
-		history := s.(MCPReadinessPolicyHistoryStore)
-		if _, err = history.RestoreMCPReadinessPolicy(ctx, account.ID, app.ID, policyBefore.Revision, api.RestoreMCPReadinessPolicyRequest{ExpectedRevision: policyBefore.Revision, Reason: "review prior OAuth policy"}); !errors.Is(err, ErrInvalidArgument) {
+		history := s.(state.MCPReadinessPolicyHistoryStore)
+		if _, err = history.RestoreMCPReadinessPolicy(ctx, account.ID, app.ID, policyBefore.Revision, api.RestoreMCPReadinessPolicyRequest{ExpectedRevision: policyBefore.Revision, Reason: "review prior OAuth policy"}); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatal("restore accepted obsolete OAuth binding", err)
 		}
 		policyAfter, err := readiness.GetMCPReadinessPolicy(ctx, account.ID, app.ID)
@@ -152,10 +153,10 @@ func TestMCPReadinessOAuthStore(t *testing.T) {
 			t.Fatal("failed restore changed policy", err)
 		}
 	}
-	t.Run("memory", func(t *testing.T) { check(t, NewMemStore()) })
-	t.Run("postgres", func(t *testing.T) { check(t, NewPgStore(pgtest.OpenMigrated(t))) })
+	t.Run("memory", func(t *testing.T) { check(t, state.NewMemStore()) })
+	t.Run("postgres", func(t *testing.T) { check(t, state.NewPgStore(pgtest.OpenMigrated(t))) })
 }
 
 // Compile-time checks keep this optional contract available on both stores.
-var _ MCPReadinessOAuthStore = (*MemStore)(nil)
-var _ MCPReadinessOAuthStore = (*PgStore)(nil)
+var _ state.MCPReadinessOAuthStore = (*state.MemStore)(nil)
+var _ state.MCPReadinessOAuthStore = (*state.PgStore)(nil)

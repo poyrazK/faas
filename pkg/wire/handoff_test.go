@@ -6,6 +6,7 @@ package wire_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -29,6 +30,17 @@ const (
 	handoffAddrEnv        = "WIRE_HANDOFF_ADDR"
 	handoffFailNextEnv    = "WIRE_HANDOFF_FAIL_SUCCESSOR"
 	handoffLongRequestEnv = "WIRE_HANDOFF_LONG"
+	// Pre-traffic checks (docs/adr/20261020214632-automatic-unit-deploy-
+	// safety-rails.md): the old generation checks GET /check; a successor
+	// answers it after CHECK_DELAY, with 503 when BAD_CHECK, and records
+	// when it answered in CHECK_DONE; OLD_SUCCESSOR makes the successor act
+	// like a release before checks; ERR_FILE receives a failed hand-off.
+	handoffCheckEnv        = "WIRE_HANDOFF_CHECK"
+	handoffBadCheckEnv     = "WIRE_HANDOFF_BAD_CHECK"
+	handoffCheckDelayEnv   = "WIRE_HANDOFF_CHECK_DELAY"
+	handoffCheckDoneEnv    = "WIRE_HANDOFF_CHECK_DONE"
+	handoffOldSuccessorEnv = "WIRE_HANDOFF_OLD_SUCCESSOR"
+	handoffErrFileEnv      = "WIRE_HANDOFF_ERR_FILE"
 )
 
 // TestHandoffHelperProcess is one daemon generation. It serves /fast and
@@ -41,6 +53,11 @@ func TestHandoffHelperProcess(t *testing.T) {
 	if wire.IsHandoffSuccessor() && os.Getenv(handoffFailNextEnv) == "1" {
 		os.Exit(7) // a successor that never becomes ready
 	}
+	if wire.IsHandoffSuccessor() && os.Getenv(handoffOldSuccessorEnv) == "1" {
+		// A release before pre-traffic checks ignores what they pass.
+		_ = os.Unsetenv("FAAS_HANDOFF_CHECK_FDS")
+		_ = os.Unsetenv("FAAS_HANDOFF_GO_FD")
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
 	defer stop()
 	l, err := wire.ListenInherited("tcp", os.Getenv(handoffAddrEnv))
@@ -49,8 +66,20 @@ func TestHandoffHelperProcess(t *testing.T) {
 		os.Exit(2)
 	}
 	long, _ := time.ParseDuration(os.Getenv(handoffLongRequestEnv))
+	checkDelay, _ := time.ParseDuration(os.Getenv(handoffCheckDelayEnv))
 	pid := strconv.Itoa(os.Getpid())
 	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/check" {
+			time.Sleep(checkDelay)
+			if wire.IsHandoffSuccessor() && os.Getenv(handoffBadCheckEnv) == "1" {
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}
+			if done := os.Getenv(handoffCheckDoneEnv); done != "" && wire.IsHandoffSuccessor() {
+				_ = os.WriteFile(done, []byte(strconv.FormatInt(time.Now().UnixNano(), 10)), 0o600)
+			}
+			_, _ = io.WriteString(w, pid)
+			return
+		}
 		if r.URL.Path == "/long" {
 			select {
 			case <-time.After(long):
@@ -69,8 +98,18 @@ func TestHandoffHelperProcess(t *testing.T) {
 	for {
 		select {
 		case <-requests:
-			if _, err := wire.Handoff(ctx, wire.HandoffOptions{}); err != nil {
+			// This fixture exercises socket transfer and draining. Model its
+			// isolated daemon cgroup instead of measuring the shared test runner.
+			opts := wire.HandoffOptionsWithMemoryCheckForTest(func() error { return nil })
+			if os.Getenv(handoffCheckEnv) == "1" {
+				opts.Checks = []wire.HandoffCheck{{Name: "check", Network: "tcp", Address: os.Getenv(handoffAddrEnv),
+					Path: "/check", Want: []int{http.StatusOK}}}
+			}
+			if _, err := wire.Handoff(ctx, opts); err != nil {
 				fmt.Fprintln(os.Stderr, "hand-off failed; still serving:", err)
+				if file := os.Getenv(handoffErrFileEnv); file != "" {
+					_ = os.WriteFile(file, []byte(err.Error()), 0o600)
+				}
 				continue
 			}
 			// Old generation: stop accepting, finish what is in flight.
@@ -292,5 +331,163 @@ func TestHandoffEnvironmentEndsTheParentsActivation(t *testing.T) {
 	}
 	if got := strings.Join(sockets, "|"); !strings.Contains(got, "127.0.0.1:8003") || !strings.Contains(got, "127.0.0.1:8004") || len(sockets) != 2 {
 		t.Fatalf("sockets = %v, want the two handed-off descriptors", sockets)
+	}
+}
+
+// pollPIDs requests /fast until stop closes, recording each response's
+// serving PID with its arrival time, and every failure.
+func pollPIDs(client *http.Client, addr string, stop <-chan struct{}) (results func() ([]servedBy, []string)) {
+	var (
+		mu       sync.Mutex
+		served   []servedBy
+		failures []string
+		done     = make(chan struct{})
+	)
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
+			pid, err := get(client, "http://"+addr+"/fast")
+			mu.Lock()
+			if err != nil {
+				failures = append(failures, err.Error())
+			} else {
+				served = append(served, servedBy{pid: pid, at: time.Now()})
+			}
+			mu.Unlock()
+		}
+	}()
+	return func() ([]servedBy, []string) {
+		<-done
+		mu.Lock()
+		defer mu.Unlock()
+		return served, failures
+	}
+}
+
+type servedBy struct {
+	pid string
+	at  time.Time
+}
+
+// TestHandoffChecksGateTheSuccessor: with pre-traffic checks, the successor
+// takes no traffic until it answered the old generation's check, then takes
+// over; no request fails across the hand-off.
+func TestHandoffChecksGateTheSuccessor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns helper processes")
+	}
+	addr := freeAddr(t)
+	done := t.TempDir() + "/check-done"
+	old := startHandoffDaemon(t, addr, time.Second, handoffCheckEnv+"=1", handoffCheckDelayEnv+"=1500ms",
+		handoffCheckDoneEnv+"="+done)
+	oldPID := strconv.Itoa(old.Process.Pid)
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	waitFor(t, func() bool { _, err := get(client, "http://"+addr+"/fast"); return err == nil })
+
+	stop := make(chan struct{})
+	results := pollPIDs(client, addr, stop)
+	if err := old.Process.Signal(syscall.SIGUSR2); err != nil {
+		t.Fatal(err)
+	}
+	var newPID string
+	waitFor(t, func() bool {
+		pid, err := get(client, "http://"+addr+"/fast")
+		if err == nil && pid != oldPID {
+			newPID = pid
+			return true
+		}
+		return false
+	})
+	t.Cleanup(func() {
+		if pid, err := strconv.Atoi(newPID); err == nil {
+			_ = syscall.Kill(pid, syscall.SIGTERM)
+		}
+	})
+	time.Sleep(200 * time.Millisecond)
+	close(stop)
+	served, failures := results()
+	if len(failures) != 0 {
+		t.Fatalf("%d requests failed across a checked hand-off; first: %s", len(failures), failures[0])
+	}
+	raw, err := os.ReadFile(done)
+	if err != nil {
+		t.Fatalf("the successor never answered its check: %v", err)
+	}
+	checked, _ := strconv.ParseInt(string(raw), 10, 64)
+	for _, s := range served {
+		if s.pid == newPID && s.at.UnixNano() < checked {
+			t.Fatalf("the successor served traffic at %v, before it answered its check at %v", s.at, time.Unix(0, checked))
+		}
+	}
+}
+
+// TestHandoffCheckFailureRejectsTheSuccessor: a successor that fails its
+// pre-traffic check never takes a request, the old generation keeps every
+// one, and the failure reads as a rejection.
+func TestHandoffCheckFailureRejectsTheSuccessor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns helper processes")
+	}
+	addr := freeAddr(t)
+	errFile := t.TempDir() + "/err"
+	old := startHandoffDaemon(t, addr, time.Second, handoffCheckEnv+"=1", handoffBadCheckEnv+"=1",
+		handoffErrFileEnv+"="+errFile)
+	oldPID := strconv.Itoa(old.Process.Pid)
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	waitFor(t, func() bool { _, err := get(client, "http://"+addr+"/fast"); return err == nil })
+
+	if err := old.Process.Signal(syscall.SIGUSR2); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		pid, err := get(client, "http://"+addr+"/fast")
+		if err != nil {
+			t.Fatalf("request failed while the successor was rejected: %v", err)
+		}
+		if pid != oldPID {
+			t.Fatalf("request served by %s, a successor that failed its check", pid)
+		}
+	}
+	waitFor(t, func() bool { _, err := os.Stat(errFile); return err == nil })
+	raw, _ := os.ReadFile(errFile)
+	if !strings.Contains(string(raw), "rejected by pre-traffic check check: GET /check answered 503, want [200]") {
+		t.Fatalf("hand-off error = %q, want the rejection", raw)
+	}
+	if !errors.Is(fmt.Errorf("x: %w", wire.ErrHandoffRejected), wire.ErrHandoffRejected) {
+		t.Fatal("ErrHandoffRejected does not wrap")
+	}
+}
+
+// TestHandoffToASuccessorWithoutChecks: a successor from a release before
+// pre-traffic checks reports ready without them and is handed off as before.
+func TestHandoffToASuccessorWithoutChecks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns helper processes")
+	}
+	addr := freeAddr(t)
+	old := startHandoffDaemon(t, addr, time.Second, handoffCheckEnv+"=1", handoffOldSuccessorEnv+"=1")
+	oldPID := strconv.Itoa(old.Process.Pid)
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	waitFor(t, func() bool { _, err := get(client, "http://"+addr+"/fast"); return err == nil })
+	if err := old.Process.Signal(syscall.SIGUSR2); err != nil {
+		t.Fatal(err)
+	}
+	var newPID string
+	waitFor(t, func() bool {
+		pid, err := get(client, "http://"+addr+"/fast")
+		if err == nil && pid != oldPID {
+			newPID = pid
+			return true
+		}
+		return false
+	})
+	if pid, err := strconv.Atoi(newPID); err == nil {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
 	}
 }

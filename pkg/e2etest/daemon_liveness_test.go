@@ -79,3 +79,35 @@ func TestFirstDeadDaemon_ToleratesEmptyAndUnstarted(t *testing.T) {
 		})
 	}
 }
+
+// A daemon stopped on purpose by KillAPID or KillSchedd is not a crash: the
+// test restarts the other daemon before its own, and that restart's health
+// check must not fail on the deliberate kill. A crash is still reported.
+func TestRequireDaemonsAliveSkipsDeliberateKills(t *testing.T) {
+	exited := func(script string) *exec.Cmd {
+		cmd := exec.Command("sh", "-c", script)
+		cmd.Stdout = &safeBuffer{}
+		cmd.Stderr = cmd.Stdout
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start stub daemon: %v", err)
+		}
+		_ = cmd.Wait()
+		return cmd
+	}
+	killed := exited("exit 137")
+	h := &Harness{procs: []*exec.Cmd{killed}}
+	h.markKilled(killed)
+	h.requireDaemonsAlive(t) // must not fail
+
+	crashed := exited("echo 'schedd: boot failed'; exit 1")
+	h.procs = append(h.procs, crashed)
+	live := []*exec.Cmd{}
+	for _, p := range h.procs {
+		if !h.killed[p] {
+			live = append(live, p)
+		}
+	}
+	if _, out, dead := firstDeadDaemon(live); !dead || !strings.Contains(out, "boot failed") {
+		t.Fatalf("a crashed daemon beside a deliberate kill went unreported: %q %v", out, dead)
+	}
+}

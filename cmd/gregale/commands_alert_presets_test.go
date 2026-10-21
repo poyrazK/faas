@@ -19,7 +19,7 @@
 //   - cmdAlertPresetEnable happy path (route hits
 //     POST /v1/apps/{slug}/alert-presets/{name}/enable; body
 //     shape matches the EnableAlertPresetRequest wire contract).
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -34,9 +35,9 @@ import (
 // "no args" branch — a bare `gregale alerts preset` returns 1
 // with a usage line and never reaches the leaves.
 func TestCmdAlertsPreset_NoArgsIsUsage(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdAlertsPreset(nil); code != 1 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdAlertsPreset(nil); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
@@ -45,9 +46,9 @@ func TestCmdAlertsPreset_NoArgsIsUsage(t *testing.T) {
 // unknown-subcommand branch — the suggestion helper stays local
 // (we don't assert its output, only the exit code).
 func TestCmdAlertsPreset_UnknownSubcommandExitsOne(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdAlertsPreset([]string{"wat"}); code != 1 {
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", http.StatusOK)
+	if code := main.CmdAlertsPreset([]string{"wat"}); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
@@ -56,14 +57,14 @@ func TestCmdAlertsPreset_UnknownSubcommandExitsOne(t *testing.T) {
 // (no --app required; the catalog is global). The fake API must
 // see GET /v1/alert-presets verbatim.
 func TestCmdAlertPresetList_HappyPath(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	body := `[{"id":"0123456789abcdef0123456789abcdef","name":"error_rate_2pct","display_name":"Error rate exceeds 2%","description":"desc","category":"reliability","metric":"error_rate_pct","comparison":"gt","threshold":2,"window_spec":"15m","default_cooldown_minutes":15,"minimum_plan":"hobby","enabled_in_catalog":true}]`
-	f := authedFakeAPI(t, body, 200)
-	if code := cmdAlertPresetList(nil); code != 0 {
+	f := main.AuthedFakeAPI(t, body, 200)
+	if code := main.CmdAlertPresetList(nil); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "GET" || f.sawPath != "/v1/alert-presets" {
-		t.Errorf("route = %s %s, want GET /v1/alert-presets", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "GET" || (*f.SawPath()) != "/v1/alert-presets" {
+		t.Errorf("route = %s %s, want GET /v1/alert-presets", (*f.SawMethod()), (*f.SawPath()))
 	}
 }
 
@@ -72,13 +73,13 @@ func TestCmdAlertPresetList_HappyPath(t *testing.T) {
 // The body must parse as JSON with the same top-level shape the
 // server returned.
 func TestCmdAlertPresetList_JSONMode(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = false })
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = false })
 
 	body := `[{"id":"0123456789abcdef0123456789abcdef","name":"p95_latency_1s","display_name":"p95 exceeds one second","description":"desc","category":"reliability","metric":"latency_p95_ms","comparison":"gt","threshold":1000,"window_spec":"15m","default_cooldown_minutes":15,"minimum_plan":"hobby","enabled_in_catalog":true}]`
-	authedFakeAPI(t, body, 200)
-	if code := cmdAlertPresetList(nil); code != 0 {
+	main.AuthedFakeAPI(t, body, 200)
+	if code := main.CmdAlertPresetList(nil); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 }
@@ -87,14 +88,14 @@ func TestCmdAlertPresetList_JSONMode(t *testing.T) {
 // validation gate — both --app and the positional preset name are
 // required; either one missing → exit 1 with no HTTP round-trip.
 func TestCmdAlertPresetEnable_MissingAppAndName(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", 200)
+	main.ResetJSONOut(t)
+	main.AuthedFakeAPI(t, "", 200)
 	// Missing --app.
-	if code := cmdAlertPresetEnable([]string{"--webhook-url", "https://x", "--webhook-secret", "s", "error_rate_2pct"}); code != 1 {
+	if code := main.CmdAlertPresetEnable([]string{"--webhook-url", "https://x", "--webhook-secret", "s", "error_rate_2pct"}); code != 1 {
 		t.Errorf("missing --app exit = %d, want 1", code)
 	}
 	// Missing positional name.
-	if code := cmdAlertPresetEnable([]string{"--app", "demo", "--webhook-url", "https://x", "--webhook-secret", "s"}); code != 1 {
+	if code := main.CmdAlertPresetEnable([]string{"--app", "demo", "--webhook-url", "https://x", "--webhook-secret", "s"}); code != 1 {
 		t.Errorf("missing preset name exit = %d, want 1", code)
 	}
 }
@@ -103,18 +104,18 @@ func TestCmdAlertPresetEnable_MissingAppAndName(t *testing.T) {
 // both --webhook-url and --webhook-secret are required; either
 // missing → exit 1. Both checks fire before the auth round-trip.
 func TestCmdAlertPresetEnable_MissingWebhook(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	var hits int32
-	srv := newFakeAPI(t, "", 200)
-	srv.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := main.NewFakeAPI(t, "", 200)
+	(*srv.Srv()).Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
 	})
 	// Missing --webhook-url.
-	if code := cmdAlertPresetEnable([]string{"--app", "demo", "--webhook-secret", "s", "error_rate_2pct"}); code != 1 {
+	if code := main.CmdAlertPresetEnable([]string{"--app", "demo", "--webhook-secret", "s", "error_rate_2pct"}); code != 1 {
 		t.Errorf("missing --webhook-url exit = %d, want 1", code)
 	}
 	// Missing --webhook-secret.
-	if code := cmdAlertPresetEnable([]string{"--app", "demo", "--webhook-url", "https://x", "error_rate_2pct"}); code != 1 {
+	if code := main.CmdAlertPresetEnable([]string{"--app", "demo", "--webhook-url", "https://x", "error_rate_2pct"}); code != 1 {
 		t.Errorf("missing --webhook-secret exit = %d, want 1", code)
 	}
 	if got := atomic.LoadInt32(&hits); got != 0 {
@@ -129,18 +130,18 @@ func TestCmdAlertPresetEnable_MissingWebhook(t *testing.T) {
 // default" so it's NOT tested here — see
 // TestCmdAlertPresetEnable_HappyPath for the 0→omitted body shape.
 func TestCmdAlertPresetEnable_BadCooldown(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	var hits int32
-	srv := newFakeAPI(t, "", 200)
-	srv.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := main.NewFakeAPI(t, "", 200)
+	(*srv.Srv()).Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
 	})
 	// Too low (the floor is AlertRuleCooldownMinMinutes=5).
-	if code := cmdAlertPresetEnable([]string{"--app", "demo", "--webhook-url", "https://x", "--webhook-secret", "s", "--cooldown-minutes", "1", "error_rate_2pct"}); code != 1 {
+	if code := main.CmdAlertPresetEnable([]string{"--app", "demo", "--webhook-url", "https://x", "--webhook-secret", "s", "--cooldown-minutes", "1", "error_rate_2pct"}); code != 1 {
 		t.Errorf("cooldown=1 exit = %d, want 1", code)
 	}
 	// Too high (the ceiling is AlertRuleCooldownMaxMinutes=1440).
-	if code := cmdAlertPresetEnable([]string{"--app", "demo", "--webhook-url", "https://x", "--webhook-secret", "s", "--cooldown-minutes", "9999", "error_rate_2pct"}); code != 1 {
+	if code := main.CmdAlertPresetEnable([]string{"--app", "demo", "--webhook-url", "https://x", "--webhook-secret", "s", "--cooldown-minutes", "9999", "error_rate_2pct"}); code != 1 {
 		t.Errorf("cooldown=9999 exit = %d, want 1", code)
 	}
 	if got := atomic.LoadInt32(&hits); got != 0 {
@@ -151,13 +152,13 @@ func TestCmdAlertPresetEnable_BadCooldown(t *testing.T) {
 // TestCmdAlertPresetEnable_BadAction pins the local closed-set
 // validation so a typo never reaches the API.
 func TestCmdAlertPresetEnable_BadAction(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	var hits int32
-	srv := newFakeAPI(t, "", http.StatusOK)
-	srv.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := main.NewFakeAPI(t, "", http.StatusOK)
+	(*srv.Srv()).Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
 	})
-	if code := cmdAlertPresetEnable([]string{
+	if code := main.CmdAlertPresetEnable([]string{
 		"--app", "demo",
 		"--webhook-url", "https://hooks.example.com/x",
 		"--webhook-secret", "shh",
@@ -177,10 +178,10 @@ func TestCmdAlertPresetEnable_BadAction(t *testing.T) {
 // (webhook_url + webhook_secret + action set, cooldown_minutes
 // omitted when --cooldown-minutes=0, enabled defaults to true).
 func TestCmdAlertPresetEnable_HappyPath(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	respBody := `{"id":"0123456789abcdef0123456789abcdef","name":"Error rate exceeds 2% (demo)","metric":"error_rate_pct","comparison":"gt","threshold":2,"window_spec":"15m","enabled":true,"cooldown_minutes":15}`
-	f := authedFakeAPI(t, respBody, 201)
-	if code := cmdAlertPresetEnable([]string{
+	f := main.AuthedFakeAPI(t, respBody, 201)
+	if code := main.CmdAlertPresetEnable([]string{
 		"--app", "demo",
 		"--webhook-url", "https://hooks.example.com/x",
 		"--webhook-secret", "shh",
@@ -189,14 +190,14 @@ func TestCmdAlertPresetEnable_HappyPath(t *testing.T) {
 	}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if f.sawMethod != "POST" || f.sawPath != "/v1/apps/demo/alert-presets/error_rate_2pct/enable" {
-		t.Errorf("route = %s %s, want POST /v1/apps/demo/alert-presets/error_rate_2pct/enable", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "POST" || (*f.SawPath()) != "/v1/apps/demo/alert-presets/error_rate_2pct/enable" {
+		t.Errorf("route = %s %s, want POST /v1/apps/demo/alert-presets/error_rate_2pct/enable", (*f.SawMethod()), (*f.SawPath()))
 	}
 	// Body shape: webhook_url + webhook_secret set, no cooldown_minutes
 	// when --cooldown-minutes=0 (the 0 sentinel is "use preset
 	// default"), enabled defaults to true.
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
 		t.Fatalf("body unmarshal: %v", err)
 	}
 	if got["webhook_url"] != "https://hooks.example.com/x" {
@@ -221,9 +222,9 @@ func TestCmdAlertPresetEnable_HappyPath(t *testing.T) {
 // the body's cooldown_minutes field. The validator's [1, 1440]
 // band gate is exercised by TestCmdAlertPresetEnable_BadCooldown.
 func TestCmdAlertPresetEnable_CooldownOverride(t *testing.T) {
-	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","name":"r","metric":"error_rate_pct","comparison":"gt","threshold":2,"window_spec":"15m","enabled":true,"cooldown_minutes":30}`, 201)
-	if code := cmdAlertPresetEnable([]string{
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","name":"r","metric":"error_rate_pct","comparison":"gt","threshold":2,"window_spec":"15m","enabled":true,"cooldown_minutes":30}`, 201)
+	if code := main.CmdAlertPresetEnable([]string{
 		"--app", "demo",
 		"--webhook-url", "https://hooks.example.com/x",
 		"--webhook-secret", "shh",
@@ -233,7 +234,7 @@ func TestCmdAlertPresetEnable_CooldownOverride(t *testing.T) {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	var got map[string]any
-	if err := json.Unmarshal(f.sawBody, &got); err != nil {
+	if err := json.Unmarshal((*f.SawBody()), &got); err != nil {
 		t.Fatalf("body unmarshal: %v", err)
 	}
 	if cm, _ := got["cooldown_minutes"].(float64); cm != 30 {
@@ -242,18 +243,18 @@ func TestCmdAlertPresetEnable_CooldownOverride(t *testing.T) {
 }
 
 func TestCmdAutomationBacklogPresetEnableUsesNotificationDefaults(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
-	f := authedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","name":"Automation backlog exceeds five minutes","metric":"workflow_due_age_seconds","comparison":"gte","threshold":300,"window_spec":"5m","action":"webhook","enabled":true,"cooldown_minutes":30}`, 201)
-	output := captureAutomationStdout(t)
-	if code := cmdAlertPresetEnable([]string{"--app", "billing", "--webhook-url", "https://example.com/hooks", "--webhook-secret", "test-secret", "automation_backlog"}); code != 0 {
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
+	f := main.AuthedFakeAPI(t, `{"id":"0123456789abcdef0123456789abcdef","name":"Automation backlog exceeds five minutes","metric":"workflow_due_age_seconds","comparison":"gte","threshold":300,"window_spec":"5m","action":"webhook","enabled":true,"cooldown_minutes":30}`, 201)
+	output := main.CaptureAutomationStdout(t)
+	if code := main.CmdAlertPresetEnable([]string{"--app", "billing", "--webhook-url", "https://example.com/hooks", "--webhook-secret", "test-secret", "automation_backlog"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if f.sawMethod != "POST" || f.sawPath != "/v1/apps/billing/alert-presets/automation_backlog/enable" {
-		t.Fatalf("request=%s %s", f.sawMethod, f.sawPath)
+	if (*f.SawMethod()) != "POST" || (*f.SawPath()) != "/v1/apps/billing/alert-presets/automation_backlog/enable" {
+		t.Fatalf("request=%s %s", (*f.SawMethod()), (*f.SawPath()))
 	}
 	var request api.EnableAlertPresetRequest
-	if err := json.Unmarshal(f.sawBody, &request); err != nil || request.Action != nil || request.CooldownMinutes != nil {
+	if err := json.Unmarshal((*f.SawBody()), &request); err != nil || request.Action != nil || request.CooldownMinutes != nil {
 		t.Fatalf("preset defaults overridden: %+v %v", request, err)
 	}
 	var got api.AlertRuleResponse
@@ -269,7 +270,7 @@ func TestCmdAutomationBacklogPresetEnableUsesNotificationDefaults(t *testing.T) 
 // delegation) is exercised here — the leaves have their own
 // targeted tests above.
 func TestCmdAlertsPreset_DispatchTable(t *testing.T) {
-	resetJSONOut(t)
+	main.ResetJSONOut(t)
 	// Keep this dispatcher table independent of any real developer
 	// Keychain entry. The command reaches an authenticated list route
 	// for the final case, so an explicit env token is the hermetic
@@ -286,14 +287,14 @@ func TestCmdAlertsPreset_DispatchTable(t *testing.T) {
 	}
 	for _, c := range cases {
 		var hits int32
-		srv := newFakeAPI(t, `[]`, 200)
-		srv.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv := main.NewFakeAPI(t, `[]`, 200)
+		(*srv.Srv()).Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			atomic.AddInt32(&hits, 1)
 			w.WriteHeader(200)
 			_, _ = w.Write([]byte(`[]`))
 		})
-		t.Setenv("FAAS_API", srv.srv.URL)
-		got := cmdAlertsPreset(c.args)
+		t.Setenv("FAAS_API", (*srv.Srv()).URL)
+		got := main.CmdAlertsPreset(c.args)
 		if got != c.wantCode {
 			t.Errorf("args=%v exit = %d, want %d", c.args, got, c.wantCode)
 		}

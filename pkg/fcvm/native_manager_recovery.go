@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/onebox-faas/faas/pkg/netns"
 )
@@ -148,6 +149,15 @@ func (m *Manager) retireUnknownNative(ctx context.Context, instance, exportDir s
 	}
 	record, err := v.nativeRecoveryRuntime().journal.read(instance)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && m.computeAuthority != nil && m.financialComputeNeverLaunched(ctx, instance) {
+			if m.cancelUnstartedFinancialCompute(ctx, instance) {
+				return 0, nil
+			}
+			retired, readErr := m.computeAuthority.FinancialComputeRetired(ctx, m.computeNode, instance)
+			if readErr == nil && retired {
+				return 0, nil
+			}
+		}
 		return -1, fmt.Errorf("native recovery: unknown stop has no launch ownership: %w", err)
 	}
 	m.mu.Lock()

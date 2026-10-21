@@ -244,3 +244,50 @@ test('rejected callback promises preserve mutation errors without replay', async
   assert.equal(calls, 1)
   await new Promise(setImmediate)
 })
+
+test('anonymous clients send no Authorization for public reads and GET public RPCs', async () => {
+  const requests = []
+  const fetch = async (url, init) => { requests.push({ url: new URL(String(url)), ...init }); return new Response('[]', { headers: { 'Content-Type': 'application/json' } }) }
+  const db = createDataClient({ url: 'https://data.example', anonymous: true, fetch }).schema('api')
+  await db.from('products').select('id,name').limit(5).throwOnError()
+  await db.rpc('search_products', { q: 'lamp' }, { get: true }).throwOnError()
+  assert.equal(requests.length, 2)
+  for (const request of requests) {
+    assert.equal(request.headers.get('Authorization'), null)
+    assert.equal(request.credentials, 'omit')
+  }
+  assert.equal(requests[1].method, 'GET')
+  assert.equal(requests[1].url.pathname, '/rest/v1/rpc/search_products')
+  assert.equal(requests[1].url.searchParams.get('q'), 'lamp')
+  assert.equal(requests[1].headers.get('Accept-Profile'), 'api')
+})
+
+test('anonymous clients still send a token when there is one, and refuse malformed ones', async () => {
+  let session = null
+  const requests = []
+  const db = createDataClient({ url: 'https://data.example', anonymous: true, accessToken: async () => session,
+    fetch: async (url, init) => { requests.push(init); return new Response('[]') } }).schema('api')
+  await db.from('products').select().throwOnError()
+  session = 'user-token'
+  await db.from('products').select().throwOnError()
+  assert.equal(requests[0].headers.get('Authorization'), null)
+  assert.equal(requests[1].headers.get('Authorization'), 'Bearer user-token')
+  for (const bad of ['', 'two words', 42]) {
+    session = bad
+    await assert.rejects(async () => await db.from('products').select().throwOnError(), /application access token/, String(bad))
+  }
+  assert.equal(requests.length, 2, 'malformed tokens never reach the network')
+  assert.throws(() => createDataClient({ url: 'https://data.example', anonymous: 'yes', accessToken: 'x' }), /anonymous/)
+})
+
+test('without anonymous: true a missing token still fails before the network', async () => {
+  let sent = false
+  const fetch = async () => { sent = true; return new Response('[]') }
+  for (const accessToken of [undefined, null, () => null, async () => undefined]) {
+    const db = createDataClient({ url: 'https://data.example', accessToken, fetch }).schema('api')
+    await assert.rejects(async () => await db.from('products').select().throwOnError(), /application access token/)
+  }
+  const explicit = createDataClient({ url: 'https://data.example', anonymous: false, accessToken: () => null, fetch }).schema('api')
+  await assert.rejects(async () => await explicit.from('products').select().throwOnError(), /application access token/)
+  assert.equal(sent, false)
+})

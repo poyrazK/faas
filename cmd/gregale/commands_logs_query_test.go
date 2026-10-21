@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -21,17 +22,17 @@ func TestNormalizeLogsSince(t *testing.T) {
 		name, raw, source, want string
 		wantErr                 bool
 	}{
-		{name: "runtime duration", raw: "15m", source: logsSourceRuntime, want: "2026-09-22T11:45:00Z"},
-		{name: "runtime day alias", raw: "3d", source: logsSourceRuntime, want: "2026-09-19T12:00:00Z"},
-		{name: "runtime timestamp", raw: "2026-09-21T12:00:00+03:00", source: logsSourceRuntime, want: "2026-09-21T09:00:00Z"},
-		{name: "http duration", raw: "15m", source: logsSourceHTTP, want: "15m"},
-		{name: "http timestamp", raw: "2026-09-22T11:45:00Z", source: logsSourceHTTP, want: "15m0s"},
-		{name: "invalid", raw: "yesterday", source: logsSourceRuntime, wantErr: true},
-		{name: "future", raw: "2026-09-22T12:01:00Z", source: logsSourceHTTP, wantErr: true},
+		{name: "runtime duration", raw: "15m", source: main.LogsSourceRuntime, want: "2026-09-22T11:45:00Z"},
+		{name: "runtime day alias", raw: "3d", source: main.LogsSourceRuntime, want: "2026-09-19T12:00:00Z"},
+		{name: "runtime timestamp", raw: "2026-09-21T12:00:00+03:00", source: main.LogsSourceRuntime, want: "2026-09-21T09:00:00Z"},
+		{name: "http duration", raw: "15m", source: main.LogsSourceHTTP, want: "15m"},
+		{name: "http timestamp", raw: "2026-09-22T11:45:00Z", source: main.LogsSourceHTTP, want: "15m0s"},
+		{name: "invalid", raw: "yesterday", source: main.LogsSourceRuntime, wantErr: true},
+		{name: "future", raw: "2026-09-22T12:01:00Z", source: main.LogsSourceHTTP, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := normalizeLogsSince(tt.raw, tt.source, now)
+			got, err := main.NormalizeLogsSince(tt.raw, tt.source, now)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("normalizeLogsSince() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -59,11 +60,11 @@ func TestCmdLogsHTTPFiltersUseRequestDatabase(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "test-token")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
-	if code := cmdLogs([]string{"myapp", "--status", "500", "--route", "POST /checkout", "--since", "15m"}); code != 0 {
+	if code := main.CmdLogs([]string{"myapp", "--status", "500", "--route", "POST /checkout", "--since", "15m"}); code != 0 {
 		t.Fatalf("cmdLogs exit = %d", code)
 	}
 	for key, want := range map[string]string{
@@ -102,7 +103,7 @@ func TestCmdLogsRelativeSinceReachesRuntimeAsTimestamp(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "test-token")
 
 	started := time.Now()
-	if code := cmdLogs([]string{"myapp", "--since", "15m"}); code != 0 {
+	if code := main.CmdLogs([]string{"myapp", "--since", "15m"}); code != 0 {
 		t.Fatalf("cmdLogs exit = %d", code)
 	}
 	timestamp, err := time.Parse(time.RFC3339Nano, gotSince)
@@ -116,8 +117,8 @@ func TestCmdLogsRelativeSinceReachesRuntimeAsTimestamp(t *testing.T) {
 }
 
 func TestCmdLogsRequestLookupEmitsCanonicalJSON(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -129,11 +130,11 @@ func TestCmdLogsRequestLookupEmitsCanonicalJSON(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "test-token")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
-	if code := cmdLogs([]string{"--request", "req_28372", "myapp"}); code != 0 {
+	if code := main.CmdLogs([]string{"--request", "req_28372", "myapp"}); code != 0 {
 		t.Fatalf("cmdLogs exit = %d", code)
 	}
 	if gotPath != "/v1/apps/myapp/debug/requests/req_28372" {
@@ -164,11 +165,11 @@ func TestCmdLogsTraceFiltersCorrelatedHTTPEvents(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "test-token")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
-	if code := cmdLogs([]string{"myapp", "--trace", traceID, "--status", "503", "--limit", "1"}); code != 0 {
+	if code := main.CmdLogs([]string{"myapp", "--trace", traceID, "--status", "503", "--limit", "1"}); code != 0 {
 		t.Fatalf("cmdLogs exit = %d", code)
 	}
 	if got := gotQuery.Get("limit"); got != "200" {
@@ -198,7 +199,7 @@ func TestCmdLogsReleaseRevisionFiltersHTTPLogs(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 
-	if code := cmdLogs([]string{"myapp", "--source", "http", "--release", "384"}); code != 0 {
+	if code := main.CmdLogs([]string{"myapp", "--source", "http", "--release", "384"}); code != 0 {
 		t.Fatalf("cmdLogs exit = %d", code)
 	}
 	if got := telemetryQuery.Get("deployment_id"); got != deploymentID {
@@ -228,11 +229,11 @@ func TestCmdLogsAllWalksEveryHTTPLogPage(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "test-token")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
-	if code := cmdLogs([]string{"myapp", "--source", "http", "--since", "15m", "--limit", "1", "--all"}); code != 0 {
+	if code := main.CmdLogs([]string{"myapp", "--source", "http", "--since", "15m", "--limit", "1", "--all"}); code != 0 {
 		t.Fatalf("cmdLogs exit = %d", code)
 	}
 	if calls != 2 {
@@ -259,11 +260,11 @@ func TestCmdLogsAllStreamsCompletedPagesBeforeLaterPageFailure(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "test-token")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 
-	if code := cmdLogs([]string{"myapp", "--source", "http", "--all"}); code == 0 {
+	if code := main.CmdLogs([]string{"myapp", "--source", "http", "--all"}); code == 0 {
 		t.Fatal("expected later-page failure")
 	}
 	if !strings.Contains(stdout.String(), `route="/first"`) {
@@ -273,7 +274,7 @@ func TestCmdLogsAllStreamsCompletedPagesBeforeLaterPageFailure(t *testing.T) {
 
 func TestHTTPLogQueryPageWarnings(t *testing.T) {
 	var output bytes.Buffer
-	renderHTTPLogQueryPageWarnings(&output, api.DebugTelemetryListResponse{
+	main.RenderHTTPLogQueryPageWarnings(&output, api.DebugTelemetryListResponse{
 		RetentionClamped: true,
 		Complete:         false,
 	})
@@ -303,7 +304,7 @@ func TestCmdLogsRejectsInvalidHTTPFiltersBeforeNetwork(t *testing.T) {
 		{"myapp", "--source", "database"},
 		{"myapp", "--route", "/checkout"},
 	} {
-		if code := cmdLogs(args); code != 2 {
+		if code := main.CmdLogs(args); code != 2 {
 			t.Errorf("cmdLogs(%v) = %d, want 2", args, code)
 		}
 	}
@@ -318,11 +319,11 @@ func TestCmdLogsRejectsInvalidHTTPFiltersBeforeNetwork(t *testing.T) {
 // usage exit; this pins the message.
 func TestValidateHTTPLogRouteNamesTheLabelForm(t *testing.T) {
 	for _, route := range []string{"", "GET /orders/{id}", "POST /realtime/connect"} {
-		if err := validateHTTPLogRoute(route); err != nil {
+		if err := main.ValidateHTTPLogRoute(route); err != nil {
 			t.Errorf("validateHTTPLogRoute(%q) = %v, want nil", route, err)
 		}
 	}
-	err := validateHTTPLogRoute("/realtime/connect")
+	err := main.ValidateHTTPLogRoute("/realtime/connect")
 	if err == nil {
 		t.Fatal("validateHTTPLogRoute accepted a bare path")
 	}
@@ -346,11 +347,11 @@ func TestCmdLogsHTTPEmptyResultSaysSo(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "test-token")
 
 	var stdout, stderr bytes.Buffer
-	oldOut, oldErr := osStdout, osStderr
-	osStdout, osStderr = &stdout, &stderr
-	t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
+	oldOut, oldErr := (*main.OsStdout), (*main.OsStderr)
+	(*main.OsStdout), (*main.OsStderr) = &stdout, &stderr
+	t.Cleanup(func() { (*main.OsStdout), (*main.OsStderr) = oldOut, oldErr })
 
-	if code := cmdLogs([]string{"myapp", "--status", "418", "--since", "15m"}); code != 0 {
+	if code := main.CmdLogs([]string{"myapp", "--status", "418", "--since", "15m"}); code != 0 {
 		t.Fatalf("cmdLogs exit = %d, stderr %q", code, stderr.String())
 	}
 	if stdout.Len() != 0 {

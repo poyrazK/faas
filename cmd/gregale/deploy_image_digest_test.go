@@ -1,16 +1,17 @@
-package main
+package main_test
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // TestImageDigestRequiredProblem pins H10-118: a tag-only --image failed
 // with the title "Image required" and no way to find the digest.
 func TestImageDigestRequiredProblem(t *testing.T) {
-	problem := imageDigestRequiredProblem("mirror.gcr.io/traefik/whoami:v1.10.3")
+	problem := main.ImageDigestRequiredProblem("mirror.gcr.io/traefik/whoami:v1.10.3")
 	if problem.Code != api.CodeImageRequired || problem.Title != "Image digest required" {
 		t.Fatalf("problem = %q %q", problem.Code, problem.Title)
 	}

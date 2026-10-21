@@ -10,7 +10,7 @@
 // Whitebox `package state`. No Postgres dependency — runs on the
 // unit-tests-pure-* CI lanes.
 
-package state
+package state_test
 
 import (
 	"errors"
@@ -19,99 +19,100 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestMemStore_IncrementAppError_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ok, err := m.IncrementAppError(t.Context(), sqlc.IncrementAppErrorParams{})
 	if ok {
 		t.Error("ok = true, want false")
 	}
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("err = %v, want errMemStoreAppErrors", err)
 	}
 }
 
 func TestMemStore_InsertAppErrorRequest_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	if err := m.InsertAppErrorRequest(t.Context(), sqlc.InsertAppErrorRequestParams{}); !errors.Is(err, errMemStoreAppErrors) {
+	m := state.NewMemStore()
+	if err := m.InsertAppErrorRequest(t.Context(), sqlc.InsertAppErrorRequestParams{}); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("err = %v, want errMemStoreAppErrors", err)
 	}
 }
 
 func TestMemStore_ListAppErrorGroups_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	rows, err := m.ListAppErrorGroups(t.Context(), sqlc.ListAppErrorGroupsParams{})
 	if rows != nil {
 		t.Errorf("rows = %+v, want nil", rows)
 	}
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("err = %v, want errMemStoreAppErrors", err)
 	}
 }
 
 func TestMemStore_ListAppErrorRequests_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	rows, err := m.ListAppErrorRequests(t.Context(), sqlc.ListAppErrorRequestsParams{})
 	if rows != nil {
 		t.Errorf("rows = %+v, want nil", rows)
 	}
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("err = %v, want errMemStoreAppErrors", err)
 	}
 }
 
 func TestMemStore_GetAppErrorSample_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	row, err := m.GetAppErrorSample(t.Context(), sqlc.GetAppErrorSampleParams{})
-	if !reflect.DeepEqual(row, AppErrorSampleRow{}) {
+	if !reflect.DeepEqual(row, state.AppErrorSampleRow{}) {
 		t.Errorf("row = %+v, want zero value", row)
 	}
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("err = %v, want errMemStoreAppErrors", err)
 	}
 }
 
 func TestMemStore_ListAppErrorFingerprintsForPurge_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ids, err := m.ListAppErrorFingerprintsForPurge(t.Context(), sqlc.ListAppErrorFingerprintsForPurgeParams{})
 	if ids != nil {
 		t.Errorf("ids = %+v, want nil", ids)
 	}
-	if !errors.Is(err, errMemStoreAppErrors) {
+	if !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("err = %v, want errMemStoreAppErrors", err)
 	}
 }
 
 func TestMemStore_DeleteAppErrorsByIDs_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ids := []uuid.UUID{uuid.New()}
-	if err := m.DeleteAppErrorsByIDs(t.Context(), ids); !errors.Is(err, errMemStoreAppErrors) {
+	if err := m.DeleteAppErrorsByIDs(t.Context(), ids); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("err = %v, want errMemStoreAppErrors", err)
 	}
 }
 
 func TestMemStore_DeleteAppErrorRequestsByIDs_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ids := []uuid.UUID{uuid.New()}
-	if err := m.DeleteAppErrorRequestsByIDs(t.Context(), ids); !errors.Is(err, errMemStoreAppErrors) {
+	if err := m.DeleteAppErrorRequestsByIDs(t.Context(), ids); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("err = %v, want errMemStoreAppErrors", err)
 	}
 }
 
 func TestMemStore_DeleteAppErrorRequestsOlderThan_Mega5(t *testing.T) {
 	t.Parallel()
-	m := NewMemStore()
-	if err := m.DeleteAppErrorRequestsOlderThan(t.Context(), uuid.Nil, time.Now()); !errors.Is(err, errMemStoreAppErrors) {
+	m := state.NewMemStore()
+	if err := m.DeleteAppErrorRequestsOlderThan(t.Context(), uuid.Nil, time.Now()); !errors.Is(err, (*state.ErrMemStoreAppErrors)) {
 		t.Errorf("err = %v, want errMemStoreAppErrors", err)
 	}
 }

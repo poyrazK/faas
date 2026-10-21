@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -33,12 +34,14 @@ func TestSendRollbackOverReleases(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			oldStderr, oldNonInteractive, oldJSON := osStderr, nonInteractive, jsonOutput
-			osStderr, nonInteractive, jsonOutput = &stderr, true, false
-			t.Cleanup(func() { osStderr, nonInteractive, jsonOutput = oldStderr, oldNonInteractive, oldJSON })
+			oldStderr, oldNonInteractive, oldJSON := (*main.OsStderr), (*main.NonInteractive), (*main.JsonOutput)
+			(*main.OsStderr), (*main.NonInteractive), (*main.JsonOutput) = &stderr, true, false
+			t.Cleanup(func() {
+				(*main.OsStderr), (*main.NonInteractive), (*main.JsonOutput) = oldStderr, oldNonInteractive, oldJSON
+			})
 
 			var calls []api.RollbackRequest
-			_, err := sendRollbackOverReleases("my-api", api.RollbackRequest{}, tc.acknowledge, func(req api.RollbackRequest) (api.DeploymentResponse, error) {
+			_, err := main.SendRollbackOverReleases("my-api", api.RollbackRequest{}, tc.acknowledge, func(req api.RollbackRequest) (api.DeploymentResponse, error) {
 				calls = append(calls, req)
 				if !req.AcknowledgeReleases {
 					return api.DeploymentResponse{}, crossesReleaseError()
@@ -51,7 +54,7 @@ func TestSendRollbackOverReleases(t *testing.T) {
 			if tc.acknowledge && !calls[1].AcknowledgeReleases {
 				t.Fatalf("retry did not acknowledge: %+v", calls[1])
 			}
-			if errors.Is(err, errRollbackDeclined) {
+			if errors.Is(err, (*main.ErrRollbackDeclined)) {
 				t.Fatal("a script must get the API refusal, not a declined prompt")
 			}
 			for _, want := range []string{"v42  succeeded  started 2026-10-15T10:02:13Z", "gregale postgres restore db-1 --name orders-before-v42", "--acknowledge-releases"} {
@@ -66,7 +69,7 @@ func TestSendRollbackOverReleases(t *testing.T) {
 func TestSendRollbackPassesOtherErrorsThrough(t *testing.T) {
 	want := &api.APIError{Problem: api.Problem{Status: 409, Code: api.CodeRollbackTargetIneligible}}
 	calls := 0
-	_, err := sendRollbackOverReleases("my-api", api.RollbackRequest{}, true, func(api.RollbackRequest) (api.DeploymentResponse, error) {
+	_, err := main.SendRollbackOverReleases("my-api", api.RollbackRequest{}, true, func(api.RollbackRequest) (api.DeploymentResponse, error) {
 		calls++
 		return api.DeploymentResponse{}, want
 	})
@@ -76,10 +79,10 @@ func TestSendRollbackPassesOtherErrorsThrough(t *testing.T) {
 }
 
 func TestReleaseSummaryLine(t *testing.T) {
-	if got := releaseSummaryLine(nil); got != "" {
+	if got := main.ReleaseSummaryLine(nil); got != "" {
 		t.Fatalf("no release = %q, want empty", got)
 	}
-	got := releaseSummaryLine(&api.DeploymentRelease{Status: "succeeded", StartedAt: "2026-10-15T10:02:13Z", FinishedAt: "2026-10-15T10:02:40Z",
+	got := main.ReleaseSummaryLine(&api.DeploymentRelease{Status: "succeeded", StartedAt: "2026-10-15T10:02:13Z", FinishedAt: "2026-10-15T10:02:40Z",
 		MigrationDatabases: []api.ReleaseDatabaseRef{{ID: "db-1", Name: "orders"}, {ID: "db-2", Name: "audit"}}})
 	want := "release: succeeded, started 2026-10-15T10:02:13Z, finished 2026-10-15T10:02:40Z; can migrate orders, audit"
 	if got != want {

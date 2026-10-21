@@ -1,20 +1,21 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestRenderSLOMarksWakeQueueUnavailable(t *testing.T) {
 	for name, render := range map[string]func(*bytes.Buffer){
 		"app": func(buf *bytes.Buffer) {
-			renderAppSLO(buf, api.AppSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable})
+			main.RenderAppSLO(buf, api.AppSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable})
 		},
 		"account": func(buf *bytes.Buffer) {
-			renderAccountSLO(buf, api.AccountSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable})
+			main.RenderAccountSLO(buf, api.AccountSLOResponse{WakeQueueSampleStatus: api.SLOSampleStatusUnavailable})
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

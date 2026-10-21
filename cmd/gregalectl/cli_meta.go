@@ -86,6 +86,13 @@ type cliFlag struct {
 // boundary — adding a customer command to gregalectl or an operator
 // command to gregale fails CI immediately.
 var cliCommands = []cliCommand{
+	{Name: "promotion-rollout", DocSlug: "promotion-rollout", Short: "Inspect readiness and manage signed promotion rollout approvals", Subcommands: []cliSub{
+		{Name: "readiness", Short: "Check a staged policy against an exact APID revision and target", Flags: []cliFlag{{Name: "policy", Short: "rollout policy file"}, {Name: "trust-key", Short: "trusted public key"}, {Name: "revision", Short: "full APID source revision", Req: true}, {Name: "account-id", Short: "account UUID", Req: true}, {Name: "project-id", Short: "project UUID", Req: true}, {Name: "enabled-capabilities", Short: "configured APID boot flags"}, {Name: "require", Short: "capabilities needed for success (default health)"}}},
+		{Name: "keygen", Short: "Create a private signer and public trust key", Flags: []cliFlag{{Name: "sign-key", Short: "new private key path", Req: true}, {Name: "trust-key", Short: "new public key path", Req: true}}},
+		{Name: "sign", Short: "Sign reviewed, complete qualification and runbook evidence", Flags: []cliFlag{{Name: "input", Short: "approval input JSON", Req: true}, {Name: "sign-key", Short: "private signing key", Req: true}, {Name: "native-log", Short: "reviewed combined native log", Req: true}, {Name: "service-graph-log", Short: "reviewed supplemental log required for service_graph"}, {Name: "output", Short: "new signed approval file", Req: true}}},
+		{Name: "pause", Short: "Stop new admissions without changing accepted operations", Flags: []cliFlag{{Name: "policy", Short: "rollout policy file", Req: true}}},
+		{Name: "resume", Short: "Reopen only an already approved rollout scope", Flags: []cliFlag{{Name: "policy", Short: "rollout policy file", Req: true}}},
+	}},
 	{
 		Name: "ci", DocSlug: "ci", Short: "Internal, default-off CI planning and execution controls",
 		Subcommands: []cliSub{
@@ -251,6 +258,7 @@ var cliCommands = []cliCommand{
 		Short:   "Provision, migrate, and verify the fleet-wide sealed-secret identity",
 		Subcommands: []cliSub{
 			{Name: "init", Short: "Create fleet.age and fleet.age.pub", Flags: []cliFlag{{Name: "dir", Short: "fleet identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "retire-release-key", Short: "Verify and retire a recipient from release-secret storage", Flags: []cliFlag{{Name: "kid", Short: "previous age recipient"}, {Name: "current-key", Short: "current fleet identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "database environment file"}, {Name: "dry-run", Short: "read dependencies without retiring"}, {Name: "json", Short: "emit retirement status"}}},
 			{Name: "migrate", Short: "Re-seal cluster and customer material to fleet.age", Flags: []cliFlag{{Name: "fleet-key", Short: "fleet.age identity"}, {Name: "legacy-host-dir", Short: "legacy host identity directory"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
 			{Name: "verify", Short: "Prove customer probe and shared-kid JWT access", Flags: []cliFlag{{Name: "fleet-key", Short: "staged fleet.age identity"}, {Name: "host-key", Short: "per-host host.age identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "json", Short: "emit structured JSON"}}},
 		},
@@ -655,6 +663,44 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchFlags,
+		DocSlug: "flags",
+		Short:   "Release platform features to selected accounts (ADR-1700)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List platform flags, groups and per-daemon convergence"},
+			{Name: "show", Short: "Show one flag's definition and apply receipts", Flags: []cliFlag{
+				{Name: "key", Short: "platform flag key", Req: true},
+			}},
+			{Name: "inspect", Short: "Explain one flag's decision for an account", Flags: []cliFlag{
+				{Name: "key", Short: "platform flag key", Req: true},
+				{Name: "account-id", Short: "account UUID", Req: true},
+			}},
+			{Name: "account", Short: "Show every flag decided for an account", Flags: []cliFlag{
+				{Name: "account-id", Short: "account UUID", Req: true},
+			}},
+			{Name: "enable", Short: "Turn a flag's kill switch on", Flags: flagsMutationCLIFlags(true)},
+			{Name: "disable", Short: "Turn a flag off for every account", Flags: flagsMutationCLIFlags(true)},
+			{Name: "allow", Short: "Enable a flag for one account", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "deny", Short: "Exclude one account from a flag", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "revoke", Short: "Remove an account's explicit allow or deny", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "rollout", Short: "Release a flag to a stable share of accounts", Flags: append(flagsMutationCLIFlags(true),
+				cliFlag{Name: "percent", Short: "share of eligible accounts, 0..100", Req: true},
+				cliFlag{Name: "plans", Short: "comma-separated plans the rollout is limited to"})},
+			{Name: "default", Short: "Set the value for accounts no rule matches", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "value", Short: "true or false", Req: true})},
+			{Name: "set", Short: "Replace a flag's definition from a JSON file", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "file", Short: "JSON definition file, or - for stdin", Req: true})},
+			{Name: "groups", Short: "List account groups and the flags that use them"},
+			{Name: "group-add", Short: "Add an account to a group", Flags: append(flagsMutationCLIFlags(false),
+				cliFlag{Name: "group", Short: "group name", Req: true}, cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "group-remove", Short: "Remove an account from a group", Flags: append(flagsMutationCLIFlags(false),
+				cliFlag{Name: "group", Short: "group name", Req: true}, cliFlag{Name: "account-id", Short: "account UUID", Req: true})},
+			{Name: "history", Short: "Show a flag's or the groups' revisions", Flags: []cliFlag{
+				{Name: "key", Short: "platform flag key, or groups", Req: true},
+				{Name: "limit", Short: "maximum revisions to return (1..200)"},
+			}},
+			{Name: "rollback", Short: "Restore an older flag or groups revision", Flags: append(flagsMutationCLIFlags(true), cliFlag{Name: "version", Short: "historical version to restore", Req: true})},
+		},
+	},
+	{
 		Name:    dispatchAudit,
 		DocSlug: "audit",
 		Short:   "Correlate durable operator intents and live events by trace ID",
@@ -908,6 +954,16 @@ var cliCommands = []cliCommand{
 				Name:  subPKIRecoverInstall,
 				Short: "Recover an interrupted trust bundle installation",
 				Flags: []cliFlag{{Name: "root-dir", Short: "active PKI root"}},
+			},
+			{
+				Name:  subPKIIssueFeature,
+				Short: "Issue or renew an operator-enabled feature's leaves (live-queries) from the CA",
+				Flags: []cliFlag{
+					{Name: "feature", Short: "feature whose leaves to issue", Req: true, ClosedSet: []string{"live-queries"}},
+					{Name: "box-role", Short: "host role the leaves are for", Req: true, ClosedSet: []string{"control-plane", "compute-only", "single-box"}},
+					{Name: "ca-dir", Short: "PKI root holding the CA"},
+					{Name: "root-dir", Short: "PKI root the leaves are written under"},
+				},
 			},
 			{
 				Name:  subPKIMetrics,
@@ -1190,6 +1246,20 @@ func accountMutationCLIFlags() []cliFlag {
 		{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
 		{Name: "yes", Short: "acknowledge the account mutation", Req: true},
 	}
+}
+
+// flagsMutationCLIFlags are the confirmation flags of every platform-flag
+// write; withKey adds --key for writes to one flag.
+func flagsMutationCLIFlags(withKey bool) []cliFlag {
+	flags := []cliFlag{
+		{Name: "reason", Short: "audit reason (3..500 characters)", Req: true},
+		{Name: "trace-id", Short: "OTel trace id (generated when omitted)"},
+		{Name: "yes", Short: "acknowledge the platform flag change", Req: true},
+	}
+	if withKey {
+		flags = append([]cliFlag{{Name: "key", Short: "platform flag key", Req: true}}, flags...)
+	}
+	return flags
 }
 
 func configMutationCLIFlags(set bool) []cliFlag {

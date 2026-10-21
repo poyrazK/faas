@@ -6,4 +6,7 @@ package financial
 const (
 	BillingCurrency      = "USD"
 	BillingCurrencyLower = "usd"
+	// LegacyBillingCurrency is the currency records written before ADR-1430
+	// carry. Those records stay valid history; nothing new is written in it.
+	LegacyBillingCurrency = "EUR"
 )

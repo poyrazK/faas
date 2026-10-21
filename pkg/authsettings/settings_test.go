@@ -3,6 +3,7 @@ package authsettings
 // adr: 1190
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -204,11 +205,100 @@ func TestSelfDeletion(t *testing.T) {
 	}
 }
 
+func TestSignupRestrictions(t *testing.T) {
+	set, unset, err := Change{SignupAllowedDomains: &[]string{" Acme.com", "acme.io", "acme.com"}, SignupBlockedDomains: &[]string{}, BlockDisposable: ptr(true), SignupAccess: ptr("waitlist")}.Secrets()
+	want := map[string]string{"AUTH_SIGNUP_ALLOWED_DOMAINS": "acme.com,acme.io", "AUTH_SIGNUP_BLOCK_DISPOSABLE": "1", "AUTH_SIGNUP_ACCESS": "waitlist"}
+	if err != nil || !reflect.DeepEqual(set, want) || !reflect.DeepEqual(unset, []string{"AUTH_SIGNUP_BLOCKED_DOMAINS"}) {
+		t.Fatalf("set %v unset %v err %v", set, unset, err)
+	}
+	many := make([]string, 101)
+	for i := range many {
+		many[i] = fmt.Sprintf("d%d.com", i)
+	}
+	for name, change := range map[string]Change{
+		"unknown access":   {SignupAccess: ptr("closed")},
+		"not a domain":     {SignupAllowedDomains: &[]string{"acme"}},
+		"a domain with @":  {SignupBlockedDomains: &[]string{"@spam.com"}},
+		"too many domains": {SignupBlockedDomains: &many},
+	} {
+		if _, _, err := change.Secrets(); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+func TestImpersonation(t *testing.T) {
+	for value, want := range map[bool]string{true: "1", false: "0"} {
+		set, unset, err := Change{Impersonation: ptr(value)}.Secrets()
+		if err != nil || len(unset) != 0 || !reflect.DeepEqual(set, map[string]string{"AUTH_IMPERSONATION": want}) {
+			t.Fatalf("Impersonation %v: set %v unset %v err %v", value, set, unset, err)
+		}
+	}
+}
+
+func TestWeb3(t *testing.T) {
+	set, _, err := Change{Web3: &[]string{"Ethereum"}}.Secrets()
+	if err != nil || !reflect.DeepEqual(set, map[string]string{"GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED": "true", "GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED": "false"}) {
+		t.Fatalf("ethereum: %v %v", set, err)
+	}
+	set, _, err = Change{Web3: &[]string{}}.Secrets()
+	if err != nil || set["GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED"] != "false" || set["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"] != "false" {
+		t.Fatalf("off: %v %v", set, err)
+	}
+	if _, _, err := (Change{Web3: &[]string{"bitcoin"}}).Secrets(); err == nil {
+		t.Fatal("an unknown chain was accepted")
+	}
+}
+
+func TestOrgDomains(t *testing.T) {
+	for value, want := range map[bool]string{true: "1", false: "0"} {
+		set, unset, err := Change{OrgDomains: ptr(value)}.Secrets()
+		if err != nil || len(unset) != 0 || !reflect.DeepEqual(set, map[string]string{"AUTH_ORG_DOMAINS": want}) {
+			t.Fatalf("OrgDomains %v: set %v unset %v err %v", value, set, unset, err)
+		}
+	}
+	// Joining by email domain needs proven addresses.
+	if _, _, err := (Change{OrgDomains: ptr(true), Autoconfirm: ptr(true)}).Secrets(); err == nil {
+		t.Fatal("organization domains with autoconfirm accepted")
+	}
+	if _, _, err := (Change{OrgDomains: ptr(false), Autoconfirm: ptr(true)}).Secrets(); err != nil {
+		t.Fatalf("turning both off-and-on separately refused: %v", err)
+	}
+}
+
 func TestOrgClaims(t *testing.T) {
 	for value, want := range map[bool]string{true: "1", false: "0"} {
 		set, unset, err := Change{OrgClaims: ptr(value)}.Secrets()
 		if err != nil || len(unset) != 0 || !reflect.DeepEqual(set, map[string]string{"AUTH_ORG_CLAIMS": want}) {
 			t.Fatalf("OrgClaims %v: set %v unset %v err %v", value, set, unset, err)
 		}
+	}
+}
+
+func TestSessionLimits(t *testing.T) {
+	set, unset, err := Change{SessionMaxAgeMinutes: ptr(43200), SessionIdleMinutes: ptr(0), SingleSession: ptr(true)}.Secrets()
+	if err != nil || !reflect.DeepEqual(set, map[string]string{"AUTH_SESSION_MAX_AGE_MINUTES": "43200", "AUTH_SINGLE_SESSION": "1"}) || !reflect.DeepEqual(unset, []string{"AUTH_SESSION_IDLE_MINUTES"}) {
+		t.Fatalf("set %v unset %v err %v", set, unset, err)
+	}
+	for _, bad := range []int{-1, 14, 525601} {
+		if _, _, err := (Change{SessionIdleMinutes: ptr(bad)}).Secrets(); err == nil {
+			t.Errorf("idle %d accepted", bad)
+		}
+	}
+	for value, want := range map[string]int{"off": 0, "": 0, "15m": 15, "12h": 720, "30d": 43200, "365d": 525600} {
+		if got, err := ParseSessionLimit(value); err != nil || got != want {
+			t.Errorf("ParseSessionLimit(%q) = %d, %v; want %d", value, got, err, want)
+		}
+		if want > 0 && FormatSessionLimit(want) != value {
+			t.Errorf("FormatSessionLimit(%d) = %q, want %q", want, FormatSessionLimit(want), value)
+		}
+	}
+	for _, bad := range []string{"10m", "366d", "1w", "0h", "1.5h", "12"} {
+		if _, err := ParseSessionLimit(bad); err == nil {
+			t.Errorf("ParseSessionLimit(%q) accepted", bad)
+		}
+	}
+	if FormatSessionLimit(90) != "90m" || FormatSessionLimit(0) != "off" {
+		t.Fatal("format")
 	}
 }

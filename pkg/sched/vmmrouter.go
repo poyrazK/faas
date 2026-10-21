@@ -251,11 +251,12 @@ type LiveMigrationAdopt struct {
 // (nodeID, targetURL) tuple is fixed at startup via
 // ActiveComputeNodes.
 type VMMRouter struct {
-	mu      sync.Mutex
-	cache   map[string]VMM    // nodeID -> dialed client (targetURL stored separately for the dial path)
-	targets map[string]string // nodeID -> target_url (filled at construction; lookup before dial)
-	dial    DialFunc
-	tls     *tls.Config
+	computeAuthority state.FinancialComputeStore
+	mu               sync.Mutex
+	cache            map[string]VMM    // nodeID -> dialed client (targetURL stored separately for the dial path)
+	targets          map[string]string // nodeID -> target_url (filled at construction; lookup before dial)
+	dial             DialFunc
+	tls              *tls.Config
 	// outboundRelay is the schedd-local path to outboundd. It is attached to
 	// every per-node execution stream and never travels to vmmd or the guest.
 	outboundRelay     ExecutionOutboundRelay
@@ -530,6 +531,9 @@ func (r *VMMRouter) resolveFor(ctx context.Context, nodeID string) (VMM, error) 
 
 // CreateColdBoot implements RoutedVMM.
 func (r *VMMRouter) CreateColdBoot(ctx context.Context, nodeID, instance string, app AppSpec) (*WakeOutcome, error) {
+	if err := r.checkFinancialComputeOwner(ctx, nodeID, app); err != nil {
+		return nil, err
+	}
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return nil, err
@@ -640,6 +644,9 @@ func (r *VMMRouter) RestoreExecution(ctx context.Context, nodeID string, req Exe
 
 // RestoreAppTask routes the command-free app runtime envelope to one node.
 func (r *VMMRouter) RestoreAppTask(ctx context.Context, nodeID string, spec AppTaskRestoreSpec) (*AppTaskRestoreOutcome, error) {
+	if err := r.checkFinancialComputeOwner(ctx, nodeID, spec.App); err != nil {
+		return nil, err
+	}
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return nil, err
@@ -709,6 +716,9 @@ type heldJobVMMClient interface {
 // optional on the per-node client interface so older test doubles and nodes
 // can continue serving the ordinary VM lifecycle surface.
 func (r *VMMRouter) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmResult, error) {
+	if err := r.checkFinancialComputeOwnerForScope(ctx, spec.NodeID, spec.AccountID, "job:"+spec.JobID); err != nil {
+		return JobVmmResult{}, err
+	}
 	cli, err := r.resolveFor(ctx, spec.NodeID)
 	if err != nil {
 		return JobVmmResult{}, err
@@ -756,6 +766,9 @@ func (r *VMMRouter) ReleaseJobStart(ctx context.Context, spec JobStartSpec) erro
 
 // CreateFromSnapshot implements RoutedVMM.
 func (r *VMMRouter) CreateFromSnapshot(ctx context.Context, nodeID, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error) {
+	if err := r.checkFinancialComputeOwner(ctx, nodeID, app); err != nil {
+		return nil, err
+	}
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return nil, err
@@ -775,6 +788,9 @@ func (r *VMMRouter) CreateFromSnapshot(ctx context.Context, nodeID, instance str
 
 // CreatePausedFromSnapshot implements the additive warm-pool capability.
 func (r *VMMRouter) CreatePausedFromSnapshot(ctx context.Context, nodeID, instance string, app AppSpec, snap SnapshotRef) (*WakeOutcome, error) {
+	if err := r.checkFinancialComputeOwner(ctx, nodeID, app); err != nil {
+		return nil, err
+	}
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
 		return nil, err
@@ -1015,6 +1031,23 @@ func (r *VMMRouter) CancelLiveMigration(ctx context.Context, dyingNodeID, instan
 		}
 	}
 	return cli.CancelLiveMigration(ctx, dyingNodeID, instanceID, leaseToken)
+}
+
+func (r *VMMRouter) CancelFunctionMigrationSource(ctx context.Context, node, id, token string) (bool, error) {
+	client, err := r.resolveFor(ctx, node)
+	if err != nil {
+		return false, err
+	}
+	qualified, ok := client.(functionMigrationCanceller)
+	if !ok {
+		return false, state.ErrMigrationCommitUnresolved
+	}
+	if r.migrationResume != nil {
+		if err := r.migrationResume(ctx, id, node, token); err != nil {
+			return false, err
+		}
+	}
+	return qualified.CancelFunctionMigrationSource(ctx, node, id, token)
 }
 
 // UpdateEgressAllowlist (ADR-031 + ADR-033, tier-2 PR-B) routes the

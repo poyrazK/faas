@@ -32,11 +32,17 @@ func (e *Engine) publishOwnedRuntimeWithStandards(ctx context.Context, out *Wake
 	if err := e.checkManagedPostgresAdmission(ctx, p.AppID); err != nil {
 		return state.Instance{}, err
 	}
+	if err := e.checkFinancialBudgetPublication(ctx, p); err != nil {
+		return state.Instance{}, err
+	}
 	p.AdmissionReceipt = out.RuntimeAdmissionReceipt
 	return e.store.PublishOwnedInstanceRuntime(ctx, p)
 }
 
 func (e *Engine) publishOwnedWarmWithStandards(ctx context.Context, receipt *runtimeadmission.Receipt, p state.RuntimeInstancePublication) (state.Instance, error) {
+	if err := e.checkFinancialBudgetPublication(ctx, p); err != nil {
+		return state.Instance{}, err
+	}
 	p.PromotionReceipt = receipt
 	fresh, err := e.store.PublishOwnedInstanceRuntime(ctx, p)
 	if receipt == nil || !state.RuntimePublicationOutcomeUnknown(err) {

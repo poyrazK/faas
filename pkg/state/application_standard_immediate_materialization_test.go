@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -10,31 +10,32 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type standardImmediateTestStore = contractTestStore
+type standardImmediateTestStore = state.ContractTestStore
 
 func TestMemApplicationStandardImmediateClaim(t *testing.T) {
-	standardImmediateClaim(t, NewMemStore())
+	standardImmediateClaim(t, state.NewMemStore())
 }
 
 func standardImmediateClaim(t *testing.T, s standardImmediateTestStore) {
 	t.Helper()
 	ctx := t.Context()
-	f := standardAutomaticSetup(t, s, false, false)
-	first := automaticCreate(t, s, f, "immediate-oldest")
-	second := automaticCreate(t, s, f, "immediate-selected")
-	request := ApplicationStandardEnrollmentClaimRequest{OrgID: f.owner.PersonalOrg.ID, AppID: second.ID, DesiredRevision: 1, Owner: "interactive-owner"}
+	f := state.StandardAutomaticSetup(t, s, false, false)
+	first := state.AutomaticCreate(t, s, f, "immediate-oldest")
+	second := state.AutomaticCreate(t, s, f, "immediate-selected")
+	request := state.ApplicationStandardEnrollmentClaimRequest{OrgID: (*f.Owner()).PersonalOrg.ID, AppID: second.ID, DesiredRevision: 1, Owner: "interactive-owner"}
 	for _, tc := range []struct {
 		name string
-		edit func(*ApplicationStandardEnrollmentClaimRequest)
+		edit func(*state.ApplicationStandardEnrollmentClaimRequest)
 		want error
 	}{
-		{"invalid owner", func(r *ApplicationStandardEnrollmentClaimRequest) { r.Owner = "" }, ErrInvalidArgument},
-		{"invalid app", func(r *ApplicationStandardEnrollmentClaimRequest) { r.AppID = "not-a-uuid" }, ErrInvalidArgument},
-		{"invalid revision", func(r *ApplicationStandardEnrollmentClaimRequest) { r.DesiredRevision = 0 }, ErrInvalidArgument},
-		{"foreign organization", func(r *ApplicationStandardEnrollmentClaimRequest) { r.OrgID = uuid.NewString() }, ErrNotFound},
-		{"changed desired revision", func(r *ApplicationStandardEnrollmentClaimRequest) { r.DesiredRevision++ }, ErrNotFound},
+		{"invalid owner", func(r *state.ApplicationStandardEnrollmentClaimRequest) { r.Owner = "" }, state.ErrInvalidArgument},
+		{"invalid app", func(r *state.ApplicationStandardEnrollmentClaimRequest) { r.AppID = "not-a-uuid" }, state.ErrInvalidArgument},
+		{"invalid revision", func(r *state.ApplicationStandardEnrollmentClaimRequest) { r.DesiredRevision = 0 }, state.ErrInvalidArgument},
+		{"foreign organization", func(r *state.ApplicationStandardEnrollmentClaimRequest) { r.OrgID = uuid.NewString() }, state.ErrNotFound},
+		{"changed desired revision", func(r *state.ApplicationStandardEnrollmentClaimRequest) { r.DesiredRevision++ }, state.ErrNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := request
@@ -52,7 +53,7 @@ func standardImmediateClaim(t *testing.T, s standardImmediateTestStore) {
 	request.AppID = strings.ToUpper(strings.ReplaceAll(second.ID, "-", ""))
 	request.OrgID = strings.ToUpper(request.OrgID)
 	start := make(chan struct{})
-	results := make(chan ApplicationStandardEnrollmentClaim, 8)
+	results := make(chan state.ApplicationStandardEnrollmentClaim, 8)
 	failures := make(chan error, 8)
 	var wg sync.WaitGroup
 	for range 8 {
@@ -74,16 +75,16 @@ func standardImmediateClaim(t *testing.T, s standardImmediateTestStore) {
 		t.Fatalf("exclusive targeted lease: successes=%d failures=%d", len(results), len(failures))
 	}
 	for err := range failures {
-		if !errors.Is(err, ErrNotFound) {
+		if !errors.Is(err, state.ErrNotFound) {
 			t.Fatal(err)
 		}
 	}
 	held := <-results
-	if held.AppID != canonicalStandardUUID(second.ID) || held.OrgID != canonicalStandardUUID(f.owner.PersonalOrg.ID) || held.DesiredRevision != 1 {
+	if held.AppID != state.CanonicalStandardUUID(second.ID) || held.OrgID != state.CanonicalStandardUUID((*f.Owner()).PersonalOrg.ID) || held.DesiredRevision != 1 {
 		t.Fatalf("claim lost canonical target: %+v", held)
 	}
 	other, err := s.ClaimApplicationStandardEnrollment(ctx, "background-owner")
-	if err != nil || other.AppID != canonicalStandardUUID(first.ID) {
+	if err != nil || other.AppID != state.CanonicalStandardUUID(first.ID) {
 		t.Fatalf("interactive claim consumed another service: %+v %v", other, err)
 	}
 	if err := s.ReleaseApplicationStandardEnrollmentWorker(ctx, other); err != nil {
@@ -96,40 +97,40 @@ func standardImmediateClaim(t *testing.T, s standardImmediateTestStore) {
 	if err != nil || next.Generation <= held.Generation {
 		t.Fatalf("retry lost generation fence: %+v %v", next, err)
 	}
-	if err := s.ReleaseApplicationStandardEnrollmentWorker(ctx, held); !errors.Is(err, ErrApplicationStandardLeaseLost) {
+	if err := s.ReleaseApplicationStandardEnrollmentWorker(ctx, held); !errors.Is(err, state.ErrApplicationStandardLeaseLost) {
 		t.Fatalf("old release revoked replacement: %v", err)
 	}
-	if _, err := s.MaterializeApplicationStandardEnrollment(ctx, held); !errors.Is(err, ErrApplicationStandardLeaseLost) {
+	if _, err := s.MaterializeApplicationStandardEnrollment(ctx, held); !errors.Is(err, state.ErrApplicationStandardLeaseLost) {
 		t.Fatalf("old worker installed over replacement: %v", err)
 	}
 	e, err := s.MaterializeApplicationStandardEnrollment(ctx, next)
 	if err != nil || e.State != "persisted" || e.DesiredRevision != 1 || e.PersistedRevision != 1 || e.ObservedRevision != 0 || len(e.MaterializedFields) != 6 {
 		t.Fatalf("targeted installation: %+v %v", e, err)
 	}
-	if _, err := s.ClaimApplicationStandardEnrollmentForApp(ctx, request); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ClaimApplicationStandardEnrollmentForApp(ctx, request); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("installed service was claimed again: %v", err)
 	}
-	unchanged, err := s.GetApplicationStandardEnrollment(ctx, f.owner.PersonalOrg.ID, first.ID)
+	unchanged, err := s.GetApplicationStandardEnrollment(ctx, (*f.Owner()).PersonalOrg.ID, first.ID)
 	if err != nil || unchanged.State != "pending" || unchanged.DesiredRevision != 1 || unchanged.PersistedRevision != 0 {
 		t.Fatalf("unrelated intent was installed: %+v %v", unchanged, err)
 	}
 }
 
 func TestMemApplicationStandardImmediateReviewPrecedence(t *testing.T) {
-	standardImmediateReviewPrecedence(t, NewMemStore())
+	standardImmediateReviewPrecedence(t, state.NewMemStore())
 }
 
 func standardImmediateReviewPrecedence(t *testing.T, s standardImmediateTestStore) {
 	t.Helper()
 	ctx := t.Context()
-	f := standardAutomaticSetup(t, s, false, true)
-	app := automaticCreate(t, s, f, "immediate-review")
-	r := ApplicationStandardEnrollmentClaimRequest{OrgID: app.OrgID, AppID: app.ID, DesiredRevision: 1, Owner: "interactive-before-approval"}
+	f := state.StandardAutomaticSetup(t, s, false, true)
+	app := state.AutomaticCreate(t, s, f, "immediate-review")
+	r := state.ApplicationStandardEnrollmentClaimRequest{OrgID: app.OrgID, AppID: app.ID, DesiredRevision: 1, Owner: "interactive-before-approval"}
 	held, err := s.ClaimApplicationStandardEnrollmentForApp(ctx, r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.PublishApplicationStandardVersion(ctx, ApplicationStandardPublish{OrgID: app.OrgID, ActorID: f.owner.Account.ID, Slug: f.version.Slug, CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{ExpectedVersion: 1, Definition: json.RawMessage(`{"security_policy":{"mode":"default","value":"off"}}`)}})
+	v, err := s.PublishApplicationStandardVersion(ctx, state.ApplicationStandardPublish{OrgID: app.OrgID, ActorID: (*f.Owner()).Account.ID, Slug: (*f.Version()).Slug, CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{ExpectedVersion: 1, Definition: json.RawMessage(`{"security_policy":{"mode":"default","value":"off"}}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,17 +138,17 @@ func standardImmediateReviewPrecedence(t *testing.T, s standardImmediateTestStor
 	if err != nil || len(assignments) != 1 {
 		t.Fatalf("assignment: %+v %v", assignments, err)
 	}
-	p, err := s.PreviewApplicationStandardAssignment(ctx, app.OrgID, f.owner.Account.ID, ApplicationStandardReviewRequest{AssignmentID: assignments[0].ID, ExpectedRevision: 1, Scope: "organization", ScopeID: app.OrgID, StandardID: v.StandardID, AdmissionVersion: 2, Active: true, BatchSize: 1})
+	p, err := s.PreviewApplicationStandardAssignment(ctx, app.OrgID, (*f.Owner()).Account.ID, state.ApplicationStandardReviewRequest{AssignmentID: assignments[0].ID, ExpectedRevision: 1, Scope: "organization", ScopeID: app.OrgID, StandardID: v.StandardID, AdmissionVersion: 2, Active: true, BatchSize: 1})
 	if err != nil || len(p.Blockers) != 0 {
 		t.Fatalf("review: %+v %v", p.Blockers, err)
 	}
-	if _, err := s.ApproveApplicationStandardReview(ctx, p.OrgID, f.owner.Account.ID, p.ID, p.ApprovalHash); err != nil {
+	if _, err := s.ApproveApplicationStandardReview(ctx, p.OrgID, (*f.Owner()).Account.ID, p.ID, p.ApprovalHash); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.MaterializeApplicationStandardEnrollment(ctx, held); !errors.Is(err, ErrApplicationStandardOperationInProgress) {
+	if _, err := s.MaterializeApplicationStandardEnrollment(ctx, held); !errors.Is(err, state.ErrApplicationStandardOperationInProgress) {
 		t.Fatalf("interactive worker overtook approved target: %v", err)
 	}
-	if _, err := s.ClaimApplicationStandardEnrollmentForApp(ctx, r); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ClaimApplicationStandardEnrollmentForApp(ctx, r); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("queued reviewed target was claimed: %v", err)
 	}
 	c, err := s.ClaimApplicationStandardOperation(ctx, "reviewed-owner")

@@ -105,4 +105,4 @@ func (s *server) gitLabTokenForAccount(ctx context.Context, accountID string) (s
 	return replacement.Access, nil
 }
 
-func (s *server) gitLabClient() gitlabsource.Client { return gitlabsource.Client{} }
+func (s *server) gitLabClient() gitlabsource.Client { return s.gitlab }

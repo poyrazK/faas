@@ -50,6 +50,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.app_release_review import AppReleaseReview
     from ..models.build_plan import BuildPlan
+    from ..models.deployment_configuration_status import DeploymentConfigurationStatus
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
     from ..models.deployment_promotion_hold import DeploymentPromotionHold
@@ -57,7 +58,7 @@ if TYPE_CHECKING:
     from ..models.deployment_release import DeploymentRelease
     from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
     from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
-    from ..models.deployment_response_stage_state import DeploymentResponseStageState
+    from ..models.deployment_stage_state import DeploymentStageState
     from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
     from ..models.dev_patch_preview import DevPatchPreview
     from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
@@ -90,6 +91,9 @@ class DeploymentResponse:
     kind: str
     status: str
     created_at: datetime.datetime
+    configuration: DeploymentConfigurationStatus | Unset = UNSET
+    """Server-managed cron activation diagnostics. CLI-owned settings are additionally reflected in CLI receipt
+    configuration_complete. Reads never create builds or modify schedules."""
     staged_review: AppReleaseReview | Unset = UNSET
     """Atomic app configuration and serving-deployment identities used to fence release admission."""
     worker_drain: DeploymentWorkerDrainStatus | Unset = UNSET
@@ -99,14 +103,9 @@ class DeploymentResponse:
     """Compatibility hold and durable recovery progress for a deployment awaiting promotion."""
     durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset = UNSET
     """Observational validator readiness on deployment detail; not a reservation or code-purity attestation."""
-    stage_state: DeploymentResponseStageState | Unset = UNSET
-    """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be
-    rebuilt. Optional hosting_verification records started_at, deadline_at, attempts, last_error_code,
-    retry_not_before and completed_at during unavailable candidate verification recovery (ADR-481, ADR-482).
-    last_error_code distinguishes publication, gateway, transport and candidate-evidence failures; a transport
-    failure does not attribute blame to the app or platform. retry_not_before is an eligibility floor, not a
-    promised delivery time; completed_at means the attempt finished, while the hosting receipt records its verdict.
-   """
+    stage_state: DeploymentStageState | Unset = UNSET
+    """Customer-visible deployment stage progress (ADR-117). `current` is the open stage, or an empty string once
+    the deployment is live, failed or cancelled and that stage has moved into `history`."""
     dev_patch: DevPatchPreview | Unset = UNSET
     """Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have
     been applied as a live source patch to the deployment that was live at upload time (ADR-740 phase 1). It is a
@@ -317,6 +316,10 @@ class DeploymentResponse:
         status = self.status
 
         created_at = self.created_at.isoformat()
+
+        configuration: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.configuration, Unset):
+            configuration = self.configuration.to_dict()
 
         staged_review: dict[str, Any] | Unset = UNSET
         if not isinstance(self.staged_review, Unset):
@@ -655,6 +658,8 @@ class DeploymentResponse:
                 "created_at": created_at,
             }
         )
+        if configuration is not UNSET:
+            field_dict["configuration"] = configuration
         if staged_review is not UNSET:
             field_dict["staged_review"] = staged_review
         if worker_drain is not UNSET:
@@ -790,6 +795,7 @@ class DeploymentResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_release_review import AppReleaseReview
         from ..models.build_plan import BuildPlan
+        from ..models.deployment_configuration_status import DeploymentConfigurationStatus
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
         from ..models.deployment_promotion_hold import DeploymentPromotionHold
@@ -797,7 +803,7 @@ class DeploymentResponse:
         from ..models.deployment_release import DeploymentRelease
         from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
         from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
-        from ..models.deployment_response_stage_state import DeploymentResponseStageState
+        from ..models.deployment_stage_state import DeploymentStageState
         from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
         from ..models.dev_patch_preview import DevPatchPreview
         from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
@@ -822,6 +828,13 @@ class DeploymentResponse:
         status = d.pop("status")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _configuration = d.pop("configuration", UNSET)
+        configuration: DeploymentConfigurationStatus | Unset
+        if isinstance(_configuration, Unset):
+            configuration = UNSET
+        else:
+            configuration = DeploymentConfigurationStatus.from_dict(_configuration)
 
         _staged_review = d.pop("staged_review", UNSET)
         staged_review: AppReleaseReview | Unset
@@ -852,11 +865,11 @@ class DeploymentResponse:
             durable_entity_validator = DurableEntityValidatorDeploymentInfo.from_dict(_durable_entity_validator)
 
         _stage_state = d.pop("stage_state", UNSET)
-        stage_state: DeploymentResponseStageState | Unset
+        stage_state: DeploymentStageState | Unset
         if isinstance(_stage_state, Unset):
             stage_state = UNSET
         else:
-            stage_state = DeploymentResponseStageState.from_dict(_stage_state)
+            stage_state = DeploymentStageState.from_dict(_stage_state)
 
         _dev_patch = d.pop("dev_patch", UNSET)
         dev_patch: DevPatchPreview | Unset
@@ -1423,6 +1436,7 @@ class DeploymentResponse:
             kind=kind,
             status=status,
             created_at=created_at,
+            configuration=configuration,
             staged_review=staged_review,
             worker_drain=worker_drain,
             promotion_hold=promotion_hold,

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bufio"
@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
 )
@@ -66,7 +67,7 @@ func runLocalScenarioTCPTransport(t *testing.T, manifest, suite string, pool boo
 	if negative {
 		nativeCase = negativeCase[0]
 	}
-	prepared, err := prepareTestSuite(manifest, suite, testSuiteOptions{Engine: "real-vm", Validate: true, Repeat: 1, MaxWorkloadMinutes: 40})
+	prepared, err := main.PrepareTestSuite(manifest, suite, main.TestSuiteOptions{Engine: "real-vm", Validate: true, Repeat: 1, MaxWorkloadMinutes: 40})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +202,7 @@ func runLocalScenarioTCPTransport(t *testing.T, manifest, suite string, pool boo
 	if pool {
 		baseURL = startLocalPoolFixture(t, listener.Addr().(*net.TCPAddr).Port, suite == "request-deadlines")
 	}
-	report, _, err := runTestScenarioStepLoad(ctx, NewClient(control.URL, "token"), baseURL, "0123456789abcdef0123456789abcdef", nil, step, nil, nil)
+	report, _, err := main.RunTestScenarioStepLoad(ctx, main.NewClient(control.URL, "token"), baseURL, "0123456789abcdef0123456789abcdef", nil, step, nil, nil)
 	if (err != nil) != negative || report == nil {
 		t.Fatalf("TCP campaign: %v %+v", err, report)
 	}
@@ -289,7 +290,7 @@ process.once("SIGTERM",async()=>{await fixture.stop();fixture.server.closeAllCon
 		namespace = cancellationNamespace[0]
 	}
 	cmd := exec.CommandContext(ctx, node, "--input-type=module", "-e", script, source, strconv.Itoa(dependencyPort), overall, namespace)
-	cmd.Env = testCommandBaseEnv()
+	cmd.Env = main.TestCommandBaseEnv()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()

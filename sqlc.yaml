@@ -147,6 +147,18 @@ sql:
         emit_methods_with_db_argument: true
         emit_empty_slices: true
 
+  # ADR-20261019102108 Data API usage; projection mirrors its migration-owned tables.
+  - engine: "postgresql"
+    queries: "pkg/state/dataapiusage/queries.sql"
+    schema: "pkg/state/dataapiusage/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/state/dataapiusage/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+
   # Disposable SQL workload acceptance through delivered app credentials.
   - engine: "postgresql"
     queries: "pkg/managedpostgres/credentialdelivery/probe_queries.sql"
@@ -163,6 +175,7 @@ sql:
     queries:
       - "pkg/state/audit_outbox_delivery_queries.sql"
       - "pkg/state/automation_live_queries.sql"
+      - "pkg/state/billing_run_product_queries.sql"
       - "pkg/state/binding_verification_run_queries.sql"
       - "pkg/state/build_dependency_queries.sql"
       - "pkg/state/config_revision_queries.sql"
@@ -175,6 +188,7 @@ sql:
       - "pkg/state/edge_rule_replay_retention_queries.sql"
       - "pkg/state/email_verification_queries.sql"
       - "pkg/state/entity_outbox_delivery_queries.sql"
+      - "pkg/state/environment_source_job_queries.sql"
       - "pkg/state/environment_workload_retirement_queries.sql"
       - "pkg/state/event_circuit_queries.sql"
       - "pkg/state/event_consumer_execution_queries.sql"
@@ -190,8 +204,17 @@ sql:
       - "pkg/state/event_schema_rollout_queries.sql"
       - "pkg/state/event_schema_versions_queries.sql"
       - "pkg/state/event_subscription_control_queries.sql"
+      - "pkg/state/financial_budget_monitor_queries.sql"
       - "pkg/state/financial_budget_queries.sql"
+      - "pkg/state/financial_budget_stop_queries.sql"
+      - "pkg/state/financial_compute_egress_queries.sql"
+      - "pkg/state/financial_compute_job_queries.sql"
+      - "pkg/state/financial_compute_queries.sql"
+      - "pkg/state/financial_preview_command_queries.sql"
       - "pkg/state/financial_queries.sql"
+      - "pkg/state/function_migration_admission_queries.sql"
+      - "pkg/state/function_migration_destination_queries.sql"
+      - "pkg/state/function_migration_queries.sql"
       - "pkg/state/hosting_automation_queries.sql"
       - "pkg/state/hosting_domain_queries.sql"
       - "pkg/state/hosting_history_queries.sql"
@@ -232,6 +255,8 @@ sql:
       - "pkg/state/node_admission_queries.sql"
       - "pkg/state/node_lease_queries.sql"
       - "pkg/state/node_lifecycle_completion_queries.sql"
+      - "pkg/state/operation_children_queries.sql"
+      - "pkg/state/operation_schedule_queries.sql"
       - "pkg/state/operation_timeline_queries.sql"
       - "pkg/state/operation_webhook_queries.sql"
       - "pkg/state/operator_context_queries.sql"
@@ -251,26 +276,39 @@ sql:
       - "pkg/state/product_help_queries.sql"
       - "pkg/state/product_notification_queries.sql"
       - "pkg/state/product_onboarding_queries.sql"
+      - "pkg/state/product_overdue_queries.sql"
       - "pkg/state/product_owner_queries.sql"
       - "pkg/state/product_plans_queries.sql"
       - "pkg/state/product_run_details_queries.sql"
       - "pkg/state/product_work_history_queries.sql"
       - "pkg/state/product_workspace_activity_queries.sql"
       - "pkg/state/profile_gate_queries.sql"
+      - "pkg/state/project_environment_secret_queries.sql"
       - "pkg/state/profile_investigation_queries.sql"
       - "pkg/state/profile_periodic_queries.sql"
       - "pkg/state/project_binding_verification_run_queries.sql"
       - "pkg/state/project_migration_queries.sql"
+      - "pkg/state/project_release_additions_queries.sql"
       - "pkg/state/project_release_staging_queries.sql"
       - "pkg/state/project_service_queries.sql"
+      - "pkg/state/promotion_admission_queries.sql"
+      - "pkg/state/promotion_control_queries.sql"
+      - "pkg/state/promotion_health_queries.sql"
+      - "pkg/state/promotion_recovery_queries.sql"
+      - "pkg/state/promotion_release_configuration_queries.sql"
+      - "pkg/state/promotion_schedule_queries.sql"
+      - "pkg/state/promotion_worker_queries.sql"
       - "pkg/state/public_build_url_queries.sql"
       - "pkg/state/queries.sql"
       - "pkg/state/queue_binding_canary_queries.sql"
       - "pkg/state/queue_lease_queries.sql"
       - "pkg/state/regression_action_receipt_queries.sql"
+      - "pkg/state/release_freeze_queries.sql"
+      - "pkg/state/release_gate_queries.sql"
       - "pkg/state/release_review_queries.sql"
       - "pkg/state/route_advice_queries.sql"
       - "pkg/state/route_awake_queries.sql"
+      - "pkg/state/route_insights_queries.sql"
       - "pkg/state/route_priority_queries.sql"
       - "pkg/state/scenario_action_queries.sql"
       - "pkg/state/scenario_cold_queries.sql"
@@ -280,6 +318,7 @@ sql:
       - "pkg/state/scenario_work_queries.sql"
       - "pkg/state/scenario_worker_fault_queries.sql"
       - "pkg/state/scoped_telemetry_queries.sql"
+      - "pkg/state/secret_rekey_queries.sql"
       - "pkg/state/selected_trace_queries.sql"
       - "pkg/state/service_wake_ahead_queries.sql"
       - "pkg/state/snapshot_recovery_queries.sql"
@@ -414,6 +453,17 @@ sql:
         emit_interface: true
         emit_methods_with_db_argument: true
         emit_empty_slices: true
+
+  # Disposable customer schema compatibility workload (never catalog SQL).
+  - engine: "postgresql"
+    queries: "pkg/e2etest/migrationprobe/queries.sql"
+    schema: "pkg/e2etest/migrationprobe/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/e2etest/migrationprobe/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
 
   - engine: "postgresql"
     queries: "pkg/db/migration_recovery_queries.sql"

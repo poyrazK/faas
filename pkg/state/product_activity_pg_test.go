@@ -1,24 +1,27 @@
 //go:build !no_pg
 
-package state
+package state_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestProductControlActivityPostgres(t *testing.T) {
-	s := newPgStore(t)
-	insert := func(op Operation) {
+	s := state.XNewPgStore(t)
+	insert := func(op state.Operation) {
 		t.Helper()
-		tx, err := s.pool.Begin(t.Context())
+		tx, err := (*s.Pool()).Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = tx.Rollback(t.Context()) }()
-		if err = insertProductOperationTx(t.Context(), tx, op); err != nil {
+		if err = state.InsertProductOperationTx(t.Context(), tx, op); err != nil {
 			t.Fatal(err)
 		}
 		if err = tx.Commit(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	productActivityContract(t, s, productBillingPGFixture(t, s), insert)
+	state.ProductActivityContract(t, s, state.ProductBillingPGFixture(t, s), insert)
 }

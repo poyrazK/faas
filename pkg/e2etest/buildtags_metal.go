@@ -1,4 +1,4 @@
-//go:build metal && !managed_postgres_native
+//go:build metal && !promotionacceptance && !managed_postgres_native
 
 package e2etest
 
@@ -14,4 +14,4 @@ package e2etest
 //
 // Every build- and deploy-path test failed on the native gate for that reason
 // (2026-09-14) after the spool-root fix let builds get as far as spawning a VM.
-const daemonBuildTags = "metal"
+const daemonBuildTags = "metal" + functionLifetimeDaemonTags

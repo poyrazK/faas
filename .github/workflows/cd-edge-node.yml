@@ -4,7 +4,7 @@
 # per later node with the follower gate. Plans the node, swaps its gateway
 # binaries in a hard-linked overlay, restarts only the planned services
 # (deployctl reloads one into a second generation when both binaries
-# support the ADR-1580 hand-off), holds the node on the SLO gate, and rolls
+# support the ADR-20261018072701 hand-off), holds the node on the SLO gate, and rolls
 # it back to the binaries it ran before on a failure, which fails the run
 # and stops the lane.
 
@@ -105,8 +105,13 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
+          # Main's history and the release tags, not every branch
+          # (scripts/ci/fetch_release_history.sh).
           ref: ${{ steps.verify.outputs.git_sha }}
-          fetch-depth: 0
+          filter: blob:none
+
+      - name: Fetch main's history and release tags
+        run: scripts/ci/fetch_release_history.sh
 
       - name: Set up SSH
         env:
@@ -177,6 +182,8 @@ jobs:
             echo "## Edge lane on ${NODE} (${SLO_GATE}): **${action}**"
             echo
             echo "Restart: $(jq -r '.only | join(", ") | if . == "" then "none" else . end' "$plan")."
+            kept="$(jq -r '.kept // [] | join(", ")' "$plan")"
+            [[ -z "$kept" ]] || echo "Already running this release's code, not restarted: ${kept}."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Stage the unit release on the node
@@ -186,6 +193,19 @@ jobs:
           # deployctl rides in the signed unit release (tools/deployctl).
           remote="$(scripts/ci/unit_deploy.sh stage "$UNIT_PLAN" "$UNITS_DIR" "$UNITS_DIR/tools/deployctl")"
           echo "REMOTE_STAGE=$remote" >> "$GITHUB_ENV"
+
+      # The post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-
+      # safety-rails.md): the control plane's watch record learns this node,
+      # its pinned SSH target and the release it gets, before activation.
+      - name: Take over the post-deploy watch
+        id: watch_open
+        if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$TARGET" > "$RUNNER_TEMP/edge-target.json"
+          scripts/ci/unit_deploy.sh watch-open "$UNIT_PLAN" "$NODE" "$RUNNER_TEMP/edge-target.json"
 
       - name: Activate the unit release on the node
         if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
@@ -208,6 +228,10 @@ jobs:
             echo "::error::rolled ${NODE} back after the SLO gate (exit $status); the edge lane stops and the remaining nodes keep their gateways" >&2
             exit 1
           fi
+
+      - name: Return the node to the watch record
+        if: failure() && steps.watch_open.outcome == 'success'
+        run: scripts/ci/unit_deploy.sh watch-revert "$NODE"
 
       - name: Remove the staged unit release
         if: always() && env.REMOTE_STAGE != ''

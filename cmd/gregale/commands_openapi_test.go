@@ -16,7 +16,7 @@
 // All tests use t.TempDir so the YAML fixtures don't leak across
 // runs (a leak would make later tests pass on the wrong fixture).
 
-package main
+package main_test
 
 import (
 	"bytes"
@@ -29,6 +29,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 )
@@ -71,13 +72,13 @@ func writeYAML(t *testing.T, body string) string {
 // dispatcher must reject empty / over-count arg lists before
 // LoadBytes reads the YAML files.
 func TestCmdOpenapiDiff_NoArgs(t *testing.T) {
-	if code := cmdOpenapi(nil); code != 1 {
+	if code := main.CmdOpenapi(nil); code != 1 {
 		t.Errorf("cmdOpenapi nil = %d, want 1", code)
 	}
-	if code := cmdOpenapi([]string{"diff"}); code != 1 {
+	if code := main.CmdOpenapi([]string{"diff"}); code != 1 {
 		t.Errorf("cmdOpenapi diff (no files) = %d, want 1", code)
 	}
-	if code := cmdOpenapi([]string{"bogus"}); code != 1 {
+	if code := main.CmdOpenapi([]string{"bogus"}); code != 1 {
 		t.Errorf("cmdOpenapi bogus sub = %d, want 1", code)
 	}
 }
@@ -89,10 +90,10 @@ func TestCmdOpenapiDiff_NoArgs(t *testing.T) {
 func TestCmdOpenapiDiff_IdenticalExitsZero(t *testing.T) {
 	base := writeYAML(t, minimalOpenAPIYAML)
 	prop := writeYAML(t, minimalOpenAPIYAML)
-	stdout, restore := swapStdout(t)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
 
-	if code := cmdOpenapiDiff([]string{base, prop}); code != 0 {
+	if code := main.CmdOpenapiDiff([]string{base, prop}); code != 0 {
 		t.Errorf("identical docs: code = %d, want 0", code)
 	}
 	if stdout.Len() != 0 {
@@ -111,10 +112,10 @@ func TestCmdOpenapiDiff_FieldRemovedExitsTwo(t *testing.T) {
 		"                  name: { type: string }\n",
 		1)
 	prop := writeYAML(t, propYAML)
-	stdout, restore := swapStdout(t)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
 
-	if code := cmdOpenapiDiff([]string{base, prop}); code != 2 {
+	if code := main.CmdOpenapiDiff([]string{base, prop}); code != 2 {
 		t.Errorf("field-removed docs: code = %d, want 2\n--- stdout ---\n%s", code, stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "BREAKING") {
@@ -143,10 +144,10 @@ func TestCmdOpenapiDiff_PropertyAddedExitsZero(t *testing.T) {
 		"                  name: { type: string }\n                  count: { type: integer }\n                  extra: { type: boolean }\n",
 		1)
 	prop := writeYAML(t, propYAML)
-	stdout, restore := swapStdout(t)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
 
-	if code := cmdOpenapiDiff([]string{base, prop}); code != 0 {
+	if code := main.CmdOpenapiDiff([]string{base, prop}); code != 0 {
 		t.Errorf("property-added docs: code = %d, want 0\n--- stdout ---\n%s", code, stdout.String())
 	}
 	// Hard guarantee: NEVER a BREAKING marker on an additive-only
@@ -170,10 +171,10 @@ func TestCmdOpenapiDiff_TypeChangeExitsTwo(t *testing.T) {
 		"                  count: { type: string }\n",
 		1)
 	prop := writeYAML(t, propYAML)
-	stdout, restore := swapStdout(t)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
 
-	if code := cmdOpenapiDiff([]string{base, prop}); code != 2 {
+	if code := main.CmdOpenapiDiff([]string{base, prop}); code != 2 {
 		t.Errorf("type-change docs: code = %d, want 2\n--- stdout ---\n%s", code, stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "type_change") {
@@ -210,10 +211,10 @@ paths:
                   - { type: string }
                   - { type: boolean }
 `)
-	stdout, restore := swapStdout(t)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
 
-	if code := cmdOpenapiDiff([]string{base, prop}); code != 3 {
+	if code := main.CmdOpenapiDiff([]string{base, prop}); code != 3 {
 		t.Fatalf("changed union docs: code = %d, want 3\n--- stdout ---\n%s", code, stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "UNKNOWN") || !strings.Contains(stdout.String(), "unsupported_union_change") {
@@ -233,13 +234,12 @@ func TestCmdOpenapiDiff_JSON(t *testing.T) {
 		"                  count: { type: string }\n",
 		1)
 	prop := writeYAML(t, propYAML)
-	stdout, restore := swapStdout(t)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = false }()
 
-	jsonOutput = true
-	defer func() { jsonOutput = false }()
-
-	if code := cmdOpenapiDiff([]string{base, prop}); code != 2 {
+	if code := main.CmdOpenapiDiff([]string{base, prop}); code != 2 {
 		t.Errorf("type-change docs --json: code = %d, want 2\n--- stdout ---\n%s", code, stdout.String())
 	}
 	// Parse the FIRST NDJSON record. Pin only the discriminator
@@ -267,7 +267,7 @@ func TestCmdOpenapiDiff_JSON(t *testing.T) {
 // the pre-publish gate; a missing file must NOT silently exit 0).
 func TestCmdOpenapiDiff_MissingFile(t *testing.T) {
 	prop := writeYAML(t, minimalOpenAPIYAML)
-	if code := cmdOpenapiDiff([]string{"/tmp/does-not-exist-fake-file.yaml", prop}); code == 0 {
+	if code := main.CmdOpenapiDiff([]string{"/tmp/does-not-exist-fake-file.yaml", prop}); code == 0 {
 		t.Errorf("missing baseline: code = 0, want non-zero")
 	}
 }
@@ -276,7 +276,7 @@ func TestCmdOpenapiDiff_MissingFile(t *testing.T) {
 // `diff` and rejects unknown subcommands. Pins the main.go
 // switch arm at cmd/gregale/main.go.
 func TestCmdOpenapi_Dispatcher(t *testing.T) {
-	if code := cmdOpenapi([]string{"diff", "/tmp/x.yaml", "/tmp/y.yaml"}); code == 0 {
+	if code := main.CmdOpenapi([]string{"diff", "/tmp/x.yaml", "/tmp/y.yaml"}); code == 0 {
 		// 0 isn't strictly wrong (two empty files might
 		// compare to zero rows) but the file-error path
 		// fires before the parser, so a non-zero is the
@@ -284,10 +284,10 @@ func TestCmdOpenapi_Dispatcher(t *testing.T) {
 		// is the dispatch path: a nil-args / unknown-sub
 		// should return 1.
 	}
-	if code := cmdOpenapi(nil); code != 1 {
+	if code := main.CmdOpenapi(nil); code != 1 {
 		t.Errorf("cmdOpenapi nil = %d, want 1", code)
 	}
-	if code := cmdOpenapi([]string{"bogus"}); code != 1 {
+	if code := main.CmdOpenapi([]string{"bogus"}); code != 1 {
 		t.Errorf("cmdOpenapi bogus sub = %d, want 1", code)
 	}
 }
@@ -307,9 +307,9 @@ func TestCmdOpenapiGet_RawDocumentAndSource(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_openapi")
 
-	stdout, restore := swapStdout(t)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	if code := cmdOpenapiGet([]string{"demo", "--source", "auto"}); code != 0 {
+	if code := main.CmdOpenapiGet([]string{"demo", "--source", "auto"}); code != 0 {
 		t.Fatalf("cmdOpenapiGet = %d, want 0", code)
 	}
 	if got := strings.TrimSpace(stdout.String()); got != wantDoc {
@@ -335,15 +335,15 @@ func TestCmdOpenapiPreviewIncludesContractDiff(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_openapi")
-	stdout, restore := swapStdout(t)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	jsonOutput = true
-	defer resetJSONOutput()
+	(*main.JsonOutput) = true
+	defer main.ResetJSONOutput()
 
-	if code := cmdOpenapiPreview([]string{"demo", "--scope", "staging"}); code != 0 {
+	if code := main.CmdOpenapiPreview([]string{"demo", "--scope", "staging"}); code != 0 {
 		t.Fatalf("cmdOpenapiPreview = %d, want 0", code)
 	}
-	var got openapiPreviewOutput
+	var got main.OpenapiPreviewOutput
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("preview output is not JSON: %v\n%s", err, stdout.String())
 	}
@@ -368,15 +368,15 @@ func TestCmdOpenapiPreviewKeepsPolicyWhenContractDiffDisabled(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_openapi")
-	stdout, restore := swapStdout(t)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	jsonOutput = true
-	defer resetJSONOutput()
+	(*main.JsonOutput) = true
+	defer main.ResetJSONOutput()
 
-	if code := cmdOpenapiPreview([]string{"demo"}); code != 0 {
+	if code := main.CmdOpenapiPreview([]string{"demo"}); code != 0 {
 		t.Fatalf("cmdOpenapiPreview = %d, want 0", code)
 	}
-	var got openapiPreviewOutput
+	var got main.OpenapiPreviewOutput
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("preview output is not JSON: %v\n%s", err, stdout.String())
 	}
@@ -388,10 +388,10 @@ func TestCmdOpenapiPreviewKeepsPolicyWhenContractDiffDisabled(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if code := cmdOpenapiPreview([]string{"demo", "--fail-on-unavailable"}); code != 3 {
+	if code := main.CmdOpenapiPreview([]string{"demo", "--fail-on-unavailable"}); code != 3 {
 		t.Fatalf("cmdOpenapiPreview --fail-on-unavailable = %d, want 3", code)
 	}
-	var failClosed openapiPreviewOutput
+	var failClosed main.OpenapiPreviewOutput
 	if err := json.Unmarshal(stdout.Bytes(), &failClosed); err != nil {
 		t.Fatalf("fail-closed output is not JSON: %v\n%s", err, stdout.String())
 	}
@@ -409,9 +409,9 @@ func TestCmdOpenapiPreviewInvalidScopeBeforeRequest(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_openapi")
-	_, restore := swapStdout(t)
+	_, restore := main.SwapStdout(t)
 	defer restore()
-	if code := cmdOpenapiPreview([]string{"demo", "--scope", "bad scope"}); code != 1 {
+	if code := main.CmdOpenapiPreview([]string{"demo", "--scope", "bad scope"}); code != 1 {
 		t.Fatalf("cmdOpenapiPreview invalid scope = %d, want 1", code)
 	}
 	if requests != 0 {
@@ -441,10 +441,10 @@ func TestCmdOpenapiImportAndDryRun(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_openapi")
 
-	stdout, restore := swapStdout(t)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	resetJSONOutput()
-	if code := cmdOpenapiImport([]string{"demo", docPath}); code != 0 {
+	main.ResetJSONOutput()
+	if code := main.CmdOpenapiImport([]string{"demo", docPath}); code != 0 {
 		t.Fatalf("cmdOpenapiImport = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "OpenAPI document imported") || !strings.Contains(stdout.String(), "3.1.0") {
@@ -452,9 +452,9 @@ func TestCmdOpenapiImportAndDryRun(t *testing.T) {
 	}
 
 	stdout.Reset()
-	jsonOutput = true
-	defer resetJSONOutput()
-	if code := cmdOpenapiDryRun([]string{"demo", docPath}); code != 0 {
+	(*main.JsonOutput) = true
+	defer main.ResetJSONOutput()
+	if code := main.CmdOpenapiDryRun([]string{"demo", docPath}); code != 0 {
 		t.Fatalf("cmdOpenapiDryRun = %d, want 0", code)
 	}
 	var got api.AppOpenAPIImportDryRunResponse
@@ -476,12 +476,12 @@ func TestCmdOpenapiRemove_JSON(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_openapi")
-	stdout, restore := swapStdout(t)
+	stdout, restore := main.SwapStdout(t)
 	defer restore()
-	jsonOutput = true
-	defer resetJSONOutput()
+	(*main.JsonOutput) = true
+	defer main.ResetJSONOutput()
 
-	if code := cmdOpenapiRemove([]string{"demo"}); code != 0 {
+	if code := main.CmdOpenapiRemove([]string{"demo"}); code != 0 {
 		t.Fatalf("cmdOpenapiRemove = %d, want 0", code)
 	}
 	var got map[string]any

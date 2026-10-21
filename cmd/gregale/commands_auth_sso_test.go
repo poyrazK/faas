@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,12 +21,12 @@ func TestAuthSSOBodyChecksFlagsBeforeTheKeyPrompt(t *testing.T) {
 		}
 		return given
 	}
-	body, err := authSSOBody("add", flags("metadata-url", "domains", "org"), "https://idp.example.com/m", "", "Acme.com, acme.io ,", "acme", "member")
+	body, err := main.AuthSSOBody("add", flags("metadata-url", "domains", "org"), "https://idp.example.com/m", "", "Acme.com, acme.io ,", "acme", "member")
 	want := map[string]any{"metadata_url": "https://idp.example.com/m", "domains": []string{"acme.com", "acme.io"}, "organization": "acme", "role": "member"}
 	if err != nil || !reflect.DeepEqual(body, want) {
 		t.Fatalf("add body = %v, %v", body, err)
 	}
-	body, err = authSSOBody("update", flags("org"), "", "", "", "none", "member")
+	body, err = main.AuthSSOBody("update", flags("org"), "", "", "", "none", "member")
 	if err != nil || !reflect.DeepEqual(body, map[string]any{"organization": nil}) {
 		t.Fatalf("unlink body = %v, %v", body, err)
 	}
@@ -33,7 +34,7 @@ func TestAuthSSOBodyChecksFlagsBeforeTheKeyPrompt(t *testing.T) {
 	if err := os.WriteFile(metadata, []byte("<EntityDescriptor/>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if body, err := authSSOBody("add", flags("metadata-file", "domains"), "", metadata, "acme.com", "", "member"); err != nil || body["metadata_xml"] != "<EntityDescriptor/>" {
+	if body, err := main.AuthSSOBody("add", flags("metadata-file", "domains"), "", metadata, "acme.com", "", "member"); err != nil || body["metadata_xml"] != "<EntityDescriptor/>" {
 		t.Fatalf("metadata file body = %v, %v", body, err)
 	}
 	for name, tc := range map[string]struct {
@@ -54,7 +55,7 @@ func TestAuthSSOBodyChecksFlagsBeforeTheKeyPrompt(t *testing.T) {
 		"settings on remove":    {"remove", []string{"domains"}, "", "acme.com", "", "member"},
 		"both metadata sources": {"add", []string{"metadata-url", "metadata-file", "domains"}, "https://idp.example.com/m", "acme.com", "", "member"},
 	} {
-		if _, err := authSSOBody(tc.command, flags(tc.given...), tc.url, metadata, tc.domains, tc.org, tc.role); err == nil {
+		if _, err := main.AuthSSOBody(tc.command, flags(tc.given...), tc.url, metadata, tc.domains, tc.org, tc.role); err == nil {
 			t.Errorf("%s accepted", name)
 		}
 	}
@@ -68,11 +69,11 @@ func TestAuthSSOAddCallsTheAdminAPIAndPrintsTheServiceProvider(t *testing.T) {
 		method, path string
 		body         map[string]any
 	}
-	old := authAdminHTTPClient
-	authAdminHTTPClient = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+	old := (*main.AuthAdminHTTPClient)
+	(*main.AuthAdminHTTPClient) = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
 		recorder := httptest.NewRecorder()
 		if r.URL.Path == "/settings/v1" {
-			writeJSONTest(recorder, map[string]any{"keys": map[string]any{"signing": "0A1B2C3D"}, "sso": map[string]any{"enabled": true,
+			main.WriteJSONTest(recorder, map[string]any{"keys": map[string]any{"signing": "0A1B2C3D"}, "sso": map[string]any{"enabled": true,
 				"entity_id": "https://shop-auth.gregale.app/auth/v1/sso/saml/metadata", "acs_url": "https://shop-auth.gregale.app/auth/v1/sso/saml/acs"}})
 			return recorder.Result(), nil
 		}
@@ -84,16 +85,16 @@ func TestAuthSSOAddCallsTheAdminAPIAndPrintsTheServiceProvider(t *testing.T) {
 		request.method, request.path, request.body = r.Method, r.URL.Path, nil
 		_ = json.Unmarshal(raw, &request.body)
 		recorder.WriteHeader(http.StatusCreated)
-		writeJSONTest(recorder, map[string]any{"provider": map[string]any{"id": "6a1b2c3d-0000-4000-8000-000000000001", "domains": []string{"acme.com"},
+		main.WriteJSONTest(recorder, map[string]any{"provider": map[string]any{"id": "6a1b2c3d-0000-4000-8000-000000000001", "domains": []string{"acme.com"},
 			"organization": map[string]any{"id": "o1", "slug": "acme", "role": "member"}}, "members_added": 2})
 		return recorder.Result(), nil
 	})}
-	t.Cleanup(func() { authAdminHTTPClient = old })
-	oldIn := osStdin
-	osStdin = strings.NewReader(key + "\n")
-	t.Cleanup(func() { osStdin = oldIn })
+	t.Cleanup(func() { (*main.AuthAdminHTTPClient) = old })
+	oldIn := (*main.OsStdin)
+	(*main.OsStdin) = strings.NewReader(key + "\n")
+	t.Cleanup(func() { (*main.OsStdin) = oldIn })
 	out := captureAuthStdout(t)
-	if code := cmdAuth([]string{"sso", "add", "shop-auth", "--metadata-url", "https://idp.example.com/m", "--domains", "acme.com", "--org", "acme", "--admin-key-stdin"}); code != 0 {
+	if code := main.CmdAuth([]string{"sso", "add", "shop-auth", "--metadata-url", "https://idp.example.com/m", "--domains", "acme.com", "--org", "acme", "--admin-key-stdin"}); code != 0 {
 		t.Fatalf("sso add = %d", code)
 	}
 	if request.method != http.MethodPost || request.path != "/admin/v1/sso" || request.body["organization"] != "acme" || request.body["metadata_url"] != "https://idp.example.com/m" {
@@ -104,7 +105,7 @@ func TestAuthSSOAddCallsTheAdminAPIAndPrintsTheServiceProvider(t *testing.T) {
 			t.Fatalf("output lacks %q:\n%s", want, out)
 		}
 	}
-	if code := cmdAuth([]string{"sso", "remove", "shop-auth", "not-a-provider-id"}); code == 0 {
+	if code := main.CmdAuth([]string{"sso", "remove", "shop-auth", "not-a-provider-id"}); code == 0 {
 		t.Fatal("accepted a malformed provider ID")
 	}
 }
@@ -113,15 +114,15 @@ func TestAuthConfigSSOCreatesTheSAMLKeyOnce(t *testing.T) {
 	resetJSONEnv(t)
 	sealed, _, _ := authSettingsWorld(t, nil, nil)
 	captureAuthStdout(t)
-	if code := cmdAuth([]string{"config", "shop-auth", "--sso", "on"}); code != 0 {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--sso", "on"}); code != 0 {
 		t.Fatalf("config = %d", code)
 	}
 	if sealed["AUTH_SSO"] != "1" || len(sealed["AUTH_SAML_PRIVATE_KEY"]) < 1000 {
-		t.Fatalf("sealed = %v", sortedKeys(sealed))
+		t.Fatalf("sealed = %v", main.SortedKeys(sealed))
 	}
 	delete(sealed, "AUTH_SAML_PRIVATE_KEY")
-	if code := cmdAuth([]string{"config", "shop-auth", "--sso", "off"}); code != 0 || sealed["AUTH_SSO"] != "0" || sealed["AUTH_SAML_PRIVATE_KEY"] != "" {
-		t.Fatalf("off = %d, sealed %v", code, sortedKeys(sealed))
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--sso", "off"}); code != 0 || sealed["AUTH_SSO"] != "0" || sealed["AUTH_SAML_PRIVATE_KEY"] != "" {
+		t.Fatalf("off = %d, sealed %v", code, main.SortedKeys(sealed))
 	}
 }
 
@@ -129,8 +130,8 @@ func TestAuthConfigSSOKeepsAnExistingSAMLKey(t *testing.T) {
 	resetJSONEnv(t)
 	sealed, _, _ := authSettingsWorld(t, []string{"AUTH_SAML_PRIVATE_KEY"}, nil)
 	captureAuthStdout(t)
-	if code := cmdAuth([]string{"config", "shop-auth", "--sso", "on"}); code != 0 || sealed["AUTH_SSO"] != "1" {
-		t.Fatalf("config = %d, sealed %v", code, sortedKeys(sealed))
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--sso", "on"}); code != 0 || sealed["AUTH_SSO"] != "1" {
+		t.Fatalf("config = %d, sealed %v", code, main.SortedKeys(sealed))
 	}
 	if _, replaced := sealed["AUTH_SAML_PRIVATE_KEY"]; replaced {
 		t.Fatal("an existing SAML key was replaced, which breaks every identity provider's trust")
@@ -142,36 +143,36 @@ func TestAuthSSOSCIMToken(t *testing.T) {
 	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
 	key := "gaak_" + strings.Repeat("k", 43)
 	var seen []string
-	old := authAdminHTTPClient
-	authAdminHTTPClient = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+	old := (*main.AuthAdminHTTPClient)
+	(*main.AuthAdminHTTPClient) = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
 		seen = append(seen, r.Method+" "+r.URL.Path)
 		recorder := httptest.NewRecorder()
 		if r.Method == http.MethodPost {
 			recorder.WriteHeader(http.StatusCreated)
-			writeJSONTest(recorder, map[string]any{"token": "gscim_secret", "scim_url": "https://shop-auth.gregale.app/scim/v2"})
+			main.WriteJSONTest(recorder, map[string]any{"token": "gscim_secret", "scim_url": "https://shop-auth.gregale.app/scim/v2"})
 		} else {
-			writeJSONTest(recorder, map[string]any{"revoked": true})
+			main.WriteJSONTest(recorder, map[string]any{"revoked": true})
 		}
 		return recorder.Result(), nil
 	})}
-	t.Cleanup(func() { authAdminHTTPClient = old })
-	oldIn := osStdin
-	t.Cleanup(func() { osStdin = oldIn })
+	t.Cleanup(func() { (*main.AuthAdminHTTPClient) = old })
+	oldIn := (*main.OsStdin)
+	t.Cleanup(func() { (*main.OsStdin) = oldIn })
 	out := captureAuthStdout(t)
 	provider := "6a1b2c3d-0000-4000-8000-000000000001"
-	osStdin = strings.NewReader(key + "\n")
-	if code := cmdAuth([]string{"sso", "scim-token", "shop-auth", provider, "--admin-key-stdin"}); code != 0 {
+	(*main.OsStdin) = strings.NewReader(key + "\n")
+	if code := main.CmdAuth([]string{"sso", "scim-token", "shop-auth", provider, "--admin-key-stdin"}); code != 0 {
 		t.Fatalf("scim-token = %d", code)
 	}
-	osStdin = strings.NewReader(key + "\n")
-	if code := cmdAuth([]string{"sso", "scim-token", "shop-auth", provider, "--revoke", "--admin-key-stdin"}); code != 0 {
+	(*main.OsStdin) = strings.NewReader(key + "\n")
+	if code := main.CmdAuth([]string{"sso", "scim-token", "shop-auth", provider, "--revoke", "--admin-key-stdin"}); code != 0 {
 		t.Fatalf("revoke = %d", code)
 	}
 	want := []string{"POST /admin/v1/sso/" + provider + "/scim-token", "DELETE /admin/v1/sso/" + provider + "/scim-token"}
 	if strings.Join(seen, ",") != strings.Join(want, ",") || !strings.Contains(out.String(), "gscim_secret") || !strings.Contains(out.String(), "/scim/v2") {
 		t.Fatalf("requests %v output %s", seen, out)
 	}
-	if code := cmdAuth([]string{"sso", "scim-token", "shop-auth", provider, "--domains", "acme.com"}); code == 0 {
+	if code := main.CmdAuth([]string{"sso", "scim-token", "shop-auth", provider, "--domains", "acme.com"}); code == 0 {
 		t.Fatal("scim-token accepted provider settings")
 	}
 }
@@ -180,10 +181,10 @@ func TestAuthConfigOrganizationSSO(t *testing.T) {
 	resetJSONEnv(t)
 	sealed, _, _ := authSettingsWorld(t, []string{"AUTH_SAML_PRIVATE_KEY"}, nil)
 	captureAuthStdout(t)
-	if code := cmdAuth([]string{"config", "shop-auth", "--sso", "on", "--org-sso", "on"}); code != 0 || sealed["AUTH_SSO"] != "1" || sealed["AUTH_ORG_SSO"] != "1" {
-		t.Fatalf("config = %d, sealed %v", code, sortedKeys(sealed))
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--sso", "on", "--org-sso", "on"}); code != 0 || sealed["AUTH_SSO"] != "1" || sealed["AUTH_ORG_SSO"] != "1" {
+		t.Fatalf("config = %d, sealed %v", code, main.SortedKeys(sealed))
 	}
-	if code := cmdAuth([]string{"config", "shop-auth", "--org-sso", "off"}); code != 0 || sealed["AUTH_ORG_SSO"] != "0" {
-		t.Fatalf("off = %d, sealed %v", code, sortedKeys(sealed))
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--org-sso", "off"}); code != 0 || sealed["AUTH_ORG_SSO"] != "0" {
+		t.Fatalf("off = %d, sealed %v", code, main.SortedKeys(sealed))
 	}
 }

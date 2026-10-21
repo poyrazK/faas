@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingcheck"
 )
@@ -24,7 +25,7 @@ func (c bindingCheckWaitClient) GetAppBindingInventoryForDeployment(ctx context.
 }
 
 func pendingBindingCheckInventory() api.AppBindingInventory {
-	inventory := bindingCheckCLIInventory()
+	inventory := main.BindingCheckCLIInventory()
 	inventory.Bindings[0].VerificationStatus = "unknown"
 	inventory.Bindings[0].Verification.Result = "unknown"
 	inventory.Bindings[0].Verification.Reason = "probe_pending"
@@ -43,7 +44,7 @@ func TestCmdBindingsCheckWaitPinsSelectionAndPrintsOneJSONReport(t *testing.T) {
 			if r.URL.Query().Get("deployment_id") != "deployment-1" || r.URL.Query().Get("scope") != "production" {
 				t.Errorf("selection drifted: %s", r.URL)
 			}
-			inventory = bindingCheckCLIInventory()
+			inventory = main.BindingCheckCLIInventory()
 			inventory.RequestedDeploymentID = "deployment-1"
 			inventory.Scope = "production"
 		}
@@ -52,12 +53,12 @@ func TestCmdBindingsCheckWaitPinsSelectionAndPrintsOneJSONReport(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
 	var out, errs bytes.Buffer
-	osStdout, osStderr, jsonOutput = &out, &errs, false
-	defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
-	code := run([]string{"bindings", "check", "api", "--wait", "--timeout", "1s", "--poll-interval", "1ms", "--json"})
-	report := decodeBindingCheckCLI(t, out.String())
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &errs, false
+	defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
+	code := main.Run([]string{"bindings", "check", "api", "--wait", "--timeout", "1s", "--poll-interval", "1ms", "--json"})
+	report := main.DecodeBindingCheckCLI(t, out.String())
 	if code != 0 || !report.Passed || report.ExpectedDeploymentID != "deployment-1" || calls != 2 || errs.Len() != 0 {
 		t.Fatalf("exit=%d calls=%d report=%+v stderr=%s", code, calls, report, errs.String())
 	}
@@ -95,7 +96,7 @@ func TestBindingCheckWaitStopsOnTimeoutCancelAndTerminalBlockers(t *testing.T) {
 				}
 				return test.inventory, nil
 			}}
-			report, err := pollBindingCheck(ctx, client, bindingcheck.Policy{App: "api", MaxVerificationAge: time.Minute * 10}, true, time.Second)
+			report, err := main.PollBindingCheck(ctx, client, bindingcheck.Policy{App: "api", MaxVerificationAge: time.Minute * 10}, true, time.Second)
 			if !errors.Is(err, test.want) || report.Passed || report.App != "api" || calls != test.calls {
 				t.Fatalf("report=%+v err=%v calls=%d", report, err, calls)
 			}
@@ -113,7 +114,7 @@ func TestBindingCheckWaitRejectsChangedDeployment(t *testing.T) {
 		if scope != "production" || deployment != "deployment-1" {
 			t.Fatalf("unpinned read: %s %s", scope, deployment)
 		}
-		i := bindingCheckCLIInventory()
+		i := main.BindingCheckCLIInventory()
 		i.Scope = scope
 		i.RequestedDeploymentID = deployment
 		i.VerificationDeploymentID = "deployment-2"
@@ -121,7 +122,7 @@ func TestBindingCheckWaitRejectsChangedDeployment(t *testing.T) {
 	}}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	report, err := pollBindingCheck(ctx, client, bindingcheck.Policy{App: "api", MaxVerificationAge: time.Minute * 10}, true, time.Millisecond)
+	report, err := main.PollBindingCheck(ctx, client, bindingcheck.Policy{App: "api", MaxVerificationAge: time.Minute * 10}, true, time.Millisecond)
 	if err != nil || report.Passed || calls != 2 {
 		t.Fatalf("report=%+v err=%v calls=%d", report, err, calls)
 	}
@@ -129,7 +130,7 @@ func TestBindingCheckWaitRejectsChangedDeployment(t *testing.T) {
 
 func TestBindingCheckWaitRecognizesPendingRefreshAndApplicationAck(t *testing.T) {
 	now := time.Now().UTC()
-	inventory := bindingCheckCLIInventory()
+	inventory := main.BindingCheckCLIInventory()
 	adoption := &api.BindingApplicationAdoption{Source: "application_ack", Complete: true, ObservedAt: now, SecretsExpected: 6, SecretsObserved: 6}
 	for _, key := range api.BindingCredentialSecretKeys(api.BindingTypeObjectStorage, "ASSETS") {
 		adoption.Targets = append(adoption.Targets, api.BindingApplicationAckTarget{DeploymentID: "deployment-1", InstanceID: "runtime", RuntimeState: "running", Key: key, CurrentVersion: 1, ReloadSupport: "enabled", ReloadVersion: 1, Projection: "updated", Signal: "sent", ReloadAt: &now, ProcessGeneration: strings.Repeat("a", 32)})
@@ -140,7 +141,7 @@ func TestBindingCheckWaitRecognizesPendingRefreshAndApplicationAck(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Passed || !bindingCheckCanProgress(report, inventory) {
+	if report.Passed || !main.BindingCheckCanProgress(report, inventory) {
 		t.Fatalf("missing ACK not waitable: %+v", report)
 	}
 	adoption.Targets[0].ReloadSupport = "disabled"
@@ -148,10 +149,10 @@ func TestBindingCheckWaitRecognizesPendingRefreshAndApplicationAck(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bindingCheckCanProgress(report, inventory) {
+	if main.BindingCheckCanProgress(report, inventory) {
 		t.Fatal("disabled reload should require action")
 	}
-	inventory = bindingCheckCLIInventory()
+	inventory = main.BindingCheckCLIInventory()
 	pending := true
 	inventory.Bindings[0].RotationPending = &pending
 	inventory.Bindings[0].Refresh = &api.BindingRefresh{Status: "retrying"}
@@ -159,7 +160,7 @@ func TestBindingCheckWaitRecognizesPendingRefreshAndApplicationAck(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Passed || !bindingCheckCanProgress(report, inventory) {
+	if report.Passed || !main.BindingCheckCanProgress(report, inventory) {
 		t.Fatalf("pending refresh not waitable: %+v", report)
 	}
 	inventory.Bindings[0].Refresh.Status = "failed"
@@ -167,7 +168,7 @@ func TestBindingCheckWaitRecognizesPendingRefreshAndApplicationAck(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bindingCheckCanProgress(report, inventory) {
+	if main.BindingCheckCanProgress(report, inventory) {
 		t.Fatal("failed refresh should require action")
 	}
 }
@@ -182,12 +183,12 @@ func TestCmdBindingsCheckWaitTimeoutPrintsLastBlockedJSON(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_test")
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
 	var out, errs bytes.Buffer
-	osStdout, osStderr, jsonOutput = &out, &errs, false
-	defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
-	code := run([]string{"bindings", "check", "api", "--wait", "--timeout", "50ms", "--poll-interval", "1s", "--json"})
-	report := decodeBindingCheckCLI(t, out.String())
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &out, &errs, false
+	defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
+	code := main.Run([]string{"bindings", "check", "api", "--wait", "--timeout", "50ms", "--poll-interval", "1s", "--json"})
+	report := main.DecodeBindingCheckCLI(t, out.String())
 	if code != 1 || report.Passed || len(report.Blockers) == 0 || !strings.Contains(errs.String(), "deadline exceeded") {
 		t.Fatalf("exit=%d report=%+v stderr=%s", code, report, errs.String())
 	}

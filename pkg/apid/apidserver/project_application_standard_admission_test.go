@@ -26,6 +26,9 @@ type standardProjectBoundaryStore interface {
 	state.ApplicationStandardResourceStore
 	state.ApplicationStandardReviewStore
 	state.ProjectReconcileStore
+	state.DeploymentCronStagingStore
+	state.PendingDeploymentCronStore
+	state.DeploymentConfigurationStore
 }
 
 func standardProjectSource(t *testing.T, names ...string) []byte {
@@ -201,7 +204,9 @@ func standardProjectOnboarding(t *testing.T, store standardProjectBoundaryStore)
 		// then verify project onboarding installs the current standard pin
 		// before it queues the next build.
 		restoredApp := standardOnboardingBoundaryResponse[api.AppResponse](t,
-			standardOnboardingBoundaryRequest(t, e, http.MethodPost, "/v1/apps/standards-worker/restore", nil), http.StatusOK)
+			// An empty object, not JSON null: restore rejects null as an
+			// unknown intent (account-owned recovery, #4748).
+			standardOnboardingBoundaryRequest(t, e, http.MethodPost, "/v1/apps/standards-worker/restore", map[string]any{}), http.StatusOK)
 		if restoredApp.ID != worker.ID {
 			t.Fatalf("restore changed service identity: got %s, want %s", restoredApp.ID, worker.ID)
 		}

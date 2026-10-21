@@ -1,5 +1,5 @@
 // adr: 660
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -39,23 +40,23 @@ func TestCustomerOperationRecoveryReadsNeverApply(t *testing.T) {
 	defer server.Close()
 	client := api.NewClient(server.URL, "account")
 	for _, asJSON := range []bool{false, true} {
-		c, err := parseCustomerOperationCommand([]string{"inspect", "op", "--app", "exports"})
+		c, err := main.ParseCustomerOperationCommand([]string{"inspect", "op", "--app", "exports"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		var out bytes.Buffer
-		if code, err := runCustomerOperationCommand(t.Context(), client, c, &out, asJSON); err != nil || code != 0 {
+		if code, err := main.RunCustomerOperationCommand(t.Context(), client, c, &out, asJSON); err != nil || code != 0 {
 			t.Fatal("inspection", code, err)
 		}
 		if !strings.Contains(out.String(), "collect") {
 			t.Fatal("inspection omitted completed step")
 		}
-		c, err = parseCustomerOperationCommand([]string{"recover", "op", "--app", "exports", "--preview", "--expected-generation", "1", "--resolution", "safe_to_retry"})
+		c, err = main.ParseCustomerOperationCommand([]string{"recover", "op", "--app", "exports", "--preview", "--expected-generation", "1", "--resolution", "safe_to_retry"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		out.Reset()
-		if code, err := runCustomerOperationCommand(t.Context(), client, c, &out, asJSON); err != nil || code != 4 {
+		if code, err := main.RunCustomerOperationCommand(t.Context(), client, c, &out, asJSON); err != nil || code != 4 {
 			t.Fatal("blocked preview exit", code, err)
 		}
 		if asJSON && !json.Valid(out.Bytes()) {
@@ -73,14 +74,14 @@ func TestCustomerOperationRecoveryReadsNeverApply(t *testing.T) {
 func TestCustomerOperationPreviewFlagsRejectAmbiguousDecisions(t *testing.T) {
 	base := []string{"recover", "op", "--app", "exports", "--preview", "--expected-generation", "1", "--resolution", "failed"}
 	for _, extra := range [][]string{{"--recovery-id", "decision"}, {"--evidence-file", "private"}, {"--inspection-revision", "revision"}, {"--result-file", "result"}, {"--self"}} {
-		if _, err := parseCustomerOperationCommand(append(append([]string{}, base...), extra...)); err == nil {
+		if _, err := main.ParseCustomerOperationCommand(append(append([]string{}, base...), extra...)); err == nil {
 			t.Fatal("ambiguous preview accepted", extra)
 		}
 	}
-	if _, err := parseCustomerOperationCommand([]string{"inspect", "op", "--self"}); err == nil {
+	if _, err := main.ParseCustomerOperationCommand([]string{"inspect", "op", "--self"}); err == nil {
 		t.Fatal("tenant inspection accepted")
 	}
-	if _, err := parseCustomerOperationCommand([]string{"recover", "op", "--app", "exports", "--preview", "--resolution", "failed"}); err == nil {
+	if _, err := main.ParseCustomerOperationCommand([]string{"recover", "op", "--app", "exports", "--preview", "--resolution", "failed"}); err == nil {
 		t.Fatal("unfenced preview accepted")
 	}
 }

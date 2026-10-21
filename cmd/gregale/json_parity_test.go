@@ -1,8 +1,9 @@
 // JSON parity inventories emitting command families and their tests.
 // Both CLI packages keep the same extraction rules and regression fixtures.
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -94,7 +95,7 @@ func topLevelDispatcher(leaf string) string {
 	name := strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(leaf, "cmd"), "-", ""))
 	bestName, bestLength := "", 0
 	for _, singular := range []bool{false, true} {
-		for _, command := range cliCommands {
+		for _, command := range *main.CliCommands {
 			prefix := strings.ReplaceAll(command.Name, "-", "")
 			if singular {
 				prefix = strings.TrimSuffix(prefix, "s")
@@ -202,8 +203,7 @@ func hasJSONTestMode(body *ast.BlockStmt) bool {
 		switch node := node.(type) {
 		case *ast.AssignStmt:
 			for index, lhs := range node.Lhs {
-				id, ok := lhs.(*ast.Ident)
-				if ok && id.Name == "jsonOutput" && index < len(node.Rhs) {
+				if isJSONOutputTarget(lhs) && index < len(node.Rhs) {
 					value, ok := node.Rhs[index].(*ast.Ident)
 					if ok && value.Name == "true" {
 						enabled = true
@@ -244,14 +244,14 @@ func jsonTestedFile(file *ast.File) map[string]bool {
 			if !ok {
 				return true
 			}
-			id, ok := call.Fun.(*ast.Ident)
-			if !ok {
+			name := testCallee(call.Fun)
+			if name == "" {
 				return true
 			}
-			if top := topLevelDispatcher(id.Name); top != "" {
+			if top := topLevelDispatcher(name); top != "" {
 				tested[top] = true
 			}
-			if id.Name == "run" {
+			if name == "run" {
 				// Table-driven run tests keep command vectors in literal
 				// slices in this same function, sometimes passed via a variable.
 				ast.Inspect(fn.Body, func(candidate ast.Node) bool {
@@ -277,6 +277,43 @@ func jsonTestedFile(file *ast.File) map[string]bool {
 	return tested
 }
 
+// isJSONOutputTarget matches the JSON switch in either test unit: internal
+// tests assign jsonOutput, main_test assigns (*main.JsonOutput) through the
+// export_test.go pointer (ADR-982).
+func isJSONOutputTarget(lhs ast.Expr) bool {
+	if id, ok := lhs.(*ast.Ident); ok {
+		return id.Name == "jsonOutput"
+	}
+	if paren, ok := lhs.(*ast.ParenExpr); ok {
+		lhs = paren.X
+	}
+	star, ok := lhs.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	selector, ok := star.X.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && pkg.Name == "main" && selector.Sel.Name == "JsonOutput"
+}
+
+// testCallee returns the internal name a test calls. main_test reaches
+// cmdXxx and run through export_test.go aliases (main.CmdXxx, main.Run)
+// that only capitalise the first letter.
+func testCallee(fun ast.Expr) string {
+	switch fun := fun.(type) {
+	case *ast.Ident:
+		return fun.Name
+	case *ast.SelectorExpr:
+		if pkg, ok := fun.X.(*ast.Ident); ok && pkg.Name == "main" {
+			return strings.ToLower(fun.Sel.Name[:1]) + fun.Sel.Name[1:]
+		}
+	}
+	return ""
+}
+
 func isStringSlice(expr ast.Expr) bool {
 	slice, ok := expr.(*ast.ArrayType)
 	if !ok || slice.Len != nil {
@@ -296,7 +333,7 @@ func markJSONCommandVector(tested map[string]bool, args []ast.Expr) {
 		if value == "--json" || value == "-j" || value == "--json=true" {
 			continue
 		}
-		if _, known := lookupCliCommand(value); known {
+		if _, known := main.LookupCliCommand(value); known {
 			tested[topLevelDispatcher("cmd"+value)] = true
 		}
 		return
@@ -304,7 +341,7 @@ func markJSONCommandVector(tested map[string]bool, args []ast.Expr) {
 }
 
 func TestJSONAuditDispatcherMapping(t *testing.T) {
-	for _, command := range cliCommands {
+	for _, command := range *main.CliCommands {
 		want := "cmd"
 		for _, part := range strings.Split(command.Name, "-") {
 			want += strings.ToUpper(part[:1]) + part[1:]
@@ -333,6 +370,25 @@ func helper() { jsonOutput = true; cmdBindings(nil) }
 	}
 	tested := jsonTestedFile(file)
 	if !tested["cmdApps"] || !tested["cmdAlerts"] || tested["cmdBindings"] || len(tested) != 2 {
+		t.Fatalf("JSON-tested command families = %v", tested)
+	}
+}
+
+// ADR-982 moved most CLI tests to main_test, which switches JSON on through
+// (*main.JsonOutput) and calls main.CmdXxx / main.Run. The audit must count
+// those the same as the internal forms.
+func TestJSONAuditCountsExternalTestPackage(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "fixture_test.go", `package main_test
+func TestHumanExternal(t *testing.T) { main.CmdBindings(nil) }
+func TestExternalJSON(t *testing.T) { (*main.JsonOutput) = true; main.CmdApps(nil) }
+func TestExternalRunJSON(t *testing.T) { for _, args := range [][]string{{"alerts", "--json"}} { main.Run(args) } }
+func TestOtherPackage(t *testing.T) { (*main.JsonOutput) = true; other.CmdDomains(nil) }
+`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tested := jsonTestedFile(file)
+	if !tested["cmdApps"] || !tested["cmdAlerts"] || tested["cmdBindings"] || tested["cmdDomains"] || len(tested) != 2 {
 		t.Fatalf("JSON-tested command families = %v", tested)
 	}
 }

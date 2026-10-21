@@ -27,10 +27,47 @@ type Metrics struct {
 	maintenanceSec prometheus.Counter
 	keys           prometheus.Gauge
 	keyRefreshes   *prometheus.CounterVec
+	released       prometheus.Gauge
+	releases       prometheus.Counter
+	resumes        *prometheus.CounterVec
+	up             prometheus.Gauge
+	restarts       prometheus.Counter
 }
 
-// NewMetrics registers the metrics with reg.
+// NewMetrics registers one hub's metrics with reg.
 func NewMetrics(reg prometheus.Registerer) *Metrics {
+	memory := newMemoryGauge()
+	reg.MustRegister(memory)
+	return newMetrics(reg, memory)
+}
+
+// MetricsSet registers the metrics of several hubs in one process
+// (livequeryd -databases-file). Each hub's series carry its database label;
+// the engine memory gauge measures the whole process, so the hubs share it
+// unlabeled.
+type MetricsSet struct {
+	reg    prometheus.Registerer
+	memory prometheus.Gauge
+}
+
+// NewMetricsSet registers the process-wide metrics with reg.
+func NewMetricsSet(reg prometheus.Registerer) *MetricsSet {
+	memory := newMemoryGauge()
+	reg.MustRegister(memory)
+	return &MetricsSet{reg: reg, memory: memory}
+}
+
+// Database registers one database's metrics, labeled database="<id>". Call
+// it once per database: the metrics outlive the database's hub restarts.
+func (s *MetricsSet) Database(id string) *Metrics {
+	return newMetrics(prometheus.WrapRegistererWith(prometheus.Labels{"database": id}, s.reg), s.memory)
+}
+
+func newMemoryGauge() prometheus.Gauge {
+	return prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_engine_memory_bytes", Help: "Live heap of the engine process after the last collection."})
+}
+
+func newMetrics(reg prometheus.Registerer, memory prometheus.Gauge) *Metrics {
 	latency := []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5}
 	m := &Metrics{
 		subscriptions: prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_subscriptions", Help: "Live query subscriptions."}),
@@ -43,7 +80,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Full re-evaluations of a plan group (recompute mode, truncation, schema changes)."}),
 		resnapshots: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "livequery_resnapshots_total",
 			Help: "Queries read again from scratch, by reason."}, []string{"reason"}),
-		memory:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_engine_memory_bytes", Help: "Live heap of the engine process after the last collection."}),
+		memory:  memory,
 		slotLag: prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_slot_lag_bytes", Help: "WAL the slot retains."}),
 		checkpoint: prometheus.NewHistogram(prometheus.HistogramOpts{Name: "livequery_checkpoint_duration_seconds",
 			Help: "Duration of writing a checkpoint.", Buckets: latency}),
@@ -58,9 +95,20 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		keys: prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_keys", Help: "Live secrets the hub opens seals with."}),
 		keyRefreshes: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "livequery_key_refreshes_total",
 			Help: "Reads of the database's live keys from the control plane, by result."}, []string{"result"}),
+		released: prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_released",
+			Help: "1 while the hub has released the database so it can scale to zero."}),
+		releases: prometheus.NewCounter(prometheus.CounterOpts{Name: "livequery_releases_total",
+			Help: "Times the hub released an idle database."}),
+		resumes: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "livequery_resumes_total",
+			Help: "Times the hub reconnected to a released database, by reason (database_active, subscription, woken, failed)."}, []string{"reason"}),
+		up: prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_hub_up",
+			Help: "1 while the database's hub runs; 0 while it starts or restarts after an error."}),
+		restarts: prometheus.NewCounter(prometheus.CounterOpts{Name: "livequery_hub_restarts_total",
+			Help: "Times the database's hub stopped on an error and was started again."}),
 	}
-	reg.MustRegister(m.subscriptions, m.queries, m.round, m.commitToDelta, m.recompute, m.resnapshots, m.memory,
-		m.slotLag, m.checkpoint, m.slowConsumers, m.windowRefills, m.appliedTxns, m.maintenanceSec, m.keys, m.keyRefreshes)
+	reg.MustRegister(m.subscriptions, m.queries, m.round, m.commitToDelta, m.recompute, m.resnapshots,
+		m.slotLag, m.checkpoint, m.slowConsumers, m.windowRefills, m.appliedTxns, m.maintenanceSec, m.keys, m.keyRefreshes,
+		m.released, m.releases, m.resumes, m.up, m.restarts)
 	return m
 }
 
@@ -97,6 +145,24 @@ func (m *Metrics) observeCheckpoint(d time.Duration) {
 	}
 }
 
+func (m *Metrics) setReleased(released bool) {
+	if m == nil {
+		return
+	}
+	if released {
+		m.released.Set(1)
+		m.releases.Inc()
+	} else {
+		m.released.Set(0)
+	}
+}
+
+func (m *Metrics) resume(reason string) {
+	if m != nil {
+		m.resumes.WithLabelValues(reason).Inc()
+	}
+}
+
 func (m *Metrics) slowConsumer() {
 	if m != nil {
 		m.slowConsumers.Inc()
@@ -120,6 +186,25 @@ func (m *Metrics) keyRefresh(result string) {
 func (m *Metrics) setKeys(n int) {
 	if m != nil {
 		m.keys.Set(float64(n))
+	}
+}
+
+// SetUp records whether the database's hub runs.
+func (m *Metrics) SetUp(up bool) {
+	if m == nil {
+		return
+	}
+	if up {
+		m.up.Set(1)
+	} else {
+		m.up.Set(0)
+	}
+}
+
+// Restarted counts a hub started again after an error.
+func (m *Metrics) Restarted() {
+	if m != nil {
+		m.restarts.Inc()
 	}
 }
 

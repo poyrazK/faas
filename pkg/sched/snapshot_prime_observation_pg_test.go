@@ -1,4 +1,4 @@
-package sched
+package sched_test
 
 import (
 	"strings"
@@ -8,6 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,7 +21,7 @@ func TestSnapshotPrimeObservationUnknownAndHeldPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, d := primeObservationCandidate(t, s, account.ID, "unknown", nil)
+	app, d := sched.PrimeObservationCandidate(t, s, account.ID, "unknown", nil)
 	for _, raw := range []string{`{"current":"snapshot_prepare"}`, `{"current":"snapshot_prepare","current_started_at":"yesterday"}`, `{"current":"snapshot_prepare","current_started_at":"2026-02-30T12:00:00Z"}`, `{"current":"snapshot_prepare","current_started_at":"1970-01-01T00:00:00Z"}`, `{"current":null}`, `[]`,
 		`{"current":"snapshot_prepare","current_started_at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano) + `"}`} {
 		if _, err := pool.Exec(ctx, "UPDATE deployments SET stage_state=$2::jsonb WHERE id=$1", d.ID, raw); err != nil {
@@ -34,7 +35,7 @@ func TestSnapshotPrimeObservationUnknownAndHeldPostgres(t *testing.T) {
 	if _, err := pool.Exec(ctx, "UPDATE deployments SET stage_state=$2::jsonb WHERE id=$1", d.ID, d.StageState); err != nil {
 		t.Fatal(err)
 	}
-	instance := primeObservationInstance(t, s, app, d, state.StateColdBooting)
+	instance := sched.PrimeObservationInstance(t, s, app, d, state.StateColdBooting)
 	if _, err := pool.Exec(ctx, "UPDATE instances SET started_at=NULL WHERE id=$1", instance.ID); err != nil {
 		t.Fatal(err)
 	}

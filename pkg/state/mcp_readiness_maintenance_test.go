@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -10,36 +10,37 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMCPReadinessMaintenanceLifecycle(t *testing.T) {
-	check := func(t *testing.T, s Store) {
+	check := func(t *testing.T, s state.Store) {
 		ctx := t.Context()
 		account, err := s.CreateAccount(ctx, "maintenance@example.com", api.PlanPro)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app, err := s.CreateApp(ctx, App{AccountID: account.ID, Slug: "maintenance-app", Type: AppTypeApp, Status: AppActive})
+		app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "maintenance-app", Type: state.AppTypeApp, Status: state.AppActive})
 		if err != nil {
 			t.Fatal(err)
 		}
 		at := time.Now().UTC().Truncate(time.Microsecond)
-		source := s.(MCPReadinessOutboxStore)
-		windows := s.(MCPReadinessMaintenanceStore)
-		timeline := s.(MCPReadinessIncidentStore)
-		makeRule := func(name, scope string) AlertRule {
+		source := s.(state.MCPReadinessOutboxStore)
+		windows := s.(state.MCPReadinessMaintenanceStore)
+		timeline := s.(state.MCPReadinessIncidentStore)
+		makeRule := func(name, scope string) state.AlertRule {
 			t.Helper()
-			r, err := s.CreateAlertRule(ctx, AlertRule{AccountID: account.ID, AppID: app.ID, Name: name, Enabled: true, Metric: AlertMetric(api.MetricMCPReadinessUnhealthy), MCPReadinessScope: scope, Comparison: AlertGt, Threshold: 0, WindowSpec: AlertWindow5m, Action: AlertActionWebhook, WebhookURL: "https://example.com/hook", WebhookSecretSealed: []byte("fixture"), CooldownMinutes: 5})
+			r, err := s.CreateAlertRule(ctx, state.AlertRule{AccountID: account.ID, AppID: app.ID, Name: name, Enabled: true, Metric: state.AlertMetric(api.MetricMCPReadinessUnhealthy), MCPReadinessScope: scope, Comparison: state.AlertGt, Threshold: 0, WindowSpec: state.AlertWindow5m, Action: state.AlertActionWebhook, WebhookURL: "https://example.com/hook", WebhookSecretSealed: []byte("fixture"), CooldownMinutes: 5})
 			if err != nil {
 				t.Fatal(err)
 			}
 			return r
 		}
-		observe := func(rule AlertRule, when time.Time, breach bool, scopes ...string) MCPReadinessTransition {
+		observe := func(rule state.AlertRule, when time.Time, breach bool, scopes ...string) state.MCPReadinessTransition {
 			t.Helper()
 			coverage := strings.Repeat("a", 64)
 			p, _ := json.Marshal(map[string]any{"metric": api.MetricMCPReadinessUnhealthy, "mcp_readiness_coverage_fingerprint": coverage, "mcp_readiness_scopes": scopes, "mcp_readiness": []api.MCPReadinessMonitorStatus{}})
-			out, err := source.RecordMCPReadinessObservation(ctx, MCPReadinessObservation{Rule: rule, At: when, Breached: breach, Coverage: coverage, Payload: p, ObservedValue: 1})
+			out, err := source.RecordMCPReadinessObservation(ctx, state.MCPReadinessObservation{Rule: rule, At: when, Breached: breach, Coverage: coverage, Payload: p, ObservedValue: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -53,7 +54,7 @@ func TestMCPReadinessMaintenanceLifecycle(t *testing.T) {
 			}
 			return w
 		}
-		noClaim := func(rule AlertRule, when time.Time) {
+		noClaim := func(rule state.AlertRule, when time.Time) {
 			t.Helper()
 			if _, won, err := source.ClaimMCPReadinessDelivery(ctx, rule.ID, when); err != nil || won {
 				t.Fatal("unexpected notification", won, err)
@@ -68,7 +69,7 @@ func TestMCPReadinessMaintenanceLifecycle(t *testing.T) {
 		observe(prod, at.Add(time.Second), true, "production")
 		observe(mixed, at.Add(time.Second), true, "staging", "production")
 		noClaim(stage, at.Add(2*time.Second))
-		for _, rule := range []AlertRule{prod, mixed} {
+		for _, rule := range []state.AlertRule{prod, mixed} {
 			if _, won, err := source.ClaimMCPReadinessDelivery(ctx, rule.ID, at.Add(2*time.Second)); err != nil || !won {
 				t.Fatal("staging muted production", won, err)
 			}
@@ -118,7 +119,7 @@ func TestMCPReadinessMaintenanceLifecycle(t *testing.T) {
 		}
 		// Concurrent workers cannot emit the resume event twice.
 		var wg sync.WaitGroup
-		claims := make(chan MCPReadinessDeliveryClaim, 6)
+		claims := make(chan state.MCPReadinessDeliveryClaim, 6)
 		errs := make(chan error, 6)
 		for range 6 {
 			wg.Go(func() {
@@ -147,7 +148,7 @@ func TestMCPReadinessMaintenanceLifecycle(t *testing.T) {
 			t.Fatal("old notifications replayed", claim.EventID, p)
 		}
 		done := at.Add(13 * time.Minute)
-		if err = s.UpdateAlertDeliveryStatus(ctx, claim.Delivery.ID, AlertDeliveryDelivered, 1, 200, "", &done); err != nil {
+		if err = s.UpdateAlertDeliveryStatus(ctx, claim.Delivery.ID, state.AlertDeliveryDelivered, 1, 200, "", &done); err != nil {
 			t.Fatal(err)
 		}
 		if err = source.CompleteMCPReadinessDelivery(ctx, claim.EventID, claim.Token, done); err != nil {
@@ -203,7 +204,7 @@ func TestMCPReadinessMaintenanceLifecycle(t *testing.T) {
 		create("staging", at.Add(46*time.Minute), at.Add(48*time.Minute))
 		observe(inFlight, at.Add(46*time.Minute), true, "staging")
 		done = at.Add(46 * time.Minute)
-		if err = s.UpdateAlertDeliveryStatus(ctx, lease.Delivery.ID, AlertDeliveryDelivered, 1, 200, "", &done); err != nil {
+		if err = s.UpdateAlertDeliveryStatus(ctx, lease.Delivery.ID, state.AlertDeliveryDelivered, 1, 200, "", &done); err != nil {
 			t.Fatal(err)
 		}
 		if err = source.CompleteMCPReadinessDelivery(ctx, lease.EventID, lease.Token, done); err != nil {
@@ -234,13 +235,13 @@ func TestMCPReadinessMaintenanceLifecycle(t *testing.T) {
 			t.Fatal("spanning lease repeated old fire", continuationLease, won, err)
 		}
 		done = at.Add(72*time.Minute + time.Second)
-		if err = s.UpdateAlertDeliveryStatus(ctx, continuationLease.Delivery.ID, AlertDeliveryDelivered, 1, 200, "", &done); err != nil {
+		if err = s.UpdateAlertDeliveryStatus(ctx, continuationLease.Delivery.ID, state.AlertDeliveryDelivered, 1, 200, "", &done); err != nil {
 			t.Fatal(err)
 		}
 		if err = source.CompleteMCPReadinessDelivery(ctx, continuationLease.EventID, continuationLease.Token, done); err != nil {
 			t.Fatal(err)
 		}
-		if err = source.CompleteMCPReadinessDelivery(ctx, oldLease.EventID, oldLease.Token, done); !errors.Is(err, ErrConflict) {
+		if err = source.CompleteMCPReadinessDelivery(ctx, oldLease.EventID, oldLease.Token, done); !errors.Is(err, state.ErrConflict) {
 			t.Fatal("late old completion was accepted", err)
 		}
 		if v := observe(spanning, at.Add(72*time.Minute+2*time.Second), true, "staging"); v.EventID != "" {
@@ -255,7 +256,7 @@ func TestMCPReadinessMaintenanceLifecycle(t *testing.T) {
 		if err != nil || !won {
 			t.Fatal("preview setup", won, err)
 		}
-		if err = s.UpdateAlertDeliveryStatus(ctx, sent.Delivery.ID, AlertDeliveryDelivered, 1, 200, "", &previewAt); err != nil {
+		if err = s.UpdateAlertDeliveryStatus(ctx, sent.Delivery.ID, state.AlertDeliveryDelivered, 1, 200, "", &previewAt); err != nil {
 			t.Fatal(err)
 		}
 		if err = source.CompleteMCPReadinessDelivery(ctx, sent.EventID, sent.Token, previewAt); err != nil {
@@ -272,18 +273,18 @@ func TestMCPReadinessMaintenanceLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = windows.ListMCPReadinessMaintenance(ctx, foreign.ID, app.ID, "staging", "", 20); !errors.Is(err, ErrNotFound) {
+		if _, err = windows.ListMCPReadinessMaintenance(ctx, foreign.ID, app.ID, "staging", "", 20); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("foreign history", err)
 		}
-		if _, err = windows.CancelMCPReadinessMaintenance(ctx, foreign.ID, app.ID, first.ID, "foreign", at); !errors.Is(err, ErrNotFound) {
+		if _, err = windows.CancelMCPReadinessMaintenance(ctx, foreign.ID, app.ID, first.ID, "foreign", at); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("foreign cancel", err)
 		}
-		if _, err = windows.CreateMCPReadinessMaintenance(ctx, foreign.ID, app.ID, api.CreateMCPReadinessMaintenanceRequest{Scope: "staging", EndsAt: at.Add(time.Hour), Reason: "foreign"}, at); !errors.Is(err, ErrNotFound) {
+		if _, err = windows.CreateMCPReadinessMaintenance(ctx, foreign.ID, app.ID, api.CreateMCPReadinessMaintenanceRequest{Scope: "staging", EndsAt: at.Add(time.Hour), Reason: "foreign"}, at); !errors.Is(err, state.ErrNotFound) {
 			t.Fatal("foreign create", err)
 		}
 	}
-	t.Run("memory", func(t *testing.T) { check(t, NewMemStore()) })
-	t.Run("postgres", func(t *testing.T) { check(t, NewPgStore(pgtest.OpenMigrated(t))) })
+	t.Run("memory", func(t *testing.T) { check(t, state.NewMemStore()) })
+	t.Run("postgres", func(t *testing.T) { check(t, state.NewPgStore(pgtest.OpenMigrated(t))) })
 }
 
 func TestMCPReadinessMaintenanceMatching(t *testing.T) {
@@ -291,22 +292,22 @@ func TestMCPReadinessMaintenanceMatching(t *testing.T) {
 	stop := at.Add(time.Minute)
 	windows := []api.MCPReadinessMaintenanceWindow{{ID: "stage", Scope: "staging", StartsAt: at, EndsAt: stop}, {ID: "prod", Scope: "production", StartsAt: at.Add(30 * time.Second), EndsAt: stop}}
 	payload := json.RawMessage(`{"mcp_readiness_scopes":["staging","production"]}`)
-	rule := AlertRule{}
-	if ids := readinessMaintenanceIDs(rule, payload, windows, at); len(ids) != 0 {
+	rule := state.AlertRule{}
+	if ids := state.ReadinessMaintenanceIDs(rule, payload, windows, at); len(ids) != 0 {
 		t.Fatal("partial mixed coverage muted", ids)
 	}
-	if ids := readinessMaintenanceIDs(rule, payload, windows, at.Add(30*time.Second)); len(ids) != 2 {
+	if ids := state.ReadinessMaintenanceIDs(rule, payload, windows, at.Add(30*time.Second)); len(ids) != 2 {
 		t.Fatal("complete mixed coverage did not mute", ids)
 	}
-	if ids := readinessMaintenanceIDs(rule, payload, windows, stop); len(ids) != 0 {
+	if ids := state.ReadinessMaintenanceIDs(rule, payload, windows, stop); len(ids) != 0 {
 		t.Fatal("end boundary still muted", ids)
 	}
 	windows[1].CancelledAt = &at
-	if ids := readinessMaintenanceIDs(rule, payload, windows, at.Add(30*time.Second)); len(ids) != 0 {
+	if ids := state.ReadinessMaintenanceIDs(rule, payload, windows, at.Add(30*time.Second)); len(ids) != 0 {
 		t.Fatal("cancelled future window became active", ids)
 	}
 	for _, raw := range []string{`{}`, `{"mcp_readiness_scopes":[]}`, `{"mcp_readiness_scopes":[""]}`, `{"mcp_readiness_scopes":["staging","bad_scope"]}`, `bad`} {
-		if ids := readinessMaintenanceIDs(rule, json.RawMessage(raw), windows, at); len(ids) != 0 {
+		if ids := state.ReadinessMaintenanceIDs(rule, json.RawMessage(raw), windows, at); len(ids) != 0 {
 			t.Fatal("unknown coverage muted", raw, ids)
 		}
 	}

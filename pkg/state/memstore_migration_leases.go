@@ -24,7 +24,7 @@ func (m *MemStore) ReserveMigrationLease(_ context.Context, lease MigrationLease
 		if m.migrationPendingLocked(existing.InstanceID, existing.LeaseToken, false) || sourceReceipt {
 			return ErrConflict
 		}
-		if existing.LeaseExpiresAt.After(lease.CreatedAt) {
+		if existing.LeaseExpiresAt.After(lease.CreatedAt) || m.functionMigrationSources[existing.InstanceID].LeaseToken != "" {
 			return ErrConflict
 		}
 		delete(m.migrationLeases, existing.LeaseToken)
@@ -99,6 +99,11 @@ func (m *MemStore) DeleteMigrationLease(_ context.Context, leaseToken string) er
 	if m.migrationPendingLocked(lease.InstanceID, leaseToken, false) || m.migrationSourcePendingLocked(leaseToken) {
 		return ErrConflict
 	}
+	if d, ok := m.functionMigrationDestinations[leaseToken]; ok && d.Phase != FunctionDestinationRetired && d.Phase != FunctionDestinationCommitted {
+		return ErrConflict
+	}
+	delete(m.functionMigrationSources, lease.InstanceID)
+	delete(m.functionMigrationPermissions, leaseToken)
 	delete(m.migrationLeases, leaseToken)
 	delete(m.migrationResumeFences, leaseToken)
 	return nil

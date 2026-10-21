@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ func TestValidateRollbackFlagsNamesTheBrokenRule(t *testing.T) {
 		{name: "zero poll interval", checked: true, to: "v6", current: "v8", timeout: tm, want: "--poll-interval must be positive"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateRollbackFlags(tc.checked, tc.to, tc.current, tc.why, tc.wait, tc.timeout, tc.interval)
+			err := main.ValidateRollbackFlags(tc.checked, tc.to, tc.current, tc.why, tc.wait, tc.timeout, tc.interval)
 			if tc.want == "" {
 				if err != nil {
 					t.Fatalf("err = %v, want nil", err)

@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // MemStore coverage for the issue #791 cron run-history surface: the
 // durable Outcome stamped by the Complete/Fail write paths and the
@@ -13,24 +13,25 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // seedInvocationAppCtx is the contextcheck-clean twin of seedInvocationApp
 // (pkg/state/memstore_invocations_test.go:16). The lint rule rejects
 // any helper that calls context.Background() itself, so the test
 // threads its own ctx through.
-func seedInvocationAppCtx(t *testing.T, ctx context.Context) (*MemStore, string, string) {
+func seedInvocationAppCtx(t *testing.T, ctx context.Context) (*state.MemStore, string, string) {
 	t.Helper()
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acct, err := m.CreateAccount(ctx, "inv@localhost", api.PlanHobby)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	app, err := m.CreateApp(ctx, App{
+	app, err := m.CreateApp(ctx, state.App{
 		AccountID: acct.ID,
 		Slug:      "cron-runs-test",
-		Type:      AppTypeApp,
-		Status:    AppActive,
+		Type:      state.AppTypeApp,
+		Status:    state.AppActive,
 		RAMMB:     256,
 	})
 	if err != nil {
@@ -41,13 +42,13 @@ func seedInvocationAppCtx(t *testing.T, ctx context.Context) (*MemStore, string,
 
 // seedCronInvocation enqueues one cron-sourced row and claims it, so
 // the caller can drive it to whichever terminal state it needs.
-func seedCronInvocation(t *testing.T, ctx context.Context, m *MemStore, appID, acctID, cronID string, createdAt time.Time) Invocation {
+func seedCronInvocation(t *testing.T, ctx context.Context, m *state.MemStore, appID, acctID, cronID string, createdAt time.Time) state.Invocation {
 	t.Helper()
 	id := cronID
-	inv, err := m.EnqueueInvocation(ctx, Invocation{
+	inv, err := m.EnqueueInvocation(ctx, state.Invocation{
 		AppID:     appID,
 		AccountID: acctID,
-		Source:    InvocationCron,
+		Source:    state.InvocationCron,
 		Method:    "POST",
 		Path:      "/cron",
 		CronID:    &id,
@@ -77,7 +78,7 @@ func TestMemInvocationOutcome(t *testing.T) {
 			t.Fatalf("CompleteInvocation: %v", err)
 		}
 		got := mustOutcome(t, ctx, m, inv.ID)
-		if got != OutcomeSuccess {
+		if got != state.OutcomeSuccess {
 			t.Errorf("outcome = %q, want success", got)
 		}
 	})
@@ -88,7 +89,7 @@ func TestMemInvocationOutcome(t *testing.T) {
 		if err := m.FailInvocation(ctx, inv.ID, "boom", 0, 0); err != nil {
 			t.Fatalf("FailInvocation: %v", err)
 		}
-		if got := mustOutcome(t, ctx, m, inv.ID); got != OutcomeFailed {
+		if got := mustOutcome(t, ctx, m, inv.ID); got != state.OutcomeFailed {
 			t.Errorf("outcome = %q, want failed", got)
 		}
 	})
@@ -96,11 +97,11 @@ func TestMemInvocationOutcome(t *testing.T) {
 	t.Run("WithOutcome records timeout", func(t *testing.T) {
 		m, appID, acctID := seedInvocationAppCtx(t, ctx)
 		inv := seedCronInvocation(t, ctx, m, appID, acctID, "cron-1", time.Now())
-		if err := m.FailInvocation(ctx, inv.ID, "deadline", 0, 0, WithOutcome(OutcomeTimeout)); err != nil {
+		if err := m.FailInvocation(ctx, inv.ID, "deadline", 0, 0, state.WithOutcome(state.OutcomeTimeout)); err != nil {
 			t.Fatalf("FailInvocation: %v", err)
 		}
 		// The whole point of #791: a timeout is not just "failed".
-		if got := mustOutcome(t, ctx, m, inv.ID); got != OutcomeTimeout {
+		if got := mustOutcome(t, ctx, m, inv.ID); got != state.OutcomeTimeout {
 			t.Errorf("outcome = %q, want timeout", got)
 		}
 	})
@@ -108,14 +109,14 @@ func TestMemInvocationOutcome(t *testing.T) {
 	t.Run("transient requeue leaves no outcome", func(t *testing.T) {
 		m, appID, acctID := seedInvocationAppCtx(t, ctx)
 		inv := seedCronInvocation(t, ctx, m, appID, acctID, "cron-1", time.Now())
-		if err := m.FailInvocation(ctx, inv.ID, "blip", time.Minute, 0, WithOutcome(OutcomeTimeout)); err != nil {
+		if err := m.FailInvocation(ctx, inv.ID, "blip", time.Minute, 0, state.WithOutcome(state.OutcomeTimeout)); err != nil {
 			t.Fatalf("FailInvocation: %v", err)
 		}
 		got, err := m.InvocationByID(ctx, inv.ID)
 		if err != nil {
 			t.Fatalf("InvocationByID: %v", err)
 		}
-		if got.State != InvocationPending {
+		if got.State != state.InvocationPending {
 			t.Fatalf("state = %q, want pending", got.State)
 		}
 		if got.Outcome != nil {
@@ -128,17 +129,17 @@ func TestMemInvocationOutcome(t *testing.T) {
 		inv := seedCronInvocation(t, ctx, m, appID, acctID, "cron-1", time.Now())
 		// budget=1 with attempts already at 1 (Claim bumped it) routes
 		// to dead_letter; the caller's timeout hint must not win.
-		if err := m.FailInvocation(ctx, inv.ID, "spent", time.Minute, 1, WithOutcome(OutcomeTimeout)); err != nil {
+		if err := m.FailInvocation(ctx, inv.ID, "spent", time.Minute, 1, state.WithOutcome(state.OutcomeTimeout)); err != nil {
 			t.Fatalf("FailInvocation: %v", err)
 		}
 		got, err := m.InvocationByID(ctx, inv.ID)
 		if err != nil {
 			t.Fatalf("InvocationByID: %v", err)
 		}
-		if got.State != InvocationDeadLetter {
+		if got.State != state.InvocationDeadLetter {
 			t.Fatalf("state = %q, want dead_letter", got.State)
 		}
-		if got.Outcome == nil || *got.Outcome != OutcomeDeadLetter {
+		if got.Outcome == nil || *got.Outcome != state.OutcomeDeadLetter {
 			t.Errorf("outcome = %v, want dead_letter", got.Outcome)
 		}
 	})
@@ -171,8 +172,8 @@ func TestMemListCronRunsForCron(t *testing.T) {
 
 	t.Run("non-cron rows never appear", func(t *testing.T) {
 		m, appID, acctID := seedInvocationAppCtx(t, ctx)
-		if _, err := m.EnqueueInvocation(ctx, Invocation{
-			AppID: appID, AccountID: acctID, Source: InvocationAsyncInvoke,
+		if _, err := m.EnqueueInvocation(ctx, state.Invocation{
+			AppID: appID, AccountID: acctID, Source: state.InvocationAsyncInvoke,
 			Method: "POST", Path: "/x", DueAt: time.Now(), CreatedAt: time.Now(),
 		}); err != nil {
 			t.Fatalf("EnqueueInvocation: %v", err)
@@ -216,7 +217,7 @@ func TestMemListCronRunsForCron(t *testing.T) {
 	})
 }
 
-func mustOutcome(t *testing.T, ctx context.Context, m *MemStore, id string) InvocationOutcome {
+func mustOutcome(t *testing.T, ctx context.Context, m *state.MemStore, id string) state.InvocationOutcome {
 	t.Helper()
 	got, err := m.InvocationByID(ctx, id)
 	if err != nil {

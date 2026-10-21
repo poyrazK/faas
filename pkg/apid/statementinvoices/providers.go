@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/lagoinvoice"
 	"github.com/onebox-faas/faas/pkg/billing/paddleinvoice"
 	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
@@ -48,9 +49,11 @@ type provider interface {
 	customer(requested, externalRef string) (string, *api.Problem)
 	currencyProblem(currency string) *api.Problem
 	// push creates the invoice once, or adopts the one an earlier attempt
-	// created; record stores its ID before anything else is sent.
+	// created; record stores its ID before anything else is sent. push calls
+	// reject when the provider refused to create the invoice, so nothing
+	// exists there (ADR-20261019180000).
 	push(ctx context.Context, conn connection, export *state.StatementInvoiceExport, src statementInvoiceSource, resumed bool,
-		record func(invoiceID string) error) *api.Problem
+		record func(invoiceID string) error, reject func()) *api.Problem
 	payment(ctx context.Context, conn connection, invoiceID string) (state.StatementInvoicePayment, bool, error)
 	dashboardURL(livemode bool, invoiceID string) string
 }
@@ -96,6 +99,53 @@ func resolveCustomer(requested, externalRef string, valid *regexp.Regexp, title,
 		return "", api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, title+" customer required", detail)
 	}
 	return customer, nil
+}
+
+// refused reports a provider's definitive refusal of a request: a rejected
+// key or a 4xx other than a timeout, a conflict or a rate limit, which the
+// next attempt may get past.
+func refused(err error, keyRejected error, status int) bool {
+	if errors.Is(err, keyRejected) {
+		return true
+	}
+	return status >= 400 && status < 500 && status != http.StatusRequestTimeout && status != http.StatusConflict &&
+		status != http.StatusTooManyRequests
+}
+
+func stripeRefused(err error) bool {
+	var e *stripeinvoice.Error
+	status := 0
+	if errors.As(err, &e) {
+		status = e.Status
+	}
+	return refused(err, stripeinvoice.ErrKeyRejected, status)
+}
+
+func paddleRefused(err error) bool {
+	var e *paddleinvoice.Error
+	status := 0
+	if errors.As(err, &e) {
+		status = e.Status
+	}
+	return refused(err, paddleinvoice.ErrKeyRejected, status)
+}
+
+func lagoRefused(err error) bool {
+	var e *lagoinvoice.Error
+	status := 0
+	if errors.As(err, &e) {
+		status = e.Status
+	}
+	return refused(err, lagoinvoice.ErrKeyRejected, status)
+}
+
+// stripeIdempotencyKey names one Stripe request of an export attempt; the
+// first attempt keeps the original keys so in-flight exports resume.
+func stripeIdempotencyKey(export *state.StatementInvoiceExport, suffix string) string {
+	if export.Attempt == 0 {
+		return "gregale-" + export.ID + "-" + suffix
+	}
+	return fmt.Sprintf("gregale-%s-a%d-%s", export.ID, export.Attempt, suffix)
 }
 
 func periodDescription(src statementInvoiceSource) string {
@@ -164,13 +214,16 @@ func stripeCallProblem(err error) *api.Problem {
 // push creates the draft invoice once and adds each line Stripe does not
 // already hold; idempotency keys derive from the export.
 func (p stripeProvider) push(ctx context.Context, conn connection, export *state.StatementInvoiceExport, src statementInvoiceSource,
-	_ bool, record func(string) error) *api.Problem {
+	_ bool, record func(string) error, reject func()) *api.Problem {
 	metadata := map[string]string{"gregale_statement_id": src.statementID, "gregale_statement_revision": strconv.Itoa(src.revision), "gregale_source": src.kind}
 	if export.ProviderInvoiceID == "" {
-		invoice, err := p.client.CreateInvoice(ctx, conn.key, "gregale-"+export.ID+"-invoice", stripeinvoice.InvoiceParams{
+		invoice, err := p.client.CreateInvoice(ctx, conn.key, stripeIdempotencyKey(export, "invoice"), stripeinvoice.InvoiceParams{
 			Customer: export.Customer, Currency: export.Currency, Description: periodDescription(src), Metadata: metadata,
 			CollectionMethod: stripeCollectionMethod(export.Collection), DaysUntilDue: export.DaysUntilDue, AutomaticTax: export.AutomaticTax})
 		if err != nil {
+			if stripeRefused(err) {
+				reject()
+			}
 			return stripeCallProblem(err)
 		}
 		if err := record(invoice.ID); err != nil {
@@ -181,13 +234,17 @@ func (p stripeProvider) push(ctx context.Context, conn connection, export *state
 	if err != nil {
 		return stripeCallProblem(err)
 	}
-	for i, item := range statementInvoiceItems(src.invoice) {
+	unit, err := billing.StripeMinorUnit(export.Currency)
+	if err != nil {
+		return statementInvoiceProblem(err)
+	}
+	for i, item := range statementInvoiceItems(src.invoice.In(unit)) {
 		line := strconv.Itoa(i)
 		if existing[line] {
 			continue
 		}
 		lineMetadata := map[string]string{stripeinvoice.LineMetadataKey: line, "gregale_statement_id": src.statementID}
-		if err := p.client.CreateInvoiceItem(ctx, conn.key, "gregale-"+export.ID+"-item-"+line, stripeinvoice.ItemParams{
+		if err := p.client.CreateInvoiceItem(ctx, conn.key, stripeIdempotencyKey(export, "item-"+line), stripeinvoice.ItemParams{
 			Customer: export.Customer, InvoiceID: export.ProviderInvoiceID, Currency: export.Currency, AmountMinor: item.amount,
 			Description: item.description, PeriodStart: src.start, PeriodEnd: src.end, Metadata: lineMetadata}); err != nil {
 			return stripeCallProblem(err)
@@ -222,7 +279,7 @@ func (p stripeProvider) collect(ctx context.Context, conn connection, export *st
 	if invoice.Deleted || invoice.Status != "draft" {
 		return nil
 	}
-	if err := p.client.FinalizeInvoice(ctx, conn.key, "gregale-"+export.ID+"-finalize", export.ProviderInvoiceID); err != nil {
+	if err := p.client.FinalizeInvoice(ctx, conn.key, stripeIdempotencyKey(export, "finalize"), export.ProviderInvoiceID); err != nil {
 		return stripeCallProblem(err)
 	}
 	return nil
@@ -239,8 +296,16 @@ func (p stripeProvider) payment(ctx context.Context, conn connection, invoiceID 
 	if invoice.Deleted {
 		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true, nil
 	}
-	return knownPayment(state.StatementInvoicePayment{Status: invoice.Status, AmountPaidMinor: max(invoice.AmountPaid, 0),
-		AmountRemainingMinor: max(invoice.AmountRemaining, 0), DueAt: invoice.DueDate, PaidAt: invoice.PaidAt}, invoice.HostedURL)
+	// Stripe writes some currencies differently from ISO 4217; Gregale keeps
+	// ISO minor units (ADR-20261019100330).
+	currency := strings.ToUpper(invoice.Currency)
+	unit, unitErr := billing.StripeMinorUnit(currency)
+	iso, _ := api.CurrencyMinorExponent(currency)
+	if unitErr != nil {
+		unit = billing.MinorUnit{Exponent: iso, Step: 1}
+	}
+	return knownPayment(state.StatementInvoicePayment{Status: invoice.Status, AmountPaidMinor: unit.ToISOMinor(max(invoice.AmountPaid, 0), iso),
+		AmountRemainingMinor: unit.ToISOMinor(max(invoice.AmountRemaining, 0), iso), DueAt: invoice.DueDate, PaidAt: invoice.PaidAt}, invoice.HostedURL)
 }
 
 // --- Paddle (ADR-1507) ---
@@ -278,7 +343,7 @@ func paddleCallProblem(err error) *api.Problem {
 	switch {
 	case errors.Is(err, paddleinvoice.ErrKeyRejected):
 		return providerProblem(http.StatusUnprocessableEntity, "Paddle rejected the key",
-			"use an API key with read and write access to transactions")
+			"use an API key with read and write access to transactions and read access to customers")
 	case errors.As(err, &paddleErr) && paddleErr.Status >= 400 && paddleErr.Status < 500:
 		return providerProblem(http.StatusUnprocessableEntity, "Paddle rejected the request", paddleErr.Detail)
 	default:
@@ -286,16 +351,18 @@ func paddleCallProblem(err error) *api.Problem {
 	}
 }
 
-// push creates a draft, manually collected transaction once. Paddle has no
-// idempotency keys, so a resumed export first adopts the transaction whose
-// custom_data names it.
+// push creates a draft, manually collected transaction once, then bills it
+// when the export sends (ADR-20261019100333). Paddle has no idempotency
+// keys, so a resumed export first adopts the transaction whose custom_data
+// names it.
 func (p paddleProvider) push(ctx context.Context, conn connection, export *state.StatementInvoiceExport, src statementInvoiceSource,
-	resumed bool, record func(string) error) *api.Problem {
+	resumed bool, record func(string) error, reject func()) *api.Problem {
 	if export.ProviderInvoiceID != "" {
-		return nil
+		return p.collect(ctx, conn, export)
 	}
 	items, problem := nonNegativeItems(src)
 	if problem != nil {
+		reject()
 		return problem
 	}
 	id := ""
@@ -310,17 +377,60 @@ func (p paddleProvider) push(ctx context.Context, conn connection, export *state
 		params := paddleinvoice.TransactionParams{CustomerID: export.Customer, Currency: export.Currency,
 			CustomData: map[string]string{"gregale_export_id": export.ID, "gregale_statement_id": src.statementID,
 				"gregale_statement_revision": strconv.Itoa(src.revision), "gregale_source": src.kind}}
+		if export.Collection == state.CollectionSend {
+			params.PaymentTermsDays = export.DaysUntilDue
+		}
 		for _, item := range items {
 			params.Items = append(params.Items, paddleinvoice.Item{Description: item.description, AmountMinor: item.amount})
 		}
 		created, err := p.client.CreateTransaction(ctx, conn.key, params)
 		if err != nil {
+			if paddleRefused(err) {
+				reject()
+			}
 			return paddleCallProblem(err)
 		}
 		id = created
 	}
 	if err := record(id); err != nil {
 		return api.ErrInternal("could not record the Paddle transaction")
+	}
+	return p.collect(ctx, conn, export)
+}
+
+// collect bills the transaction of an export set to send
+// (ADR-20261019100333): Paddle numbers the invoice and emails it. Only a
+// draft or ready transaction is billed, so the step is safe to repeat.
+func (p paddleProvider) collect(ctx context.Context, conn connection, export *state.StatementInvoiceExport) *api.Problem {
+	if export.Collection != state.CollectionSend {
+		return nil
+	}
+	txn, err := p.client.GetTransaction(ctx, conn.key, export.ProviderInvoiceID)
+	if err != nil {
+		return paddleCallProblem(err)
+	}
+	if txn.Deleted || txn.Status != "draft" && txn.Status != "ready" {
+		return nil
+	}
+	address, err := p.client.CustomerAddress(ctx, conn.key, export.Customer)
+	if errors.Is(err, paddleinvoice.ErrNoAddress) {
+		return providerProblem(http.StatusUnprocessableEntity, "Paddle customer has no address",
+			"add an address to the customer in Paddle, then export again; the transaction is kept as a draft")
+	}
+	if err != nil {
+		return paddleCallProblem(err)
+	}
+	// The customer's business, when it has one, carries its tax identifier
+	// onto the invoice (ADR-20261020120000).
+	business, hasBusiness, err := p.client.ActiveBusiness(ctx, conn.key, export.Customer)
+	if err != nil {
+		return paddleCallProblem(err)
+	}
+	if !hasBusiness {
+		business.ID = ""
+	}
+	if err := p.client.BillTransaction(ctx, conn.key, export.ProviderInvoiceID, address, business.ID); err != nil {
+		return paddleCallProblem(err)
 	}
 	return nil
 }
@@ -401,13 +511,14 @@ func lagoCallProblem(err error) *api.Problem {
 // appeared since the export began, an earlier attempt may have crashed
 // before tagging it, so the export stops instead of issuing a second one.
 func (p lagoProvider) push(ctx context.Context, conn connection, export *state.StatementInvoiceExport, src statementInvoiceSource,
-	resumed bool, record func(string) error) *api.Problem {
+	resumed bool, record func(string) error, reject func()) *api.Problem {
 	if export.ProviderInvoiceID == "" {
 		items, problem := nonNegativeItems(src)
 		if problem != nil {
+			reject()
 			return problem
 		}
-		id, problem := p.findOrCreate(ctx, conn, export, src, items, resumed)
+		id, problem := p.findOrCreate(ctx, conn, export, src, items, resumed, reject)
 		if problem != nil {
 			return problem
 		}
@@ -422,7 +533,7 @@ func (p lagoProvider) push(ctx context.Context, conn connection, export *state.S
 }
 
 func (p lagoProvider) findOrCreate(ctx context.Context, conn connection, export *state.StatementInvoiceExport, src statementInvoiceSource,
-	items []statementInvoiceItem, resumed bool) (string, *api.Problem) {
+	items []statementInvoiceItem, resumed bool, reject func()) (string, *api.Problem) {
 	if resumed {
 		id, err := p.client.FindInvoice(ctx, conn.apiURL, conn.key, export.ID)
 		if err != nil || id != "" {
@@ -446,6 +557,9 @@ func (p lagoProvider) findOrCreate(ctx context.Context, conn connection, export 
 	}
 	id, err := p.client.CreateInvoice(ctx, conn.apiURL, conn.key, params)
 	if err != nil {
+		if lagoRefused(err) {
+			reject()
+		}
 		return "", lagoCallProblem(err)
 	}
 	return id, nil

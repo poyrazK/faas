@@ -30,22 +30,26 @@ func recoveryCLI() string {
 }
 
 type deployRecovery struct {
-	Stage          string `json:"stage"`
-	App            string `json:"app,omitempty"`
-	DeploymentID   string `json:"deployment_id,omitempty"`
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-	InspectCommand string `json:"inspect_command"`
-	ResumeCommand  string `json:"resume_command,omitempty"`
-	RetryFlag      string `json:"retry_flag,omitempty"`
-	Hint           string `json:"hint"`
-	NextCommand    string `json:"next_command,omitempty"`
+	Configuration     *api.DeploymentConfigurationStatus `json:"configuration,omitempty"`
+	SessionID         string                             `json:"session_id,omitempty"`
+	SubmissionOutcome deploySubmissionOutcome            `json:"submission_outcome,omitempty"`
+	Stage             string                             `json:"stage"`
+	App               string                             `json:"app,omitempty"`
+	DeploymentID      string                             `json:"deployment_id,omitempty"`
+	IdempotencyKey    string                             `json:"idempotency_key,omitempty"`
+	InspectCommand    string                             `json:"inspect_command"`
+	ResumeCommand     string                             `json:"resume_command,omitempty"`
+	RetryFlag         string                             `json:"retry_flag,omitempty"`
+	Hint              string                             `json:"hint"`
+	NextCommand       string                             `json:"next_command,omitempty"`
 }
 
 func newDeployRecovery(stage, slug, deploymentID, key string, timeout time.Duration, rollout bool) *deployRecovery {
 	r := &deployRecovery{Stage: stage, App: slug, DeploymentID: deploymentID, IdempotencyKey: key}
 	r.InspectCommand = recoveryCLI() + " deployments --app " + recoveryArgument(slug)
 	if deploymentID != "" {
-		r.InspectCommand = recoveryCLI() + " deployment get " + recoveryArgument(deploymentID)
+		r.SubmissionOutcome = deploySubmissionAccepted
+		r.InspectCommand = recoveryCLI() + " deployment " + recoveryArgument(deploymentID)
 		r.ResumeCommand = deploymentWaitResumeCommandWithRollout(deploymentID, timeout, rollout)
 		r.Hint = "The deployment was accepted. Inspect it or resume waiting; do not submit another deployment to resume the wait."
 	} else {
@@ -95,7 +99,24 @@ func printDeploySubmissionError(title string, err error, slug, key, stage, deplo
 	if errors.As(err, &phase) {
 		stage = phase.stage
 	}
-	return printErr(title, &deployRecoveryError{err: err, recovery: newDeployRecovery(stage, slug, deploymentID, key, 0, false)})
+	recovery := newDeployRecovery(stage, slug, deploymentID, key, 0, false)
+	recovery.SubmissionOutcome = submissionOutcome(api.DeploymentResponse{ID: deploymentID}, err)
+	switch recovery.SubmissionOutcome {
+	case deploySubmissionAccepted:
+		if deploymentID == "" {
+			recovery.Hint = "The server confirmed deployment acceptance without a deployment ID. Inspect deployment history to find it. Staged deployment configuration is preserved."
+		} else {
+			recovery.Hint += " Staged deployment configuration is preserved."
+		}
+	case deploySubmissionUnknown:
+		recovery.Hint = "Deployment acceptance is unknown. Staged deployment configuration is preserved. Inspect deployment history before retrying."
+		if recovery.RetryFlag != "" {
+			recovery.Hint += " Retry the original command with this retry flag, unchanged source and options, and the same profile, endpoint, and account. Server replay retention limits still apply."
+		}
+	case deploySubmissionRejected:
+		recovery.Hint = "The deployment submission was rejected or stopped before submission. Correct the error before retrying."
+	}
+	return printErr(title, &deployRecoveryError{err: err, recovery: recovery})
 }
 
 func renderDeployRecoveryError(title string, e *deployRecoveryError) int {
@@ -151,8 +172,10 @@ func renderDeployRecoveryError(title string, e *deployRecoveryError) int {
 	} else {
 		renderAPIError(osStderr, &APIError{Problem: p})
 		PrintWarn(osStderr, "Stage: %s; inspect: %s", r.Stage, r.InspectCommand)
-		if r.DeploymentID != "" {
+		if r.DeploymentID != "" && r.ResumeCommand != "" {
 			PrintWarn(osStderr, "Deployment: %s; resume: %s", r.DeploymentID, r.ResumeCommand)
+		} else if r.ResumeCommand != "" {
+			PrintWarn(osStderr, "Resume: %s", r.ResumeCommand)
 		}
 		if r.RetryFlag != "" {
 			PrintWarn(osStderr, "Retry flag for the original command: %s", r.RetryFlag)

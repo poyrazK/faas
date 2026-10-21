@@ -50,7 +50,7 @@ func TestProjectImageFullRootfsUsesPinnedChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, err := frameworkprofile.CaptureImageRuntime(app.Manifest.ProjectImageCommand, app.Manifest.ProjectImageHealthcheck)
+	profile, err := frameworkprofile.CaptureImageRuntime(app.Manifest.ProjectImageCommand, app.Manifest.ProjectImageHealthcheck, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

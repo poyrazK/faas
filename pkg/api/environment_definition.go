@@ -10,9 +10,11 @@ import (
 // Omitted fields are unmanaged. Collection ownership is explicit: routes and
 // policies are replaced as a whole, while maps own only their declared keys.
 type EnvironmentDefinition struct {
-	APIVersion  string `json:"api_version"`
-	Project     string `json:"project"`
-	Environment string `json:"environment"`
+	// RecoveryRetention explicitly protects completed serving history within count, time and byte limits.
+	RecoveryRetention *EnvironmentRecoveryRetention `json:"recovery_retention,omitempty"`
+	APIVersion        string                        `json:"api_version"`
+	Project           string                        `json:"project"`
+	Environment       string                        `json:"environment"`
 	// Retain is the only supported queue pruning disposition. It retires
 	// admission/dispatch while preserving accepted work and receipt identity.
 	QueuePruningPolicy string `json:"queue_pruning_policy,omitempty"`
@@ -58,8 +60,18 @@ type EnvironmentWorkload struct {
 	ServiceBindings map[string]EnvironmentServiceBinding `json:"service_bindings,omitempty"`
 }
 
+const EnvironmentGitBuildContextFormat = "gregale.git-build-context.v1"
+
 type EnvironmentWorkloadSource struct {
-	Kind string `json:"kind"`
+	// ReuseUnchangedBuild opts into a canonical, bounded Git build context and
+	// same-app signed build reuse. BuildContext defaults to the whole repository.
+	ReuseUnchangedBuild bool   `json:"reuse_unchanged_build,omitempty"`
+	BuildContext        string `json:"build_context,omitempty"`
+	Kind                string `json:"kind"`
+	// BuildArtifactID and BuildArtifactHash pin an existing signed source build.
+	// They never carry configuration, snapshot state or execution authority.
+	BuildArtifactID   string `json:"build_artifact_id,omitempty"`
+	BuildArtifactHash string `json:"build_artifact_hash,omitempty"`
 	// Runtime is required for kind function and selects its supported runner.
 	Runtime    string `json:"runtime,omitempty"`
 	Directory  string `json:"directory,omitempty"`

@@ -552,10 +552,15 @@ type PlatformTenantStatementResponse struct {
 	Lines            []PlatformTenantStatementLineResponse `json:"lines"`
 	// Fees are the monthly base fee and minimum top-up this revision bills
 	// (ADR-1322); amount_millicents includes them.
-	Fees        []APIConsumerStatementFeeResponse `json:"fees,omitempty"`
-	AsOf        time.Time                         `json:"as_of"`
-	CreatedAt   time.Time                         `json:"created_at"`
-	FinalizedAt *time.Time                        `json:"finalized_at,omitempty"`
+	Fees []APIConsumerStatementFeeResponse `json:"fees,omitempty"`
+	// CreditAppliedMillicents is prepaid credit drawn when the statement was
+	// finalized; AmountDueMillicents is what is left to invoice
+	// (ADR-20261019100331).
+	CreditAppliedMillicents int64      `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64      `json:"amount_due_millicents"`
+	AsOf                    time.Time  `json:"as_of"`
+	CreatedAt               time.Time  `json:"created_at"`
+	FinalizedAt             *time.Time `json:"finalized_at,omitempty"`
 }
 
 type PlatformTenantStatementListResponse struct {

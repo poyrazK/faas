@@ -10,6 +10,9 @@ const (
 	ProductPermissionViewBilling ProductPermission = "billing:read"
 	ProductPermissionManagePlan  ProductPermission = "plans:manage"
 	ProductPermissionManageTeam  ProductPermission = "team:manage"
+	// ProductPermissionManageBilling changes the workspace's billing
+	// details in the owner's provider (ADR-20261020120000).
+	ProductPermissionManageBilling ProductPermission = "billing:manage"
 )
 
 type ProductAccessPolicy struct {
@@ -23,6 +26,9 @@ type ProductPermissions struct {
 	ViewBilling bool `json:"view_billing"`
 	ManagePlan  bool `json:"manage_plan"`
 	ManageTeam  bool `json:"manage_team"`
+	// ManageBilling is omitted when false, so permission sets without it
+	// encode exactly as before in stored receipts and hashes.
+	ManageBilling bool `json:"manage_billing,omitempty"`
 }
 
 type ProductCustomerAccess struct {

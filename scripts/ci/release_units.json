@@ -24,6 +24,10 @@
       "lane": "control-plane",
       "services": [{"name": "s3-gatewayd", "optional": true, "readyz": "http://127.0.0.1:9096/readyz"}]
     },
+    "livequeryd": {
+      "lane": "control-plane",
+      "services": [{"name": "livequeryd", "optional": true, "readyz": "http://127.0.0.1:9471/readyz"}]
+    },
     "bridged": {
       "lane": "control-plane",
       "services": [{"name": "bridged", "optional": true}]
@@ -67,6 +71,13 @@
     "canary": {"duration": "4m", "max_hold": "2m"},
     "follower": {"duration": "90s", "max_hold": "30s"}
   },
+  "watch": {
+    "_comment": "Post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md): the SLO gate keeps running for `window` after a run's last activation, each rule held for its own for: (max hold = window). `max_blind_rounds` rounds without evidence (5 minutes at the interval) make it inconclusive. A host holds at most `max_unwatched` unit releases not yet watched clean, so release retention (3 previous releases) still holds its known-good release.",
+    "window": "30m",
+    "interval": "15s",
+    "max_blind_rounds": 20,
+    "max_unwatched": 2
+  },
   "global_inputs": ["go.mod", "go.sum"],
   "_migrations_comment": "Goose migrations (*.sql directly in migrations_dir). When every one added since base is lane-eligible (declared -- migration-compat: expand, no contract change; docs/adr/20261018084150-unit-lane-expand-migrations.md), they are the data step the control-plane lane applies before restarting anything. Otherwise they block like any other path under blocking_paths.migrations.",
   "migrations_dir": "migrations/",
@@ -98,7 +109,8 @@
       "deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.service",
       "deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.socket",
       "deploy/ansible/roles/githubd_service/files/faas-githubd.service",
-      "deploy/ansible/roles/s3_gateway_service/files/faas-s3-gatewayd.service"
+      "deploy/ansible/roles/s3_gateway_service/files/faas-s3-gatewayd.service",
+      "deploy/ansible/roles/livequeryd_service/files/faas-livequeryd.service"
     ],
     "outside_releases": ["deploy/systemd/", "deploy/grafana/", "deploy/cloudflare/"]
   },

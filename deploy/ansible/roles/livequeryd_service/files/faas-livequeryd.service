@@ -1,0 +1,39 @@
+[Unit]
+Description=Gregale live queries (livequeryd): incremental SQL results for one database
+After=network-online.target postgresql.service faas-cp.slice
+Wants=network-online.target faas-cp.slice
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=notify
+User=faas
+Group=faas
+ExecStart=/opt/faas/current/bin/livequeryd
+Restart=on-failure
+RestartSec=2s
+WatchdogSec=60s
+Slice=faas-cp.slice
+MemoryMax=512M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectHostname=yes
+ProtectClock=yes
+ProtectProc=invisible
+ReadOnlyPaths=/etc/faas
+ReadWritePaths=/var/lib/faas/livequeryd
+
+[Install]
+WantedBy=multi-user.target

@@ -35,16 +35,28 @@ type OperationSignalInput struct {
 	SignalID    string
 	Event       string
 	Payload     json.RawMessage
+	// Source records who delivered the signal (ADR-20261017100853); empty means the
+	// account. It is history, not identity: a repeat from another source is
+	// still the same signal.
+	Source string
 }
 
 // OperationSignalStore delivers named events to Operations waiting on them.
 // OperationsForSubject lists active Operations of one name about one subject.
 type OperationSignalStore interface {
 	SignalOperation(ctx context.Context, in OperationSignalInput) (api.OperationSignalReceipt, error)
-	OperationsForSubject(ctx context.Context, accountID, appID, scope, name string, subject api.OperationSubject, limit int) ([]string, error)
+	// tenantID, when set, keeps the match inside one platform tenant.
+	OperationsForSubject(ctx context.Context, accountID, appID, tenantID, scope, name string, subject api.OperationSubject, limit int) ([]string, error)
 }
 
 func validateOperationSignal(in *OperationSignalInput) error {
+	switch in.Source {
+	case "":
+		in.Source = api.OperationSignalSourceAccount
+	case api.OperationSignalSourceAccount, api.OperationSignalSourceCustomer, api.OperationSignalSourceWebhook:
+	default:
+		return fmt.Errorf("%w: unknown signal source", ErrInvalidArgument)
+	}
 	if in.SignalID == "" || len(in.SignalID) > api.OperationSignalIDMaxBytes || strings.IndexFunc(in.SignalID, unicode.IsControl) >= 0 {
 		return fmt.Errorf("%w: signal_id must be 1-%d printable bytes", ErrInvalidArgument, api.OperationSignalIDMaxBytes)
 	}
@@ -146,7 +158,7 @@ func (s *PgStore) SignalOperation(ctx context.Context, in OperationSignalInput) 
 	if err := insertWorkflowEventTx(ctx, tx, "", &WorkflowEvent{ID: id, RunID: op.WorkflowRunID, EventName: in.Event, Payload: in.Payload}); err != nil {
 		return api.OperationSignalReceipt{}, err
 	}
-	event := operationWorkflowEvent(&op, run, "signal_received", map[string]any{"signal_id": in.SignalID, "event": in.Event, "waiting": receipt.Waiting}, time.Now().UTC())
+	event := operationWorkflowEvent(&op, run, "signal_received", map[string]any{"signal_id": in.SignalID, "event": in.Event, "waiting": receipt.Waiting, "source": in.Source}, time.Now().UTC())
 	if err := operationSaveTx(ctx, tx, op, event); err != nil {
 		return api.OperationSignalReceipt{}, err
 	}
@@ -156,7 +168,7 @@ func (s *PgStore) SignalOperation(ctx context.Context, in OperationSignalInput) 
 	return receipt, nil
 }
 
-func (s *PgStore) OperationsForSubject(ctx context.Context, accountID, appID, scope, name string, subject api.OperationSubject, limit int) ([]string, error) {
+func (s *PgStore) OperationsForSubject(ctx context.Context, accountID, appID, tenantID, scope, name string, subject api.OperationSubject, limit int) ([]string, error) {
 	a, err := operationUUID(accountID)
 	if err != nil {
 		return nil, ErrNotFound
@@ -167,6 +179,7 @@ func (s *PgStore) OperationsForSubject(ctx context.Context, accountID, appID, sc
 	}
 	ids, err := sqlc.New().ActiveCustomerOperationsForSubject(ctx, s.pool, sqlc.ActiveCustomerOperationsForSubjectParams{
 		AccountID: a, AppID: app, Scope: scope, Name: name, SubjectType: subject.Type, SubjectID: subject.ID, PageLimit: int32(limit),
+		TenantID: mustPgUUID(tenantID),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("state: list subject operations: %w", err)
@@ -207,19 +220,19 @@ func (m *MemStore) SignalOperation(_ context.Context, in OperationSignalInput) (
 		return api.OperationSignalReceipt{}, err
 	}
 	op = cloneOperation(op)
-	event := operationWorkflowEvent(&op, run, "signal_received", map[string]any{"signal_id": in.SignalID, "event": in.Event, "waiting": receipt.Waiting}, time.Now().UTC())
+	event := operationWorkflowEvent(&op, run, "signal_received", map[string]any{"signal_id": in.SignalID, "event": in.Event, "waiting": receipt.Waiting, "source": in.Source}, time.Now().UTC())
 	m.operationSaveLocked(op, event)
 	return receipt, nil
 }
 
-func (m *MemStore) OperationsForSubject(_ context.Context, accountID, appID, scope, name string, subject api.OperationSubject, limit int) ([]string, error) {
+func (m *MemStore) OperationsForSubject(_ context.Context, accountID, appID, tenantID, scope, name string, subject api.OperationSubject, limit int) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	data := m.operationMemoryLocked()
 	matches := []Operation{}
 	for _, op := range data.operations {
 		active := op.State == api.OperationAccepted || op.State == api.OperationRunning || op.State == api.OperationWaiting
-		if active && op.AccountID == accountID && op.AppID == appID && op.Scope == scope && op.Name == name && op.Subject != nil && *op.Subject == subject {
+		if active && op.AccountID == accountID && op.AppID == appID && (tenantID == "" || op.PlatformTenantID == tenantID) && op.Scope == scope && op.Name == name && op.Subject != nil && *op.Subject == subject {
 			matches = append(matches, op)
 		}
 	}

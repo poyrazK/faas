@@ -1,0 +1,70 @@
+# Synthetic coverage for the ADR-20261016123221 Customer Operations alerts: each fires
+# on its failure shape and stays quiet on a healthy one. Two schedd replicas
+# report the same fleet value, and the rules read max().
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "overdue Operations fire after 10m"
+    input_series:
+      - series: 'schedd_customer_operations_overdue{job="schedd",instance="node-a:9103"}'
+        values: '2x40'
+      - series: 'schedd_customer_operations_overdue{job="schedd",instance="node-b:9103"}'
+        values: '2x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasCustomerOperationDeadlinesOverdue
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: FaasCustomerOperationDeadlinesOverdue
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: customer_operations
+            exp_annotations:
+              summary: "Customer Operations are staying past their deadlines"
+              description: "2 active Customer Operations have been more than three minutes past their deadline for 10m. Workflow Operations are settled by the schedd deadline sweep and HTTP Operations by the invocation deadline reaper; one of them has stopped."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerOperations.md"
+
+  - interval: 30s
+    name: "a briefly overdue Operation stays quiet"
+    input_series:
+      - series: 'schedd_customer_operations_overdue{job="schedd",instance="node-a:9103"}'
+        values: '0x10 1x6 0x24'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasCustomerOperationDeadlinesOverdue
+        exp_alerts: []
+
+  - interval: 30s
+    name: "unknown outcomes across three accounts fire"
+    input_series:
+      - series: 'schedd_customer_operations_outcome_unknown_accounts{job="schedd",instance="node-a:9103"}'
+        values: '3x20'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: FaasCustomerOperationOutcomesUnknown
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: customer_operations
+            exp_annotations:
+              summary: "Customer Operation attempts are ending with unknown outcomes across accounts"
+              description: "3 accounts had an Operation attempt end with an unknown outcome in the last 15m. One app timing out is its owner's problem; several accounts at once point at the platform losing attempts (instance crashes, lost leases, node loss)."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerOperations.md"
+
+  - interval: 30s
+    name: "one account with unknown outcomes stays quiet"
+    input_series:
+      - series: 'schedd_customer_operations_outcome_unknown_accounts{job="schedd",instance="node-a:9103"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: FaasCustomerOperationOutcomesUnknown
+        exp_alerts: []

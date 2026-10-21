@@ -45,6 +45,9 @@ func ProjectImageLifecycleAdmissionReasons(plan api.Plan, workloads []reposcan.W
 		if err := manifest.ValidateLifecyclePlan(plan); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q: %s", workload.Name, err))
 		}
+		if err := workload.ImageProcess.ValidatePlan(plan); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q: image process: %s", workload.Name, err))
+		}
 	}
 	return reasons
 }
@@ -89,6 +92,15 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 		}
 		if err := workload.ImageHealthcheck.Validate(); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q has an invalid image healthcheck: %s", workload.Name, err))
+		}
+		if err := workload.ImageProcess.Validate(); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q has an invalid image process: %s", workload.Name, err))
+		}
+		if err := workload.DockerfileBuild.Validate(); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q has invalid build options: %s", workload.Name, err))
+		}
+		if workload.Image != "" && !workload.DockerfileBuild.IsZero() {
+			reasons = append(reasons, fmt.Sprintf("workload %q is a prebuilt image; build options apply only to Dockerfile builds", workload.Name))
 		}
 		if api.IsReservedAppSlug(slug) {
 			// Do not strand a project that already owns a reserved collision:

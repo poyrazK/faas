@@ -50,6 +50,7 @@ type AppTaskCoordinatorConfig struct {
 // restore the pinned deployment and resolve its scoped runtime environment,
 // but customer code cannot be dispatched before MarkAppTaskRunning wins.
 type AppTaskRestoreRequest struct {
+	LeaseToken      string
 	ID              string
 	AccountID       string
 	AppID           string
@@ -238,6 +239,9 @@ func (c *AppTaskCoordinator) SweepOnce(ctx context.Context) (state.AppTaskSweepR
 		return state.AppTaskSweepResult{}, fmt.Errorf("sched: sweep app tasks: %w", err)
 	}
 	c.config.Metrics.swept(result)
+	if err := c.quiescePromotionMigrations(ctx); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
@@ -275,7 +279,8 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 
 	restoreCtx, cancelRestore := context.WithTimeout(workCtx, c.config.RestoreTimeout)
 	session, restoreErr := c.backend.Restore(restoreCtx, AppTaskRestoreRequest{
-		ID: task.ID, AccountID: task.AccountID, AppID: task.AppID,
+		LeaseToken: *task.LeaseToken,
+		ID:         task.ID, AccountID: task.AccountID, AppID: task.AppID,
 		DeploymentID: task.DeploymentID, Kind: task.Kind, DeploymentScope: task.DeploymentScope,
 		ArtifactKey: task.ArtifactKey, ImageDigest: task.ImageDigest,
 	})
@@ -305,6 +310,11 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 			return err
 		}
 		code, message := "restore_failed", "app task environment could not be prepared"
+		if errors.Is(restoreErr, state.ErrFinancialBudgetHeld) {
+			// No command was dispatched. Leave the restoring lease to the
+			// normal safe replay sweep; the next claim remains budget-gated.
+			return restoreErr
+		}
 		if restoreTimedOut {
 			code, message = "restore_timeout", "app task environment preparation timed out"
 		} else if errors.Is(restoreErr, ErrAppTaskAccountInactive) {

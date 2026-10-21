@@ -1,6 +1,7 @@
-package main
+package main_test
 
 import (
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -34,7 +35,7 @@ func TestCmdCronsRmFlags(t *testing.T) {
 			}))
 			defer srv.Close()
 			configureCronCancelClient(t, srv.URL)
-			if code := cmdCronsRm(tc.args); code != tc.wantCode {
+			if code := main.CmdCronsRm(tc.args); code != tc.wantCode {
 				t.Fatalf("crons rm %v = %d, want %d", tc.args, code, tc.wantCode)
 			}
 			if called != tc.wantCall {

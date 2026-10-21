@@ -2,7 +2,7 @@
 // --verbose flag on `gregale audit-events`. Mirrors the
 // commands_metrics_test.go shape: httptest fake-apid + t.Setenv
 // for FAAS_API / FAAS_TOKEN + osStdout seam for human-mode asserts.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -80,7 +81,7 @@ func TestCmdAuditEvents_Verbose_ExpandedColumns(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdAuditEvents([]string{"list", "--kind-prefix", "stateless.advisory", "--verbose"}); code != 0 {
+	if code := main.CmdAuditEvents([]string{"list", "--kind-prefix", "stateless.advisory", "--verbose"}); code != 0 {
 		t.Fatalf("audit-events --verbose = %d, want 0", code)
 	}
 	out := stop()
@@ -118,7 +119,7 @@ func TestCmdAuditEvents_Verbose_NonStatelessFallsBack(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdAuditEvents([]string{"list", "--verbose"}); code != 0 {
+	if code := main.CmdAuditEvents([]string{"list", "--verbose"}); code != 0 {
 		t.Fatalf("audit-events --verbose (non-stateless row) = %d, want 0", code)
 	}
 	out := stop()
@@ -153,7 +154,7 @@ func TestCmdAuditEvents_DefaultShapeUnchanged(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	if code := cmdAuditEvents([]string{"list"}); code != 0 {
+	if code := main.CmdAuditEvents([]string{"list"}); code != 0 {
 		t.Fatalf("audit-events default = %d, want 0", code)
 	}
 	out := stop()
@@ -164,9 +165,9 @@ func TestCmdAuditEvents_DefaultShapeUnchanged(t *testing.T) {
 }
 
 func TestCmdAuditEvents_JSONEmitsCompleteNDJSONRows(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
-	t.Cleanup(func() { jsonOutput = false })
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.JsonOutput) = false })
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.ListAuditEventsResponse{Events: []api.AuditEventResponse{{
 			ID: "event-1", At: "2026-09-10T17:51:28Z", Actor: "schedd",
@@ -176,9 +177,9 @@ func TestCmdAuditEvents_JSONEmitsCompleteNDJSONRows(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	out, restore := swapStdout(t)
+	out, restore := main.SwapStdout(t)
 	defer restore()
-	if code := cmdAuditEvents([]string{"list"}); code != 0 {
+	if code := main.CmdAuditEvents([]string{"list"}); code != 0 {
 		t.Fatalf("exit = %d", code)
 	}
 	var row api.AuditEventResponse

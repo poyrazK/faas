@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -6,21 +6,22 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreOrgActivityTenantOrderingPaginationAndDedupe(t *testing.T) {
 	t.Parallel()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	orgA, orgB := uuid.New(), uuid.New()
 	appA, appB := uuid.New(), uuid.New()
 	at := time.Date(2026, 9, 22, 14, 32, 0, 0, time.UTC)
 
-	appendRow := func(org, app uuid.UUID, source, kind string, when time.Time) OrgActivity {
+	appendRow := func(org, app uuid.UUID, source, kind string, when time.Time) state.OrgActivity {
 		t.Helper()
-		row, err := store.AppendOrgActivity(ctx, OrgActivity{
+		row, err := store.AppendOrgActivity(ctx, state.OrgActivity{
 			OrgID: org, OccurredAt: when, Kind: kind,
-			ActorType: OrgActivityActorUser, ActorLabel: "person@example.com",
+			ActorType: state.OrgActivityActorUser, ActorLabel: "person@example.com",
 			ResourceType: "app", ResourceID: app.String(), ResourceLabel: "payments",
 			AppID: &app, SourceType: "test", SourceID: source,
 		})
@@ -35,8 +36,8 @@ func TestMemStoreOrgActivityTenantOrderingPaginationAndDedupe(t *testing.T) {
 	newest := appendRow(orgA, appB, "three", "app.deployed", at)
 	appendRow(orgB, appB, "foreign", "app.deployed", at.Add(time.Hour))
 
-	duplicate, err := store.AppendOrgActivity(ctx, OrgActivity{
-		OrgID: orgA, Kind: "env.set", ActorType: OrgActivityActorSystem,
+	duplicate, err := store.AppendOrgActivity(ctx, state.OrgActivity{
+		OrgID: orgA, Kind: "env.set", ActorType: state.OrgActivityActorSystem,
 		ActorLabel: "different", ResourceType: "app", ResourceLabel: "different",
 		SourceType: "test", SourceID: "two",
 	})
@@ -47,7 +48,7 @@ func TestMemStoreOrgActivityTenantOrderingPaginationAndDedupe(t *testing.T) {
 		t.Fatalf("dedupe returned %#v, want original %#v", duplicate, middle)
 	}
 
-	page, err := store.ListOrgActivity(ctx, OrgActivityFilter{OrgID: orgA, Limit: 2})
+	page, err := store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: orgA, Limit: 2})
 	if err != nil {
 		t.Fatalf("ListOrgActivity page 1: %v", err)
 	}
@@ -55,9 +56,9 @@ func TestMemStoreOrgActivityTenantOrderingPaginationAndDedupe(t *testing.T) {
 		t.Fatalf("page 1 = %#v, want newest/tied-id order", page)
 	}
 
-	page, err = store.ListOrgActivity(ctx, OrgActivityFilter{
+	page, err = store.ListOrgActivity(ctx, state.OrgActivityFilter{
 		OrgID: orgA, Limit: 2,
-		Before: &OrgActivityCursor{OccurredAt: middle.OccurredAt, ID: middle.ID},
+		Before: &state.OrgActivityCursor{OccurredAt: middle.OccurredAt, ID: middle.ID},
 	})
 	if err != nil {
 		t.Fatalf("ListOrgActivity page 2: %v", err)
@@ -66,7 +67,7 @@ func TestMemStoreOrgActivityTenantOrderingPaginationAndDedupe(t *testing.T) {
 		t.Fatalf("page 2 = %#v, want oldest only", page)
 	}
 
-	filtered, err := store.ListOrgActivity(ctx, OrgActivityFilter{OrgID: orgA, AppID: &appB, KindPrefix: "app.", Limit: 10})
+	filtered, err := store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: orgA, AppID: &appB, KindPrefix: "app.", Limit: 10})
 	if err != nil || len(filtered) != 1 || filtered[0].ID != newest.ID {
 		t.Fatalf("filtered = %#v, err=%v", filtered, err)
 	}
@@ -74,8 +75,8 @@ func TestMemStoreOrgActivityTenantOrderingPaginationAndDedupe(t *testing.T) {
 
 func TestNormalizeOrgActivityRejectsNonObjectData(t *testing.T) {
 	t.Parallel()
-	_, err := normalizeOrgActivity(OrgActivity{
-		OrgID: uuid.New(), Kind: "env.set", ActorType: OrgActivityActorUser,
+	_, err := state.NormalizeOrgActivity(state.OrgActivity{
+		OrgID: uuid.New(), Kind: "env.set", ActorType: state.OrgActivityActorUser,
 		ActorLabel: "person@example.com", ResourceType: "environment_variable",
 		ResourceLabel: "DATABASE_URL", SourceType: "test", SourceID: "bad",
 		Data: []byte(`"secret"`),
@@ -87,8 +88,8 @@ func TestNormalizeOrgActivityRejectsNonObjectData(t *testing.T) {
 
 func TestNormalizeOrgActivityRejectsUnnamespacedKind(t *testing.T) {
 	t.Parallel()
-	_, err := normalizeOrgActivity(OrgActivity{
-		OrgID: uuid.New(), Kind: "deployed", ActorType: OrgActivityActorSystem,
+	_, err := state.NormalizeOrgActivity(state.OrgActivity{
+		OrgID: uuid.New(), Kind: "deployed", ActorType: state.OrgActivityActorSystem,
 		ActorLabel: "Gregale", ResourceType: "app", ResourceLabel: "payments",
 		SourceType: "test", SourceID: "bad-kind",
 	}, time.Now())

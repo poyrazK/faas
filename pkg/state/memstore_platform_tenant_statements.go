@@ -290,6 +290,7 @@ func (m *MemStore) FinalizePlatformTenantStatement(_ context.Context, accountID,
 	}
 	now := time.Now().UTC()
 	out.Status, out.FinalizedAt = APIConsumerUsageStatementFinalized, &now
+	out.CreditAppliedMillicents = m.applyPlatformTenantCreditsLocked(out, now)
 	m.platformTenantStatements[out.ID] = out
 	m.enqueuePlatformTenantStatementFinalizedWebhooksLocked(out, now)
 	return clonePlatformTenantStatementHeader(out), true, nil
@@ -315,7 +316,8 @@ func (m *MemStore) enqueuePlatformTenantStatementFinalizedWebhooksLocked(stateme
 		Revision: statement.Revision, Status: string(statement.Status), PeriodStart: statement.PeriodStart,
 		PeriodEnd: statement.PeriodEnd, Currency: statement.Currency, BillableUnits: statement.BillableUnits,
 		UnpricedUnits: statement.UnpricedUnits, AmountMillicents: statement.AmountMillicents,
-		Priced: statement.UnpricedUnits == 0 && statement.Currency != "", Lines: lines,
+		CreditAppliedMillicents: statement.CreditAppliedMillicents, AmountDueMillicents: statement.AmountDueMillicents(),
+		Priced: statement.UnpricedUnits == 0 && statement.Currency != "", Lines: lines, Fees: statementFeeResponses(statement.Fees),
 		AsOf: statement.AsOf, FinalizedAt: *statement.FinalizedAt,
 	})
 	if err != nil {
@@ -413,4 +415,14 @@ func (m *MemStore) GetPlatformTenantStatementHandoff(_ context.Context, accountI
 		return PlatformTenantStatementHandoff{}, ErrNotFound
 	}
 	return out, nil
+}
+
+// statementFeeResponses renders fees for a webhook payload; never nil, so
+// the payload carries an empty list like the Postgres trigger does.
+func statementFeeResponses(fees []APIConsumerStatementFee) []api.APIConsumerStatementFeeResponse {
+	out := make([]api.APIConsumerStatementFeeResponse, 0, len(fees))
+	for _, fee := range fees {
+		out = append(out, api.APIConsumerStatementFeeResponse{Kind: fee.Kind, RateCardID: fee.RateCardID, AmountMillicents: fee.AmountMillicents})
+	}
+	return out
 }

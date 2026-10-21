@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -38,24 +39,24 @@ func TestCmdPlatformTenantControls(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	if code := cmdPlatformTenants([]string{"rate-card-create", "--id", "t1", "--currency", "EUR", "--price-millicents", "2",
+	if code := main.CmdPlatformTenants([]string{"rate-card-create", "--id", "t1", "--currency", "EUR", "--price-millicents", "2",
 		"--unit", "app:tokens", "--base-fee-millicents", "4900000", "--minimum-millicents", "100", "--prorate-monthly-fees"}); code != 0 {
 		t.Fatalf("rate-card-create exit %d", code)
 	}
 	if card.Unit != "app:tokens" || card.BaseFeeMillicentsPerMonth != 4900000 || card.MinimumMillicentsPerMonth != 100 || !card.ProrateMonthlyFees {
 		t.Fatalf("card = %+v", card)
 	}
-	if code := cmdPlatformTenants([]string{"trial-set", "--id", "t1", "--days", "30"}); code != 0 || trial.Days != 30 {
+	if code := main.CmdPlatformTenants([]string{"trial-set", "--id", "t1", "--days", "30"}); code != 0 || trial.Days != 30 {
 		t.Fatalf("trial-set exit %d, request %+v", code, trial)
 	}
-	if code := cmdPlatformTenants([]string{"trial-set", "--id", "t1"}); code == 0 {
+	if code := main.CmdPlatformTenants([]string{"trial-set", "--id", "t1"}); code == 0 {
 		t.Fatal("trial-set without --days or --ends-at succeeded")
 	}
-	if code := cmdPlatformTenants([]string{"billing-policy-set", "--block-overdue-after-days", "14"}); code != 0 ||
+	if code := main.CmdPlatformTenants([]string{"billing-policy-set", "--block-overdue-after-days", "14"}); code != 0 ||
 		policy.BlockOverdueAfterDays == nil || *policy.BlockOverdueAfterDays != 14 {
 		t.Fatalf("billing-policy-set exit %d, request %+v", code, policy)
 	}
-	if code := cmdPlatformTenants([]string{"overdue-holds"}); code != 0 {
+	if code := main.CmdPlatformTenants([]string{"overdue-holds"}); code != 0 {
 		t.Fatalf("overdue-holds exit %d", code)
 	}
 }

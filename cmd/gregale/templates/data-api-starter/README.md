@@ -202,7 +202,19 @@ and PostgreSQL egress. Use an isolated database: the first migration creates
 and audience. No identity provider or database administrator key is bundled.
 Keep credentials in your environment or secret store.
 
-Reserve the migration app and attach its release-only connection:
+To run the API and its migrations as one app instead, skip the migration app
+and pass this directory's migrations to `create`. Later schema changes then ship
+with `gregale data-api deploy notes-data --migrations migrations`; see
+[single-app projects](https://gregale.dev/docs/data-api#single-app-projects):
+
+```sh
+gregale data-api create notes-data --database notes-db \
+  --issuer https://identity.example.com/ \
+  --jwks-url https://identity.example.com/.well-known/jwks.json \
+  --audience notes --migrations migrations
+```
+
+For the two-app layout, reserve the migration app and attach its release-only connection:
 
 ```sh
 gregale deploy --create-only --path . --dockerfile --name notes-migrations

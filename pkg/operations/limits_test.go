@@ -42,7 +42,6 @@ func TestOperationLimitsCompile(t *testing.T) {
 		"attempts over plan": {base, api.OperationLimits{MaxAttempts: plan.AttemptsMax + 1}, "max_attempts"},
 		"budget over plan":   {base, api.OperationLimits{MaxExecutionSeconds: plan.ExecutionSecondsMax + 1}, "max_execution_seconds"},
 		"workflow attempts":  {workflow, api.OperationLimits{MaxAttempts: 2}, "HTTP operations"},
-		"workflow budget":    {workflow, api.OperationLimits{MaxExecutionSeconds: 60}, "HTTP operations"},
 		"job limits":         {job, api.OperationLimits{DeadlineSeconds: 60}, "job operations"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -54,9 +53,10 @@ func TestOperationLimitsCompile(t *testing.T) {
 			}
 		})
 	}
-	workflow.Limits = &api.OperationLimits{DeadlineSeconds: 600}
+	// ADR-20261016110803: workflows take a deadline and an execution budget.
+	workflow.Limits = &api.OperationLimits{DeadlineSeconds: 600, MaxExecutionSeconds: 60}
 	workflow.ProgressStages = []string{"collecting"}
-	if _, err := Compile(workflow, plan); err != nil && strings.Contains(err.Error(), "limits") {
-		t.Fatalf("workflow deadline rejected: %v", err)
+	if _, err := Compile(workflow, plan); err != nil && (strings.Contains(err.Error(), "limits") || strings.Contains(err.Error(), "max_")) {
+		t.Fatalf("workflow deadline and budget rejected: %v", err)
 	}
 }

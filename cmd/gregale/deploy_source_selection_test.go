@@ -1,7 +1,8 @@
-package main
+package main_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,7 @@ func TestValidateDeploySourceSelection(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateDeploySourceSelection(tt.path, tt.worktree, tt.image, tt.archive, tt.repo, tt.template, tt.githubSnippet, tt.ref, tt.sourceBranch)
+			err := main.ValidateDeploySourceSelection(tt.path, tt.worktree, tt.image, tt.archive, tt.repo, tt.template, tt.githubSnippet, tt.ref, tt.sourceBranch)
 			if tt.want == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -50,10 +51,10 @@ func TestValidateDeploySourceSelection(t *testing.T) {
 }
 
 func TestValidateRepoDeployFlags(t *testing.T) {
-	if err := validateRepoDeployFlags(map[string]bool{"no-triggers": true, "wait": true, "platform-tenant-required": true, "no-require-authn": true}); err != nil {
+	if err := main.ValidateRepoDeployFlags(map[string]bool{"no-triggers": true, "wait": true, "platform-tenant-required": true, "no-require-authn": true}); err != nil {
 		t.Fatalf("supported flags rejected: %v", err)
 	}
-	err := validateRepoDeployFlags(map[string]bool{"app": true, "vcpu": true, "doctor-strict": true})
+	err := main.ValidateRepoDeployFlags(map[string]bool{"app": true, "vcpu": true, "doctor-strict": true})
 	if err == nil {
 		t.Fatal("unsupported flags accepted")
 	}
@@ -70,29 +71,29 @@ func TestImageDeployHasNoImplicitManifestSource(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "gregale.yaml"), []byte("workflows:\n  - name: from-cwd\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateDeployDiffManifest(""); err != nil {
+	if err := main.ValidateDeployDiffManifest(""); err != nil {
 		t.Fatalf("image preview read cwd manifest: %v", err)
 	}
-	if got := previewCronsFromManifest("", "image-app"); len(got) != 0 {
+	if got := main.PreviewCronsFromManifest("", "image-app"); len(got) != 0 {
 		t.Fatalf("image preview imported %d cwd cron(s)", len(got))
 	}
-	if got, err := loadWorkflowManifestForDeploy(context.Background(), nil, ""); err != nil || len(got) != 0 {
+	if got, err := main.LoadWorkflowManifestForDeploy(context.Background(), nil, ""); err != nil || len(got) != 0 {
 		t.Fatalf("image deploy imported cwd workflows: got=%v err=%v", got, err)
 	}
-	if got, err := deployManifestTriggersWithRollback(context.Background(), nil, "image-app", ""); err != nil || len(got.steps) != 0 {
+	if got, err := main.DeployManifestTriggersWithRollback(context.Background(), nil, "image-app", ""); err != nil || len((*got.Steps())) != 0 {
 		t.Fatalf("image deploy imported cwd triggers: got=%v err=%v", got, err)
 	}
 }
 
 func TestValidateExplicitDockerfile(t *testing.T) {
 	dir := t.TempDir()
-	if err := validateExplicitDockerfile(dir); err == nil || !strings.Contains(err.Error(), "not found") {
+	if err := main.ValidateExplicitDockerfile(dir); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("missing Dockerfile error = %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateExplicitDockerfile(dir); err != nil {
+	if err := main.ValidateExplicitDockerfile(dir); err != nil {
 		t.Fatalf("valid Dockerfile rejected: %v", err)
 	}
 }

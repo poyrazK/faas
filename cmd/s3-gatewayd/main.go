@@ -118,6 +118,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		enabled.Store(flag)
 		return nil
 	}, log)
+	watcher.Daemon = "s3-gatewayd" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(ctx); err != nil {
 		log.Warn("s3-gatewayd: initial runtime config reconcile failed", "err", err)
 	}

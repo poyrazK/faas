@@ -1,0 +1,58 @@
+{
+  "parent_revision": "9b87313c0b6fd53776c3d4cf27739fb278f473e2",
+  "source_file_sha256": {
+    ".github/workflows/function-backends.yml": "fbce38ec8e95b1af157cee0b73b41dded8337f7475b0a7daa228ec799b06904f",
+    "Makefile": "2a5be609b7b1eb75447fed4296bf8b34cc8ecf6db50ced6b0834cdbe56a1f61c",
+    "cmd/e2e/function_migration_destination_commit_fault_metal_test.go": "91678c337362b6357eb79574be7a0a3bafccddaf2afa92ca7989968aab0d62be",
+    "cmd/e2e/function_migration_destination_flow_metal_test.go": "acdcc0591e8bdbcfda37fce4914d54db486e4be0404e08ee272bb1e0c196d3f8",
+    "cmd/e2e/function_migration_destination_postgres_metal_test.go": "a1903a66a6c33590247d0cb15d9475c6e614c7c086b2586ddbb45ed6f52c267b",
+    "cmd/e2e/function_migration_destination_replies_metal_test.go": "4850f4d9d6771f405676d4838f3f54420679f3629150e5195f739573a5e2ed41",
+    "cmd/e2e/sec11_sweep_test.go": "f719bf75713df3baf4f6a413b39895451049a2f95d251ad9d7dbe8a635316d31",
+    "docs/adr/1352-function-migration-destination.md": "466f06c0f7a105fdf97c5220235b37cfa20a8c88b9ebfff3b96e3bed3d9a2fac",
+    "docs/ops/function-backend-concurrency-acceptance.md": "916475ac415ea4c72d130c6ebef7d2807a3b0f68705e5eaaa38264beacd909c0",
+    "docs/ops/function-migration-native-acceptance.md": "81a7a88ba8aeea9037da8f59bd1184e5765b7adcd3b5ad2143867ae79a62c760",
+    "guest/runners/internal/function_resources_postgres_test.go": "c4212c0ba855500ae77d3194edf28379d8bd36d3ad153d2902545538b234c806",
+    "pkg/e2etest/functionmigration/evidence.go": "9f8b5d702357bfa05ceebdcf3c484fb9c790e0ee093bcdaabbe9a754ddacbf3e",
+    "pkg/e2etest/functionmigration/evidence_test.go": "3ecab30b786652bac656d56d0b6650e42ecab1f04ef1e2d35751106106939f52",
+    "pkg/e2etest/functionmigration/replies.go": "c0efdcb120097c588e507b87e70888b7afdf3a5e9c738ecacbf884c049643e58",
+    "pkg/e2etest/functionmigration/replies_test.go": "df5887f6cefc80b1556aaf267028a137a63394f58c46f48f792fe204a42dd5b0",
+    "pkg/e2etest/functionmigration/reply_evidence.go": "f829ce28ed2ed553641d9195f9e657384220071d1c4e80d6f46aa517526e46a0",
+    "pkg/e2etest/functionsql/control.go": "035715d2fca4f0a48b74ae78585704c18afd5eb06e253a85937d64a8958f7778",
+    "pkg/e2etest/functionsql/control_test.go": "ccc5ee9005bada634c2039797e88dfffa037cee024367c4ffb6a8f0788f8e6d5",
+    "pkg/state/statetest/dispatch.go": "76138ce6d931224a1d6a37d25484ad15277f28090b9d798ddcb91368d293564e",
+    "pkg/state/statetest/migration_reply_test.go": "24464d4e93d8dacc7f68369b9f06531d87d1ee7488223c1f261c31610d7f4f77",
+    "scripts/ci/function-migration-native.py": "599ab6e21d795c0e1b5cc3b22c2f0b56c365e1cf16a584bec3dd6ed0454cd7b0",
+    "scripts/ci/test_function_migration_native.py": "2c8ec018e42c26cc16128baf9940495e9f1f9be2bdd0c228c2c7da9d08d7722a"
+  },
+  "portable_race_command": "go test -p 1 -race ./pkg/e2etest/functionmigration ./pkg/e2etest/functionsql ./pkg/state/statetest ./guest/runners/internal -run '^Test(Report|Load|Control|ReplayAdoption|PgDispatchesMigrationReply|SessionsPostgres|FunctionResourcesPostgres)' -count=1 -timeout=3m -json",
+  "qualified_lint_command": "golangci-lint run --build-tags metal,function_background_native --new-from-rev=9b87313c0b6fd53776c3d4cf27739fb278f473e2 --timeout 20m ./cmd/e2e ./pkg/e2etest/functionmigration ./pkg/e2etest/functionsql ./pkg/state/statetest ./guest/runners/internal",
+  "python_guard_command": "python3 -B -m unittest discover -s scripts/ci -p test_function_migration_native.py -v",
+  "policy_command": "make docs-links-check sealed-env-scope-check runbook-sql-check shell-quoting-check text-encoding-check adr-number-uniqueness-check",
+  "workflow_lint_command": "actionlint .github/workflows/function-backends.yml",
+  "portable_checks_passed": true,
+  "native_compilation_passed": true,
+  "native_reply_boundaries_qualified": false,
+  "failure_matrix_qualified": false,
+  "production_ready": false,
+  "injection_scope": [
+    "client-reply-discard",
+    "post-commit-error",
+    "explicit-concurrent-retry"
+  ],
+  "real_packet_loss_qualified": false,
+  "log_sha256": {
+    "portable.jsonl": "1e40eb0fb34d00bc439654f55f0cbe89c0da9411cab8ea44913bb76ad0277d40",
+    "portable.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "python.log": "efd9ad72f0686c038a075d37ba9cf6f6aef24d4759ab99d1978cfc864aa5bd1d",
+    "lint.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "policy.log": "2438c3dd4370985eeb423f7997abb9755a1e3e3f59f8d8a715bd1fb6b79293d7",
+    "actionlint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "cleanup": {
+    "task_sql_containers_and_volumes_removed": true,
+    "task_credentials_and_certificates_removed": true,
+    "temporary_native_binary_removed": true
+  },
+  "github_ci_run": false,
+  "published": false
+}

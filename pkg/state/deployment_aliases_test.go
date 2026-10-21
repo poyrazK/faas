@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,32 +8,33 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreDeploymentAliasesPinImmutableDeployment(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "deployment-aliases@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "alias-app", Status: AppActive})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "alias-app", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Status: DeployBuilding, CreatedAt: time.Now().UTC()})
+	first, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployBuilding, CreatedAt: time.Now().UTC()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Status: DeployLive, CreatedAt: time.Now().UTC().Add(time.Second)})
+	second, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployLive, CreatedAt: time.Now().UTC().Add(time.Second)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherApp, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "other-app", Status: AppActive})
+	otherApp, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "other-app", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := store.CreateDeployment(ctx, Deployment{AppID: otherApp.ID, Status: DeployLive})
+	other, err := store.CreateDeployment(ctx, state.Deployment{AppID: otherApp.ID, Status: state.DeployLive})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,16 +61,16 @@ func TestMemStoreDeploymentAliasesPinImmutableDeployment(t *testing.T) {
 	if updated.DeploymentID != second.ID || updated.Revision != second.Revision || updated.CreatedAt != created.CreatedAt {
 		t.Fatalf("updated alias = %+v, want target %s and stable creation time", updated, second.ID)
 	}
-	if _, err := store.SetDeploymentAlias(ctx, app.ID, "candidate", other.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.SetDeploymentAlias(ctx, app.ID, "candidate", other.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-app target = %v, want ErrNotFound", err)
 	}
-	if _, err := store.SetDeploymentAlias(ctx, app.ID, "Bad_Name", first.ID); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.SetDeploymentAlias(ctx, app.ID, "Bad_Name", first.ID); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("invalid name = %v, want ErrInvalidArgument", err)
 	}
-	if _, err := store.SetDeploymentAlias(ctx, app.ID, strings.Repeat("a", 27), first.ID); !errors.Is(err, ErrInvalidArgument) {
+	if _, err := store.SetDeploymentAlias(ctx, app.ID, strings.Repeat("a", 27), first.ID); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("too-long hostname alias = %v, want ErrInvalidArgument", err)
 	}
-	if _, err := store.SetDeploymentAlias(ctx, app.ID, "failed", "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.SetDeploymentAlias(ctx, app.ID, "failed", "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing target = %v, want ErrNotFound", err)
 	}
 	rows, err := store.ListDeploymentAliases(ctx, app.ID)
@@ -79,26 +80,26 @@ func TestMemStoreDeploymentAliasesPinImmutableDeployment(t *testing.T) {
 	if err := store.DeleteDeploymentAlias(ctx, app.ID, "candidate"); err != nil {
 		t.Fatalf("DeleteDeploymentAlias: %v", err)
 	}
-	if _, err := store.DeploymentAliasByHostLabel(ctx, hostLabel); !errors.Is(err, ErrNotFound) {
+	if _, err := store.DeploymentAliasByHostLabel(ctx, hostLabel); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("deleted host lookup = %v, want ErrNotFound", err)
 	}
-	if err := store.DeleteDeploymentAlias(ctx, app.ID, "candidate"); !errors.Is(err, ErrNotFound) {
+	if err := store.DeleteDeploymentAlias(ctx, app.ID, "candidate"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("second DeleteDeploymentAlias = %v, want ErrNotFound", err)
 	}
 }
 
 func TestMemStoreDeploymentAliasRejectsExistingAppHostnameCollision(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "deployment-alias-host-conflict@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "orders-api", Status: AppActive})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "orders-api", Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := store.CreateDeployment(ctx, Deployment{AppID: app.ID, Status: DeployLive})
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployLive})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,10 +107,10 @@ func TestMemStoreDeploymentAliasRejectsExistingAppHostnameCollision(t *testing.T
 	if !ok {
 		t.Fatal("host label rejected valid alias")
 	}
-	if _, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: hostLabel, Status: AppActive}); err != nil {
+	if _, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: hostLabel, Status: state.AppActive}); err != nil {
 		t.Fatalf("seed legacy app using reserved alias host: %v", err)
 	}
-	if _, err := store.SetDeploymentAlias(ctx, app.ID, "x", deployment.ID); !errors.Is(err, ErrConflict) {
+	if _, err := store.SetDeploymentAlias(ctx, app.ID, "x", deployment.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("SetDeploymentAlias collision = %v, want ErrConflict", err)
 	}
 }

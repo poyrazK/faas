@@ -24,7 +24,7 @@ func EndpointRouter(routes func() []realtime.LiveRoute) Router {
 	return func(_ context.Context, key RouteKey) (Route, error) {
 		for _, r := range routes() {
 			if key.KID != "" && r.KID == key.KID || key.KID == "" && key.Database != "" && r.Database == key.Database {
-				return Route{Database: r.Database, URL: r.URL, SealedRole: r.SealedRole, DataAPIRole: r.DataAPIRole}, nil
+				return Route{Database: r.Database, URL: r.URL, SealedRole: r.SealedRole, DataAPIRole: r.DataAPIRole, Access: r.DataAPIAccess}, nil
 			}
 		}
 		return Route{}, ErrNoRoute

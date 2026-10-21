@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // GDPR ledger round-trips on MemStore. Mirrors pgstore_gdpr_test.go
 // for the in-memory implementation — same property surface, no Postgres
@@ -18,13 +18,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // memTestGdprAccount mints a fresh account in the MemStore and returns
 // its id. The gdpr_requests ledger is keyed by account_id; per-test
 // accounts keep the tests order-independent and avoid `t.Parallel()`
 // shenanigans (the MemStore is not safe for concurrent test use).
-func memTestGdprAccount(t *testing.T, m *MemStore) string {
+func memTestGdprAccount(t *testing.T, m *state.MemStore) string {
 	t.Helper()
 	email := fmt.Sprintf("mem-gdpr+%s@example.com", t.Name())
 	acct, err := m.CreateAccount(context.Background(), email, api.PlanFree)
@@ -39,16 +40,16 @@ func memTestGdprAccount(t *testing.T, m *MemStore) string {
 // accessors and validates that the append-side default timestamp is
 // applied when RequestedAt is zero.
 func TestMem_AppendGdprRequest_RoundTrip(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := memTestGdprAccount(t, m)
 
 	id := uuid.NewString()
 	at := time.Date(2026, 1, 15, 12, 30, 0, 0, time.UTC)
-	if err := m.AppendGdprRequest(context.Background(), GdprRequest{
+	if err := m.AppendGdprRequest(context.Background(), state.GdprRequest{
 		ID:           id,
 		AccountID:    acctID,
 		AccountEmail: "mem-round-trip@example.com",
-		Action:       GdprActionRestore,
+		Action:       state.GdprActionRestore,
 		RequestedAt:  at,
 	}); err != nil {
 		t.Fatalf("AppendGdprRequest: %v", err)
@@ -70,8 +71,8 @@ func TestMem_AppendGdprRequest_RoundTrip(t *testing.T) {
 	if r.AccountEmail != "mem-round-trip@example.com" {
 		t.Errorf("AccountEmail = %q, want %q", r.AccountEmail, "mem-round-trip@example.com")
 	}
-	if r.Action != GdprActionRestore {
-		t.Errorf("Action = %q, want %q", r.Action, GdprActionRestore)
+	if r.Action != state.GdprActionRestore {
+		t.Errorf("Action = %q, want %q", r.Action, state.GdprActionRestore)
 	}
 	if !r.RequestedAt.Equal(at) {
 		t.Errorf("RequestedAt = %v, want %v", r.RequestedAt, at)
@@ -86,11 +87,11 @@ func TestMem_AppendGdprRequest_RoundTrip(t *testing.T) {
 // the PgStore test: the caller is responsible for UUID minting, the
 // guard exists to surface programming errors loudly.
 func TestMem_AppendGdprRequest_EmptyIDReturnsError(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := memTestGdprAccount(t, m)
 
-	err := m.AppendGdprRequest(context.Background(), GdprRequest{
-		AccountID: acctID, Action: GdprActionExport,
+	err := m.AppendGdprRequest(context.Background(), state.GdprRequest{
+		AccountID: acctID, Action: state.GdprActionExport,
 	})
 	if err == nil {
 		t.Fatal("AppendGdprRequest with empty ID returned nil, want error")
@@ -110,14 +111,14 @@ func TestMem_AppendGdprRequest_EmptyIDReturnsError(t *testing.T) {
 // We insert with no explicit timestamp, then read back and confirm the
 // persisted timestamp is within tolerance of now.
 func TestMem_AppendGdprRequest_SetsDefaultTimestamp(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := memTestGdprAccount(t, m)
 
 	before := time.Now().UTC().Add(-2 * time.Second)
-	if err := m.AppendGdprRequest(context.Background(), GdprRequest{
+	if err := m.AppendGdprRequest(context.Background(), state.GdprRequest{
 		ID:        uuid.NewString(),
 		AccountID: acctID,
-		Action:    GdprActionDelete,
+		Action:    state.GdprActionDelete,
 	}); err != nil {
 		t.Fatalf("AppendGdprRequest: %v", err)
 	}
@@ -138,11 +139,11 @@ func TestMem_AppendGdprRequest_SetsDefaultTimestamp(t *testing.T) {
 // MemStore returns literal nil (per the source: `return nil, nil`)
 // for this case; callers should treat nil/empty equivalently.
 func TestMem_ListGdprRequestsForAccount_LimitZero(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := memTestGdprAccount(t, m)
 
-	if err := m.AppendGdprRequest(context.Background(), GdprRequest{
-		ID: uuid.NewString(), AccountID: acctID, Action: GdprActionExport,
+	if err := m.AppendGdprRequest(context.Background(), state.GdprRequest{
+		ID: uuid.NewString(), AccountID: acctID, Action: state.GdprActionExport,
 		RequestedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("AppendGdprRequest: %v", err)
@@ -164,17 +165,17 @@ func TestMem_ListGdprRequestsForAccount_LimitZero(t *testing.T) {
 // the slice in reverse (most recent first), matching the SQL `ORDER BY
 // requested_at DESC` semantics.
 func TestMem_CompleteGdprRequest_StampsCompletedAt(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := memTestGdprAccount(t, m)
 
 	id := uuid.NewString()
-	if err := m.AppendGdprRequest(context.Background(), GdprRequest{
-		ID: id, AccountID: acctID, Action: GdprActionDelete,
+	if err := m.AppendGdprRequest(context.Background(), state.GdprRequest{
+		ID: id, AccountID: acctID, Action: state.GdprActionDelete,
 		RequestedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("AppendGdprRequest: %v", err)
 	}
-	if err := m.CompleteGdprRequest(context.Background(), acctID, string(GdprActionDelete)); err != nil {
+	if err := m.CompleteGdprRequest(context.Background(), acctID, string(state.GdprActionDelete)); err != nil {
 		t.Fatalf("CompleteGdprRequest: %v", err)
 	}
 	rows, err := m.ListGdprRequestsForAccount(context.Background(), acctID, 10)
@@ -196,10 +197,10 @@ func TestMem_CompleteGdprRequest_StampsCompletedAt(t *testing.T) {
 // not-found sentinel. pg/grace uses this same ErrNotFound signal to
 // detect a stale tick on MemStore (in tests / dev shells).
 func TestMem_CompleteGdprRequest_NoMatchReturnsErrNotFound(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 
-	err := m.CompleteGdprRequest(context.Background(), "", string(GdprActionDelete))
-	if !errors.Is(err, ErrNotFound) {
+	err := m.CompleteGdprRequest(context.Background(), "", string(state.GdprActionDelete))
+	if !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("Complete on empty account: err = %v, want ErrNotFound", err)
 	}
 }

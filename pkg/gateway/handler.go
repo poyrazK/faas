@@ -915,13 +915,14 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
-	devBridgeAuthorize func(*http.Request) *api.Problem
-	devBridgeForward   func(http.ResponseWriter, *http.Request, App) bool
-	backend            Backend
-	declaredRoutes     DeclaredRouteMatcher
-	limiter            *Limiter
-	preAuthLimiter     *preAuthSourceLimiter
-	preAuthCentral     CentralBackend
+	financialBudgetAdmission func(context.Context, App) error
+	devBridgeAuthorize       func(*http.Request) *api.Problem
+	devBridgeForward         func(http.ResponseWriter, *http.Request, App) bool
+	backend                  Backend
+	declaredRoutes           DeclaredRouteMatcher
+	limiter                  *Limiter
+	preAuthLimiter           *preAuthSourceLimiter
+	preAuthCentral           CentralBackend
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
 	// limiter + accountLimiter but constructed with NewLimiterWithLRU
@@ -1241,7 +1242,8 @@ type Handler struct {
 	// commit 14.
 	responseCache *ResponseCache
 	// contentObserver compares anonymous GET responses on routes without a
-	// cache rule (ADR-1188); only the outcome reaches request telemetry.
+	// cache rule (ADR-1188) and the bodies a cache rule stores (ADR-1199);
+	// only the outcome reaches request telemetry.
 	contentObserver *contentObserver
 	// cacheRefresh coalesces detached stale-while-waking refreshes by
 	// response-cache key. The customer request returns the stale body while
@@ -1277,8 +1279,13 @@ type Handler struct {
 	wafInspector WAFInspector
 	// wafInline checks headers and URI in-path for warn and block
 	// kind=waf rules (ADR-831 amendment 4). Nil makes them observe.
-	wafInline  WAFInlineChecker
-	operations OperationRouteEnqueuer
+	wafInline WAFInlineChecker
+	// challengeKey signs kind=challenge tokens and passes (ADR-831
+	// amendment 7). Nil leaves challenge rules unenforced.
+	challengeKey []byte
+	// challengeNow is the challenge clock; nil means time.Now.
+	challengeNow func() time.Time
+	operations   OperationRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -1479,6 +1486,8 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	// race with parallel ServeHTTP readers — the load test under -race
 	// caught that pattern; see the field doc).
 	h.proxyFor = defaultProxy
+	// Route priorities also order the cold-wake queue (ADR-20261018181846).
+	h.gate.classifier = h
 	return h
 }
 
@@ -5890,6 +5899,17 @@ haveApp:
 		h.observe(r, rec.status, app.ID, "", false, Target{})
 		return
 	}
+	if h.financialBudgetAdmission != nil {
+		if err := h.financialBudgetAdmission(r.Context(), app); err != nil {
+			var problem *api.Problem
+			if !errors.As(err, &problem) {
+				problem = api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Budget admission unavailable", "Retry shortly.")
+			}
+			api.WriteProblem(w, problem)
+			h.observe(r, rec.status, app.ID, "", false, Target{})
+			return
+		}
+	}
 	if api.MustLimitsFor(app.Plan).DebugTelemetryEnabled {
 		// ADR-634: the request-ID journal is a debugging index; a write it
 		// could not make (or queue) never stops the request.
@@ -6216,6 +6236,14 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
+	// ADR-831 amendment 7: the challenge page posts its solution here. It
+	// runs after the IP and geo gates, so a blocked client cannot earn a
+	// pass, and before the body-reading gates, so a validate or limit rule
+	// cannot reject the form.
+	if h.handleChallengeSolve(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 	if h.applyEdgeRuleJWT(w, r, app) {
 		h.metrics.ObserveEdgeRejection(app.ID, "jwt", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -6335,6 +6363,14 @@ haveApp:
 	// operator-authorized deployment smoke available for rollout readiness.
 	if app.PlatformTenantRequired && !deploymentSmoke && authenticatedFrom(r.Context()).PlatformTenantID == "" {
 		api.WriteProblem(w, api.ErrPlatformTenantRequired())
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	// ADR-831 amendment 7 / kind=challenge. After every auth gate, so a
+	// verified credential bypasses it, and before respond, cache and wake, so
+	// an unsolved client never reaches the app.
+	if h.applyEdgeRuleChallenge(w, r, app, deploymentSmoke) {
+		h.metrics.ObserveEdgeRejection(app.ID, "challenge", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
@@ -6465,7 +6501,14 @@ haveApp:
 					return
 				}
 				var releaseErr error
-				projectReleaseID, projectReleaseDeploymentID, releaseErr = resolver.ResolveProjectRelease(r.Context(), app.ID, projectReleaseScope, requested)
+				canary, supportsCanary := h.backend.(interface {
+					ResolveProjectCanary(context.Context, string, string, string) (string, string, error)
+				})
+				if requested == "" && supportsCanary {
+					projectReleaseID, projectReleaseDeploymentID, releaseErr = canary.ResolveProjectCanary(r.Context(), app.ID, projectReleaseScope, uuid.NewString())
+				} else {
+					projectReleaseID, projectReleaseDeploymentID, releaseErr = resolver.ResolveProjectRelease(r.Context(), app.ID, projectReleaseScope, requested)
+				}
 				if releaseErr != nil {
 					status := http.StatusServiceUnavailable
 					if errors.Is(releaseErr, ErrReleaseGone) {
@@ -6563,6 +6606,11 @@ haveApp:
 		cw.excludeManagedVersionCookie(managedVersionSetCookie)
 		cw.excludeManagedCookie(managedReleaseContextSetCookie)
 		w = cw
+		if h.contentObserver != nil && contentObservable(r) {
+			// Compare the body this miss stores with the previous one for the
+			// URL, so the rule's max-age can be checked (ADR-1199).
+			r = r.WithContext(withContentTee(r.Context(), newRefillObserver(cw, h.contentObserver, app.ID, r, rule)))
+		}
 		defer func() {
 			// Proxy aborts unwind through this defer after a partial body has
 			// been written. Preserve the abort without caching those bytes.
@@ -6798,7 +6846,7 @@ haveApp:
 	}
 	if routeProbe {
 		exactDeploymentID = probeDeploymentID
-		exactDeploymentScope = app.Scope
+		exactDeploymentScope = h.routeProbeScope(app, probeDeploymentID, probeToken)
 		exactDeploymentTrigger = sched.TriggerGateway
 		exactUnavailableTitle = "Route probe unavailable"
 		exactUnavailableDetail = "the probed deployment has no routable target"
@@ -6930,6 +6978,8 @@ haveApp:
 			attribute.String("app_plan", string(app.Plan)),
 			attribute.Int("desired_instances", maxInstances),
 		)
+		// The wake queue orders and admits waiters by route priority.
+		wakeCtx = withRoutePriorityRequest(wakeCtx, r)
 		//nolint:contextcheck // request ctx at handler boundary.
 		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerGateway, concurrencyConfigForApp(app))
 		wakeSpan.SetAttributes(
@@ -8868,7 +8918,8 @@ func (h *Handler) ensureServiceCapacity(ctx context.Context, app App, trigger st
 	}
 	h.noteColdWake(ctx, app.ID)
 	maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
-	_, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, trigger, concurrencyConfigForApp(app))
+	_, wakeID, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, trigger, concurrencyConfigForApp(app))
+	recordServiceWakeID(ctx, wakeID)
 	return err
 }
 
@@ -8891,7 +8942,8 @@ func (h *Handler) EnsureServiceDeploymentCapacity(ctx context.Context, app App, 
 	// Match the public cold-bucket fan-out allowance: rollout capacity is
 	// governed by the plan ceiling here, while schedd remains authoritative
 	// for the temporary rollout-instance exception.
-	_, _, _, err := h.backend.Admit(ctx, app.ID, deploymentID, app.Scope, sched.TriggerServiceMesh, limits.MaxConcurrency)
+	wakeID, _, _, err := h.backend.Admit(ctx, app.ID, deploymentID, app.Scope, sched.TriggerServiceMesh, limits.MaxConcurrency)
+	recordServiceWakeID(ctx, wakeID)
 	return err
 }
 

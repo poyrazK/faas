@@ -984,6 +984,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if problem := validateDeploySettingsCondition(req, environment); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if req.ExpectedServiceBindingFingerprint != nil {
 		if problem := validateServiceBindingPlanRequest(req, environment.Slug); problem != nil {
 			api.WriteProblem(w, problem)
@@ -1514,6 +1518,8 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	configActivityAtomic := false
+	params.TouchDeploymentPolicies = req.Profiling != nil || req.Tracing != nil
+	params = guardedDeploySettingsParams(req, acct, params)
 	var configActivityOutboxID int64
 	var updated state.App
 	var err error
@@ -1540,7 +1546,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		if errors.Is(err, state.ErrServiceBindingPlanConflict) {
+		if problem := deploySettingsUpdateProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else if errors.Is(err, state.ErrServiceBindingPlanConflict) {
 			api.WriteProblem(w, serviceBindingPlanConflictProblem())
 		} else if problem := state.ServiceCapacityProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
@@ -1975,56 +1983,6 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// restoreApp reactivates a deleted app while its seven-day grace window is
-// open. The tombstone lookup is deliberately separate from loadApp so normal
-// customer reads continue to hide deleted slugs.
-func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, err := s.store.AppBySlugIncludingDeleted(r.Context(), r.PathValue("slug"))
-	if err != nil || app.AccountID != acct.ID {
-		s.notFound(w, "no such app")
-		return
-	}
-	limits := api.MustLimitsFor(acct.Plan)
-	restored, err := s.restoreAppWithActivity(r.Context(), r, acct, app, limits)
-	if err != nil {
-		var qe *state.QuotaError
-		if errors.As(err, &qe) {
-			api.WriteProblem(w, appaccess.QuotaProblem(qe, limits))
-			return
-		}
-		if errors.Is(err, state.ErrOrgAppAdmissionUnavailable) {
-			api.WriteProblem(w, appaccess.AdmissionUnavailableProblem())
-			return
-		}
-		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
-				api.CodeAppNotRestorable, "App not restorable",
-				"the seven-day app deletion grace window has lapsed"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not restore app"))
-		return
-	}
-	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		fmt.Sprintf(`{"app_id":"%s","kind":"restored"}`, restored.ID))
-	s.audit.Emit(r.Context(), "app.restored", &acct.ID, map[string]any{
-		"app_id": restored.ID,
-		"slug":   restored.Slug,
-	})
-	resp := s.appResponseWithContext(r.Context(), restored, acct.Plan)
-	// RestoreApp persists the storage state as active, but the customer-facing
-	// read model calls an app with no deployments "undeployed". Keep this
-	// mutation response consistent with GET /v1/apps/{slug} and listApps so
-	// automation does not observe active and undeployed for the same row.
-	if _, latestErr := s.store.LatestDeployment(r.Context(), restored.ID); errors.Is(latestErr, state.ErrNotFound) && resp.Status == string(state.AppActive) {
-		resp.Status = api.AppStatusUndeployed
-	} else if latestErr != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not resolve restored app deployment state"))
-		return
-	}
-	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, restored))
-}
-
 // --- deployments -----------------------------------------------------------
 
 // getDeployment returns one deployment by id.
@@ -2040,8 +1998,16 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
-	resp := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
-	writeJSON(w, http.StatusOK, s.withRelease(r.Context(), resp, d))
+	response := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
+	if store, ok := s.store.(state.DeploymentConfigurationStore); ok {
+		configuration, err := store.DeploymentConfiguration(r.Context(), acct.ID, d.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read deployment configuration status"))
+			return
+		}
+		response.Configuration = &configuration
+	}
+	writeJSON(w, http.StatusOK, s.withRelease(r.Context(), response, d))
 }
 
 // updateDeploymentMinInstances (issue #557 closure / ADR-074) is the
@@ -2611,6 +2577,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		activity.DeploymentID = &targetID
 	}
 	s.recordAppActivity(ctx, r, acct, app, activity)
+	if trigger != state.RollbackTriggerManual {
+		s.freezeAfterAutomaticRollback(ctx, acct.ID, app, current.ID, automaticRollbackCause(trigger, current))
+	}
 	return target, s.plainRollbacks().Record(ctx, acct, app, target, current.ID, trigger), nil
 }
 

@@ -18,6 +18,9 @@ type ProductUsageGuidance struct {
 	Suspended        bool                          `json:"suspended"`
 	PlanAction       string                        `json:"plan_action"`
 	Features         []ProductFeatureUsageGuidance `json:"features"`
+	// InvoiceOverdue reports an overdue-invoice hold (ADR-20261018212918);
+	// runnable features then have state invoice_overdue.
+	InvoiceOverdue bool `json:"invoice_overdue,omitempty"`
 }
 
 type ProductFeatureUsageGuidance struct {

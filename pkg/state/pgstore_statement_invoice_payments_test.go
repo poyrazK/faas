@@ -92,11 +92,25 @@ func TestPgStoreBillingProviders(t *testing.T) {
 	checkBillingProviders(t, ctx, store, accountID)
 }
 
+// adr: 20261019180000
+func TestPgStoreStatementInvoiceExportClaims(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, _ := seedConsumerKeyAccountApp(t, ctx, store)
+	checkStatementInvoiceExportClaims(t, ctx, store, accountID)
+}
+
 // adr: 1306
 func TestPgStoreConsumerCredits(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
 	accountID, appID := seedConsumerKeyAccountApp(t, ctx, store)
 	checkConsumerCredits(t, ctx, store, accountID, appID)
+}
+
+// adr: 20261019100331
+func TestPgStoreTenantCredits(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, _ := seedConsumerKeyAccountApp(t, ctx, store)
+	checkTenantCredits(t, ctx, store, accountID)
 }
 
 // adr: 1307

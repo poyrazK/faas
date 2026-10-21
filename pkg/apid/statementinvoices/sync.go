@@ -80,6 +80,9 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 			}
 		}
 		conns[cacheKey] = conn
+		if conn == nil {
+			s.notifySyncBlocked(ctx, export.AccountID, export.Provider, now)
+		}
 	}
 	if conn == nil {
 		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.StatementInvoiceSyncKeyRetry))
@@ -87,6 +90,7 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 	payment, known, err := p.payment(ctx, *conn, export.ProviderInvoiceID)
 	if errors.Is(err, errKeyRejected) {
 		conns[cacheKey] = nil
+		s.notifySyncBlocked(ctx, export.AccountID, export.Provider, now)
 		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.StatementInvoiceSyncKeyRetry))
 	}
 	if err != nil || !known {
@@ -102,6 +106,28 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 			"from": prev, "to": payment.Status})
 	}
 	return nil
+}
+
+// notifySyncBlocked emails the account, at most once a day per provider,
+// that Gregale cannot read its exported invoices: payment status stops
+// updating, and overdue holds lift after api.ConsumerOverdueStatusMaxAge
+// (ADR-20261019180000). A failed send is retried at the next sync.
+func (s *Service) notifySyncBlocked(ctx context.Context, accountID, provider string, now time.Time) {
+	acct, err := s.Host.Store().AccountByID(ctx, accountID)
+	if err != nil {
+		return
+	}
+	title := provider
+	if p := s.provider(provider); p != nil {
+		title = p.title()
+	}
+	day := now.UTC().Format(time.DateOnly)
+	subject := "Gregale cannot read your " + title + " invoices"
+	body := fmt.Sprintf("Gregale could not open or use your %s key, so the payment status of invoices it exported to %s "+
+		"stopped updating. Customers held for an overdue invoice there are let through after %d hours without a fresh status.\n\n"+
+		"Reconnect %s with: gregale account billing-connection connect %s\n(as of %s)\n",
+		title, title, int(api.ConsumerOverdueStatusMaxAge.Hours()), title, provider, now.UTC().Format(time.RFC3339))
+	_ = s.Host.SendEmail(ctx, acct.Email, subject, body, "statement-invoices-sync-blocked-"+accountID+"-"+provider+"-"+day)
 }
 
 // nextInvoiceSync is when to read the invoice again; nil once it is final.
@@ -189,11 +215,20 @@ func overdueDigest(invoices []state.StatementInvoiceExport, now time.Time) (stri
 	return subject, b.String()
 }
 
-// formatMinor renders a two-decimal currency amount, e.g. EUR 37.50.
+// formatMinor renders an amount in currency's minor unit, e.g. EUR 37.50,
+// JPY 3750 or KWD 3.750 (ADR-20261019100330).
 func formatMinor(currency string, minor int64) string {
 	sign := ""
 	if minor < 0 {
 		sign, minor = "-", -minor
 	}
-	return fmt.Sprintf("%s %s%d.%02d", currency, sign, minor/100, minor%100)
+	exp, _ := api.CurrencyMinorExponent(currency)
+	if exp == 0 {
+		return fmt.Sprintf("%s %s%d", currency, sign, minor)
+	}
+	scale := int64(1)
+	for range exp {
+		scale *= 10
+	}
+	return fmt.Sprintf("%s %s%d.%0*d", currency, sign, minor/scale, exp, minor%scale)
 }

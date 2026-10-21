@@ -211,6 +211,96 @@ GitHub-triggered images recheck their recorded source branch before cutover.
 Explicit rollback retains its existing behavior. See
 [ADR-681](adr/681-image-deployment-promotion-ordering.md).
 
+Prebuilt image services can also override the image's process
+([ADR-1337](adr/1337-compose-process-overrides-and-key-reporting.md)):
+
+```yaml
+services:
+  api:
+    image: ghcr.io/team/api:production
+    entrypoint: [tini, --]
+    command: [node, server.js]
+    user: "1000:1000"
+    working_dir: /srv/app
+    stop_signal: SIGINT
+    stop_grace_period: 20s
+    env_file: [.env.production]
+```
+
+`entrypoint` replaces the image ENTRYPOINT and, as in Docker, drops its CMD, so
+`command` supplies the arguments; `entrypoint: []` clears the ENTRYPOINT and
+needs a `command`. String entrypoints are split on spaces; anything with quotes
+or shell syntax must use the list form. `user` takes a name or id with an
+optional `:group`, resolved against the image's `/etc/passwd` and `/etc/group`.
+`working_dir` must be an absolute path. `stop_signal` accepts the signals
+guest-init delivers (SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2), and
+`stop_grace_period` is capped by the plan. Like commands, these overrides are
+captured per deployment, so queued deployments and rollbacks keep them.
+Source-built services set the same things in their Dockerfile; Compose
+overrides on them produce a scan warning.
+
+`env_file` contributes variable names only. The scan lists them as required
+environment keys, exactly like `environment:`; values never leave the source,
+so set them with `gregale env set` or secrets. An env file missing from the
+source (for example a git-ignored `.env`) is a warning, or silent with
+`required: false`. Quoted values, including multi-line double- or
+single-quoted ones, are read to their closing quote; a malformed line is
+reported with its file and line number and skipped.
+
+Source-built services pass `build.args` and `build.target` to their Dockerfile
+build, as `docker compose build` does
+([ADR-20261019142544](adr/20261019142544-compose-build-args-and-target.md)):
+
+```yaml
+services:
+  api:
+    build:
+      context: ./api
+      target: production
+      args:
+        NODE_VERSION: 22
+        APP_VERSION: ${APP_VERSION:-dev}
+        SENTRY_RELEASE:
+```
+
+`args` takes the map or the list form. `${VAR}` reads the source's `.env`, like
+the rest of the file; `$VAR` without braces is passed literally and warns. A name
+without a value (`SENTRY_RELEASE:`, or `- SENTRY_RELEASE` in the list form) also
+reads `.env`; when `.env` does not set
+it, the argument is left out and the Dockerfile's `ARG` default applies, with a
+warning. `target` must name a stage the Dockerfile declares with `FROM … AS`;
+an unknown stage fails the scan. A service whose build context has no Dockerfile
+builds with Railpack, so its `args` and `target` are warned and ignored. Up to
+64 arguments of at most 4 KiB each are accepted (`DockerfileBuildArgsMax`,
+`DockerfileBuildArgValueMaxBytes`).
+
+Each deployment keeps the arguments and target it was planned with, and changing
+either rebuilds instead of reusing a cached image. A public build URL with the
+same name as an argument wins. Build arguments end up in the image history, so
+keep secrets out of them and set those with `gregale secrets set`. Plans show the
+target and the argument names, not their values.
+
+The scan reports every other Compose key instead of dropping it silently:
+
+| Keys | Result |
+|---|---|
+| `build` (`context`, `dockerfile`, `args`, `target`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied (process keys and `healthcheck` only on prebuilt images). |
+| `container_name`, `init`, `stdin_open`, `tty`, `platform: linux/amd64`, `x-*` extensions | Ignored without a warning; they have no effect on a microVM service. |
+| `volumes`, `tmpfs` | Warning: no persistent volumes or bind mounts; each start gets a fresh filesystem. |
+| `deploy`, `scale`, `cpus`, `mem_limit` and other resource keys | Warning: CPU, memory and replicas come from the plan and app scaling. |
+| `restart` | Warning: the platform starts, parks and restarts services. |
+| `secrets`, `configs` | Warning: use `gregale secrets set` or environment variables. |
+| `networks`, `network_mode`, `links`, `external_links` | Warning: services reach each other through `depends_on` service bindings. |
+| `cap_add`, `privileged`, `devices`, `security_opt`, `ulimits` and other kernel controls | Warning: each service runs in its own microVM. |
+| `dns`, `extra_hosts`, `hostname` and other guest networking keys | Warning: guest networking is managed by the platform. |
+| `labels`, `logging`, `pull_policy`, any other `platform` | Warning. |
+| `build.secrets`, `build.ssh`, `build.dockerfile_inline`, other `build.*` keys | Warning: the builder uses only `build.context`, `build.dockerfile`, `build.args` and `build.target`. |
+| Any other service key | Warning: not supported. |
+| `extends`, top-level `include` | Warning: not resolved. The warning names the inherited keys (or the extended file and service) and the included files whose services were not loaded; inline them. |
+
+Managed database and cache services (for example `postgres`) do not report
+their keys: the managed resource replaces the container.
+
 | Concern | Current contract | Qualification boundary |
 |---|---|---|
 | Image platform | Linux/amd64; compatible child selected from an OCI or Docker index. A lone child without a platform annotation is selected and its config's platform checked. | Other architectures and operating systems are rejected. |
