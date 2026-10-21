@@ -37,6 +37,10 @@ project was reviewed nor whether the authenticated account can still read it.
    production workload adapter and GitLab protected-branch review evidence
    require separate qualification before enforcement can be enabled.
 
+The protected-branch evidence and workload preparation extension is specified
+in [ADR-20261017190801](20261017190801-gitlab-reviewed-gitops.md). Its provider-bound trust contract
+supersedes the initial report/manual/prune restriction; production gates remain.
+
 ## Consequences
 
 - A standalone Gregale project can bind a GitLab.com definition after an

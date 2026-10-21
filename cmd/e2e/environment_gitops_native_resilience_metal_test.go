@@ -32,7 +32,7 @@ type nativeGitOpsJourney struct {
 	app, worker                  state.App
 	source                       state.EnvironmentGitSource
 	original                     api.EnvironmentDefinition
-	provider                     *gitOpsSourceFixture
+	provider                     gitOpsSourceProvider
 	pendingImage, candidateImage string
 	pullEntered                  <-chan struct{}
 	releasePull                  func()
@@ -41,109 +41,136 @@ type nativeGitOpsJourney struct {
 }
 
 func (j *nativeGitOpsJourney) run(t *testing.T) {
-	// Activation is deliberately distinct from serving: a real customer
-	// queue delivery is required before this mixed graph can be applied.
-	j.waitActivated(t, j.source.ApprovedRevisionID, j.source.Generation)
-	firstDelivery := j.sendQueue(t, 0)
-	j.bindingID = firstDelivery.QueueBindingID
-	j.waitQueue(t, firstDelivery, false)
-	baseline := j.waitApplied(t, j.source.ApprovedRevisionID, j.source.Generation)
+	var baseline, changedServing api.EnvironmentGitOpsStatusResponse
+	var pending, changed, rolledBack api.ApproveEnvironmentGitRevisionResponse
+	if !t.Run("baseline_serving", func(t *testing.T) {
+		// Activation is deliberately distinct from serving: a real customer
+		// queue delivery is required before this mixed graph can be applied.
+		j.waitActivated(t, j.source.ApprovedRevisionID, j.source.Generation)
+		firstDelivery := j.sendQueue(t, 0)
+		j.bindingID = firstDelivery.QueueBindingID
+		j.waitQueue(t, firstDelivery, false)
+		baseline = j.waitApplied(t, j.source.ApprovedRevisionID, j.source.Generation)
+	}) {
+		return
+	}
 	stopTraffic := j.startTraffic(t)
 	defer stopTraffic()
 	j.waitHTTPInFlight(t)
 
-	t.Log("GitOps native resilience: source outage and apid restart")
-	j.provider.setUnavailable(true)
-	j.waitStatus(t, "source outage", api.EnvironmentGitSourcePollCheckInterval+time.Minute, func(s api.EnvironmentGitOpsStatusResponse) bool {
-		return s.Source.SourceErrorCode == "environment_git_source_unavailable"
-	})
-	j.assertAuthority(t, j.source.ApprovedRevisionID, j.source.Generation)
-	j.waitQueue(t, j.sendQueue(t, 0), false)
-	j.waitHTTPInFlight(t)
-	if err := j.h.RestartAPID(); err != nil {
-		t.Fatal(err)
+	if !t.Run("source_outage_restart", func(t *testing.T) {
+		t.Log("GitOps native resilience: source outage and apid restart")
+		j.provider.setUnavailable(true)
+		j.waitStatus(t, "source outage", api.EnvironmentGitSourcePollCheckInterval+time.Minute, func(s api.EnvironmentGitOpsStatusResponse) bool {
+			return s.Source.SourceErrorCode == j.provider.outageCode()
+		})
+		j.assertAuthority(t, j.source.ApprovedRevisionID, j.source.Generation)
+		j.waitQueue(t, j.sendQueue(t, 0), false)
+		j.waitHTTPInFlight(t)
+		if err := j.h.RestartAPID(); err != nil {
+			t.Fatal(err)
+		}
+		j.assertAuthority(t, j.source.ApprovedRevisionID, j.source.Generation)
+		j.provider.setUnavailable(false)
+		j.waitStatus(t, "source recovery", 2*time.Minute, func(s api.EnvironmentGitOpsStatusResponse) bool {
+			return s.Source.SourceErrorCode == "" && s.Source.SourceCommitSHA == strings.Repeat("a", 40)
+		})
+	}) {
+		return
 	}
-	j.assertAuthority(t, j.source.ApprovedRevisionID, j.source.Generation)
-	j.provider.setUnavailable(false)
-	j.waitStatus(t, "source recovery", 2*time.Minute, func(s api.EnvironmentGitOpsStatusResponse) bool {
-		return s.Source.SourceErrorCode == "" && s.Source.SourceCommitSHA == strings.Repeat("a", 40)
-	})
-
-	t.Log("GitOps native resilience: crash during preparation and supersede the held revision")
-	j.addRevision(t, strings.Repeat("b", 40), j.pendingImage, 1)
-	pending := j.approve(t, strings.Repeat("b", 40))
-	select {
-	case <-j.pullEntered:
-	case err := <-j.trafficFailures:
-		t.Fatalf("customer traffic failed during preparation: %v", err)
-	case <-time.After(3 * time.Minute):
-		t.Fatal("pending revision never reached its held image pull")
-	case <-t.Context().Done():
-		t.Fatal(t.Context().Err())
+	if !t.Run("held_revision_supersession", func(t *testing.T) {
+		t.Log("GitOps native resilience: crash during preparation and supersede the held revision")
+		j.addRevision(t, strings.Repeat("b", 40), j.pendingImage, 1)
+		pending = j.approve(t, strings.Repeat("b", 40))
+		select {
+		case <-j.pullEntered:
+		case err := <-j.trafficFailures:
+			t.Fatalf("customer traffic failed during preparation: %v", err)
+		case <-time.After(3 * time.Minute):
+			t.Fatal("pending revision never reached its held image pull")
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+		j.waitStatus(t, "pending preparation", time.Minute, func(s api.EnvironmentGitOpsStatusResponse) bool {
+			return s.WorkloadEvidence != nil && s.WorkloadEvidence.RevisionID == pending.Revision.ID &&
+				s.WorkloadEvidence.GraphPhase == "preparing" && !s.WorkloadEvidence.Activated
+		})
+		j.waitHTTPInFlight(t)
+		if err := j.h.RestartAPID(); err != nil {
+			t.Fatal(err)
+		}
+		j.assertGatewayBody(t, helloBody)
+		j.addRevision(t, strings.Repeat("c", 40), j.candidateImage, 2)
+		changed = j.approve(t, strings.Repeat("c", 40))
+		if changed.Source.Generation <= pending.Source.Generation {
+			t.Fatal("supersession did not advance the approved generation")
+		}
+		j.releasePull()
+		activated := j.waitActivated(t, changed.Revision.ID, changed.Source.Generation)
+		if activated.WorkloadEvidence.Serving || activated.Source.AppliedRevisionID == changed.Revision.ID {
+			t.Fatal("new mixed graph claimed serving before its customer queue delivery")
+		}
+	}) {
+		return
 	}
-	j.waitStatus(t, "pending preparation", time.Minute, func(s api.EnvironmentGitOpsStatusResponse) bool {
-		return s.WorkloadEvidence != nil && s.WorkloadEvidence.RevisionID == pending.Revision.ID &&
-			s.WorkloadEvidence.GraphPhase == "preparing" && !s.WorkloadEvidence.Activated
-	})
-	j.waitHTTPInFlight(t)
-	if err := j.h.RestartAPID(); err != nil {
-		t.Fatal(err)
+	if !t.Run("scheduler_restart_inflight", func(t *testing.T) {
+		t.Log("GitOps native resilience: scheduler crash after activation with a delivery in flight")
+		inFlight := j.sendQueue(t, 10000)
+		j.waitQueue(t, inFlight, true)
+		j.waitHTTPInFlight(t)
+		if err := j.h.KillSchedd(); err != nil {
+			t.Fatal(err)
+		}
+		j.assertGatewayBody(t, gitOpsNextBody)
+		if err := j.h.RestartSchedd(); err != nil {
+			t.Fatal(err)
+		}
+		if err := j.h.RestartAPID(); err != nil {
+			t.Fatal(err)
+		}
+		j.waitQueue(t, inFlight, false)
+		// A replayed accepted delivery may finish on a retained deployment. A
+		// separate fresh delivery must prove the newly selected consumer serves.
+		j.waitQueue(t, j.sendQueue(t, 0), false)
+		changedServing = j.waitApplied(t, changed.Revision.ID, changed.Source.Generation)
+		j.assertQueueContract(t, 2)
+		j.assertNoSupersededServing(t, pending.Source.Generation)
+	}) {
+		return
 	}
-	j.assertGatewayBody(t, helloBody)
-	j.addRevision(t, strings.Repeat("c", 40), j.candidateImage, 2)
-	changed := j.approve(t, strings.Repeat("c", 40))
-	if changed.Source.Generation <= pending.Source.Generation {
-		t.Fatal("supersession did not advance the approved generation")
+	if !t.Run("reviewed_rollback", func(t *testing.T) {
+		t.Log("GitOps native resilience: reviewed rollback with accepted queue work")
+		rollbackDelivery := j.sendQueue(t, 10000)
+		j.waitQueue(t, rollbackDelivery, true)
+		j.waitHTTPInFlight(t)
+		rolledBack = j.approve(t, strings.Repeat("a", 40))
+		if rolledBack.Revision.ID != j.source.ApprovedRevisionID || rolledBack.Source.Generation <= changed.Source.Generation {
+			t.Fatal("rollback did not reapprove the original immutable revision at a new generation")
+		}
+		rollbackActivated := j.waitActivated(t, rolledBack.Revision.ID, rolledBack.Source.Generation)
+		if rollbackActivated.WorkloadEvidence.GraphID == baseline.WorkloadEvidence.GraphID ||
+			rollbackActivated.WorkloadEvidence.GraphID == changedServing.WorkloadEvidence.GraphID {
+			t.Fatal("rollback reused an earlier graph's qualification authority")
+		}
+		j.waitQueue(t, rollbackDelivery, false)
+		j.waitQueue(t, j.sendQueue(t, 0), false)
+		j.waitApplied(t, rolledBack.Revision.ID, rolledBack.Source.Generation)
+		j.assertQueueContract(t, 1)
+		j.assertGatewayBody(t, helloBody)
+		j.assertNoSupersededServing(t, pending.Source.Generation)
+	}) {
+		return
 	}
-	j.releasePull()
-	activated := j.waitActivated(t, changed.Revision.ID, changed.Source.Generation)
-	if activated.WorkloadEvidence.Serving || activated.Source.AppliedRevisionID == changed.Revision.ID {
-		t.Fatal("new mixed graph claimed serving before its customer queue delivery")
+	if !t.Run("override_repair", func(t *testing.T) {
+		j.repairOverride(t, rolledBack)
+	}) {
+		return
 	}
-
-	t.Log("GitOps native resilience: scheduler crash after activation with a delivery in flight")
-	inFlight := j.sendQueue(t, 10000)
-	j.waitQueue(t, inFlight, true)
-	j.waitHTTPInFlight(t)
-	if err := j.h.KillSchedd(); err != nil {
-		t.Fatal(err)
+	if !t.Run("retirement_recovery", func(t *testing.T) {
+		j.runWorkloadRetirement(t)
+	}) {
+		return
 	}
-	j.assertGatewayBody(t, gitOpsNextBody)
-	if err := j.h.RestartSchedd(); err != nil {
-		t.Fatal(err)
-	}
-	if err := j.h.RestartAPID(); err != nil {
-		t.Fatal(err)
-	}
-	j.waitQueue(t, inFlight, false)
-	// A replayed accepted delivery may finish on a retained deployment. A
-	// separate fresh delivery must prove the newly selected consumer serves.
-	j.waitQueue(t, j.sendQueue(t, 0), false)
-	changedServing := j.waitApplied(t, changed.Revision.ID, changed.Source.Generation)
-	j.assertQueueContract(t, 2)
-	j.assertNoSupersededServing(t, pending.Source.Generation)
-
-	t.Log("GitOps native resilience: reviewed rollback with accepted queue work")
-	rollbackDelivery := j.sendQueue(t, 10000)
-	j.waitQueue(t, rollbackDelivery, true)
-	j.waitHTTPInFlight(t)
-	rolledBack := j.approve(t, strings.Repeat("a", 40))
-	if rolledBack.Revision.ID != j.source.ApprovedRevisionID || rolledBack.Source.Generation <= changed.Source.Generation {
-		t.Fatal("rollback did not reapprove the original immutable revision at a new generation")
-	}
-	rollbackActivated := j.waitActivated(t, rolledBack.Revision.ID, rolledBack.Source.Generation)
-	if rollbackActivated.WorkloadEvidence.GraphID == baseline.WorkloadEvidence.GraphID ||
-		rollbackActivated.WorkloadEvidence.GraphID == changedServing.WorkloadEvidence.GraphID {
-		t.Fatal("rollback reused an earlier graph's qualification authority")
-	}
-	j.waitQueue(t, rollbackDelivery, false)
-	j.waitQueue(t, j.sendQueue(t, 0), false)
-	j.waitApplied(t, rolledBack.Revision.ID, rolledBack.Source.Generation)
-	j.assertQueueContract(t, 1)
-	j.assertGatewayBody(t, helloBody)
-	j.assertNoSupersededServing(t, pending.Source.Generation)
-	j.repairOverride(t, rolledBack)
-	j.runWorkloadRetirement(t)
 }
 
 func (j *nativeGitOpsJourney) addRevision(t *testing.T, sha, image string, concurrency int) {
@@ -287,7 +314,7 @@ func (j *nativeGitOpsJourney) assertAuthority(t *testing.T, revision string, gen
 	t.Helper()
 	s, err := j.client.GetEnvironmentGitOps(t.Context(), j.project.Slug, "production")
 	if err != nil || s.Source.ApprovedRevisionID != revision || s.Source.AppliedRevisionID != revision || s.Source.Generation != generation ||
-		s.Source.SourceErrorCode != "environment_git_source_unavailable" {
+		s.Source.SourceErrorCode != j.provider.outageCode() {
 		t.Fatalf("source outage or restart changed approved/serving authority: %+v %v", s.Source, err)
 	}
 }

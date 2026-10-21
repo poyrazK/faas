@@ -1413,6 +1413,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		}
 	case db.NotifyRouteProbeChallenge:
 		var p struct {
+			Scope        string    `json:"scope"`
 			AppID        string    `json:"app_id"`
 			DeploymentID string    `json:"deployment_id"`
 			Token        string    `json:"token"`
@@ -1420,6 +1421,14 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" || p.DeploymentID == "" || p.Token == "" || p.ExpiresAt.IsZero() {
 			log.Warn("gatewayd: bad route probe challenge", "payload_length", len(n.Payload))
+			return
+		}
+		if p.Scope != "" {
+			if authorizer, ok := inv.(interface {
+				AuthorizeRouteProbeForScope(string, string, string, string, time.Time)
+			}); ok {
+				authorizer.AuthorizeRouteProbeForScope(p.AppID, p.DeploymentID, p.Token, p.Scope, p.ExpiresAt)
+			}
 			return
 		}
 		if authorizer, ok := inv.(interface {

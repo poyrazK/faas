@@ -301,7 +301,7 @@ type PrivateInputAllowRule struct {
 
 // tenantHairpinTCPPorts are the public-edge ports a guest may open on any
 // host address, so an app can call a platform app through a public hostname
-// that resolves to this node (ADR-20261020120000).
+// that resolves to this node (ADR-20261020123000).
 var tenantHairpinTCPPorts = []int{80, 443}
 
 // DefaultHostPolicy is the platform-wide host nftables policy. Source of
@@ -618,7 +618,7 @@ func (h HostPolicy) Render() string {
 	// bridge subnet (its one host address is the bridge IP; the per-netns
 	// chain narrows the ports), the public edge for hairpin calls, and
 	// ICMP. The drop keeps bridge traffic from the public and source-CIDR
-	// rules below (spec §11, ADR-20261020120000).
+	// rules below (spec §11, ADR-20261020123000).
 	fmt.Fprintf(&b, "    iifname %q ip daddr %s accept\n", h.BridgeName, h.MasqueradeCIDR)
 	fmt.Fprintf(&b, "    iifname %q tcp dport { %s } accept\n", h.BridgeName, joinInts(tenantHairpinTCPPorts, ","))
 	fmt.Fprintf(&b, "    iifname %q meta l4proto { icmp, ipv6-icmp } accept\n", h.BridgeName)

@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from ..models.project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
     from ..models.project_environment_promotion_change import ProjectEnvironmentPromotionChange
     from ..models.project_environment_qualification_response import ProjectEnvironmentQualificationResponse
+    from ..models.project_promotion_health_policy import ProjectPromotionHealthPolicy
+    from ..models.project_release_secret_configuration import ProjectReleaseSecretConfiguration
     from ..models.project_release_set_response import ProjectReleaseSetResponse
 
 
@@ -35,6 +37,12 @@ class ProjectEnvironmentPromotionPreviewResponse:
     """True when promotion stages deployments dark and atomically activates a project release graph."""
     promotion_hash: str
     promotion_token: str
+    secrets: ProjectReleaseSecretConfiguration | Unset = UNSET
+    """Candidate and baseline immutable secret version references bound to an atomic release."""
+    destination_config_hash: str | Unset = UNSET
+    """Hash of the configuration resolved with destination service bindings; included in the promotion identity."""
+    health: ProjectPromotionHealthPolicy | Unset = UNSET
+    """Destination probe and optional migration contract bound to the exact promotion preview and approval."""
     sync_config: bool | Unset = UNSET
     """Whether this exact promotion will copy the source's non-secret configuration to the target."""
     blocking_reasons: list[str] | Unset = UNSET
@@ -79,6 +87,16 @@ class ProjectEnvironmentPromotionPreviewResponse:
 
         promotion_token = self.promotion_token
 
+        secrets: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.secrets, Unset):
+            secrets = self.secrets.to_dict()
+
+        destination_config_hash = self.destination_config_hash
+
+        health: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.health, Unset):
+            health = self.health.to_dict()
+
         sync_config = self.sync_config
 
         blocking_reasons: list[str] | Unset = UNSET
@@ -118,6 +136,12 @@ class ProjectEnvironmentPromotionPreviewResponse:
                 "promotion_token": promotion_token,
             }
         )
+        if secrets is not UNSET:
+            field_dict["secrets"] = secrets
+        if destination_config_hash is not UNSET:
+            field_dict["destination_config_hash"] = destination_config_hash
+        if health is not UNSET:
+            field_dict["health"] = health
         if sync_config is not UNSET:
             field_dict["sync_config"] = sync_config
         if blocking_reasons is not UNSET:
@@ -140,6 +164,8 @@ class ProjectEnvironmentPromotionPreviewResponse:
         from ..models.project_environment_config_diff_response import ProjectEnvironmentConfigDiffResponse
         from ..models.project_environment_promotion_change import ProjectEnvironmentPromotionChange
         from ..models.project_environment_qualification_response import ProjectEnvironmentQualificationResponse
+        from ..models.project_promotion_health_policy import ProjectPromotionHealthPolicy
+        from ..models.project_release_secret_configuration import ProjectReleaseSecretConfiguration
         from ..models.project_release_set_response import ProjectReleaseSetResponse
 
         d = dict(src_dict)
@@ -169,6 +195,22 @@ class ProjectEnvironmentPromotionPreviewResponse:
         promotion_hash = d.pop("promotion_hash")
 
         promotion_token = d.pop("promotion_token")
+
+        _secrets = d.pop("secrets", UNSET)
+        secrets: ProjectReleaseSecretConfiguration | Unset
+        if isinstance(_secrets, Unset):
+            secrets = UNSET
+        else:
+            secrets = ProjectReleaseSecretConfiguration.from_dict(_secrets)
+
+        destination_config_hash = d.pop("destination_config_hash", UNSET)
+
+        _health = d.pop("health", UNSET)
+        health: ProjectPromotionHealthPolicy | Unset
+        if isinstance(_health, Unset):
+            health = UNSET
+        else:
+            health = ProjectPromotionHealthPolicy.from_dict(_health)
 
         sync_config = d.pop("sync_config", UNSET)
 
@@ -211,6 +253,9 @@ class ProjectEnvironmentPromotionPreviewResponse:
             release_graph_mode=release_graph_mode,
             promotion_hash=promotion_hash,
             promotion_token=promotion_token,
+            secrets=secrets,
+            destination_config_hash=destination_config_hash,
+            health=health,
             sync_config=sync_config,
             blocking_reasons=blocking_reasons,
             from_release_set=from_release_set,

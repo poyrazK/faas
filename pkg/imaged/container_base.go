@@ -8,8 +8,8 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 func (h *Handler) containerBaseProducer(ctx context.Context, prepared preparedContainerWorkload, runtime string, start int) (state.BaseImageProducer, error) {
@@ -20,7 +20,7 @@ func (h *Handler) containerBaseProducer(ctx context.Context, prepared preparedCo
 	if !ok {
 		return state.BaseImageProducer{}, fmt.Errorf("imaged: base producer store unavailable")
 	}
-	base, err := store.GetCurrentBaseImageProducer(ctx, sched.BaseKeyForArch(runtime, oci.ImageArchitecture))
+	base, err := store.GetCurrentBaseImageProducer(ctx, storagekey.BaseForArch(runtime, oci.ImageArchitecture))
 	if err != nil {
 		return state.BaseImageProducer{}, err
 	}

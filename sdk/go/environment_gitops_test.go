@@ -12,6 +12,36 @@ import (
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
+func TestEnvironmentGitOpsRolloutWebhookPreservesEvidenceAndDiagnostics(t *testing.T) {
+	for _, status := range []string{"serving", "failed", "superseded"} {
+		t.Run(status, func(t *testing.T) {
+			body := `{"version":1,"transition_id":"transition","source_id":"source","project":"shop","environment":"production","axis":"rollout","previous_status":"progressing","status":"` + status + `","generation":3,"observed_version":7,"approved_revision_id":"revision","commit_sha":"` + strings.Repeat("a", 40) + `","definition_digest":"` + strings.Repeat("b", 64) + `","graph_id":"graph","plan_hash":"` + strings.Repeat("c", 64) + `","observed_at":"2026-10-17T12:00:00Z","dashboard_path":"/dashboard/projects/shop/environments/production/gitops","changes":[],"blocking_reasons":["environment_workload_build_failed"],"details_truncated":false,"diagnostics":[{"resource":"workload/api","stage":"preparation","code":"environment_workload_build_failed","actor":"customer","message":"The candidate build failed.","action":"Inspect build diagnostics."}]}`
+			var payload faas.EnvironmentGitOpsChangedWebhookPayload
+			if err := json.Unmarshal([]byte(body), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Axis != "rollout" || payload.Status != status || payload.Generation != 3 || payload.ObservedVersion != 7 || payload.DefinitionDigest != strings.Repeat("b", 64) ||
+				payload.GraphID != "graph" || payload.PlanHash != strings.Repeat("c", 64) || payload.CommitSHA != strings.Repeat("a", 40) || len(payload.Diagnostics) != 1 {
+				t.Fatal("rollout identity or guidance lost", payload)
+			}
+			var diagnostic faas.EnvironmentGitOpsDiagnostic = payload.Diagnostics[0]
+			if diagnostic.Resource != "workload/api" || diagnostic.Code != "environment_workload_build_failed" || diagnostic.Action == "" {
+				t.Fatal("safe guidance lost", diagnostic)
+			}
+			encoded, err := json.Marshal(payload)
+			var before, after any
+			if err != nil || json.Unmarshal([]byte(body), &before) != nil || json.Unmarshal(encoded, &after) != nil {
+				t.Fatal(err)
+			}
+			original, _ := json.Marshal(before)
+			roundTrip, _ := json.Marshal(after)
+			if string(original) != string(roundTrip) {
+				t.Fatalf("wire metadata changed: %s", encoded)
+			}
+		})
+	}
+}
+
 func TestEnvironmentGitOpsReviewedRevisionAndOverrideTransport(t *testing.T) {
 	sha, digest := strings.Repeat("a", 40), strings.Repeat("b", 64)
 	verified := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
@@ -50,7 +80,7 @@ func TestEnvironmentGitOpsReviewedRevisionAndOverrideTransport(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(faas.EnvironmentGitOpsStatusResponse{Source: faas.EnvironmentGitSource{
 				ApprovedRevisionID: "approved", SourceCommitSHA: sha, SourceDefinitionDigest: digest, SourceVerifiedAt: &verified,
 				SourceErrorCode: "environment_git_source_unavailable",
-			}})
+			}, WorkloadEvidence: &faas.EnvironmentWorkloadActivationEvidence{CommitSHA: strings.Repeat("c", 40), RevisionID: "approved"}})
 		}
 	}))
 	defer server.Close()
@@ -71,11 +101,23 @@ func TestEnvironmentGitOpsReviewedRevisionAndOverrideTransport(t *testing.T) {
 	}
 	status, err := client.GetEnvironmentGitOps(ctx, "my project", "production")
 	if err != nil || status.Source.SourceCommitSHA != sha || status.Source.SourceDefinitionDigest != digest ||
+		status.WorkloadEvidence == nil || status.WorkloadEvidence.CommitSHA != strings.Repeat("c", 40) ||
 		status.Source.SourceVerifiedAt == nil || !status.Source.SourceVerifiedAt.Equal(verified) ||
 		status.Source.SourceErrorCode != "environment_git_source_unavailable" || status.Source.ApprovedRevisionID != "approved" {
 		t.Fatalf("source availability/authority: %+v %v", status, err)
 	}
 	if requests != 4 {
 		t.Fatalf("requests: %d", requests)
+	}
+}
+
+func TestGitLabProtectedSourceUsesOAuthRepositoryIdentity(t *testing.T) {
+	spec := faas.EnvironmentGitSourceSpec{Provider: "gitlab", RepositoryID: 41, Repository: "team/subgroup/shop", Ref: "refs/heads/main", ManifestPath: "production.yaml", Mode: "report", ApprovalPolicy: "protected_branch"}
+	if err := spec.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	spec.InstallationID = 42
+	if err := spec.Validate(); err == nil {
+		t.Fatal("GitLab accepted a GitHub installation")
 	}
 }

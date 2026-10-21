@@ -1015,7 +1015,7 @@ func TestHostPolicyStaticEgressRulesMultiple(t *testing.T) {
 // subnet, the public edge on 80/443, and ICMP. Bridge traffic is dropped
 // before the public and source-CIDR rules, which would otherwise admit it
 // to any listener on the node's own addresses (spec §11,
-// ADR-20261020120000).
+// ADR-20261020123000).
 func TestHostPolicyInputAdmitsGuestsOnlyToBridgeServicesAndEdge(t *testing.T) {
 	p := DefaultHostPolicy
 	p.PrivateInputAllowRules = []PrivateInputAllowRule{{Source: netip.MustParsePrefix("10.0.0.0/8"), Ports: []int{5432}}}

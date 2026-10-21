@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.project_environment_promotion_response_status import (
+    ProjectEnvironmentPromotionResponseStatus,
+    check_project_environment_promotion_response_status,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -28,6 +32,8 @@ class ProjectEnvironmentPromotionResponse:
     to_environment: str
     promotion_hash: str
     workloads: list[ProjectEnvironmentPromotionWorkloadResponse]
+    status: ProjectEnvironmentPromotionResponseStatus | Unset = UNSET
+    """A running health-gated promotion has been accepted and has not completed cutover and verification."""
     sync_config: bool | Unset = UNSET
     """Whether this promotion copied the source's non-secret configuration."""
     release_graph: ProjectEnvironmentPromotionReleaseGraphResponse | Unset = UNSET
@@ -50,6 +56,10 @@ class ProjectEnvironmentPromotionResponse:
             workloads_item = workloads_item_data.to_dict()
             workloads.append(workloads_item)
 
+        status: str | Unset = UNSET
+        if not isinstance(self.status, Unset):
+            status = self.status
+
         sync_config = self.sync_config
 
         release_graph: dict[str, Any] | Unset = UNSET
@@ -68,6 +78,8 @@ class ProjectEnvironmentPromotionResponse:
                 "workloads": workloads,
             }
         )
+        if status is not UNSET:
+            field_dict["status"] = status
         if sync_config is not UNSET:
             field_dict["sync_config"] = sync_config
         if release_graph is not UNSET:
@@ -100,6 +112,13 @@ class ProjectEnvironmentPromotionResponse:
 
             workloads.append(workloads_item)
 
+        _status = d.pop("status", UNSET)
+        status: ProjectEnvironmentPromotionResponseStatus | Unset
+        if isinstance(_status, Unset):
+            status = UNSET
+        else:
+            status = check_project_environment_promotion_response_status(_status)
+
         sync_config = d.pop("sync_config", UNSET)
 
         _release_graph = d.pop("release_graph", UNSET)
@@ -116,6 +135,7 @@ class ProjectEnvironmentPromotionResponse:
             to_environment=to_environment,
             promotion_hash=promotion_hash,
             workloads=workloads,
+            status=status,
             sync_config=sync_config,
             release_graph=release_graph,
         )

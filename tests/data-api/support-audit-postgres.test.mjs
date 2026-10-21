@@ -9,8 +9,21 @@ const directory=process.env.DATA_API_SUPPORT_CONSOLE_DIR
 test('PostgreSQL audit persists history, isolates tenants, retries outages and replays outbox after restart',{skip:!directory||!process.env.DATA_API_TEST_DATABASE_URL,timeout:30000},async t=>{
  const pg=createRequire(join(directory,'package.json'))('pg'),{postgresAudit}=await import(pathToFileURL(join(directory,'audit-postgres.mjs')))
  const suffix=randomBytes(5).toString('hex'),db='support_audit_'+suffix,role='audit_writer_'+suffix,password=randomBytes(16).toString('hex'),admin=new pg.Client({connectionString:process.env.DATA_API_TEST_DATABASE_URL});await admin.connect()
- const outbox=await mkdtemp('/tmp/gregale-audit-outbox-');let owner,store
- t.after(async()=>{await store?.close();await owner?.end();await admin.query('DROP DATABASE IF EXISTS "'+db+'" WITH (FORCE)');await admin.query('DROP ROLE IF EXISTS "'+role+'"');await admin.end();await rm(outbox,{recursive:true,force:true})})
+ const outbox=await mkdtemp('/tmp/gregale-audit-outbox-');let owner,store,services=[]
+ t.after(async()=>{
+  await store?.close()
+  for(const service of services)if(service.listening){service.closeAllConnections();await new Promise(resolve=>service.close(resolve))}
+  // HTTP close starts asynchronous audit-pool cleanup. Wait for its actual
+  // connections to retire before DROP DATABASE can terminate a leased client.
+  let connections
+  for(let attempt=0;attempt<250;attempt++){
+   connections=Number((await admin.query('SELECT count(*) FROM pg_stat_activity WHERE datname=$1 AND usename=$2',[db,role])).rows[0].count)
+   if(connections===0)break
+   await new Promise(resolve=>setTimeout(resolve,20))
+  }
+  assert.equal(connections,0,'Support console audit connections must close before database teardown')
+  await owner?.end();await admin.query('DROP DATABASE IF EXISTS "'+db+'" WITH (FORCE)');await admin.query('DROP ROLE IF EXISTS "'+role+'"');await admin.end();await rm(outbox,{recursive:true,force:true})
+ })
  await admin.query('CREATE ROLE "'+role+'" LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD \''+password+'\'')
  await admin.query('CREATE DATABASE "'+db+'"')
  const ownerURL=new URL(process.env.DATA_API_TEST_DATABASE_URL);ownerURL.pathname='/'+db;owner=new pg.Client({connectionString:ownerURL.toString()});await owner.connect()
@@ -43,7 +56,7 @@ test('PostgreSQL audit persists history, isolates tenants, retries outages and r
  const provider=await demoProvider(),data=await demoData(provider),configConsole=settings({SUPPORT_ORIGIN:'http://127.0.0.1:1',SUPPORT_OIDC_ISSUER:provider.issuer,SUPPORT_OIDC_CLIENT_ID:'support-console-demo',SUPPORT_DATA_AUDIENCE:'support-data-demo',SUPPORT_DATA_API_URL:data.url,SUPPORT_SCHEMA_FINGERPRINT:'a'.repeat(64),SUPPORT_SESSION_KEY:randomBytes(32).toString('base64url'),SUPPORT_AUDIT_DATABASE_URL:config.url,SUPPORT_AUDIT_OUTBOX_DIR:outbox,SUPPORT_AUDIT_ADMINS:'[{"subject":"agent-a","tenant":"shop-a"}]'})
  const definition=JSON.parse(await readFile(join(directory,'support-console.json'),'utf8')),server=await createConsole(configConsole,definition,{auditSink:()=>{}})
  await listen(server);configConsole.origin='http://127.0.0.1:'+server.address().port
- t.after(async()=>{for(const service of [server,data.server,provider.server])if(service.listening){service.closeAllConnections();await new Promise(resolve=>service.close(resolve))}})
+ services=[server,data.server,provider.server]
  const start=await fetch(configConsole.origin+'/auth/login',{redirect:'manual'}),loginCookie=start.headers.getSetCookie()[0].split(';')[0],authorize=new URL(start.headers.get('location'));authorize.searchParams.set('agent','a')
  const authorized=await fetch(authorize,{redirect:'manual'}),callback=await fetch(authorized.headers.get('location'),{redirect:'manual',headers:{Cookie:loginCookie}}),cookie=callback.headers.getSetCookie().find(v=>v.startsWith('support_session=')).split(';')[0]
  const response=await fetch(configConsole.origin+'/api/data?resource=cases&purpose=export',{headers:{Cookie:cookie}});assert.equal(response.status,200)

@@ -14,7 +14,8 @@ func TestProductAccessDefaultsAndExplicitPolicy(t *testing.T) {
 		role string
 		want api.ProductPermissions
 	}{
-		{"owner", api.ProductPermissions{ViewWork: true, RunWork: true, ViewBilling: true}},
+		// The workspace owner manages billing details by default (ADR-20261020120000).
+		{"owner", api.ProductPermissions{ViewWork: true, RunWork: true, ViewBilling: true, ManageBilling: true}},
 		{"admin", api.ProductPermissions{ViewWork: true, RunWork: true, ViewBilling: true}},
 		{"member", api.ProductPermissions{ViewWork: true}},
 		{"operator", api.ProductPermissions{}},
@@ -30,8 +31,16 @@ func TestProductAccessDefaultsAndExplicitPolicy(t *testing.T) {
 	if got := EffectiveAccess(&p, "operator"); !got.RunWork || !got.ViewWork || got.ViewBilling {
 		t.Fatalf("operator: %+v", got)
 	}
-	if got := EffectiveAccess(&p, "billing"); !got.ViewBilling || got.ViewWork || got.RunWork {
+	if got := EffectiveAccess(&p, "billing"); !got.ViewBilling || got.ViewWork || got.RunWork || got.ManageBilling {
 		t.Fatalf("billing: %+v", got)
+	}
+	all := api.ProductAccessPolicy{Roles: map[string][]api.ProductPermission{"finance": {api.ProductPermissionViewWork, api.ProductPermissionRunWork,
+		api.ProductPermissionViewBilling, api.ProductPermissionManagePlan, api.ProductPermissionManageTeam, api.ProductPermissionManageBilling}}}
+	if err := ValidateAccess(&all); err != nil {
+		t.Fatalf("a role with every permission: %v", err)
+	}
+	if got := EffectiveAccess(&all, "finance"); !got.ManageBilling || !got.ManageTeam {
+		t.Fatalf("finance: %+v", got)
 	}
 	for _, role := range []string{"owner", "admin", "member", "blocked", "unknown"} {
 		if got := EffectiveAccess(&p, role); got != (api.ProductPermissions{}) {

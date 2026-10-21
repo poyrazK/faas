@@ -70,3 +70,28 @@ are added; no VM, scheduler or routing lifecycle changes are introduced. Fleet
 load or dependency outages can delay collection and leave explicit unknown gaps.
 Notifications, active public probes, arbitrary environment selection, worker/job
 health and automatic recovery remain separate subsequent slices.
+
+## Amendment 1 (2026-10-21): quiet apps are observed every 75 seconds
+
+On production-us the collector re-assessed every app every 30 seconds while one
+of 103 apps had a live instance. Each assessment issued about a dozen
+PostgreSQL statements and three PromQL queries, and the health queries were
+nearly all of Prometheus's query load on the 2-vCPU control plane.
+
+An app is quiet when its new assessment adds no history entry (unchanged and
+fresh), its capacity is known with no instances and no required capacity, and
+it counted no requests. Only a deploy or a wake can change such an assessment,
+so its next check is scheduled `AppHealthCollectorQuietInterval` (75 seconds)
+later instead of 30. Unknown capacity keeps 30 seconds so a failed instance
+read is retried soon. Unknown request evidence does not: an idle app has no
+request series, so its request check is `request_evidence_unavailable` (status
+`unknown`) on every observation, the same as during a Prometheus outage, and
+observing it sooner learns nothing new. (The first version also required a
+known status and request evidence; on production-us 84 of 89 idle apps were
+`unknown` only for request evidence, so it never applied.)
+
+The quiet interval plus a lost lease (30 s), the collection timeout (10 s) and
+one idle sweep (1 s) stays under the 2-minute evidence age, so a quiet app never
+records a gap; a test pins that bound. The history page's `interval_seconds`
+remains the 30-second minimum target spacing it documents. A quiet app's first
+observation after a deploy or wake can come up to 45 seconds later than before.

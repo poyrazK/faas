@@ -12986,7 +12986,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/PlanLimit' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '409':
+          description: Conflict; deploy_settings_conflict means the guarded app, deployment or targeted settings changed and no settings were updated.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '422': { $ref: '#/components/responses/InvalidMinInstances' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     delete:
@@ -23735,6 +23739,170 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/deployment-cron-staging:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: getDeploymentCronStagingSnapshot
+      summary: Read the HTTP cron set and its deployment staging revision.
+      description: |
+        Snapshots only HTTP scheduling intent for the owned app. Command crons,
+        execution progress and server-held original rows are excluded.
+      responses:
+        '200':
+          description: The captured HTTP scheduling set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentCronStagingSnapshot' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [deployments]
+      operationId: applyDeploymentCronStaging
+      summary: Prepare deferred cron activation or recover legacy cron staging.
+      description: |
+        Prepare retains active schedules until the accepted production release is
+        live and owns all traffic. Track_upload binds an owned upload for autonomous
+        recovery of cached committed submissions. Cancel fences an unsubmitted intent.
+        Repeating prepare reads its durable prepared, activated, conflict or discarded
+        status. Legacy stage/restore replaces the complete set under locks. Command
+        crons are preserved and count toward app and account quotas. The exact
+        app, unchanged latest deployment, revision, owner and canonical intent
+        guard staging and cleanup. Ordinary HTTP scheduling edits, including
+        same-value updates, invalidate ownership; scheduler firing and suspension
+        bookkeeping do not. Cleanup before a delayed stage fences it out. Accepted
+        or uncertain deployment submission must retain staging. No builds are
+        created; no unchecked fallback or HTTP response replay cache is used.
+        Recovery restores scheduling configuration, not already dispatched work.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeploymentCronStagingRequest' }
+      responses:
+        '200':
+          description: The guarded cron operation and durable activation status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentStagingReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '402':
+          description: The replacement exceeds the app or account cron quota, or the plan does not allow crons.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: deployment_cron_conflict; app, deployment, HTTP cron set, revision or ownership changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Cron staging storage is unavailable; scheduling recovery remains pending.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/deployment-staging:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: getDeploymentStagingSnapshot
+      summary: Read the deployment policy revision and current profiling and tracing.
+      description: |
+        Atomically snapshots the owned app's policy group and latest deployment
+        identity. Use this snapshot to prepare a private pre-submission journal.
+        This endpoint does not change configuration or enqueue builds.
+      responses:
+        '200':
+          description: The current policy snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentStagingSnapshot' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [deployments]
+      operationId: applyDeploymentStaging
+      summary: Atomically stage or recover profiling and tracing for one deploy attempt.
+      description: |
+        Requires the same write scope and MFA checks as app settings PATCH.
+        Only profiling and tracing are supported. The exact app, unchanged latest
+        deployment and policy revision protect staging. An ownership token and
+        canonical intent digest protect cleanup against concurrent edits and ABA
+        changes. Cleanup before a delayed stage fences that stage out. No builds
+        are created. The endpoint uses its own revision protocol rather than the
+        HTTP response replay cache. A conflict leaves cleanup pending; there is
+        no unchecked fallback. Accepted or uncertain deployment submission must
+        preserve staged policies rather than requesting cleanup.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeploymentStagingRequest' }
+      responses:
+        '200':
+          description: The policies were staged or their cleanup completed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentStagingReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: deployment_staging_conflict; app, deployment, policy revision or ownership changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Staging storage is unavailable; the journal remains pending.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/deployment-submissions/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: attempt_id
+        in: path
+        required: true
+        description: The opaque attempt ID persisted before deployment submission.
+        schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+    get:
+      tags: [deployments]
+      operationId: getDeploymentSubmission
+      summary: Read the immutable acceptance receipt for a deployment attempt.
+      description: |
+        Requires deployment-read access to the owned app. Returns the original
+        deployment even after failure or supersession. A 404 means no retained
+        receipt is available; it does not establish rejection and must never
+        trigger automatic resubmission. Receipts expire when their deployment
+        or app is purged. This lookup does not enqueue builds or change traffic.
+      responses:
+        '200':
+          description: The immutable accepted submission receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentSubmissionReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Receipt storage is unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/deployments:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -23835,6 +24003,7 @@ paths:
                   description: "JSON array of workflow definitions (plan-gated)."
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/DeploymentAttemptID'
       responses:
         '202':
           description: The deployment whose build has been accepted and queued.
@@ -24106,6 +24275,7 @@ paths:
             example: {"repo":"onebox-faas/hello","ref":"main","format":"tarball"}
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/DeploymentAttemptID'
       responses:
         '202':
           description: The source-ref deployment whose build has been accepted and queued.
@@ -24217,6 +24387,7 @@ paths:
                   $ref: '#/components/schemas/SourceTarballDeployRequest'
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/DeploymentAttemptID'
       responses:
         '202':
           description: The local-tarball deployment whose build has been accepted and queued.
@@ -24345,12 +24516,19 @@ paths:
         schema: { type: string }
         description: Upload session id to finalize (returned by POST /v1/uploads).
     post:
+      parameters:
+        - $ref: '#/components/parameters/DeploymentAttemptID'
       tags: [uploads]
       operationId: commitUpload
       summary: Finalize the session, validate the tarball, enqueue the build.
       responses:
         '201':
           description: Deployment created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentResponse' }
+        '202':
+          description: Previously accepted upload deployment recovered by its submission receipt.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DeploymentResponse' }
@@ -34314,6 +34492,31 @@ paths:
         On over-quota the response carries `can_apply=false`
         (and `crons_not_allowed=true` for Free plan) so the CLI
         can branch without a second request.
+      parameters:
+        - name: Project-Add-Services
+          in: header
+          required: false
+          description: Require planned HTTP source service additions; disabled until native qualification. No removals or configuration changes.
+          schema: { type: string, enum: [required] }
+        - name: Project-Stabilization
+          in: header
+          required: false
+          description: Plan a progressive release with ten minutes of monitoring after rollout success.
+          schema: { type: string, enum: [required] }
+        - name: Project-Progressive
+          in: header
+          required: false
+          description: Preview a progressive project rollout with immutable paired configuration and verified health.
+          schema: { type: string, enum: [required] }
+        - name: Project-Worker-Health
+          in: header
+          required: false
+          description: Require real worker job outcomes in an atomic verified worker release.
+          schema: { type: string, enum: [required] }
+        - name: Project-Release-Mode
+          in: header
+          description: Set atomic to preview a source-only safe project release against the active production graph.
+          schema: { type: string, enum: [atomic, atomic-verify, atomic-config-verify, atomic-migrate-verify, atomic-config-migrate-verify, atomic-verify-workers, atomic-config-verify-workers, atomic-migrate-verify-workers, atomic-config-migrate-verify-workers] }
       requestBody:
         required: true
         content:
@@ -34393,6 +34596,133 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/project-submissions/{attempt_id}:
+    get:
+      tags: [projects]
+      operationId: getProjectSubmission
+      summary: Read a durable project apply acceptance receipt.
+      description: Recover the selected workload set and accepted deployment identities for an owned attempt. Reads do not enqueue builds, change configuration, or restart interrupted submissions.
+      parameters:
+        - name: attempt_id
+          description: The opaque project apply attempt recorded before submission.
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+      responses:
+        '200':
+          description: Current project submission and accepted workload identities. Reads never enqueue builds.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectSubmissionReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/project-submissions/{attempt_id}/{action}:
+    post:
+      tags: [projects]
+      operationId: controlProjectRelease
+      summary: Control an owned progressive deployment or admit planned schema cleanup.
+      description: Persist a generation-fenced operator decision. Before full activation abort preserves the unchanged baseline. At full traffic new unassigned work is blocked while fresh baseline health permits paired graph/config restoration. Recovery retries that bounded verification without forcing health or overwriting newer intent. Reusing the same request identity and generation is idempotent. Contract admission additionally requires fresh current health and drained retained versions and work; it permanently fences retired deployments before queuing the source-declared cleanup task.
+      parameters:
+        - name: attempt_id
+          in: path
+          required: true
+          description: Durable project deployment attempt.
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+        - name: action
+          in: path
+          required: true
+          description: Abort a running canary, retry baseline recovery, or run declared schema cleanup after stabilization and drain barriers.
+          schema: { type: string, enum: [abort, recover, contract, resolve-contract] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { $ref: '#/components/schemas/ProjectReleaseControlRequest' }
+                - { $ref: '#/components/schemas/ProjectMigrationRecoveryRequest' }
+      responses:
+        '200':
+          description: Durable decision and current receipt; acceptance does not imply restoration has completed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectSubmissionReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410':
+          description: Retained rollback baseline expired; deploy a compatible replacement.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/safe-deploy:
+    post:
+      tags: [projects]
+      operationId: safeApplyProject
+      summary: Build an existing HTTP project and atomically publish its ready release.
+      description: Requires an active production release set, the complete project, no_triggers=true, and a durable attempt. Candidates receive zero traffic and publish only after every candidate completes readiness. Project-Add-Services opts into independent HTTP source additions behind native qualification admission. All serving services must remain unchanged. Additions cannot combine with configuration, secrets, migrations, workers or progressive rollout. Verified releases probe existing critical routes and restore the original membership on regression; new services are checked by startup readiness. Failed or withdrawn additions remain quota-counted reservations without a default route and may be retried with identical settings.
+      parameters:
+        - name: Project-Add-Services
+          in: header
+          required: false
+          description: Apply the scanned independent HTTP service additions after native qualification; preserve existing membership and configuration.
+          schema: { type: string, enum: [required] }
+        - name: Project-Stabilization
+          in: header
+          required: false
+          description: Require ten minutes of guarded health monitoring after progressive rollout success.
+          schema: { type: string, enum: [required] }
+        - name: Project-Progressive
+          in: header
+          required: false
+          description: Submit a progressive project rollout behind native qualification admission.
+          schema: { type: string, enum: [required] }
+        - name: Project-Worker-Health
+          in: header
+          required: false
+          description: Keep the required worker delivery health policy when applying the scanned release.
+          schema: { type: string, enum: [required] }
+        - name: Project-Release-Mode
+          in: header
+          description: atomic-verify enables durable probes; atomic-config-verify pairs configuration; atomic-migrate-verify and atomic-config-migrate-verify also admit one backward-compatible migration.
+          schema: { type: string, enum: [atomic, atomic-verify, atomic-config-verify, atomic-migrate-verify, atomic-config-migrate-verify, atomic-verify-workers, atomic-config-verify-workers, atomic-migrate-verify-workers, atomic-config-migrate-verify-workers] }
+        - name: Deployment-Attempt-ID
+          in: header
+          required: true
+          description: Durable identity for this safe project submission and release operation.
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+        - name: plan_token
+          in: query
+          description: Scan token bound to the safe release baseline.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/ProjectApplyRequest' }
+      responses:
+        '200':
+          description: Accepted candidate deployments and durable safe release state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/projects:
     get:
       tags: [projects]
@@ -34425,6 +34755,14 @@ paths:
         the just-inserted apps and inserts crons in a follow-up
         pass; the quota check ran inside ApplyProjectPlan's Tx.
       parameters:
+        - name: Project-Retry-Targets
+          in: header
+          description: JSON object mapping selected app IDs to their latest failed deployment IDs. Requires Deployment-Attempt-ID, exact only selection, no_triggers=true, and no secret or exclusion changes. Forces unchanged workloads to rebuild; rejects stale targets. Acceptance checks the target under the app lock.
+          schema: { type: string, maxLength: 32768 }
+        - name: Deployment-Attempt-ID
+          in: header
+          description: Durable project submission identity. Reuse only for the same request; inspect its receipt after an uncertain response.
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
         - name: plan_token
           in: query
           required: false
@@ -34471,6 +34809,73 @@ paths:
         '403': { $ref: '#/components/responses/PlanLimit' }
         '409': { $ref: '#/components/responses/ValidationFailed' }
         '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/release-secrets:
+    post:
+      tags: [projects]
+      operationId: stageProjectReleaseSecrets
+      summary: Stage encrypted application secret versions for an atomic HTTP release.
+      description: Requires MFA and secrets write permission. Admission defaults off pending native qualification. Values are encrypted before persistence; the response contains opaque version IDs. Request replay is bounded to the staging window. Existing production keys only; managed credentials are unsupported.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Existing project slug owning the proposed secret snapshots.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectReleaseSecretStageRequest' }
+      responses:
+        '200':
+          description: Immutable staged version references, without encrypted or plaintext values.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectReleaseSecretStageResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/deployment-readiness:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug in the authenticated account; a missing project can be checked as a proposed first deployment.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+    post:
+      tags: [projects]
+      operationId: checkProjectDeployment
+      summary: Check project deployment or environment promotion readiness without submitting work.
+      description: |
+        Evaluates declared metadata and current account/project state without source
+        uploads, credential staging, probe execution, builds, approvals or writes.
+        Only key names and bounded remedies appear in the report. Status is blocked
+        when a definite blocker exists, otherwise unknown when a required read fails,
+        otherwise ready. Ready applies to control-plane prerequisites; deployment
+        still validates source bytes and runtime health. A state hash is provided
+        only when required state was readable. It is a comparison identity, not
+        an approval or an apply token. Deployment admission remains authoritative.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectDeploymentCheckRequest' }
+      responses:
+        '200':
+          description: Current prerequisite report, including blocked and unknown outcomes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectDeploymentReadiness' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}:
@@ -34962,6 +35367,146 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PreviewEnvironmentGitPlanResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/promotion-plan:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: previewEnvironmentGitPromotion
+      summary: Preview image promotion from a proven serving environment release.
+      description: Read-only, value-redacted proposal. Reads both bound sources, source release, current graph evidence,
+        artifacts, target intent and ownership on one snapshot. Source builds without a portable artifact reference
+        are blocked. The hash grants no approval or execution authority; expected_plan_hash rejects changed observations.
+        Target review and fresh qualification remain required.
+      requestBody:
+        required: true
+        description: Source environment, immutable target-manifest commit, and optional previously reviewed observation
+          hash.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewEnvironmentGitPromotionRequest'
+      responses:
+        '200':
+          description: Read-only promotion proposal; blockers prevent patch and manifest export.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvironmentGitPromotionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/releases:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    get:
+      tags:
+      - projects
+      operationId: listEnvironmentGitReleases
+      summary: List retained GitOps serving releases and current rollback eligibility.
+      description: Verifies the immutable target manifest commit through the bound provider and
+        assesses each release using the rollback planner on one scoped observation snapshot per page.
+        Only completed serving history of the current source is listed. Eligibility can change
+        after observation. Release compatibility deadlines do not guarantee artifact retention.
+        This read-only catalog never pins artifacts or authorizes rollback execution.
+      parameters:
+      - name: target_commit_sha
+        in: query
+        required: true
+        description: Immutable commit containing the target manifest whose configuration will be preserved.
+        schema:
+          type: string
+          pattern: '^[a-f0-9]{40}$'
+      - name: before
+        in: query
+        required: false
+        description: next_before release UUID from the previous recovery page in this Git source scope.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Bounded recovery catalog with current eligibility and public artifact identities.
+          headers:
+            Cache-Control:
+              description: Recovery observations must always be refreshed before use.
+              schema:
+                type: string
+                enum: [no-store]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListEnvironmentGitReleasesResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/rollback-plan:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: previewEnvironmentGitRollback
+      summary: Propose a code rollback from a retained GitOps serving release.
+      description: Read-only, value-redacted proposal selecting exact retained artifacts in this environment.
+        Rechecks historical serving evidence, current artifact trust, identity mappings, target intent and ownership
+        on one snapshot. It preserves current configuration and changes only compatible workload sources.
+        Review the observation hash before export; normal Git approval and fresh qualification remain required.
+      requestBody:
+        required: true
+        description: Retained release UUID, immutable target-manifest commit, and optional previously reviewed observation
+          hash.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewEnvironmentGitRollbackRequest'
+      responses:
+        '200':
+          description: Read-only rollback proposal; blockers prevent patch and manifest export.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvironmentGitRollbackResponse'
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -35825,17 +36370,33 @@ paths:
         required: true
         description: Target environment receiving the promotion preview.
         schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
-      - name: from
-        in: query
-        required: true
-        description: Source environment whose live releases are compared with the target.
-        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
-      - name: sync_config
-        in: query
-        required: false
-        description: Opt in to copying the source's non-secret configuration atomically with the target release graph.
-        schema: { type: boolean, default: false }
     get:
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Source environment whose live releases are compared with the target.
+          schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+        - name: sync_config
+          in: query
+          required: false
+          description: Opt in to copying the source's non-secret configuration atomically with the target release graph.
+          schema: { type: boolean, default: false }
+        - name: verify
+          in: query
+          required: false
+          description: Require destination HTTP probes before cutover and success; requires snapshot-aware sync_config and qualified operator admission.
+          schema: { type: boolean, default: false }
+        - name: migrate
+          in: query
+          required: false
+          description: Run exactly one source release command as a backward-compatible destination migration before health probes. Requires sync_config, verify and qualified migration admission. Schema changes remain after code/config rollback.
+          schema: { type: boolean, default: false }
+        - name: workers
+          in: query
+          required: false
+          description: Promote HTTP services and one existing production push worker with coordinated job admission and delivery health. Requires sync_config and verify; migration combinations are unsupported.
+          schema: { type: boolean, default: false }
       tags: [projects]
       operationId: getProjectEnvironmentPromotionPreview
       summary: Preview promotion of live workloads between project environments.
@@ -35851,6 +36412,13 @@ paths:
         Protected-target promotions from an active source release set also
         require the latest passing health and smoke qualification, which is
         bound to that immutable release-set ID and expires after 24 hours.
+        With `verify=true`, the exact GET/HEAD critical probe policy is also
+        captured in the approval identity. The first milestone requires pinned
+        HTTP configuration, a probe for every HTTP workload, at most five probes,
+        and at least 21 minutes of revision retention. With `workers=true`, one
+        existing production push worker participates in the same cutover. Its
+        destination binding and credentials remain unchanged; startup proof and
+        real delivery health gate promotion.
       responses:
         '200':
           description: Promotion preview and immutable promotion identity.
@@ -35861,6 +36429,42 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+    post:
+      tags: [projects]
+      operationId: previewProjectEnvironmentPromotionSecrets
+      summary: Preview promotion with destination production secret changes.
+      description: |
+        Read-only, bounded preview containing immutable secret version references
+        from the authenticated release-secrets staging endpoint. Requires MFA,
+        secrets write permission, sync_config, verify, complete HTTP release graphs
+        and production as the destination. Existing application-owned persistent
+        secret keys only; workers, migrations, managed credentials, explicit grants
+        and reload hooks are refused. Each mentioned workload supplies a complete
+        secret map; an empty map removes its serving secrets and omitted workloads
+        inherit production versions. Source secrets are never copied. Approval and
+        execution revalidate the exact versions and destination baseline. New
+        admissions also require qualified operator rollout for the secrets scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionSecretPreviewRequest' }
+      responses:
+        '200':
+          description: Promotion preview with secret key changes and version references only.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionPreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Secret releases or destination verification are unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/projects/{slug}/environments/{environment}/promote:
     parameters:
@@ -35892,6 +36496,15 @@ paths:
         failed verification automatically rolls back the promotion. Target
         configuration remains target-scoped unless the token was created with
         `sync_config=true`; secrets are never copied from the source environment.
+        A health-gated promotion returns 202 with status=running. A leased worker
+        checks dark candidates in the destination before atomic cutover, then
+        requires fresh post-cutover health. Check the promotion status endpoint
+        for phase, evidence, deadline and any guarded automatic rollback.
+        Excess verified promotions wait durably with health.phase=queued and an
+        admission receipt for at most 15 minutes. Dispatch revalidates the approved
+        intent before preparing workloads and starts a fresh health window.
+        A full waiting queue returns 429 (project_promotion_queue_full) with
+        Retry-After; no operation is accepted and approval remains available.
       requestBody:
         required: true
         content:
@@ -35900,6 +36513,11 @@ paths:
       responses:
         '200':
           description: Promotion result for each project workload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionResponse' }
+        '202':
+          description: Health-gated promotion accepted; destination health and cutover are pending.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionResponse' }
@@ -35987,6 +36605,102 @@ paths:
               schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionStatusResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/abort:
+    parameters:
+      - { name: slug, in: path, required: true, description: Project slug owning the abort request., schema: { type: string } }
+      - { name: environment, in: path, required: true, description: Destination environment of the promotion being aborted., schema: { type: string } }
+      - { name: promotion, in: path, required: true, description: Durable promotion identifier to abort., schema: { type: string, format: uuid } }
+    post:
+      tags: [projects]
+      operationId: abortProjectEnvironmentPromotion
+      summary: Abort an in-progress environment promotion.
+      description: A durable generation-fenced operator decision. Before cutover, abort preserves destination intent and retires unused candidates. After cutover, abort or recover requires fresh server-owned baseline health and worker startup proof before atomic restoration. Recovery never rebuilds or extends retention. Migration incidents use recover-migration. Identical request replay returns that decision's durable receipt even after a newer decision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPromotionControlRequest' }
+      responses:
+        '200':
+          description: Terminal operator decision acknowledgement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '202':
+          description: Restoration requested; fresh baseline checks are pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Stale generation, reused request identity, unsupported phase, or changed destination intent; inspect promotion status.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover:
+    parameters:
+      - { name: slug, in: path, required: true, description: Project slug owning the restoration recovery request., schema: { type: string } }
+      - { name: environment, in: path, required: true, description: Destination environment receiving the restored baseline., schema: { type: string } }
+      - { name: promotion, in: path, required: true, description: Durable promotion identifier whose blocked restoration is being retried., schema: { type: string, format: uuid } }
+    post:
+      tags: [projects]
+      operationId: recoverProjectEnvironmentPromotion
+      summary: Retry guarded restoration of a blocked environment promotion.
+      description: Retry a blocked restoration with a generation-fenced operator decision. Fresh server-owned baseline health and worker startup proof are required before atomic restoration. The retained baseline is reused without rebuilding or extending retention; migration incidents require recover-migration. An identical request replays its original durable receipt even after a newer decision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPromotionControlRequest' }
+      responses:
+        '200':
+          description: Terminal acknowledgement of the restoration recovery decision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '202':
+          description: Recovery accepted; baseline health and worker startup checks are pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Recovery rejected because the inspected generation, request identity, phase or destination intent no longer permits restoration.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration:
+    parameters:
+      - { name: slug, in: path, required: true, description: Project slug owning the migration recovery request., schema: { type: string } }
+      - { name: environment, in: path, required: true, description: Destination environment whose migration was inspected., schema: { type: string } }
+      - { name: promotion, in: path, required: true, description: Durable promotion identifier with the interrupted migration task., schema: { type: string, format: uuid } }
+    post:
+      tags: [projects]
+      operationId: recoverProjectEnvironmentPromotionMigration
+      summary: Recover an interrupted promotion migration without replaying SQL.
+      description: Records explicit database inspection, requests scheduler-confirmed teardown of the original runtime, and either resumes the captured promotion's health checks or resolves the incident through a different verified active repair promotion. Original task outcomes remain unchanged. Same-request replay returns the durable acknowledgement.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPromotionMigrationRecoveryRequest' }
+      responses:
+        '200':
+          description: Existing terminal recovery acknowledgement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionMigrationRecovery' }
+        '202':
+          description: Recovery accepted; scheduler teardown or server verification is pending.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionMigrationRecovery' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Task, generation, runtime or destination intent changed; inspect current promotion status.' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback:
@@ -37533,8 +38247,8 @@ paths:
         - name: outcome
           in: query
           required: false
-          description: Only events with this outcome; detected, warned and blocked are kind=waf detections.
-          schema: { type: string, enum: [matched, logged, detected, warned, blocked] }
+          description: Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
+          schema: { type: string, enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed] }
         - name: since
           in: query
           required: false
@@ -37579,6 +38293,11 @@ paths:
           required: false
           description: How far back to total hit counts.
           schema: { type: string, enum: ['1h', '24h', '7d'], default: '24h' }
+        - name: series
+          in: query
+          required: false
+          description: Also return each rule's hourly totals (ADR-20261020105001).
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Per-rule counts.
@@ -37587,6 +38306,34 @@ paths:
               schema: { $ref: '#/components/schemas/EdgeRuleStatsResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/suggestions:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeRuleSuggestions
+      summary: Protection recipes suggested from an app's own traffic.
+      description: |
+        ADR-20261020105000. Reads the app's request telemetry over the last 7 days (or
+        the plan's telemetry retention when shorter) and recommends
+        protection recipes (ADR-986) with the parameters to add them with:
+        blocking unverified bots when bots are a noticeable share of
+        requests, rate-limiting busy or failing sign-in paths, and limiting
+        /admin to known IPs. Recipes already added and paths an enabled rule
+        of the same kind covers are skipped. Read-only; apply a suggestion
+        with the recipe (dashboard or `gregale edge-rules recipe`). Plans
+        without request analytics get 402.
+      responses:
+        '200':
+          description: Ranked suggestions, possibly empty.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleRecipeSuggestionsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -63448,6 +64195,19 @@ components:
         The browser sets it automatically on `/login` / `/signup`;
         the SDK uses the device-code flow instead and never sets
         this cookie.
+    DeploymentAttemptID:
+      name: Deployment-Attempt-ID
+      in: header
+      required: false
+      schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+      description: |
+        Persist a random opaque ID before submission to recover lost acceptance
+        replies. The accepted attempt remains bound to its original deployment,
+        including after failure or supersession. Missing receipts never authorize
+        resubmission. Independent from Idempotency-Key replay.
+        Concurrent accepted/in-progress attempts may return 409 with
+        deployment_attempt_accepted or deployment_attempt_pending; recover
+        acceptance using the receipt instead of treating that conflict as rejection.
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -71716,8 +72476,8 @@ components:
       type: object
       description: Select a Git definition. GitHub uses the project's bound repository;
         GitLab.com requires an account OAuth connection, a repository path and an explicit ref.
-        Repository identity is verified by the server. GitLab.com currently supports report
-        mode, manual approval and prune=false.
+        Repository identity is verified by the server. Both providers support manual or verified
+        protected-branch approval. Production enforcement remains unavailable in this preview.
       properties:
         provider:
           type: string
@@ -71761,7 +72521,7 @@ components:
       additionalProperties: false
     EnvironmentGitOpsChangedWebhookPayload:
       type: object
-      description: Value-free account webhook emitted atomically with a current GitOps report or completed source poll. Unchanged status is silent; first failures and later recoveries are delivered to explicit environment.gitops.changed subscribers. The drift and source axes remain independent.
+      description: Value-free account webhook for independent drift, source and rollout axes. Rollout serving and failure outcomes are assessed from current exact-commit graph evidence when a current report completes; approval and control transactions supersede pending rollouts. Each terminal outcome is delivered once per approval generation. Pending observations stay silent. Existing drift/source transition rules and explicit environment.gitops.changed subscriptions apply. Delivery is signed and at least once; deduplicate retries by transition_id.
       required: [version, transition_id, source_id, project, environment, axis, previous_status, status, generation, observed_version, observed_at, dashboard_path, changes, blocking_reasons, details_truncated]
       properties:
         version: { type: integer, enum: [1] }
@@ -71769,13 +72529,21 @@ components:
         source_id: { type: string, format: uuid }
         project: { type: string }
         environment: { type: string }
-        axis: { type: string, enum: [drift, source] }
-        previous_status: { type: string, enum: [unknown, in_sync, drifted, blocked, unavailable, verified] }
-        status: { type: string, enum: [in_sync, drifted, blocked, unavailable, verified] }
+        axis: { type: string, enum: [drift, source, rollout] }
+        previous_status: { type: string, enum: [unknown, in_sync, drifted, blocked, unavailable, verified, progressing, serving, failed] }
+        status: { type: string, enum: [in_sync, drifted, blocked, unavailable, verified, serving, failed, superseded] }
         generation: { type: integer, format: int64, minimum: 0 }
         observed_version: { type: integer, format: int64, minimum: 0 }
         approved_revision_id: { type: string, format: uuid }
         commit_sha: { type: string, pattern: '^[a-f0-9]{40}$' }
+        definition_digest: { type: string, pattern: '^[a-f0-9]{64}$' }
+        graph_id: { type: string, format: uuid }
+        plan_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        diagnostics:
+          type: array
+          maxItems: 100
+          description: Safe mapped blocker codes and guidance, optionally scoped to a workload. Never includes upstream error text, logs, values or secret-reference targets.
+          items: { $ref: '#/components/schemas/EnvironmentGitOpsDiagnostic' }
         run_id: { type: string, format: uuid }
         error_code: { type: string }
         observed_at: { type: string, format: date-time }
@@ -71789,6 +72557,478 @@ components:
           maxItems: 100
           items: { type: string }
         details_truncated: { type: boolean }
+    PreviewEnvironmentGitPromotionRequest:
+      type: object
+      description: Read-only environment promotion observation. A saved hash is not approval.
+      additionalProperties: false
+      required:
+      - from_environment
+      - target_commit_sha
+      properties:
+        from_environment:
+          type: string
+          description: Distinct source environment slug.
+        target_commit_sha:
+          type: string
+          description: Verified commit containing the target environment manifest.
+          pattern: ^[a-f0-9]{40}$
+        expected_plan_hash:
+          type: string
+          description: Previously reviewed hash; changed source, release, artifact or target observations return 409.
+          pattern: ^[a-f0-9]{64}$
+    ListEnvironmentGitReleasesRequest:
+      type: object
+      description: Validated query inputs for an immutable-target recovery catalog read.
+      required: [target_commit_sha]
+      properties:
+        target_commit_sha:
+          type: string
+          pattern: '^[a-f0-9]{40}$'
+          description: Exact target-manifest revision against which recovery eligibility is assessed.
+        before:
+          type: string
+          format: uuid
+          description: Scoped anchor release from an earlier catalog response; omitted for the newest page.
+    EnvironmentGitRecoveryRelease:
+      type: object
+      description: One retained serving release assessed against the selected current target manifest.
+      required: [release_set_id, active, created_at, retention_status, commit_sha, eligibility, blocking_reasons, artifacts]
+      properties:
+        protection_status:
+          type: string
+          enum: [disabled, expired, outside_policy, budget_exceeded, protected]
+          description: Current artifact policy selection, independent of rollback eligibility and routing retention.
+        artifacts_protected_until:
+          type: string
+          format: date-time
+          description: Age deadline of current protection; a newer release or explicit policy change may displace it earlier.
+        retained_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Per-release charged layer bytes when currently protected; shared keys are charged once within each release.
+
+        release_set_id:
+          type: string
+          format: uuid
+          description: Immutable release UUID within the current Git binding history.
+        active:
+          type: boolean
+          description: Whether this release is the environment's current active selection.
+        created_at:
+          type: string
+          format: date-time
+          description: Creation time used with release UUID for stable descending recovery pagination.
+        expires_at:
+          type: string
+          format: date-time
+          description: Routing compatibility deadline for this release; does not guarantee artifact retention.
+        retention_status:
+          type: string
+          enum: [active, unknown, compatibility_window, compatibility_window_elapsed]
+          description: Current selection or compatibility window status, separate from rollback eligibility.
+        commit_sha:
+          type: string
+          description: Original manifest commit verified by historical serving evidence, or empty when unproven.
+        served_at:
+          type: string
+          format: date-time
+          description: Completion time of the selected release's historical serving receipt.
+        eligibility:
+          type: string
+          enum: [eligible, blocked]
+          description: Whether the reused rollback planner reports no blockers at observation time.
+        blocking_reasons:
+          type: array
+          description: Value-redacted rollback planner blockers for this retained release.
+          items:
+            type: string
+        artifacts:
+          type: array
+          description: Public immutable image and signed build identities checked for this recovery selection.
+          items:
+            $ref: '#/components/schemas/EnvironmentGitPromotionArtifact'
+        plan_hash:
+          type: string
+          description: Individual rollback observation hash; obtain a fresh plan and revalidate before export.
+    ListEnvironmentGitReleasesResponse:
+      type: object
+      description: Read-only page of recovery eligibility observations for one verified target manifest commit.
+      required: [project, environment, source_id, target_commit_sha, observed_at, read_only, values_redacted, requires_target_qualification, releases]
+      properties:
+        recovery_retention:
+          $ref: '#/components/schemas/EnvironmentRecoveryRetention'
+        retention_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Current charged bytes across all protected releases of this source, including releases outside this page.
+
+        project:
+          type: string
+          description: Registered project slug for this recovery page.
+        environment:
+          type: string
+          description: Registered environment slug for the retained recovery history.
+        source_id:
+          type: string
+          format: uuid
+          description: Current Git binding identity restricting all releases and the page cursor.
+        target_commit_sha:
+          type: string
+          pattern: '^[a-f0-9]{40}$'
+          description: Provider-verified immutable target manifest commit for every release assessment in the page.
+        observed_at:
+          type: string
+          format: date-time
+          description: Time of this page's recovery observation; eligibility is not a future guarantee.
+        read_only:
+          type: boolean
+          enum: [true]
+          description: Confirms that listing recovery history caused no retention or execution mutation.
+        values_redacted:
+          type: boolean
+          enum: [true]
+          description: Confirms that recovery results omit configuration values, secret references and storage paths.
+        requires_target_qualification:
+          type: boolean
+          enum: [true]
+          description: Recovery proposals must still pass new qualification for the target environment.
+        releases:
+          type: array
+          maxItems: 10
+          description: Newest retained completed serving releases from this Git source, including expired windows.
+          items:
+            $ref: '#/components/schemas/EnvironmentGitRecoveryRelease'
+        next_before:
+          type: string
+          format: uuid
+          description: Last release UUID in this page when additional older recovery history exists.
+    PreviewEnvironmentGitRollbackRequest:
+      type: object
+      description: Read-only environment rollback observation. A saved hash is not approval.
+      additionalProperties: false
+      required:
+      - release_set_id
+      - target_commit_sha
+      properties:
+        release_set_id:
+          type: string
+          format: uuid
+          description: Retained GitOps serving release UUID in this environment.
+        target_commit_sha:
+          type: string
+          description: Immutable commit whose current manifest will receive the rollback source changes.
+          pattern: ^[a-f0-9]{40}$
+        expected_plan_hash:
+          type: string
+          description: Previously reviewed rollback hash; changed historical evidence or target intent returns 409.
+          pattern: ^[a-f0-9]{64}$
+    EnvironmentGitPromotionOrigin:
+      type: object
+      description: Scoped identity of the approved source release; graph and release IDs are empty if unproven.
+      additionalProperties: false
+      required:
+      - source_id
+      - revision_id
+      - commit_sha
+      - definition_digest
+      - generation
+      - intent_version
+      - graph_id
+      - release_set_id
+      - provider
+      - repository_id
+      properties:
+        source_id:
+          type: string
+          description: Source binding identity.
+        revision_id:
+          type: string
+          description: Current approved revision identity.
+        commit_sha:
+          type: string
+          description: Approved immutable source commit.
+          pattern: ^([a-f0-9]{40}|[a-f0-9]{64})$
+        definition_digest:
+          type: string
+          description: Approved source definition digest.
+          pattern: ^[a-f0-9]{64}$
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Source approval generation.
+        intent_version:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Observed source intent version.
+        graph_id:
+          type: string
+          description: Current qualified graph identity, if present.
+        release_set_id:
+          type: string
+          description: Active source release identity, if present.
+        provider:
+          type: string
+          description: Bound provider.
+          enum:
+          - github
+          - gitlab
+        repository_id:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Immutable provider repository identity.
+    EnvironmentGitPromotionTarget:
+      type: object
+      description: Target binding and manifest observation; no target values are returned.
+      additionalProperties: false
+      required:
+      - source_id
+      - generation
+      - intent_version
+      - commit_sha
+      - definition_digest
+      - proposed_digest
+      - manifest_path
+      properties:
+        source_id:
+          type: string
+          description: Target source binding identity.
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Target source generation.
+        intent_version:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Observed target intent version.
+        commit_sha:
+          type: string
+          description: Immutable target manifest commit.
+          pattern: ^[a-f0-9]{40}$
+        definition_digest:
+          type: string
+          description: Required local base definition digest.
+          pattern: ^[a-f0-9]{64}$
+        proposed_digest:
+          type: string
+          description: Digest after replacing only proposed image source contracts.
+          pattern: ^[a-f0-9]{64}$
+        manifest_path:
+          type: string
+          description: Bound target manifest path in Git.
+    EnvironmentGitPromotionArtifact:
+      type: object
+      description: Selected active source deployment identity, without host paths or storage keys.
+      additionalProperties: false
+      required:
+      - resource
+      - deployment_id
+      - kind
+      properties:
+        resource:
+          type: string
+          description: Logical workload resource.
+        deployment_id:
+          type: string
+          description: Exact selected live deployment.
+        build_id:
+          type: string
+          description: Associated build identity, if present.
+        kind:
+          type: string
+          description: Recorded deployment kind.
+        image_digest:
+          type: string
+          description: Recorded immutable image identity, if present.
+        build_artifact_id:
+          type: string
+          format: uuid
+          description: Existing signed source-build producer identity.
+        build_artifact_hash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: Immutable producer input hash.
+        artifact_digest:
+          type: string
+          pattern: '^sha256:[a-f0-9]{64}$'
+          description: Exact built application-layer byte digest.
+        build_commit_sha:
+          type: string
+          pattern: '^([a-f0-9]{40}|[a-f0-9]{64})$'
+          description: Original code commit, distinct from the target manifest commit.
+    EnvironmentGitPromotionChange:
+      type: object
+      description: Only a workload source contract changes; target configuration and identity are preserved.
+      additionalProperties: false
+      required:
+      - resource
+      - before
+      - after
+      properties:
+        resource:
+          type: string
+          description: Target workload resource whose source contract is proposed to change.
+        before:
+          $ref: '#/components/schemas/EnvironmentWorkloadSource'
+        after:
+          $ref: '#/components/schemas/EnvironmentWorkloadSource'
+    PreviewEnvironmentGitPromotionResponse:
+      type: object
+      description: Read-only, value-redacted promotion proposal. It neither activates a release nor proves target readiness.
+      additionalProperties: false
+      required:
+      - project
+      - from_environment
+      - to_environment
+      - observed_at
+      - read_only
+      - values_redacted
+      - requires_target_qualification
+      - origin
+      - target
+      - artifacts
+      - changes
+      - target_plan
+      - blocking_reasons
+      - plan_hash
+      properties:
+        project:
+          type: string
+          description: Project slug.
+        from_environment:
+          type: string
+          description: Source environment slug.
+        to_environment:
+          type: string
+          description: Target environment slug.
+        observed_at:
+          type: string
+          description: Observation time.
+          format: date-time
+        read_only:
+          type: boolean
+          enum:
+          - true
+          description: Always true; no writes or leases are issued.
+        values_redacted:
+          type: boolean
+          enum:
+          - true
+          description: Configuration values and secret-reference targets are omitted.
+        requires_target_qualification:
+          type: boolean
+          enum:
+          - true
+          description: Source evidence cannot authorize target activation.
+        origin:
+          $ref: '#/components/schemas/EnvironmentGitPromotionOrigin'
+        target:
+          $ref: '#/components/schemas/EnvironmentGitPromotionTarget'
+        artifacts:
+          type: array
+          description: Selected source deployment identities.
+          items:
+            $ref: '#/components/schemas/EnvironmentGitPromotionArtifact'
+        changes:
+          type: array
+          description: Image-only source contract proposals.
+          items:
+            $ref: '#/components/schemas/EnvironmentGitPromotionChange'
+        target_plan:
+          $ref: '#/components/schemas/EnvironmentGitOpsPlan'
+        blocking_reasons:
+          type: array
+          description: Reasons patch or manifest export is unavailable.
+          items:
+            type: string
+        plan_hash:
+          type: string
+          description: Domain-separated hash of source release, artifacts and target observation; never an execution
+            token.
+          pattern: ^[a-f0-9]{64}$
+    PreviewEnvironmentGitRollbackResponse:
+      type: object
+      description: Read-only, value-redacted rollback proposal. It neither activates a release nor proves target readiness.
+      additionalProperties: false
+      required:
+      - project
+      - environment
+      - observed_at
+      - read_only
+      - values_redacted
+      - requires_target_qualification
+      - current_release_set_id
+      - origin
+      - target
+      - artifacts
+      - changes
+      - target_plan
+      - blocking_reasons
+      - plan_hash
+      properties:
+        project:
+          type: string
+          description: Project containing the selected historical release.
+        environment:
+          type: string
+          description: Environment whose workload code would be restored.
+        observed_at:
+          type: string
+          description: Time at which rollback selection and current target intent were observed.
+          format: date-time
+        read_only:
+          type: boolean
+          enum:
+          - true
+          description: True because rollback planning does not change pins, intent or deployment status.
+        values_redacted:
+          type: boolean
+          enum:
+          - true
+          description: Rollback output excludes variable values and secret-reference destinations.
+        requires_target_qualification:
+          type: boolean
+          enum:
+          - true
+          description: Historical serving evidence selects code; the new target still needs fresh qualification.
+        current_release_set_id:
+          type: string
+          description: Current active release identity, or empty when no release is active.
+        origin_served_at:
+          type: string
+          format: date-time
+          description: Historical serving completion time; missing proof blocks export.
+        origin:
+          $ref: '#/components/schemas/EnvironmentGitPromotionOrigin'
+        target:
+          $ref: '#/components/schemas/EnvironmentGitPromotionTarget'
+        artifacts:
+          type: array
+          description: Retained deployment and exact code artifact identities selected for rollback.
+          items:
+            $ref: '#/components/schemas/EnvironmentGitPromotionArtifact'
+        changes:
+          type: array
+          description: Code-only source contract proposals.
+          items:
+            $ref: '#/components/schemas/EnvironmentGitPromotionChange'
+        target_plan:
+          $ref: '#/components/schemas/EnvironmentGitOpsPlan'
+        blocking_reasons:
+          type: array
+          description: Historical evidence, artifact or target conflicts that prevent rollback export.
+          items:
+            type: string
+        plan_hash:
+          type: string
+          description: Rollback-specific SHA256 of historical serving evidence, selected code and current target intent; never deployment authority.
+          pattern: ^[a-f0-9]{64}$
     PreviewEnvironmentGitPlanResponse:
       type: object
       description: Read-only candidate plan pinned to a source generation and observed intent version. Values are omitted. The plan cannot authorize approval, adoption, deployment or runtime readiness. Re-run after source or environment changes.
@@ -71854,10 +73094,165 @@ components:
       required:
       - source
       - revision
+    EnvironmentGitOpsExplanation:
+      type: object
+      description: Read-only assessment of recorded source, graph and workload facts. Unknown or historical evidence never grants
+        readiness or execution authority.
+      properties:
+        read_only:
+          type: boolean
+        assessed_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum:
+          - unknown
+          - blocked
+          - progressing
+          - reporting
+          - serving
+          - degraded
+        summary:
+          type: string
+        source_id:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        intent_version:
+          type: integer
+          format: int64
+        source_freshness:
+          type: string
+          enum:
+          - unknown
+          - stale
+          - fresh
+        observed_commit_sha:
+          type: string
+        approved_revision_id:
+          type: string
+        applied_revision_id:
+          type: string
+        serving_revision_id:
+          type: string
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentGitOpsDiagnostic'
+        workloads:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentWorkloadProgress'
+      required:
+      - read_only
+      - assessed_at
+      - status
+      - summary
+      - source_id
+      - generation
+      - intent_version
+      - source_freshness
+      - issues
+      - workloads
+    EnvironmentGitOpsDiagnostic:
+      type: object
+      description: A recognized blocker with a responsible actor and a safe next action. Unrecognized upstream errors are redacted.
+      properties:
+        resource:
+          type: string
+        stage:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+        actor:
+          type: string
+          enum:
+          - customer
+          - operator
+          - controller
+        action:
+          type: string
+      required:
+      - stage
+      - code
+      - message
+      - actor
+      - action
+    EnvironmentWorkloadProgress:
+      type: object
+      description: Read-only progress for one exact reviewed graph member. Serving remains unknown without current whole-graph
+        convergence proof.
+      properties:
+        resource:
+          type: string
+        app_id:
+          type: string
+        deployment_id:
+          type: string
+        job_id:
+          type: string
+        execution_mode:
+          type: string
+        build_status:
+          type: string
+        build_cache_status:
+          type: string
+          enum: [hit, miss, invalidated]
+          description: Recorded builder cache decision; does not grant qualification, activation or serving authority.
+        build_cache_key_sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        preparation:
+          type: string
+          enum:
+          - complete
+          - pending
+          - failed
+          - unknown
+        qualification:
+          type: string
+          enum:
+          - complete
+          - pending
+          - failed
+          - unknown
+        activation:
+          type: string
+          enum:
+          - complete
+          - pending
+          - failed
+          - unknown
+        serving:
+          type: string
+          enum:
+          - complete
+          - pending
+          - failed
+          - unknown
+        blocking_reasons:
+          type: array
+          items:
+            type: string
+      required:
+      - resource
+      - app_id
+      - execution_mode
+      - preparation
+      - qualification
+      - activation
+      - serving
+      - blocking_reasons
     EnvironmentGitOpsStatusResponse:
       type: object
       description: Source authority, current workload qualification evidence, and the twenty most recent durable reconciliation attempts.
       properties:
+        explanation:
+          $ref: '#/components/schemas/EnvironmentGitOpsExplanation'
         approval:
           $ref: '#/components/schemas/EnvironmentGitRevisionApproval'
         workload_retirements:
@@ -71988,6 +73383,14 @@ components:
       type: object
       description: Evidence summary for the exact current reviewed workload graph; retained workloads count only when their exact live deployment remains in the active release set. This evidence does not authorize candidate activation or serving.
       properties:
+        commit_sha:
+          type: string
+          pattern: '^([a-f0-9]{40}|[a-f0-9]{64})$'
+          description: Approved revision commit verified in the same current graph snapshot. Independent source-ref observations never supply this identity. Older servers may omit this field.
+        workloads:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentWorkloadProgress'
         graph_id:
           type: string
           format: uuid
@@ -72092,7 +73495,7 @@ components:
       required: [id, source_id, revision_id, generation, definition_digest, evidence, recorded_at]
     EnvironmentGitReviewedMergeEvidence:
       type: object
-      description: Reviews of the final PR head before merge. Permissions and protection describe the check time, not historical policy.
+      description: Reviews of the final GitHub PR or GitLab MR head before merge. Permissions and protection describe the check time, not historical policy.
       properties:
         reviewed_definition_digest:
           type: string
@@ -72141,6 +73544,7 @@ components:
         installation_id:
           type: integer
           format: int64
+          description: GitHub App installation ID; omitted for GitLab OAuth sources.
         repository_id:
           type: integer
           format: int64
@@ -72157,7 +73561,7 @@ components:
         checked_at:
           type: string
           format: date-time
-      required: [qualified, profile, installation_id, repository_id, repository, branch, commit_sha, policy_digest, required_review_count, checked_at]
+      required: [qualified, profile, repository_id, repository, branch, commit_sha, policy_digest, required_review_count, checked_at]
     EnvironmentGitReviewEvidence:
       description: One reviewer decision for the proposed environment definition at an exact commit.
       type: object
@@ -72507,10 +73911,34 @@ components:
       - plan_hash
       - changes
       - blocking_reasons
+    EnvironmentRecoveryRetention:
+      type: object
+      additionalProperties: false
+      description: Explicit artifact retention; count, age and byte limits apply together. Removing the policy or detaching releases its protection. No snapshot or trust transfer.
+      required: [releases, seconds, max_bytes]
+      properties:
+        releases:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: Maximum newest completed serving releases, including the active release when served.
+        seconds:
+          type: integer
+          minimum: 1
+          maximum: 604800
+          description: Maximum age measured from original serving completion; observations never renew it.
+        max_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1073741824
+          description: Conservative per-release unique layer bytes budget; account policy reservations are limited to 2147483648 bytes.
     EnvironmentDefinition:
       type: object
       description: Versioned Git intent; omitted settings are unmanaged and removal requires explicit pruning. The workloads map is required; an explicit empty map represents an empty environment.
       properties:
+        recovery_retention:
+          $ref: '#/components/schemas/EnvironmentRecoveryRetention'
         api_version:
           type: string
           enum:
@@ -72598,6 +74026,13 @@ components:
       type: object
       description: Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources require runtime and exclude dockerfile. An immutable image may explicitly opt into full-rootfs dispatch. The gated internal executor reserves new private workloads when app is omitted. Preparation does not grant serving authority.
       properties:
+        reuse_unchanged_build:
+          type: boolean
+          default: false
+          description: Opt into isolated canonical Git context and same-app signed build reuse. A fresh target candidate and qualification are always required. An explicit build_artifact_id takes precedence. Link entries in the context are unsupported.
+        build_context:
+          type: string
+          description: Repository-relative context directory; defaults to the entire repository when reuse is enabled. Must contain source.directory and all shared build inputs. Files outside this directory are not delivered to the builder. Requires reuse_unchanged_build.
         kind:
           type: string
           enum:
@@ -72605,6 +74040,14 @@ components:
           - dockerfile
           - image
           - function
+        build_artifact_id:
+          type: string
+          format: uuid
+          description: Existing signed source-build producer. Requires build_artifact_hash; same mapped app only. Unsupported for images and scheduled Jobs.
+        build_artifact_hash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: Exact immutable producer input hash. Retention does not grant qualification or activation authority.
         runtime:
           type: string
           description: Supported runner; required only when kind is function.
@@ -77961,6 +79404,45 @@ components:
         version: { type: integer, enum: [1] }
         report_id: { type: string, pattern: '^[A-Za-z0-9._:-]{1,128}$' }
         hours: { type: array, maxItems: 48, items: { $ref: '#/components/schemas/DataAPIUsageHour' } }
+        access: { $ref: '#/components/schemas/DataAPIAccessConfig' }
+    DataAPIAccessConfig:
+      description: Access settings the runtime reports for live reads without a user token, sent after start and hourly. It replaces the stored settings; turning usage reporting off forgets them. Holds key hashes, never keys.
+      type: object
+      additionalProperties: false
+      required: [version, schemas]
+      properties:
+        version: { type: integer, enum: [1] }
+        schemas: { type: array, minItems: 1, maxItems: 8, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$' } }
+        auth: { $ref: '#/components/schemas/DataAPIUserAuth' }
+        public_read: { type: array, maxItems: 64, items: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}\.[A-Za-z_][A-Za-z0-9_]{0,62}$' } }
+        server_keys: { type: array, maxItems: 2, items: { $ref: '#/components/schemas/DataAPIServerKey' } }
+    DataAPIUserAuth:
+      description: The issuer, JWKS URL and audience the Data API verifies user tokens against. Live reads verify user tokens with the same settings.
+      type: object
+      additionalProperties: false
+      required: [issuer, jwks_url, audience]
+      properties:
+        issuer: { type: string, format: uri, maxLength: 2048 }
+        jwks_url: { type: string, format: uri, maxLength: 2048 }
+        audience: { type: string, minLength: 1, maxLength: 256 }
+    DataAPIServerKey:
+      description: One server-key rotation slot as the runtime reports it, the SHA-256 of the key and any permissions.
+      type: object
+      additionalProperties: false
+      required: [slot, sha256]
+      properties:
+        slot: { type: string, enum: [a, b] }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        permissions: { $ref: '#/components/schemas/DataAPIServerKeyPermissionSet' }
+    DataAPIServerKeyPermissionSet:
+      description: Narrows a server key. Absent fields keep full access; live reads use relations and subjects.
+      type: object
+      additionalProperties: false
+      properties:
+        access: { type: string, enum: [read, write] }
+        relations: { type: array, maxItems: 64, items: { type: string } }
+        rpcs: { type: array, maxItems: 64, items: { type: string } }
+        subjects: { type: boolean }
     DataAPIUsageMonthToDate:
       description: Admitted requests in the current UTC calendar month, all and anonymous, which owner caps compare against.
       type: object
@@ -84211,7 +85693,7 @@ components:
     EdgeProtectionResponse:
       description: Edge rejection counts for one app over a range.
       type: object
-      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf]
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge]
       properties:
         app_id: { type: string }
         range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
@@ -84239,7 +85721,7 @@ components:
             type: object
             required: [gate, status, count]
             properties:
-              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf] }
+              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge] }
               status: { type: string, enum: ['401', '403', '413', '429', '503', other] }
               count: { type: integer, format: int64, minimum: 0 }
         waf:
@@ -84272,6 +85754,17 @@ components:
                 properties:
                   name: { type: string, description: CRS rule ID. }
                   count: { type: integer, format: int64, minimum: 0 }
+        challenge:
+          type: object
+          description: kind=challenge decisions (ADR-831 amendment 7); its 403s also appear in rejections under gate challenge.
+          required: [issued, solved, rejected, passed, bypassed, invalid]
+          properties:
+            issued: { type: integer, format: int64, minimum: 0, description: "Challenge pages served to browser navigations." }
+            solved: { type: integer, format: int64, minimum: 0, description: "Passes earned by solving the proof of work." }
+            rejected: { type: integer, format: int64, minimum: 0, description: "Non-navigation requests answered 403 challenge_required." }
+            passed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a pass from an earlier solve." }
+            bypassed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a verified API key, consumer key or JWT." }
+            invalid: { type: integer, format: int64, minimum: 0, description: "Solutions refused: wrong work or an expired token." }
 
     PreAuthEnforcementSuggestion:
       description: |
@@ -85644,10 +87137,43 @@ components:
           items: { $ref: '#/components/schemas/DevSyncHistoryItem' }
         summary: { $ref: '#/components/schemas/DevSyncHistorySummary' }
 
+    AppDeploySettingsCondition:
+      type: object
+      additionalProperties: false
+      required: [expected_app_id, expected_deployment_id, expected_settings]
+      description: >-
+        Atomic preconditions for single-app lifecycle/scaling recovery. The app
+        must retain this identity and its newest deployment must be the expected
+        live deployment. Every targeted field must still match its observed
+        value, including targeted fields omitted from the partial update because
+        they already match the desired value. Checked in the same transaction as
+        the update. A conflict returns 409 deploy_settings_conflict with field
+        names, without setting values. Cannot be combined with environment edits
+        or other app fields. Ordinary updates can omit this object.
+      properties:
+        expected_app_id:
+          type: string
+          minLength: 1
+          description: Exact app ID returned by the app read.
+        expected_deployment_id:
+          type: string
+          minLength: 1
+          description: Exact accepted deployment being recovered.
+        expected_settings:
+          type: object
+          minProperties: 1
+          maxProperties: 13
+          propertyNames:
+            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, scaling_policy, retry_policy]
+          additionalProperties: {}
+          description: Observed values from the app read; null represents an unset optional policy. Must cover every mutated setting.
+
     UpdateAppRequest:
       description: "Partial update — every field is optional; omitted fields are unchanged."
       type: object
       properties:
+        deploy_settings_condition:
+          $ref: '#/components/schemas/AppDeploySettingsCondition'
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
         tracing:
@@ -87411,6 +88937,165 @@ components:
         source: { type: string, enum: [registry, object_storage] }
         sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
 
+    DeploymentCronConfig:
+      type: object
+      additionalProperties: false
+      description: Closed scheduling intent for one HTTP cron; command and execution data are excluded.
+      required: [id, schedule, path, enabled, timezone, skip_if_running]
+      properties:
+        id: { type: string, format: uuid }
+        schedule: { type: string }
+        path: { type: string }
+        enabled: { type: boolean }
+        timezone: { type: string }
+        skip_if_running: { type: boolean }
+    DeploymentCronStagingSnapshot:
+      type: object
+      description: The owned app and current HTTP scheduling set captured before staging.
+      required: [app_id, revision, latest_deployment_id, crons]
+      properties:
+        app_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 0 }
+        latest_deployment_id: { type: string }
+        crons:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentCronConfig' }
+    DeploymentCronStagingRequest:
+      type: object
+      description: Immutable HTTP cron intent. Prepare retains active schedules until the submitted production release owns all traffic; cancel fences an unsubmitted intent. Stage and restore support legacy recovery.
+      additionalProperties: false
+      required: [session_id, operation, expected_app_id, expected_deployment_id, expected_revision, before, desired]
+      properties:
+        upload_id: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$', description: Owned opaque upload identity to track for autonomous committed-upload recovery. }
+        session_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        operation: { type: string, enum: [stage, restore, prepare, cancel, track_upload] }
+        expected_app_id: { type: string, format: uuid }
+        expected_deployment_id: { type: string }
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        before:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentCronConfig' }
+        desired:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentCronConfig' }
+    DeploymentStagingSnapshot:
+      type: object
+      description: An atomic snapshot for journaling selected deployment policies before staging.
+      required: [app_id, revision, latest_deployment_id, settings]
+      properties:
+        app_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 0 }
+        latest_deployment_id:
+          type: string
+          description: The latest deployment ID, or an empty string when no deployment exists.
+        settings:
+          type: object
+          additionalProperties: false
+          properties:
+            profiling:
+              anyOf:
+                - $ref: '#/components/schemas/ProfilingConfig'
+                - { type: 'null' }
+            tracing:
+              anyOf:
+                - $ref: '#/components/schemas/TracingConfig'
+                - { type: 'null' }
+    DeploymentStagingRequest:
+      type: object
+      description: The immutable non-secret intent used to stage or restore deployment policies.
+      required: [session_id, operation, expected_app_id, expected_deployment_id, expected_revision, before, desired]
+      properties:
+        session_id: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+        operation: { type: string, enum: [stage, restore] }
+        expected_app_id: { type: string, format: uuid }
+        expected_deployment_id:
+          type: string
+          description: The captured latest deployment ID, or an empty string when none exists.
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        before:
+          type: object
+          additionalProperties: false
+          properties:
+            profiling:
+              anyOf:
+                - $ref: '#/components/schemas/ProfilingConfig'
+                - { type: 'null' }
+            tracing:
+              anyOf:
+                - $ref: '#/components/schemas/TracingConfig'
+                - { type: 'null' }
+        desired:
+          type: object
+          additionalProperties: false
+          properties:
+            profiling:
+              anyOf:
+                - $ref: '#/components/schemas/ProfilingConfig'
+                - { type: 'null' }
+            tracing:
+              anyOf:
+                - $ref: '#/components/schemas/TracingConfig'
+                - { type: 'null' }
+    DeploymentStagingReceipt:
+      type: object
+      description: The outcome of an atomic deployment policy staging or cleanup operation.
+      required: [session_id, app_id, status, revision]
+      properties:
+        session_id: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [staged, cleaned, prepared, activated, conflict, discarded] }
+        revision: { type: integer, format: int64, minimum: 0 }
+    DeploymentSubmissionReceipt:
+      description: Immutable acceptance evidence for one opaque deployment submission attempt.
+      type: object
+      required: [attempt_id, app_id, deployment_id, accepted_at]
+      properties:
+        attempt_id:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+          minLength: 32
+          maxLength: 32
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        accepted_at: { type: string, format: date-time }
+    DeploymentConfigurationStatus:
+      type: object
+      description: Server-managed cron activation diagnostics. CLI-owned settings are additionally reflected in CLI receipt configuration_complete. Reads never create builds or modify schedules.
+      required: [complete, crons]
+      properties:
+        complete:
+          type: boolean
+          description: True when no deferred cron activation is recorded or the tracked intent was activated.
+        crons:
+          $ref: '#/components/schemas/DeploymentCronActivationStatus'
+    DeploymentCronActivationStatus:
+      type: object
+      description: The latest retained cron intent for this deployment. Activated records historical completion even after a later deployment changes schedules.
+      required: [status, message]
+      properties:
+        session_id:
+          type: string
+          pattern: '^[a-f0-9]{32}$'
+          description: Opaque intent identity; may be generated by APID for direct API deployments.
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: App cron revision at preparation; identifies the latest intent bound to this deployment.
+        status:
+          type: string
+          enum: [not_managed, pending, activated, conflicted, discarded]
+          description: Cron activation outcome, independent of the release lifecycle status.
+        reason:
+          type: string
+          enum: [awaiting_readiness, awaiting_full_traffic, awaiting_rollout, competing_traffic, awaiting_activation, cron_changed, quota_changed, identity_conflict, plan_unavailable, intent_superseded, deployment_superseded, deployment_failed, deployment_canceled, rollout_aborted, non_production, cron_guard_conflict, activation_discarded]
+          description: Stable diagnostic code. Absent when activated or not managed.
+        message:
+          type: string
+          description: Customer-facing explanation of the activation outcome.
+        hint:
+          type: string
+          description: Recovery guidance; pending changes finish automatically and terminal conflicts require inspection before a new attempt.
     # Wire shape of `deployments.stage_state` (state.StageState, ADR-117).
     # Served verbatim by GET /v1/deployments/{id}/stages and embedded as
     # DeploymentResponse.stage_state. TestSpecComplianceDeploymentStageState
@@ -87545,6 +89230,9 @@ components:
       type: object
       required: [id, app_id, image_digest, kind, status, created_at]
       properties:
+        configuration:
+          $ref: '#/components/schemas/DeploymentConfigurationStatus'
+          description: Read-only diagnostics included by GET /v1/deployments/{id}; absent on older servers and other response surfaces.
         staged_review:
           $ref: '#/components/schemas/AppReleaseReview'
           description: Intent snapshot committed with a zero-traffic reviewed candidate.
@@ -98642,6 +100330,9 @@ components:
       type: object
       required: [source]
       properties:
+        release_config:
+          type: string
+          description: JSON-encoded ProjectReleaseConfigRequest for atomic-config-verify; contains only non-secret workload variables.
         migration:
           type: boolean
           default: false
@@ -99246,6 +100937,18 @@ components:
       type: object
       required: [workload_slug, workload_name, kind]
       properties:
+        secret_changes:
+          type: array
+          description: Production secret key names and change kinds, without values or fingerprints.
+          items: { $ref: '#/components/schemas/ProjectEnvironmentConfigChange' }
+        release_configuration_hash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: Identity of the approved immutable HTTP variable snapshot and environment versions; destination secrets and bindings remain owned by the target.
+        environment_changes:
+          type: array
+          description: Variable key names and change kinds only; values and secret material are omitted.
+          items: { $ref: '#/components/schemas/ProjectEnvironmentConfigChange' }
         source_workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         target_workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
         promoted_workload_config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
@@ -99267,11 +100970,252 @@ components:
           type: string
           enum: [source_sha256, image_digest, commit_sha, deployment_id]
 
+    ProjectPromotionMigrationRecoveryRequest:
+      description: Operator inspection evidence and captured task identity for resuming or resolving a promotion migration incident.
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_task_id, expected_generation, action, database_state_checked, schema_compatible, evidence_hash]
+      properties:
+        request_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        expected_task_id: { type: string, format: uuid }
+        expected_generation: { type: integer, format: int64, minimum: 1 }
+        action: { type: string, enum: [resume, resolve] }
+        replacement_promotion_id:
+          type: string
+          format: uuid
+          description: Required for resolve; must identify a different succeeded verified active promotion in the same destination.
+        database_state_checked:
+          type: boolean
+          enum: [true]
+          description: Explicit operator attestation of destination database inspection.
+        schema_compatible:
+          type: boolean
+          description: Required true for resume; attests that the expected expansion is present and backward-compatible.
+        evidence_hash: { type: string, pattern: '^[a-f0-9]{64}$', description: SHA256 reference to private inspection evidence. Contents are not uploaded. }
+
+    ProjectPromotionMigrationRecovery:
+      description: Durable acknowledgement and deadline for an operator's promotion migration recovery decision.
+      type: object
+      required: [request, status, operator_account_id, requested_at, deadline]
+      properties:
+        request: { $ref: '#/components/schemas/ProjectPromotionMigrationRecoveryRequest' }
+        status: { type: string, enum: [quiescing, verifying, resumed, resolved, blocked] }
+        reason: { type: string }
+        operator_account_id: { type: string, format: uuid }
+        requested_at: { type: string, format: date-time }
+        deadline: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+
+    ProjectPromotionMigrationPolicy:
+      type: object
+      description: One backward-compatible source release command authorized against destination runtime inputs. Contains a command fingerprint, never command bytes or credentials.
+      required: [app_id, slug, command_hash, compatibility]
+      properties:
+        app_id: { type: string, format: uuid }
+        slug: { type: string }
+        command_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        compatibility: { type: string, enum: [backward-compatible] }
+
+    ProjectDeploymentCheckRequest:
+      type: object
+      additionalProperties: false
+      description: Metadata-only project intent. Local source checks provide workloads; promotion checks provide from_environment instead. Proposed files never stage production changes.
+      properties:
+        environment: { type: string, default: production }
+        from_environment: { type: string }
+        expected_state_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        atomic: { type: boolean }
+        add_services: { type: boolean }
+        verify: { type: boolean }
+        workers: { type: boolean }
+        worker_health: { type: boolean }
+        migrate: { type: boolean }
+        progressive: { type: boolean }
+        stabilize: { type: boolean }
+        sync_config: { type: boolean }
+        release_config:
+          $ref: '#/components/schemas/ProjectReleaseConfigRequest'
+        workloads:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/ProjectDeploymentCheckWorkload' }
+        managed:
+          type: array
+          maxItems: 100
+          items: { type: string }
+
+    ProjectDeploymentCheckWorkload:
+      description: Planned workload and provided key names used by metadata-only deployment readiness checks.
+      type: object
+      additionalProperties: false
+      required: [workload]
+      properties:
+        workload: { $ref: '#/components/schemas/PlanWorkload' }
+        command_shell: { type: boolean }
+        release_command:
+          type: array
+          items: { type: string }
+        release_command_shell: { type: boolean }
+        provided_keys:
+          description: Key names proposed by a separate secrets input; values are never included.
+          type: array
+          maxItems: 256
+          items: { type: string }
+
+    ProjectDeploymentCheck:
+      description: Public deployment readiness finding with its status, observed limits and suggested remedy.
+      type: object
+      required: [code, status, message]
+      properties:
+        code: { type: string }
+        status: { type: string, enum: [passed, blocked, unknown] }
+        workload: { type: string }
+        message: { type: string }
+        remedy: { type: string }
+        observed: { type: integer }
+        limit: { type: integer }
+
+    ProjectDeploymentReadiness:
+      description: Metadata-only project deployment readiness report tied to the inspected environment and state hash.
+      type: object
+      required: [schema_version, project_slug, environment, status, checked_at, runtime_checked, checks]
+      properties:
+        schema_version: { type: integer, enum: [1] }
+        project_slug: { type: string }
+        environment: { type: string }
+        from_environment: { type: string }
+        status: { type: string, enum: [ready, blocked, unknown] }
+        state_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        checked_at: { type: string, format: date-time }
+        runtime_checked: { type: boolean, enum: [false] }
+        checks:
+          type: array
+          maxItems: 1024
+          items: { $ref: '#/components/schemas/ProjectDeploymentCheck' }
+
+    ProjectPromotionHealthPolicy:
+      type: object
+      description: Destination probe and optional migration contract bound to the exact promotion preview and approval.
+      required: [probes]
+      properties:
+        workers:
+          description: Complete immutable worker set for multiple-worker promotions; mutually exclusive with worker.
+          type: array
+          minItems: 2
+          maxItems: 8
+          items: { $ref: '#/components/schemas/ProjectReleaseWorker' }
+        worker: { $ref: '#/components/schemas/ProjectReleaseWorker' }
+        migration: { $ref: '#/components/schemas/ProjectPromotionMigrationPolicy' }
+        probes:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { $ref: '#/components/schemas/ProjectReleaseProbe' }
+
+    ProjectPromotionControlRequest:
+      description: Stable operator request identity and expected promotion checkpoint generation.
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_generation]
+      properties:
+        request_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        expected_generation: { type: integer, format: int64, minimum: 1 }
+
+    ProjectPromotionControl:
+      description: Durable promotion abort or restoration decision, including its operator, deadline and resolution.
+      type: object
+      required: [request, action, status, operator_account_id, requested_at, deadline]
+      properties:
+        request: { $ref: '#/components/schemas/ProjectPromotionControlRequest' }
+        action: { type: string, enum: [abort, recover] }
+        status: { type: string, enum: [pending, aborted, restored, blocked] }
+        operator_account_id: { type: string }
+        requested_at: { type: string, format: date-time }
+        deadline: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        reason: { type: string }
+
+    ProjectPromotionAdmission:
+      type: object
+      description: Durable capacity wait receipt. Queue time does not consume the execution health window. An absent started_at means execution has never started.
+      required: [queued_at, wait_deadline, reason]
+      properties:
+        queued_at: { type: string, format: date-time }
+        wait_deadline: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        reason: { type: string }
+
+    ProjectPromotionHealth:
+      type: object
+      description: Durable destination health checkpoint. Includes counts only, without challenge tokens, credentials or response bodies.
+      required: [policy, phase, generation, started_at, deadline, verdict, healthy_rounds, regressed_rounds]
+      properties:
+        workers:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/ProjectPromotionWorkerHealth' }
+        admission: { $ref: '#/components/schemas/ProjectPromotionAdmission' }
+        control: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        worker: { $ref: '#/components/schemas/ProjectReleaseWorker' }
+        worker_health: { $ref: '#/components/schemas/ProjectWorkerHealth' }
+        recovery: { $ref: '#/components/schemas/ProjectPromotionMigrationRecovery' }
+        migration: { $ref: '#/components/schemas/ProjectReleaseCommand' }
+        policy: { $ref: '#/components/schemas/ProjectPromotionHealthPolicy' }
+        phase: { type: string, enum: [queued, migrating, preflight, cutover, verifying, finalizing, rolling_back, restoring, aborted, succeeded, failed, conflicted, rollback_failed] }
+        generation: { type: integer, format: int64, minimum: 1 }
+        started_at:
+          type: string
+          format: date-time
+          description: Queue entry time while waiting; reset once to execution start at validated dispatch.
+        deadline:
+          type: string
+          format: date-time
+          description: Queue wait deadline while queued; a fresh execution deadline after dispatch.
+        checked_at: { type: string, format: date-time }
+        verdict: { type: string, enum: [unknown, healthy, regressed] }
+        healthy_rounds: { type: integer, minimum: 0 }
+        regressed_rounds: { type: integer, minimum: 0 }
+        message: { type: string }
+        evidence:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/ProjectReleaseProbeEvidence' }
+
+    ProjectPromotionWorkerHealth:
+      description: Captured queue worker policy paired with observed delivery health for one promotion member.
+      type: object
+      required: [worker, health]
+      properties:
+        worker: { $ref: '#/components/schemas/ProjectReleaseWorker' }
+        health: { $ref: '#/components/schemas/ProjectWorkerHealth' }
+
+    ProjectEnvironmentPromotionSecretPreviewRequest:
+      description: Environment promotion preview inputs referencing staged immutable secrets without plaintext values.
+      type: object
+      additionalProperties: false
+      required: [from_environment, sync_config, verify, secrets]
+      properties:
+        from_environment: { type: string }
+        sync_config: { type: boolean, enum: [true] }
+        verify: { type: boolean, enum: [true] }
+        secrets:
+          type: object
+          minProperties: 1
+          description: Complete destination secret key/version maps by workload. Values must be staged immutable UUIDs, never plaintext.
+          additionalProperties:
+            type: object
+            additionalProperties: { type: string, format: uuid }
+
     ProjectEnvironmentPromotionPreviewResponse:
       description: Read-only promotion preview between two registered project environments.
       type: object
       required: [project_slug, from_environment, to_environment, to_environment_protected, approval_required, can_promote, config_diff, changes, release_graph_mode, promotion_hash, promotion_token]
       properties:
+        secrets: { $ref: '#/components/schemas/ProjectReleaseSecretConfiguration' }
+        destination_config_hash:
+          type: string
+          description: Hash of the configuration resolved with destination service bindings; included in the promotion identity.
+        health: { $ref: '#/components/schemas/ProjectPromotionHealthPolicy' }
         project_slug: { type: string }
         from_environment: { type: string }
         to_environment: { type: string }
@@ -99543,6 +101487,7 @@ components:
       type: object
       required: [promotion_id, project_slug, from_environment, to_environment, promotion_hash, workloads]
       properties:
+        status: { type: string, enum: [running, succeeded, failed], description: 'A running health-gated promotion has been accepted and has not completed cutover and verification.' }
         promotion_id: { type: string, minLength: 1 }
         project_slug: { type: string }
         from_environment: { type: string }
@@ -99596,6 +101541,7 @@ components:
       type: object
       required: [promotion_id, project_slug, from_environment, to_environment, promotion_hash, status, created_at, updated_at, workloads]
       properties:
+        health: { $ref: '#/components/schemas/ProjectPromotionHealth' }
         promotion_id: { type: string, minLength: 1 }
         project_slug: { type: string }
         from_environment: { type: string }
@@ -100450,6 +102396,9 @@ components:
       type: object
       required: [source]
       properties:
+        release_config:
+          type: string
+          description: Planned non-secret workload variables encoded as ProjectReleaseConfigRequest JSON for atomic-config-verify admission.
         migration:
           type: boolean
           default: false
@@ -100470,6 +102419,10 @@ components:
           type: string
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
           description: "Environment slug applied to deployments created by this apply"
+        secrets:
+          type: string
+          writeOnly: true
+          description: "JSON object of secret names to plaintext values, sealed for every selected workload in the deployment environment before any build is queued. Requires secrets:write or admin in addition to deploy permission. Uses the existing plan secret count/value quotas; never included in source or responses. Failed configuration queues no builds; already applied configuration remains available for retry."
         approval_token:
           type: string
           description: "Short-lived approval credential for the exact protected-environment plan"
@@ -100792,6 +102745,7 @@ components:
         - can_apply
         - plan_token
       properties:
+        safe_release: { $ref: '#/components/schemas/ProjectSafeRelease' }
         project_slug: { type: string }
         repo_full_name: { type: string }
         environment: { type: string, description: "Registered project environment targeted by this plan" }
@@ -100877,11 +102831,318 @@ components:
           type: array
           items: { type: string, description: "Persisted slug no longer in the repo; ignored this deploy. Run `gregale deployments exclude clear --slug=...` to drop." }
 
+    ProjectSafeRelease:
+      type: object
+      description: Server-owned safe project release checkpoint. Activation occurs only after all zero-traffic candidates complete readiness.
+      required: [status, previous_release_id, ttl_seconds, deadline]
+      properties:
+        add_services: { type: boolean, description: Explicit opt-in to reserve new HTTP source services. }
+        additions:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectReleaseAddition' }
+        status: { type: string, enum: [building, activated, failed, conflicted, verifying, succeeded, rolling_back, rolled_back, rollback_failed] }
+        previous_release_id: { type: string }
+        release_id: { type: string }
+        ttl_seconds: { type: integer }
+        deadline: { type: string, format: date-time }
+        message: { type: string }
+        verification: { $ref: '#/components/schemas/ProjectReleaseVerification' }
+        configuration: { $ref: '#/components/schemas/ProjectReleaseConfiguration' }
+        release_command: { $ref: '#/components/schemas/ProjectReleaseCommand' }
+        worker: { $ref: '#/components/schemas/ProjectReleaseWorker' }
+        restored_release_id: { type: string }
+
+    ProjectReleaseAddition:
+      type: object
+      description: Source-owned settings bound by the plan. app_id is assigned during durable reservation.
+      required: [slug, root_dir, fingerprint]
+      properties:
+        app_id: { type: string }
+        slug: { type: string }
+        root_dir: { type: string }
+        fingerprint: { type: string, pattern: '^[a-f0-9]{64}$' }
+
+    ProjectReleaseWorker:
+      type: object
+      description: One graph-owned production push worker, its immutable binding intent and runtime admission evidence.
+      required: [app_id, slug, binding_id, binding_hash, previous_deployment_id, drain_seconds, status]
+      properties:
+        app_id: { type: string }
+        slug: { type: string }
+        binding_id: { type: string }
+        binding_hash: { type: string }
+        previous_deployment_id: { type: string }
+        drain_seconds: { type: integer }
+        status: { type: string, enum: [building, ready, active, restored, failed, conflicted] }
+        deployment_id: { type: string }
+        instance_id: { type: string }
+
+    ProjectReleaseCommand:
+      type: object
+      description: Planned backward-compatible migration identity and durable task outcome. Task logs remain on the app-task resource.
+      required: [app_id, slug, command_hash, compatibility, status]
+      properties:
+        app_id: { type: string }
+        slug: { type: string }
+        command_hash: { type: string }
+        compatibility: { type: string, enum: [backward-compatible] }
+        status: { type: string, enum: [waiting, queued, restoring, running, succeeded, failed, timed_out, cancelled, uncertain] }
+        task_id: { type: string }
+        exit_code: { type: integer }
+        failure_code: { type: string }
+        verify_baseline: { type: boolean, description: Require attributed production baseline probes after migration and before publication. }
+        baseline_verification: { $ref: '#/components/schemas/ProjectMigrationBaselineVerification' }
+        contract_command_hash: { type: string, description: Immutable hash of the source-declared cleanup command. }
+        contract: { $ref: '#/components/schemas/ProjectMigrationContract' }
+
+    ProjectMigrationContract:
+      type: object
+      description: Guarded schema cleanup admission and durable task result. Cleanup command and task logs remain private to their existing resources.
+      required: [status, retired_deployments]
+      properties:
+        status: { type: string, enum: [ready, blocked, queued, restoring, running, succeeded, failed, timed_out, cancelled, uncertain, unknown] }
+        reason: { type: string }
+        request_id: { type: string }
+        expected_generation: { type: integer, format: int64 }
+        task_id: { type: string }
+        retired_deployments: { type: integer, minimum: 0 }
+        exit_code: { type: integer }
+        failure_code: { type: string }
+        recovery: { $ref: '#/components/schemas/ProjectMigrationRecovery' }
+
+    ProjectMigrationRecoveryRequest:
+      type: object
+      additionalProperties: false
+      description: Operator attestation after database inspection and cleanup execution quiescence, bound to a different verified active replacement. This request records recovery and retires drained old code; it does not execute SQL or replay cleanup.
+      required: [request_id, expected_task_id, expected_generation, replacement_attempt_id, database_state_checked, execution_quiescent, evidence_hash]
+      properties:
+        request_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        expected_task_id: { type: string, format: uuid }
+        expected_generation: { type: integer, format: int64, minimum: 1 }
+        replacement_attempt_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        database_state_checked: { type: boolean, description: Operator must attest that database state was inspected and repaired. }
+        execution_quiescent: { type: boolean, description: Operator must confirm the original cleanup execution has stopped. }
+        evidence_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+
+    ProjectMigrationRecovery:
+      type: object
+      description: Durable operator resolution and verified roll-forward identity. The cleanup outcome remains unchanged; database and execution checks are operator attestations.
+      required: [status]
+      properties:
+        status: { type: string, enum: [blocked, needs_operator, not_required, resolved] }
+        reason: { type: string }
+        request_id: { type: string }
+        task_id: { type: string, format: uuid }
+        expected_generation: { type: integer, format: int64 }
+        replacement_attempt_id: { type: string }
+        replacement_release_id: { type: string, format: uuid }
+        evidence_hash: { type: string }
+        operator_account_id: { type: string, format: uuid }
+        resolved_at: { type: string, format: date-time }
+
+    ProjectMigrationBaselineVerification:
+      type: object
+      description: Durable post-expansion production probe checkpoint. Commands and database contents remain private.
+      required: [task_id, release_id, started_at, checked_at, status, evidence]
+      properties:
+        task_id: { type: string }
+        release_id: { type: string }
+        started_at: { type: string, format: date-time }
+        checked_at: { type: string, format: date-time }
+        status: { type: string, enum: [healthy, failed, unknown] }
+        evidence:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectReleaseProbeEvidence' }
+
+    ProjectReleaseSecretVersionMap:
+      type: object
+      description: Workload names mapped to complete secret name and immutable version ID snapshots; empty maps remove secrets from that candidate.
+      additionalProperties:
+        type: object
+        additionalProperties: { type: string, format: uuid }
+    ProjectReleaseSecretConfiguration:
+      type: object
+      description: Candidate and baseline immutable secret version references bound to an atomic release.
+      additionalProperties: false
+      required: [versions, previous_versions]
+      properties:
+        versions: { $ref: '#/components/schemas/ProjectReleaseSecretVersionMap' }
+        previous_versions: { $ref: '#/components/schemas/ProjectReleaseSecretVersionMap' }
+    ProjectReleaseSecretStageRequest:
+      type: object
+      description: A bounded secret staging identity and complete private workload value sets.
+      additionalProperties: false
+      required: [request_id, workloads]
+      properties:
+        request_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        workloads:
+          type: object
+          description: Complete proposed workload secret snapshots within shared document and per-plan value limits. Values are accepted over TLS and sealed before storage.
+          additionalProperties:
+            type: object
+            additionalProperties: { type: string, minLength: 1, writeOnly: true }
+    ProjectReleaseSecretStageResponse:
+      type: object
+      description: Stable staging identity and version references returned after encryption.
+      additionalProperties: false
+      required: [request_id, versions]
+      properties:
+        request_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        versions: { $ref: '#/components/schemas/ProjectReleaseSecretVersionMap' }
+
+    ProjectReleaseConfiguration:
+      type: object
+      description: Paired release configuration fingerprints and committed version identities; values remain private to server storage.
+      required: [previous_version, previous_hash, target_hash, environment_hash]
+      properties:
+        secrets: { $ref: '#/components/schemas/ProjectReleaseSecretConfiguration' }
+        previous_version: { type: integer, format: int64 }
+        previous_hash: { type: string }
+        target_hash: { type: string }
+        environment_hash: { type: string }
+        request_hash: { type: string }
+        target_version: { type: integer, format: int64 }
+        restored_version: { type: integer, format: int64 }
+
+    ProjectReleaseConfigRequest:
+      type: object
+      description: Complete variable sets and optional staged secret version references for selected workloads; omitted snapshots inherit prior release values.
+      anyOf:
+        - required: [env]
+        - required: [secrets]
+      additionalProperties: false
+      properties:
+        secrets: { $ref: '#/components/schemas/ProjectReleaseSecretVersionMap' }
+        env:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: { type: string }
+
+    ProjectWorkerJobSample:
+      type: object
+      description: Attributed delivery attempts in a bounded window, including unknown unfinished deliveries.
+      required: [attempts, failures, incomplete, duration_ms, retries, queue_delay_ms]
+      properties:
+        attempts: { type: integer, format: int64 }
+        failures: { type: integer, format: int64 }
+        incomplete: { type: integer, format: int64 }
+        duration_ms: { type: integer, format: int64 }
+        retries: { type: integer, format: int64 }
+        queue_delay_ms: { type: integer, format: int64 }
+
+    ProjectWorkerHealth:
+      type: object
+      description: Opt-in real production queue delivery verification; absence of traffic never proves health.
+      required: [status, candidate, baseline, pending_jobs, oldest_pending_age_ms, baseline_pending_jobs, baseline_oldest_pending_age_ms]
+      properties:
+        status: { type: string, enum: [insufficient_evidence, healthy, regressed] }
+        candidate: { $ref: '#/components/schemas/ProjectWorkerJobSample' }
+        baseline: { $ref: '#/components/schemas/ProjectWorkerJobSample' }
+        pending_jobs: { type: integer, format: int64 }
+        oldest_pending_age_ms: { type: integer, format: int64 }
+        baseline_pending_jobs: { type: integer, format: int64 }
+        baseline_oldest_pending_age_ms: { type: integer, format: int64 }
+
+    ProjectReleaseControlRequest:
+      description: An operator decision fenced against the inspected progressive checkpoint.
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_generation]
+      properties:
+        request_id: { type: string, pattern: '^[a-f0-9]{32}$', description: Reuse this identity after an ambiguous response. }
+        expected_generation: { type: integer, format: int64, minimum: 1, description: Inspected checkpoint generation. }
+
+    ProjectReleaseControl:
+      description: Most recent durable operator decision and its restoration outcome.
+      type: object
+      required: [action, request_id, expected_generation, requested_at, status]
+      properties:
+        action: { type: string, enum: [abort, recover] }
+        request_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        expected_generation: { type: integer, format: int64, minimum: 1 }
+        requested_at: { type: string, format: date-time }
+        status: { type: string, enum: [pending, restored, blocked] }
+
+    ProjectReleaseStabilization:
+      type: object
+      description: Opt-in bounded health monitoring after progressive rollout success.
+      required: [enabled, status]
+      properties:
+        enabled: { type: boolean }
+        status: { type: string, enum: [waiting, monitoring, completed, rolled_back, needs_operator, conflicted] }
+        health: { type: string, enum: [healthy, regressed, unknown] }
+        started_at: { type: string, format: date-time }
+        deadline: { type: string, format: date-time }
+
+    ProjectReleaseVerification:
+      type: object
+      description: Snapshotted critical probes and durable post-cutover verification evidence.
+      required: [probes, healthy_rounds, regressed_rounds]
+      properties:
+        stabilization: { $ref: '#/components/schemas/ProjectReleaseStabilization' }
+        control: { $ref: '#/components/schemas/ProjectReleaseControl' }
+        actions:
+          type: array
+          description: Currently available guarded controls; an empty list permits inspection only.
+          items: { type: string, enum: [abort, recover] }
+        progressive: { type: boolean, description: "Require staged 5 percent, 25 percent and full project promotion." }
+        percent: { type: integer, enum: [5, 25, 100], description: Current progressive stage traffic percentage. }
+        generation: { type: integer, format: int64, minimum: 1, description: Durable progressive observation generation. }
+        worker_health: { $ref: '#/components/schemas/ProjectWorkerHealth' }
+        probes:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectReleaseProbe' }
+        deadline: { type: string, format: date-time }
+        checked_at: { type: string, format: date-time }
+        healthy_rounds: { type: integer }
+        regressed_rounds: { type: integer }
+        evidence:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectReleaseProbeEvidence' }
+
+    ProjectReleaseProbe:
+      type: object
+      description: Concrete read-only critical endpoint bound to one project workload.
+      required: [app_id, slug, method, path]
+      properties:
+        app_id: { type: string }
+        slug: { type: string }
+        method: { type: string }
+        path: { type: string }
+
+    ProjectReleaseProbeEvidence:
+      type: object
+      description: Attributed candidate and retained baseline samples for a critical probe round.
+      required: [probe, candidate_requests, candidate_errors, stable_requests, stable_errors, unauthenticated, unexpected_responses]
+      properties:
+        probe: { $ref: '#/components/schemas/ProjectReleaseProbe' }
+        candidate_requests: { type: integer }
+        candidate_errors: { type: integer }
+        stable_requests: { type: integer }
+        stable_errors: { type: integer }
+        unauthenticated: { type: integer }
+        unexpected_responses: { type: integer }
+
+    ProjectSubmissionReceipt:
+      type: object
+      description: Durable, account-scoped recovery for one project apply attempt.
+      required: [attempt_id, project_slug, status, selection_complete, apply]
+      properties:
+        selection_complete: { type: boolean, description: "Whether the selected workload set was durably recorded before enqueue." }
+        attempt_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        project_slug: { type: string }
+        environment: { type: string }
+        status: { type: string, enum: [processing, complete, rejected, interrupted] }
+        apply: { $ref: '#/components/schemas/ApplyResponse' }
+
     ApplyResponse:
       description: "Apply response. Carries the inserted project_id and per-app IDs."
       type: object
       required: [project_slug, scan_source, can_apply, plan_token]
       properties:
+        safe_release: { $ref: '#/components/schemas/ProjectSafeRelease' }
+        submission_attempt_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         project_slug: { type: string }
         repo_full_name: { type: string }
         scan_source: { type: string }
@@ -100983,6 +103244,8 @@ components:
         build_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         deployment_status: { type: string, description: "Terminal deployment status added by wait-aware CLI responses." }
         build_status: { type: string, description: "Terminal build status added by wait-aware CLI responses." }
+        configuration:
+          $ref: '#/components/schemas/DeploymentConfigurationStatus'
         error: { type: string, description: "Staging or enqueue error message; partial-failure rows carry this in lieu of IDs." }
 
     # ─── Alert rules (issue #396 / ADR-045 PR 3) ──────────────────────────
@@ -101035,7 +103298,7 @@ components:
         edge_rule_id:
           type: string
           format: uuid
-          description: 'ADR-1192. Immutable edge rule selector for edge_rule_hits and edge_rule_log_hits; absent means every rule of the app.'
+          description: 'ADR-1192. Immutable edge rule selector for edge_rule_hits, edge_rule_log_hits and edge_rule_activity; absent means every rule of the app.'
         post_deploy_rollback_window_seconds:
           type: integer
           minimum: 0
@@ -101132,6 +103395,7 @@ components:
             - synthetic_check_latency_p95_ms
             - edge_rule_hits
             - edge_rule_log_hits
+            - edge_rule_activity
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -101215,7 +103479,7 @@ components:
         edge_rule_id:
           type: string
           format: uuid
-          description: "ADR-1192. Edge rule to count for edge_rule_hits (enforced matches) or edge_rule_log_hits (log-mode matches); omit to count every rule of the app. Immutable. Edge-rule metrics are webhook-only and take window_spec 1h, 6h, 24h or 7d (hourly hit buckets, kept 14 days)."
+          description: "ADR-1192. Edge rule to count for edge_rule_hits (enforced matches), edge_rule_log_hits (log-mode matches) or edge_rule_activity (matches in either mode, so the alert survives a switch from log mode to enforce); omit to count every rule of the app. Immutable. Edge-rule metrics are webhook-only and take window_spec 1h, 6h, 24h or 7d (hourly hit buckets, kept 14 days)."
         post_deploy_rollback_window_seconds:
           type: integer
           minimum: 0
@@ -101226,7 +103490,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -101306,7 +103570,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -101562,7 +103826,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf, challenge]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -101593,6 +103857,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
             - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
+            - { $ref: '#/components/schemas/EdgeRuleChallengeAction' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         name: { type: string, description: Operator-facing rule name. }
@@ -101636,7 +103901,7 @@ components:
         enabled: { type: boolean, default: true }
         kind:
           type: string
-          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf]
+          enum: [route, rewrite, redirect, headers, cors, jwt, ip, validate, limit, maintenance, geo, throttle, budget, cache, respond, retry, circuit_breaker, async, waf, challenge]
         validate_mode:
           type: string
           enum: [block, observe, warn]
@@ -101666,6 +103931,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
             - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
+            - { $ref: '#/components/schemas/EdgeRuleChallengeAction' }
         name: { type: string, maxLength: 100, description: Optional operator-facing name for the new rule. }
         description: { type: string, maxLength: 1000, description: Optional operator-facing notes for the new rule. }
         expires_at: { type: string, format: date-time, description: Optional time after which the gateway stops applying the new rule. }
@@ -101716,6 +103982,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
             - { $ref: '#/components/schemas/EdgeRuleAsyncAction' }
             - { $ref: '#/components/schemas/EdgeRuleWAFAction' }
+            - { $ref: '#/components/schemas/EdgeRuleChallengeAction' }
         name: { type: string, maxLength: 100, description: Replacement rule name. }
         description: { type: string, maxLength: 1000, description: Replacement rule notes. }
         expires_at: { type: string, format: date-time, description: New expiry; the gateway stops applying the rule after it. }
@@ -101847,8 +104114,8 @@ components:
         rule_kind: { type: string }
         outcome:
           type: string
-          enum: [matched, logged, detected, warned, blocked]
-          description: 'matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests were answered with 403).'
+          enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed]
+          description: 'matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests were answered with 403). challenged, rejected, solved and failed are kind=challenge outcomes: the challenge page served to a browser, a request that is not a browser navigation answered with 403, a solution that earned a pass, and a solution answered with 403. An enforced challenge rule records these instead of matched.'
         occurred_at: { type: string, format: date-time }
         request_id: { type: string }
         method: { type: string }
@@ -101888,6 +104155,48 @@ components:
         rule_id: { type: string }
         matched: { type: integer, format: int64, minimum: 0, description: Requests an enforced rule matched. }
         logged: { type: integer, format: int64, minimum: 0, description: Requests a log-mode rule matched. }
+        series:
+          type: array
+          description: With series=true, matched plus logged per hour; the first value is the hour starting at since, the last the current hour (ADR-20261020105001).
+          items: { type: integer, format: int64, minimum: 0 }
+
+    EdgeRuleRecipeSuggestionsResponse:
+      description: Protection recipes suggested from the app's traffic (ADR-20261020105000).
+      type: object
+      required: [window, since, suggestions]
+      properties:
+        window: { type: string, example: 7d, description: 'Telemetry window the suggestions read, in days: 7d, or the plan''s telemetry retention when shorter.' }
+        since: { type: string, format: date-time, description: Start of the telemetry window. }
+        suggestions:
+          type: array
+          description: Ranked suggestions, at most five.
+          items: { $ref: '#/components/schemas/EdgeRuleRecipeSuggestion' }
+
+    EdgeRuleRecipeSuggestion:
+      description: One suggested protection recipe and why (ADR-20261020105000).
+      type: object
+      required: [recipe, title, reason]
+      properties:
+        recipe: { type: string, description: Recipe id to add (ADR-986). }
+        title: { type: string, description: The recipe's title. }
+        reason: { type: string, description: What in the app's traffic led to the suggestion. }
+        params:
+          type: object
+          description: Recipe parameters to add it with; required parameters not listed must be supplied.
+          additionalProperties: { type: string }
+        alternative: { $ref: '#/components/schemas/EdgeRuleRecipeSuggestionAlternative' }
+
+    EdgeRuleRecipeSuggestionAlternative:
+      description: A softer recipe for the same observation, such as challenging browsers instead of rate-limiting (ADR-831 amendment 7).
+      type: object
+      required: [recipe, title]
+      properties:
+        recipe: { type: string, description: Recipe id of the alternative (ADR-986). }
+        title: { type: string, description: The alternative recipe's title. }
+        params:
+          type: object
+          description: Parameters to add the alternative with.
+          additionalProperties: { type: string }
 
     EdgeRuleSetVersionResponse:
       description: One recorded state of an app's whole edge-rule set (ADR-961).
@@ -102852,6 +105161,31 @@ components:
           maximum: 65536
           default: 8192
           description: Request body prefix inspected. Larger and streaming bodies are inspected up to this size only; larger values use more of the app's inspection budget.
+    EdgeRuleChallengeAction:
+      description: |
+        Asks browsers on matched routes to prove they run a real browser
+        before the request reaches the app (ADR-831 amendment 7). A request
+        without a valid pass is answered at the edge: a page load gets a page
+        that solves a short proof of work in the browser and sets a signed
+        pass cookie, and any other request gets 403 challenge_required.
+        Requests with a verified API key, consumer key or JWT subject are
+        never challenged. Use log mode to see what a rule would challenge,
+        and add a verified_bot missing condition so search crawlers pass.
+        Hobby and above. Omitted values are stored as their defaults.
+      type: object
+      properties:
+        difficulty:
+          type: integer
+          minimum: 10
+          maximum: 22
+          default: 16
+          description: Leading zero bits the browser must find in a SHA-256 hash. Each extra bit doubles the work; the default takes tens to a few hundred milliseconds.
+        pass_ttl_seconds:
+          type: integer
+          minimum: 300
+          maximum: 86400
+          default: 3600
+          description: How long a solved challenge lets the browser through.
     EdgeRuleAsyncAction:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).
@@ -111372,7 +113706,7 @@ components:
         automatic_tax: { type: boolean, description: "Whether Stripe Tax calculated this invoice's tax (ADR-1313)." }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
-        source_kind: { type: string, enum: [app_consumer, platform_tenant] }
+        source_kind: { type: string, enum: [app_consumer, platform_tenant, product_control] }
         payment_status:
           type: string
           enum: [draft, open, paid, void, uncollectible, deleted]
@@ -111504,12 +113838,12 @@ components:
         hold_on_gaps: { type: boolean, description: "Hold an app consumer whose usage ledger misses requests telemetry saw (default true)." }
 
     BillingRunSources:
-      description: "Which customers a run bills. With platform_tenants, a consumer's tenant-attributed usage is billed on the tenant statement and its app item is skipped."
+      description: "Which customers a run bills. With platform_tenants, a consumer's tenant-attributed usage is billed on the tenant statement and its app item is skipped. product_customers bills each Product Control customer's statement for the month and needs Product Control to be enabled (ADR-20261018212918)."
       type: array
       minItems: 1
-      maxItems: 2
+      maxItems: 3
       uniqueItems: true
-      items: { type: string, enum: [app_consumers, platform_tenants] }
+      items: { type: string, enum: [app_consumers, platform_tenants, product_customers] }
 
     BillingRunExport:
       description: "Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1507; requires finalize and a connected key)."
@@ -111560,11 +113894,11 @@ components:
           items: { $ref: '#/components/schemas/BillingRunResponse' }
 
     BillingRunItemResponse:
-      description: "What a billing run did for one app consumer or platform tenant."
+      description: "What a billing run did for one app consumer, platform tenant or Product Control customer. A product_control item names its app in app_id and its customer in platform_tenant_id; its statement_id is the Product Control statement document."
       type: object
       required: [source_kind, external_ref, outcome, exported_invoices, attempts, updated_at]
       properties:
-        source_kind: { type: string, enum: [app_consumer, platform_tenant] }
+        source_kind: { type: string, enum: [app_consumer, platform_tenant, product_control] }
         app_id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
         platform_tenant_id: { type: string, format: uuid }
@@ -111572,7 +113906,7 @@ components:
         outcome:
           type: string
           enum: [pending, drafted, finalized, exported, up_to_date, held, skipped, failed]
-          description: "up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage or a completeness gap. skipped: billed through a platform tenant, or already invoiced through the other path."
+          description: "up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage, a completeness gap, or Product Control runs with no recorded outcome. skipped: billed through a platform tenant, or already invoiced through the other path or by hand."
         statement_id: { type: string, format: uuid }
         revision: { type: integer, minimum: 1 }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
@@ -114167,6 +116501,7 @@ components:
         count: { type: integer, minimum: 1, description: "Number of original requests represented by this collapsed telemetry row." }
         cold_boot: { type: boolean }
         trace_id: { type: [string, 'null'], description: "W3C distributed-tracing identifier (32 hex chars), separate from request_id." }
+        trace_inferred: { type: boolean, description: "True when Gregale linked this service call to its caller's trace because the caller sent no traceparent and was serving exactly one request (ADR-1138): the trace id is inferred, not propagated." }
         received_at: { type: string, format: date-time }
         wake_id: { type: string, description: "Opaque wake identifier when this request admitted a wake; omitted for warm requests." }
         instance_id: { type: string, description: "Opaque instance identifier that served the request; omitted when no target was reached." }

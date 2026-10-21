@@ -74,7 +74,7 @@ print(Template(pathlib.Path(sys.argv[1]).read_text()).render(public_iface="eth0"
 
 // The rendered host ruleset admits guests only to the bridge services, the
 // public edge and ICMP, and drops other bridge traffic before the public and
-// source-CIDR rules (spec §11, ADR-20261020120000).
+// source-CIDR rules (spec §11, ADR-20261020123000).
 func TestFirewallTemplateNarrowsTenantBridgeInputStandardJinja(t *testing.T) {
 	if err := exec.Command("python3", "-c", "import jinja2").Run(); err != nil {
 		t.Skip("python3 with jinja2 required for firewall rendering")

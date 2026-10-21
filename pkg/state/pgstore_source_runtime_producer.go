@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -42,10 +43,32 @@ func readSourceRuntimeProducer(ctx context.Context, tx pgx.Tx, accountID, appID,
 	if err := lockSourceBuildRootfsBase(ctx, tx, root.Input, now); err != nil {
 		return runtimeProducerSelection{}, fmt.Errorf("source runtime base: %w", err)
 	}
-	return sourceRuntimeProducerSelection(root, proof), nil
+	selection := sourceRuntimeProducerSelection(root, proof)
+	selection.Identity.DeploymentID, selection.Identity.Scope = canonicalStandardUUID(depID), root.Input.Scope
+	if root.Input.DeploymentID != depID {
+		dep, err := deploymentByIDDB(ctx, tx, depID)
+		if err != nil {
+			return selection, err
+		}
+		selection.Identity.Scope = dep.Scope
+	}
+	return selection, nil
 }
 
 func readSourceRuntimeRootfs(ctx context.Context, tx pgx.Tx, accountID, appID, depID string) (SourceBuildRootfs, error) {
+	requestedDepID := depID
+	origin, err := sqlc.New().EnvironmentBuildArtifactOrigin(ctx, tx, sqlc.EnvironmentBuildArtifactOriginParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), DeploymentID: mustPgUUID(depID)})
+	if err == nil {
+		depID = origin
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		// Borrower validation takes NOWAIT owner/producer locks before the
+		// ordinary source selection. Preserve the same retryable fence error.
+		var busy *pgconn.PgError
+		if errors.As(err, &busy) && busy.Code == "55P03" {
+			return SourceBuildRootfs{}, ErrApplicationStandardRuntimeBusy
+		}
+		return SourceBuildRootfs{}, mapErr(err)
+	}
 	row, err := sqlc.New().GetCurrentSourceBuildRootfs(ctx, tx, sourceBuildRootfsScope(accountID, appID, depID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SourceBuildRootfs{}, ErrApplicationStandardRuntimeStale
@@ -56,6 +79,16 @@ func readSourceRuntimeRootfs(ctx context.Context, tx pgx.Tx, accountID, appID, d
 	root, err := sourceBuildRootfsRow(row)
 	if err != nil {
 		return SourceBuildRootfs{}, fmt.Errorf("source runtime rootfs: %w", err)
+	}
+	if requestedDepID != depID {
+		target, err := deploymentByIDDB(ctx, tx, requestedDepID)
+		if err != nil {
+			return root, err
+		}
+		frozen := candidateFrozenInputs(target)
+		if frozen.BuiltArtifact == nil || frozen.BuiltArtifact.ID != root.ID || frozen.BuiltArtifact.InputHash != root.InputHash {
+			return root, ErrApplicationStandardRuntimeStale
+		}
 	}
 	if err := lockSourceRuntimeOwner(ctx, tx, root); err != nil {
 		return SourceBuildRootfs{}, fmt.Errorf("source runtime owner and intent: %w", err)

@@ -28,6 +28,8 @@ type EnvironmentWorkloadServingRoute struct {
 // require a completed invocation for every reviewed queue consumer; scheduled
 // Jobs require one successful, revision-current occurrence after activation.
 type EnvironmentWorkloadServingReceipt struct {
+	// FirstServedAt survives gateway handoffs; it is historical evidence only.
+	FirstServedAt          *time.Time                                  `json:"-"`
 	GraphID                string                                      `json:"graph_id"`
 	SourceID               string                                      `json:"-"`
 	SourceGeneration       int64                                       `json:"-"`
@@ -137,6 +139,10 @@ func cloneEnvironmentWorkloadServingReceipt(in EnvironmentWorkloadServingReceipt
 	out.Acknowledgements = make(map[int64][]string, len(in.Acknowledgements))
 	for generation, nodes := range in.Acknowledgements {
 		out.Acknowledgements[generation] = slices.Clone(nodes)
+	}
+	if in.FirstServedAt != nil {
+		first := *in.FirstServedAt
+		out.FirstServedAt = &first
 	}
 	if in.ServedAt != nil {
 		servedAt := *in.ServedAt

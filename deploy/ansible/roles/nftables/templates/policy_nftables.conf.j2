@@ -27,7 +27,7 @@ table inet faas {
     iif lo accept
     # Guests reach only the bridge services (the per-netns chain narrows the
     # ports), the public edge for hairpin calls, and ICMP; the drop keeps
-    # bridge traffic from the rules below (spec §11, ADR-20261020120000).
+    # bridge traffic from the rules below (spec §11, ADR-20261020123000).
     iifname "br-tenants" ip daddr {{ masquerade_cidr }} accept
     iifname "br-tenants" tcp dport { 80,443 } accept
     iifname "br-tenants" meta l4proto { icmp, ipv6-icmp } accept

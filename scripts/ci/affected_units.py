@@ -11,7 +11,7 @@ can carry.
 A binary's inputs are the files `go build` reads for it: the Go, cgo,
 assembly and embedded files of every module package in its import closure,
 loaded with `go list -deps` under the release build configuration
-(linux/amd64, CGO off, `-tags metal` for daemons). Test files and files a
+(linux/amd64, CGO off, the Makefile's DAEMON_TAGS for daemons). Test files and files a
 build constraint excludes are not inputs. go.mod, go.sum and the Makefile's
 release build recipe are inputs of every binary. A deleted file under a
 package in the closure counts too, since the closure is loaded at head.
@@ -20,7 +20,28 @@ Each binary gets a unit version: the newest first-parent commit in
 (base, head] that changed one of its inputs. A binary without one is
 unchanged since base. Release builds stamp `unit-<commit>` into
 pkg/wire.Version, so a unit's bytes depend only on the source it was built
-from, and a deploy can tell whether the host already runs that version.
+from.
+
+The import closure over-approximates what a binary runs. With --code, each
+binary of a deployable lane whose closure changed is built at base and at
+head with the release flags, a neutral version stamp and an empty Go build
+ID (binary_code.py), and the report records its code status and digests:
+
+  changed  its code differs from base's: a host on the base release
+           restarts it.
+  same     identical code; the closure change linked nothing it runs.
+  lines    only the line table differs (an edit above functions it
+           links): the same code, so it is treated like same, and the
+           running binary keeps line numbers that match the source its
+           version names.
+
+The release still carries every closure binary of an eligible lane, the
+unchanged ones too, so a host that runs an earlier unit release of it can
+get back to base's code after a revert. The deploy plan
+(plan_unit_deploy.py) restarts a unit only when the code digest the host
+runs differs from the release's; unit versions name the source of the
+binary each host runs. docs/adr/1650-per-unit-control-plane-releases.md
+("Selection by code").
 
 Non-Go inputs map to flags (scripts/ci/release_units.json):
 
@@ -68,18 +89,22 @@ trail the control plane.
 The checkout must be at --head (`go list` reads the working tree).
 
 Usage:
-  scripts/ci/affected_units.py --base v0.1.18-rc.273 --head HEAD [--output report.json]
+  scripts/ci/affected_units.py --base v0.1.18-rc.273 --head HEAD [--code [--code-cache FILE]]
+                               [--output report.json]
 """
 import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG = os.path.join(HERE, "release_units.json")
 sys.path.insert(0, HERE)
+import binary_code  # noqa: E402
 import check_migration_expand_contract as migration_lint  # noqa: E402
 import host_roles  # noqa: E402
 
@@ -92,7 +117,7 @@ LIST_FIELDS = ",".join([
     "HFiles", "SysoFiles", "EmbedFiles", "Module", "Error", "DepsErrors",
 ])
 FILE_FIELDS = ("GoFiles", "CgoFiles", "SFiles", "CFiles", "HFiles", "SysoFiles", "EmbedFiles")
-RECIPE_VARS = re.compile(r"^(GO|GO_BUILD_FLAGS|LDFLAGS|BUILD_CGO_ENABLED|DAEMONS|CLIS)\s*[:?+]?=")
+RECIPE_VARS = re.compile(r"^(GO|GO_BUILD_FLAGS|DAEMON_TAGS|LDFLAGS|BUILD_CGO_ENABLED|DAEMONS|CLIS)\s*[:?+]?=")
 RECIPE_TARGETS = ("build-release-batch:", "build-release-unit:")
 # How many paths a flag lists in the report; the count is always complete.
 FLAG_PATH_LIMIT = 20
@@ -123,6 +148,13 @@ def load_config(path=DEFAULT_CONFIG):
         if group not in HOST_GROUP_ROLES:
             raise ValueError(f"{path}: host_config converges unknown host group {group!r}")
     return config
+
+
+def daemon_tags(text):
+    """The build tags release builds give daemons: the Makefile's DAEMON_TAGS
+    (comma-separated), else metal."""
+    m = re.search(r"^DAEMON_TAGS\s*:=\s*(\S+)\s*$", text, re.M)
+    return m.group(1).split(",") if m else ["metal"]
 
 
 def makefile_list(text, var):
@@ -211,9 +243,9 @@ def closure(main, graph):
     return dirs, files
 
 
-def binary_closures(daemons, clis, module, root="."):
+def binary_closures(daemons, clis, module, root=".", tags_for_daemons=("metal",)):
     out = {}
-    for names, tags in ((daemons, ["metal"]), (clis, [])):
+    for names, tags in ((daemons, list(tags_for_daemons)), (clis, [])):
         if not names:
             continue
         mains = [f"./cmd/{n}" for n in names]
@@ -370,12 +402,14 @@ def classify_deploy(paths, config, host):
     return out
 
 
-def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=None, host=None):
+def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=None, host=None, code=None):
     """The report for a range. commits are newest first; closures map each
     binary to (package dirs, input files) at head; exists is head's file set;
     data is classify_range's verdict on the range's migrations; host maps
     each host group to {"owners": {path: [roles]}, "changed": {"all",
-    "roles"}} (host_view), and without it every deploy/ path blocks."""
+    "roles"}} (host_view), and without it every deploy/ path blocks; code
+    maps measured binaries to {"code", "code_digest", "base_code_digest"}
+    (measure_code)."""
     global_inputs = set(config.get("global_inputs") or [])
     binaries = {}
     for name, entry in sorted(config["binaries"].items()):
@@ -387,12 +421,21 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
             if sha in recipe_shas or any(p in global_inputs or hits(p, dirs, files, exists) for p in paths):
                 version = sha
                 break
-        binaries[name] = {
+        # closure: an input changed since base. changed: its code did, when
+        # measured; otherwise the closure stands in for it.
+        binary = {
             "lane": entry["lane"],
+            "closure": version is not None,
             "changed": version is not None,
+            "code": None,
             "commit": version,
             "version": f"unit-{version}" if version else None,
         }
+        measured = (code or {}).get(name)
+        if measured and version:
+            binary.update(measured)
+            binary["changed"] = measured["code"] in binary_code.CODE_CHANGED
+        binaries[name] = binary
     for name in closures:
         if name not in config["binaries"]:
             raise ValueError(f"release binary {name} has no lane in the lane table")
@@ -441,6 +484,9 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
     lanes = {}
     for lane in DEPLOY_LANES:
         changed = sorted(n for n, b in binaries.items() if b["changed"] and b["lane"] == lane)
+        # A lane carries every closure binary, the ones whose code did not
+        # change too: a host on an earlier unit release may run other code.
+        carried = sorted(n for n, b in binaries.items() if b["closure"] and b["lane"] == lane)
         # The edge lane lands on compute hosts as they are: a change to a
         # role those hosts run waits for the full release that converges it.
         blocked = sorted(blocking + (["compute_deploy"] if lane == "edge" and "compute_deploy" in flags else []))
@@ -452,12 +498,12 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
         # own changed. Whatever blocks it blocks the edge lane too, which
         # therefore never goes ahead of it (cd-edge-units.yml checks the
         # control plane before any gateway).
-        carries = bool(changed) or (lane == "control-plane" and (has_data or has_host))
+        carries = bool(carried) or (lane == "control-plane" and (has_data or has_host))
         if not carries:
             reasons.append(f"no {lane} daemon changed since base")
-        lanes[lane] = {"changed": changed, "blocked_by": blocked, "eligible": carries and not blocked,
-                       "reasons": reasons}
-    deployable = sorted(n for lane in lanes.values() if lane["eligible"] for n in lane["changed"])
+        lanes[lane] = {"changed": changed, "carried": carried, "blocked_by": blocked,
+                       "eligible": carries and not blocked, "reasons": reasons}
+    deployable = sorted(n for lane in lanes.values() if lane["eligible"] for n in lane["carried"])
     pending = {lane: sorted(n for n, b in binaries.items() if b["changed"] and b["lane"] == lane)
                for lane in ("shared", "compute", "tool")}
     for lane, v in lanes.items():
@@ -516,7 +562,97 @@ def host_view(base_sha, head_sha, root=".", services=()):
     return view
 
 
-def report(base, head, config_path=DEFAULT_CONFIG, root="."):
+class BuildSide:
+    """One commit's release build recipe (its Makefile), for binary_code.build."""
+
+    def __init__(self, sha, path):
+        self.sha, self.path = sha, path
+        with open(os.path.join(path, "Makefile"), encoding="utf-8") as fh:
+            makefile = fh.read()
+        self.daemons = set(makefile_list(makefile, "DAEMONS"))
+        self.binaries = self.daemons | set(makefile_list(makefile, "CLIS"))
+        self.flags = makefile_list(makefile, "GO_BUILD_FLAGS")
+        self.daemon_tags = daemon_tags(makefile)
+        self.module = module_path(path)
+
+    def tags(self, name):
+        return self.daemon_tags if name in self.daemons else []
+
+
+CODE_CACHE_FORMAT = 1
+
+
+def load_code_cache(path, base_sha, go):
+    """{binary: (file digest, code digest)} built at base_sha by toolchain
+    go, from a cache file an earlier run wrote; {} when there is none or it
+    describes other builds."""
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            cache = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if (cache.get("format_version"), cache.get("base"), cache.get("neutral_version"), cache.get("go")) != \
+            (CODE_CACHE_FORMAT, base_sha, binary_code.NEUTRAL_VERSION, go):
+        return {}
+    return {name: tuple(pair) for name, pair in (cache.get("digests") or {}).items()}
+
+
+def write_code_cache(path, base_sha, go, digests):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"format_version": CODE_CACHE_FORMAT, "base": base_sha,
+                   "neutral_version": binary_code.NEUTRAL_VERSION, "go": go,
+                   "digests": {name: list(pair) for name, pair in sorted(digests.items())}},
+                  fh, indent=2, sort_keys=True)
+        fh.write("\n")
+
+
+def measure_code(names, base_sha, head_sha, go, root=".", cache_path=None, workdir=None):
+    """({binary: {"code", "code_digest", "base_code_digest"}}, binaries
+    whose base digests came from the cache, binaries built at base) for
+    names, built at base (an exported tree) and at head (the checkout) with
+    binary_code.build and toolchain go. The base builds are the same for
+    every range over one base, so a cache file keeps their digests between
+    runs."""
+    base_hashes = load_code_cache(cache_path, base_sha, go)
+    cached = sorted(n for n in names if n in base_hashes)
+    buildable = []
+    tmp = tempfile.mkdtemp(prefix="unit-code-", dir=workdir)
+    try:
+        out = os.path.join(tmp, "out")
+        os.makedirs(out)
+        missing = [n for n in names if n not in base_hashes]
+        if missing:
+            binary_code.prefetch_tree(base_sha, head_sha, root)
+            binary_code.export_tree(base_sha, os.path.join(tmp, "base"), root)
+            base = BuildSide(base_sha, os.path.join(tmp, "base"))
+            # A binary base does not build is new: no base digest, "added".
+            buildable = [n for n in missing if n in base.binaries and os.path.isdir(os.path.join(base.path, "cmd", n))]
+            if buildable:
+                base_hashes.update(binary_code.build(base, buildable, out))
+        head_hashes = binary_code.build(BuildSide(head_sha, root), names, out)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if cache_path:
+        write_code_cache(cache_path, base_sha, go, base_hashes)
+    status = binary_code.compare(base_hashes, head_hashes, names)
+    measured = {}
+    for n in names:
+        measured[n] = {"code": status[n], "code_digest": head_hashes[n][1],
+                       "base_code_digest": base_hashes[n][1] if n in base_hashes else None}
+    return measured, cached, sorted(buildable)
+
+
+def code_candidates(rep):
+    """Binaries worth building at both commits: those of a deployable lane,
+    whose closure changed, in a lane nothing blocks. A blocked lane ships
+    nothing, and the full release ships every other binary."""
+    return sorted(n for n, b in rep["binaries"].items()
+                  if b["closure"] and b["lane"] in DEPLOY_LANES and not rep["lanes"][b["lane"]]["blocked_by"])
+
+
+def report(base, head, config_path=DEFAULT_CONFIG, root=".", code=False, code_cache=None, workdir=None):
     config = load_config(config_path)
     base_sha = git("rev-parse", "--verify", f"{base}^{{commit}}", root=root).strip()
     head_sha = git("rev-parse", "--verify", f"{head}^{{commit}}", root=root).strip()
@@ -533,7 +669,7 @@ def report(base, head, config_path=DEFAULT_CONFIG, root="."):
     with open(os.path.join(root, "Makefile"), encoding="utf-8") as fh:
         makefile = fh.read()
     daemons, clis = makefile_list(makefile, "DAEMONS"), makefile_list(makefile, "CLIS")
-    closures = binary_closures(daemons, clis, module_path(root), root)
+    closures = binary_closures(daemons, clis, module_path(root), root, daemon_tags(makefile))
     commits = range_commits(base_sha, head_sha, root)
     exists = set(git("ls-tree", "-r", "--name-only", head_sha, root=root).splitlines())
     directory = config.get("migrations_dir")
@@ -542,16 +678,35 @@ def report(base, head, config_path=DEFAULT_CONFIG, root="."):
         data = migration_lint.classify_range(root, base_sha, head_sha, directory)
     hc = config.get("host_config")
     host = host_view(base_sha, head_sha, root, hc.get("stateful_services") or ()) if hc else {}
-    out = analyze(commits, closures, config, exists, recipe_commits(commits, root), data, host)
-    out.update(base=base_sha, head=head_sha, base_ref=base)
+    recipes = recipe_commits(commits, root)
+    out = analyze(commits, closures, config, exists, recipes, data, host)
+    selection = None
+    if code:
+        names = code_candidates(out)
+        selection = {"neutral_version": binary_code.NEUTRAL_VERSION, "go": None, "measured": names,
+                     "base_cached": [], "base_built": [], "error": None}
+        try:
+            selection["go"] = binary_code.go_version(root)
+            if names:
+                measured, selection["base_cached"], selection["base_built"] = measure_code(
+                    names, base_sha, head_sha, selection["go"], root, code_cache, workdir)
+                out = analyze(commits, closures, config, exists, recipes, data, host, measured)
+        except (RuntimeError, subprocess.CalledProcessError) as err:
+            # Selecting by closure restarts more units, never fewer: the
+            # release carries no digests and hosts compare unit versions.
+            detail = getattr(err, "stderr", "") or ""
+            selection.update(measured=[], base_cached=[], base_built=[], error=f"{err} {detail}".strip())
+            print(f"warning: code selection failed, selecting by closure: {selection['error']}", file=sys.stderr)
+    out.update(base=base_sha, head=head_sha, base_ref=base, code_selection=selection)
     return out
 
 
 def summary(rep):
     lines = [f"range {rep['base'][:12]}..{rep['head'][:12]}: {rep['commits']} commits"]
     for name, b in sorted(rep["binaries"].items()):
-        if b["changed"]:
-            lines.append(f"  {name:20} {b['lane']:14} {b['commit'][:12]}")
+        if b["closure"]:
+            code = f" code {b['code']}" if b.get("code") else ""
+            lines.append(f"  {name:20} {b['lane']:14} {b['commit'][:12]}{code}")
     for flag, v in sorted(rep["flags"].items()):
         if flag in ("data", "host_config"):
             continue
@@ -567,7 +722,9 @@ def summary(rep):
                      f"(converged first, {hc['version']})")
     for lane, v in rep["lanes"].items():
         state = "eligible" if v["eligible"] else "not eligible: " + "; ".join(v["reasons"])
-        lines.append(f"{lane} lane: {' '.join(v['changed']) or '<none>'} ({state})")
+        same = sorted(set(v["carried"]) - set(v["changed"]))
+        unchanged = f"; carried with unchanged code: {' '.join(same)}" if same else ""
+        lines.append(f"{lane} lane: {' '.join(v['changed']) or '<none>'} ({state}{unchanged})")
     lines.append(f"deployable: {' '.join(rep['deployable']) or '<none>'}")
     lines.append(f"eligible: {str(rep['eligible']).lower()}" +
                  ("" if rep["eligible"] else f" ({'; '.join(rep['reasons'])})"))
@@ -579,10 +736,15 @@ def main():
     ap.add_argument("--base", required=True, help="the full release the host runs (tag or commit)")
     ap.add_argument("--head", default="HEAD", help="the commit to release (default HEAD; must be checked out)")
     ap.add_argument("--config", default=DEFAULT_CONFIG, help="lane table (default scripts/ci/release_units.json)")
+    ap.add_argument("--code", action="store_true",
+                    help="build each deployable closure binary at base and head and select by code")
+    ap.add_argument("--code-cache", help="JSON file of base code digests, read and updated (with --code)")
+    ap.add_argument("--workdir", help="parent directory for the exported base tree and binaries (with --code)")
     ap.add_argument("--output", help="write the JSON report here instead of stdout")
     args = ap.parse_args()
     try:
-        rep = report(args.base, args.head, args.config)
+        rep = report(args.base, args.head, args.config, code=args.code, code_cache=args.code_cache,
+                     workdir=args.workdir)
     except (RuntimeError, ValueError, subprocess.CalledProcessError) as err:
         detail = getattr(err, "stderr", "") or ""
         print(f"affected_units: {err} {detail}".strip(), file=sys.stderr)

@@ -1,4 +1,4 @@
-package main_test
+package main
 
 import (
 	"bytes"
@@ -10,13 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCmdDeploy_JSONDefaultWaitPropagatesTerminalFailure(t *testing.T) {
-	main.ResetJSONOutput()
-	defer main.ResetJSONOutput()
+	resetJSONOutput()
+	defer resetJSONOutput()
 
 	var deploymentReads atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,14 +34,14 @@ func TestCmdDeploy_JSONDefaultWaitPropagatesTerminalFailure(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	(*main.JsonOutput) = true
+	jsonOutput = true
 
 	var stdout bytes.Buffer
-	oldOut := (*main.OsStdout)
-	(*main.OsStdout) = &stdout
-	defer func() { (*main.OsStdout) = oldOut }()
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
 
-	if code := main.CmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 1 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app"}); code != 1 {
 		t.Fatalf("cmdDeploy --json exit = %d, want terminal failure exit 1", code)
 	}
 	if deploymentReads.Load() == 0 {
@@ -58,8 +57,8 @@ func TestCmdDeploy_JSONDefaultWaitPropagatesTerminalFailure(t *testing.T) {
 }
 
 func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
-	main.ResetJSONOutput()
-	defer main.ResetJSONOutput()
+	resetJSONOutput()
+	defer resetJSONOutput()
 
 	var deploymentReads atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,17 +77,17 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	(*main.JsonOutput) = true
+	jsonOutput = true
 
 	var stdout bytes.Buffer
-	oldOut := (*main.OsStdout)
-	(*main.OsStdout) = &stdout
-	defer func() { (*main.OsStdout) = oldOut }()
-	stderr, restoreErr := main.CaptureStderr(t)
+	oldOut := osStdout
+	osStdout = &stdout
+	defer func() { osStdout = oldOut }()
+	stderr, restoreErr := captureStderr(t)
 	defer restoreErr()
 
 	started := time.Now()
-	if code := main.CmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app", "--timeout", "1"}); code != 3 {
+	if code := cmdDeployTarball([]string{"--image", "registry.x/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--name", "my-app", "--timeout", "1"}); code != 3 {
 		t.Fatalf("cmdDeploy --json --timeout 1 exit = %d, want timeout exit 3", code)
 	}
 	elapsed := time.Since(started)
@@ -98,11 +97,11 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	if deploymentReads.Load() == 0 {
 		t.Fatal("default JSON deploy did not poll the deployment before timing out")
 	}
-	problem := main.AssertOneProblem(t, stderr.String())
-	if problem.Code != "transport_error" || !strings.Contains(problem.Detail, "timed out") || !strings.Contains(problem.Hint, "resume waiting") {
+	problem := assertOneProblem(t, stderr.String())
+	if problem.Code != "transport_error" || !strings.Contains(problem.Detail, "timed out") || !strings.Contains(problem.Hint, "saved deploy") {
 		t.Fatalf("stderr missing timeout recovery: %+v", problem)
 	}
-	var receipt main.DeployReceipt
+	var receipt DeployReceipt
 	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
 	}
@@ -112,7 +111,10 @@ func TestCmdDeploy_JSONDefaultWaitHonorsTimeout(t *testing.T) {
 	if !receipt.TimedOut {
 		t.Fatal("timeout receipt timed_out = false, want true")
 	}
-	if got, want := receipt.ResumeCommand, "gregale deployment wait d1 --timeout 1"; got != want {
+	if !validDeploySessionID(receipt.SessionID) {
+		t.Fatalf("timeout receipt missing valid session ID: %q", receipt.SessionID)
+	}
+	if got, want := receipt.ResumeCommand, "gregale deploy resume "+receipt.SessionID; got != want {
 		t.Fatalf("timeout receipt resume_command = %q, want %q", got, want)
 	}
 }

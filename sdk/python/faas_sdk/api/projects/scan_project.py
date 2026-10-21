@@ -8,14 +8,48 @@ from ...client import AuthenticatedClient, Client
 from ...models.plan_response import PlanResponse
 from ...models.problem import Problem
 from ...models.project_scan_request import ProjectScanRequest
-from ...types import Response
+from ...models.scan_project_project_add_services import (
+    ScanProjectProjectAddServices,
+)
+from ...models.scan_project_project_progressive import (
+    ScanProjectProjectProgressive,
+)
+from ...models.scan_project_project_release_mode import (
+    ScanProjectProjectReleaseMode,
+)
+from ...models.scan_project_project_stabilization import (
+    ScanProjectProjectStabilization,
+)
+from ...models.scan_project_project_worker_health import (
+    ScanProjectProjectWorkerHealth,
+)
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     body: ProjectScanRequest,
+    project_add_services: ScanProjectProjectAddServices | Unset = UNSET,
+    project_stabilization: ScanProjectProjectStabilization | Unset = UNSET,
+    project_progressive: ScanProjectProjectProgressive | Unset = UNSET,
+    project_worker_health: ScanProjectProjectWorkerHealth | Unset = UNSET,
+    project_release_mode: ScanProjectProjectReleaseMode | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(project_add_services, Unset):
+        headers["Project-Add-Services"] = str(project_add_services)
+
+    if not isinstance(project_stabilization, Unset):
+        headers["Project-Stabilization"] = str(project_stabilization)
+
+    if not isinstance(project_progressive, Unset):
+        headers["Project-Progressive"] = str(project_progressive)
+
+    if not isinstance(project_worker_health, Unset):
+        headers["Project-Worker-Health"] = str(project_worker_health)
+
+    if not isinstance(project_release_mode, Unset):
+        headers["Project-Release-Mode"] = str(project_release_mode)
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -87,6 +121,11 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ProjectScanRequest,
+    project_add_services: ScanProjectProjectAddServices | Unset = UNSET,
+    project_stabilization: ScanProjectProjectStabilization | Unset = UNSET,
+    project_progressive: ScanProjectProjectProgressive | Unset = UNSET,
+    project_worker_health: ScanProjectProjectWorkerHealth | Unset = UNSET,
+    project_release_mode: ScanProjectProjectReleaseMode | Unset = UNSET,
 ) -> Response[PlanResponse | Problem]:
     """Scan an uploaded tarball and return a deploy plan.
 
@@ -102,6 +141,11 @@ def sync_detailed(
     can branch without a second request.
 
     Args:
+        project_add_services (ScanProjectProjectAddServices | Unset):
+        project_stabilization (ScanProjectProjectStabilization | Unset):
+        project_progressive (ScanProjectProjectProgressive | Unset):
+        project_worker_health (ScanProjectProjectWorkerHealth | Unset):
+        project_release_mode (ScanProjectProjectReleaseMode | Unset):
         body (ProjectScanRequest): Multipart body for POST /v1/projects/scan (dry-run).
 
     Raises:
@@ -114,6 +158,11 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        project_add_services=project_add_services,
+        project_stabilization=project_stabilization,
+        project_progressive=project_progressive,
+        project_worker_health=project_worker_health,
+        project_release_mode=project_release_mode,
     )
 
     response = client.get_httpx_client().request(
@@ -127,6 +176,11 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ProjectScanRequest,
+    project_add_services: ScanProjectProjectAddServices | Unset = UNSET,
+    project_stabilization: ScanProjectProjectStabilization | Unset = UNSET,
+    project_progressive: ScanProjectProjectProgressive | Unset = UNSET,
+    project_worker_health: ScanProjectProjectWorkerHealth | Unset = UNSET,
+    project_release_mode: ScanProjectProjectReleaseMode | Unset = UNSET,
 ) -> PlanResponse | Problem | None:
     """Scan an uploaded tarball and return a deploy plan.
 
@@ -142,6 +196,11 @@ def sync(
     can branch without a second request.
 
     Args:
+        project_add_services (ScanProjectProjectAddServices | Unset):
+        project_stabilization (ScanProjectProjectStabilization | Unset):
+        project_progressive (ScanProjectProjectProgressive | Unset):
+        project_worker_health (ScanProjectProjectWorkerHealth | Unset):
+        project_release_mode (ScanProjectProjectReleaseMode | Unset):
         body (ProjectScanRequest): Multipart body for POST /v1/projects/scan (dry-run).
 
     Raises:
@@ -155,6 +214,11 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        project_add_services=project_add_services,
+        project_stabilization=project_stabilization,
+        project_progressive=project_progressive,
+        project_worker_health=project_worker_health,
+        project_release_mode=project_release_mode,
     ).parsed
 
 
@@ -162,6 +226,11 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ProjectScanRequest,
+    project_add_services: ScanProjectProjectAddServices | Unset = UNSET,
+    project_stabilization: ScanProjectProjectStabilization | Unset = UNSET,
+    project_progressive: ScanProjectProjectProgressive | Unset = UNSET,
+    project_worker_health: ScanProjectProjectWorkerHealth | Unset = UNSET,
+    project_release_mode: ScanProjectProjectReleaseMode | Unset = UNSET,
 ) -> Response[PlanResponse | Problem]:
     """Scan an uploaded tarball and return a deploy plan.
 
@@ -177,6 +246,11 @@ async def asyncio_detailed(
     can branch without a second request.
 
     Args:
+        project_add_services (ScanProjectProjectAddServices | Unset):
+        project_stabilization (ScanProjectProjectStabilization | Unset):
+        project_progressive (ScanProjectProjectProgressive | Unset):
+        project_worker_health (ScanProjectProjectWorkerHealth | Unset):
+        project_release_mode (ScanProjectProjectReleaseMode | Unset):
         body (ProjectScanRequest): Multipart body for POST /v1/projects/scan (dry-run).
 
     Raises:
@@ -189,6 +263,11 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        project_add_services=project_add_services,
+        project_stabilization=project_stabilization,
+        project_progressive=project_progressive,
+        project_worker_health=project_worker_health,
+        project_release_mode=project_release_mode,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -200,6 +279,11 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ProjectScanRequest,
+    project_add_services: ScanProjectProjectAddServices | Unset = UNSET,
+    project_stabilization: ScanProjectProjectStabilization | Unset = UNSET,
+    project_progressive: ScanProjectProjectProgressive | Unset = UNSET,
+    project_worker_health: ScanProjectProjectWorkerHealth | Unset = UNSET,
+    project_release_mode: ScanProjectProjectReleaseMode | Unset = UNSET,
 ) -> PlanResponse | Problem | None:
     """Scan an uploaded tarball and return a deploy plan.
 
@@ -215,6 +299,11 @@ async def asyncio(
     can branch without a second request.
 
     Args:
+        project_add_services (ScanProjectProjectAddServices | Unset):
+        project_stabilization (ScanProjectProjectStabilization | Unset):
+        project_progressive (ScanProjectProjectProgressive | Unset):
+        project_worker_health (ScanProjectProjectWorkerHealth | Unset):
+        project_release_mode (ScanProjectProjectReleaseMode | Unset):
         body (ProjectScanRequest): Multipart body for POST /v1/projects/scan (dry-run).
 
     Raises:
@@ -229,5 +318,10 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            project_add_services=project_add_services,
+            project_stabilization=project_stabilization,
+            project_progressive=project_progressive,
+            project_worker_health=project_worker_health,
+            project_release_mode=project_release_mode,
         )
     ).parsed

@@ -71,6 +71,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -345,11 +346,10 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 	)
 	prepared, err := h.vmm.PrepareLiveMigration(leaseCtx, fromNodeID, instanceID, snapshotKey)
 	if err != nil {
-		// Phase 1 failure: no state has changed on the dying
-		// vmmd (it returned before pausing). The instance
-		// stays RUNNING on the dying node. Drop silently and
-		// bump peer_failure — the next compute_node_changed
-		// event retries.
+		// Legacy capture recovers before returning failure. A qualified
+		// function may instead retain a source receipt after checkpoint
+		// effects; expiry fences that attempt before recovery/retirement.
+		// Do not infer that the guest is serving from this wire error.
 		h.metrics.LiveMigrationDecisions("peer_failure").Inc()
 		h.log.Warn("sched: migrate one: Phase 1 prepare failed",
 			"instance_id", instanceID,
@@ -481,8 +481,15 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 		// Adopt may have registered a destination VM before returning an
 		// error. Destroy is idempotent and prevents a partial destination
 		// from leaking RAM/netns resources while the source is resumed.
-		h.cleanupAdopted(leaseCtx, instanceID)
-		h.ledger.Release(instanceID)
+		if strings.HasPrefix(prepared.LeaseToken, state.FunctionMigrationTokenPrefix) {
+			h.cancelSource(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+			if functionDestinationCleanupConfirmed(context.WithoutCancel(leaseCtx), h.store, instanceID, prepared.LeaseToken) {
+				h.ledger.Release(instanceID)
+			}
+		} else {
+			h.cleanupAdopted(leaseCtx, instanceID)
+			h.ledger.Release(instanceID)
+		}
 		h.metrics.LiveMigrationDecisions("peer_failure").Inc()
 		h.log.Warn("sched: migrate one: Phase 3 adopt failed",
 			"instance_id", instanceID,
@@ -513,6 +520,11 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 			"instance_id", instanceID, "to_node_id", h.newOwnerNodeID)
 	}
 
+	if strings.HasPrefix(prepared.LeaseToken, state.FunctionMigrationTokenPrefix) {
+		if err := activateCommittedFunctionDestination(ctx, h.store, h.vmm, instanceID, prepared.LeaseToken); err != nil {
+			return fmt.Errorf("sched: migration activation retained: %w", err)
+		}
+	}
 	// Phase 5 is lease-bound and detached from an expired request. A failed
 	// acknowledgement leaves the durable source lease for vmmd's expiry loop.
 	h.acknowledgeSource(ctx, fromNodeID, instanceID, prepared.LeaseToken)
@@ -585,6 +597,13 @@ func (h *MigrationHarness) rollbackStore(ctx context.Context, instanceID, fromNo
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+
+	if sources, ok := h.store.(state.FunctionMigrationSourceStore); ok {
+		_, err := sources.GetFunctionMigrationSource(cleanupCtx, instanceID, leaseToken)
+		if err == nil || !errors.Is(err, state.ErrNotFound) {
+			return
+		}
+	}
 	if err := h.store.CancelInstanceMigration(cleanupCtx, instanceID, fromNodeID, leaseToken); err != nil && h.log != nil {
 		h.log.Debug("sched: migrate one: durable rollback did not apply",
 			"instance_id", instanceID,
@@ -600,6 +619,12 @@ func (h *MigrationHarness) cancelSource(ctx context.Context, dyingNodeID, instan
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	if handled, _, err := rollbackFunctionMigrationSource(cleanupCtx, h.store, h.vmm, instanceID, leaseToken); handled {
+		if err != nil && h.log != nil {
+			h.log.Warn("sched: function source rollback retained", "instance_id", instanceID, "err", err)
+		}
+		return
+	}
 	if err := h.vmm.CancelLiveMigration(cleanupCtx, dyingNodeID, instanceID, leaseToken); err != nil && h.log != nil {
 		h.log.Debug("sched: migrate one: source rollback did not apply",
 			"instance_id", instanceID,

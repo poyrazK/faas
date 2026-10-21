@@ -70,6 +70,7 @@ export type AuditEntry = Readonly<{
   id: string; occurred_at: string
   action: 'organization.created' | 'member.added' | 'member.role_changed' | 'member.removed' | 'member.signed_in' | 'invitation.created' | 'invitation.revoked'
     | 'invitation.accepted' | 'domain.added' | 'domain.verified' | 'domain.removed' | 'sso.connected' | 'sso.updated' | 'sso.disconnected'
+    | 'service_account.created' | 'service_account.updated' | 'service_account.deleted' | 'service_account.secret_created' | 'service_account.secret_revoked'
   actor_id: string | null; actor_email: string | null; target_user_id: string | null; target_email: string | null; data: Readonly<Record<string, unknown>>
 }>
 /** mfa_enabled (a verified second factor) is shown only to those who manage members, null to others. */
@@ -83,6 +84,15 @@ export type OrgDomain = Readonly<{ domain: string; verified: boolean; verified_a
 export type SuggestedOrganization = Readonly<{ id: string; slug: string; name: string; domain: string; role: string }>
 export type OrgSSOProvider = Readonly<{ id: string; entity_id: string | null; metadata_url: string | null; domains: readonly string[]; role: string }>
 export type CreatedInvitation = Invitation & Readonly<{ delivered: boolean; token?: string }>
+/** A secret of a service account: only its last four characters are kept to show. */
+export type ServiceAccountSecret = Readonly<{ id: string; hint: string; created_at: string; expires_at: string | null; last_used_at: string | null }>
+/**
+ * An organization's machine principal. Its ID is the client ID of the
+ * client-credentials grant; it holds one of the organization's roles.
+ */
+export type ServiceAccount = Readonly<{ id: string; name: string; role: string; disabled: boolean; created_at: string; secrets: readonly ServiceAccountSecret[] }>
+/** A new secret, shown only in this answer. */
+export type CreatedServiceAccountSecret = Readonly<{ client_id: string; client_secret: string; secret: Readonly<{ id: string; hint: string; expires_at: string | null }> }>
 
 /** The wallets GoTrue verifies sign-ins from (EIP-4361 and Sign-In With Solana). */
 export type Web3Chain = 'ethereum' | 'solana'
@@ -607,6 +617,25 @@ export function createAuthClient(options: AuthClientOptions) {
       list: async (org: string) => (await authz<{ members: Member[] }>('GET', `/orgs/${id(org)}/members`)).members,
       setRole: (org: string, user: string, role: string) => authz<{ org_id: string; user_id: string; role: string }>('PATCH', `/orgs/${id(org)}/members/${id(user)}`, { role }),
       remove: (org: string, user: string) => authz<null>('DELETE', `/orgs/${id(org)}/members/${id(user)}`),
+    },
+    /**
+     * Service accounts, when the app turned them on: members holding
+     * members:manage make machine principals that get tokens with the
+     * client-credentials grant (createClientCredentials in
+     * @gregale/auth/server). Only owners manage owner-role accounts. A
+     * secret is shown once; an account has at most two live ones.
+     */
+    serviceAccounts: {
+      list: async (org: string) => (await authz<{ service_accounts: ServiceAccount[] }>('GET', `/orgs/${id(org)}/service-accounts`)).service_accounts,
+      create: (org: string, input: { name: string; role: string; expiresInDays?: number }) =>
+        authz<CreatedServiceAccountSecret & Readonly<{ id: string; org_id: string; name: string; role: string; created_at: string }>>('POST', `/orgs/${id(org)}/service-accounts`,
+          { name: input.name, role: input.role, ...(input.expiresInDays ? { expires_in_days: input.expiresInDays } : {}) }),
+      update: (org: string, account: string, input: { name?: string; role?: string; disabled?: boolean }) =>
+        authz<Omit<ServiceAccount, 'secrets'>>('PATCH', `/orgs/${id(org)}/service-accounts/${id(account)}`, input),
+      remove: (org: string, account: string) => authz<null>('DELETE', `/orgs/${id(org)}/service-accounts/${id(account)}`),
+      addSecret: (org: string, account: string, input: { expiresInDays?: number } = {}) =>
+        authz<CreatedServiceAccountSecret>('POST', `/orgs/${id(org)}/service-accounts/${id(account)}/secrets`, input.expiresInDays ? { expires_in_days: input.expiresInDays } : {}),
+      revokeSecret: (org: string, account: string, secret: string) => authz<null>('DELETE', `/orgs/${id(org)}/service-accounts/${id(account)}/secrets/${id(secret)}`),
     },
     invitations: {
       create: (org: string, input: { email: string; role: string; expiresIn?: number }) =>

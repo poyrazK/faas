@@ -42,7 +42,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|routes|policies|queues|diff|preview|promote|status|rollback>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|routes|policies|queues|diff|preview|promote|status|rollback|abort|recover|recover-migration>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -84,6 +84,10 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentPromote(args[1:])
 	case "status":
 		return cmdProjectsEnvironmentPromotionStatus(args[1:])
+	case "abort", "recover":
+		return cmdProjectsEnvironmentControl(args[0], args[1:])
+	case "recover-migration":
+		return cmdProjectsEnvironmentRecoverMigration(args[1:])
 	case "rollback":
 		return cmdProjectsEnvironmentPromotionRollback(args[1:])
 	default:
@@ -562,7 +566,7 @@ func secretCellSummary(cell api.ProjectEnvironmentSecretCellResponse) string {
 }
 
 func cmdProjectsEnvironmentPromote(args []string) int {
-	flags, positional := splitArgsForFlags(args, "yes", "wait", "progress", "sync-config", "interactive")
+	flags, positional := splitArgsForFlags(args, "yes", "wait", "progress", "sync-config", "verify", "migrate", "workers", "interactive")
 	fs := newFlagSet("projects-environments-promote", flag.ContinueOnError)
 	interactive := fs.Bool("interactive", false, "choose environments and review a promotion before confirming")
 	from := fs.String("from", "", "source environment")
@@ -572,6 +576,11 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	wait := fs.Bool("wait", false, "wait for the promotion to reach a terminal status")
 	progress := fs.Bool("progress", false, "print promotion transitions while waiting (human output only)")
 	syncConfig := fs.Bool("sync-config", false, "copy source non-secret environment configuration to the target")
+	verify := fs.Bool("verify", false, "require destination HTTP health before cutover and success (requires --sync-config)")
+	workers := fs.Bool("workers", false, "promote HTTP services and production push workers together (requires --sync-config --verify)")
+	migrate := fs.Bool("migrate", false, "run one backward-compatible release command at destination (requires --sync-config --verify)")
+	releaseSecrets := fs.String("release-secrets-file", "", "complete production secret snapshots by workload (requires --sync-config --verify --yes)")
+	secretRequestID := fs.String("release-secrets-request-id", "", "replay the printed encrypted staging request")
 	overrideFreeze := fs.String("override-freeze", "", "promote into production during a deploy freeze; the reason is audited (ADR-20261019071733)")
 	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m) for promotion completion")
 	if err := fs.Parse(flags); err != nil {
@@ -616,18 +625,39 @@ func cmdProjectsEnvironmentPromote(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	preview, err := client.GetProjectEnvironmentPromotionPreviewWithConfig(context.Background(), positional[0], *to, *from, *syncConfig)
+	if *migrate && (!*syncConfig || !*verify) {
+		return printErr("Invalid migration options", errors.New("--migrate requires --sync-config --verify"))
+	}
+	if *workers && (!*syncConfig || !*verify || *to != "production") {
+		return printErr("Invalid worker promotion options", errors.New("--workers requires --sync-config --verify to production"))
+	}
+	if *releaseSecrets != "" && (!*syncConfig || !*verify || !*yes || *to != "production" || *workers || *migrate) || *secretRequestID != "" && *releaseSecrets == "" {
+		return printErr("Invalid secret promotion options", errors.New("--release-secrets-file requires --sync-config --verify --yes to production without workers or migrations; request IDs require a secret file"))
+	}
+	preview, err := previewProjectPromotionWithSecrets(context.Background(), client, positional[0], *from, *to, *syncConfig, *verify, *migrate, *workers, *releaseSecrets, *secretRequestID)
 	if err != nil {
 		return printErr("Promotion preview failed", err)
 	}
+	if *workers && preview.CanPromote && (preview.Health == nil || len(api.ProjectPromotionWorkers(preview.Health)) == 0) {
+		return printErr("Worker promotion unavailable", errors.New("server omitted the requested worker contract; no promotion was submitted"))
+	}
+	if *migrate && (preview.Health == nil || preview.Health.Migration == nil) {
+		return printErr("Migration promotion unavailable", errors.New("server did not return the requested migration contract; no promotion was submitted"))
+	}
+	if !jsonOutput && preview.Health != nil && preview.Health.Migration != nil {
+		renderPromotionMigrationPolicy(preview.Health.Migration)
+	}
 	if !jsonOutput && preview.SyncConfig {
-		renderPromotionConfigChanges(preview.ConfigDiff.Changes)
+		renderPromotionConfigChanges(preview.ConfigDiff.Changes, preview.DestinationConfigHash != "")
 	}
 	if !preview.CanPromote {
 		if jsonOutput {
 			return jsonOut(writeJSON(preview))
 		}
 		return printErr("Promotion is blocked", errors.New(strings.Join(preview.BlockingReasons, "; ")))
+	}
+	if !jsonOutput {
+		renderPromotionSecretChanges(preview.Changes)
 	}
 	if !*yes {
 		if jsonOutput {
@@ -708,7 +738,21 @@ func executeProjectPromotion(ctx context.Context, client *Client, project string
 		return renderProjectEnvironmentPromotionWait(status, timedOut, time.Duration(timeoutSeconds)*time.Second)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(promoted))
+		if code := jsonOut(writeJSON(promoted)); code != 0 {
+			return code
+		}
+		if promoted.Status == "failed" {
+			return 1
+		}
+		return 0
+	}
+	if promoted.Status == "failed" {
+		return printErr("Promotion failed", fmt.Errorf("inspect promotion %s with projects environments status", promoted.PromotionID))
+	}
+	if promoted.Status == "running" {
+		_, _ = fmt.Fprintf(osStdout, "Promotion %s accepted: %s -> %s; destination health is pending\n", promoted.PromotionID, promoted.FromEnvironment, promoted.ToEnvironment)
+		PrintProgress(osStdout, "Inspect with: gregale projects environments status %s %s --to %s", promoted.ProjectSlug, promoted.PromotionID, promoted.ToEnvironment)
+		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, "Promoted %s: %s -> %s\n", promoted.ProjectSlug, promoted.FromEnvironment, promoted.ToEnvironment)
 	for _, workload := range promoted.Workloads {
@@ -795,11 +839,14 @@ func promotionChangeCount(preview api.ProjectEnvironmentPromotionPreviewResponse
 }
 
 func cmdProjectsEnvironmentPromotionPreview(args []string) int {
-	flags, positional := splitArgsForFlags(args, "sync-config")
+	flags, positional := splitArgsForFlags(args, "sync-config", "verify", "migrate", "workers")
 	fs := newFlagSet("projects-environments-preview", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment")
 	to := fs.String("to", "", "target environment")
 	syncConfig := fs.Bool("sync-config", false, "preview copying source non-secret configuration to the target")
+	verify := fs.Bool("verify", false, "preview destination HTTP health gates (requires --sync-config)")
+	workers := fs.Bool("workers", false, "preview coordinated HTTP and push-worker promotion (requires --sync-config --verify)")
+	migrate := fs.Bool("migrate", false, "preview one backward-compatible destination migration (requires --sync-config --verify)")
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || !api.ValidProjectEnvironmentSlug(*to) {
 		PrintUsage(os.Stderr, "usage: gregale projects environments preview <project-slug> --from <environment> --to <environment> [--sync-config]", "projects environments")
 		return 1
@@ -811,9 +858,21 @@ func cmdProjectsEnvironmentPromotionPreview(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	preview, err := client.GetProjectEnvironmentPromotionPreviewWithConfig(context.Background(), positional[0], *to, *from, *syncConfig)
+	if *migrate && (!*syncConfig || !*verify) {
+		return printErr("Invalid migration options", errors.New("--migrate requires --sync-config --verify"))
+	}
+	if *workers && (!*syncConfig || !*verify || *to != "production") {
+		return printErr("Invalid worker promotion options", errors.New("--workers requires --sync-config --verify to production"))
+	}
+	preview, err := client.GetProjectEnvironmentPromotionPreviewWithMigration(context.Background(), positional[0], *to, *from, *syncConfig, *verify, *migrate, *workers)
 	if err != nil {
 		return printErr("Promotion preview failed", err)
+	}
+	if *workers && preview.CanPromote && (preview.Health == nil || len(api.ProjectPromotionWorkers(preview.Health)) == 0) {
+		return printErr("Worker promotion unavailable", errors.New("server omitted the requested worker contract"))
+	}
+	if *migrate && preview.CanPromote && (preview.Health == nil || preview.Health.Migration == nil) {
+		return printErr("Migration promotion unavailable", errors.New("server did not return the requested migration contract"))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(preview))
@@ -823,6 +882,18 @@ func cmdProjectsEnvironmentPromotionPreview(args []string) int {
 }
 
 func renderProjectPromotionPreview(preview api.ProjectEnvironmentPromotionPreviewResponse) {
+	if preview.DestinationConfigHash != "" {
+		_, _ = fmt.Fprintf(osStdout, "Resolved destination configuration: %s\n", preview.DestinationConfigHash)
+	}
+	if preview.Health != nil {
+		_, _ = fmt.Fprintf(osStdout, "Destination health required: %d critical HTTP probes before and after cutover\n", len(preview.Health.Probes))
+		for _, worker := range api.ProjectPromotionWorkers(preview.Health) {
+			renderPromotionWorker(worker, nil)
+		}
+		if preview.Health.Migration != nil {
+			renderPromotionMigrationPolicy(preview.Health.Migration)
+		}
+	}
 	_, _ = fmt.Fprintf(osStdout, "Promotion preview %s: %s -> %s\n  can promote: %t\n  approval required: %t\n  config changes: %d\n  sync config: %t\n  promotion hash: %s\n",
 		preview.ProjectSlug, preview.FromEnvironment, preview.ToEnvironment, preview.CanPromote,
 		preview.ApprovalRequired, len(preview.ConfigDiff.Changes), preview.SyncConfig, preview.PromotionHash)
@@ -833,14 +904,24 @@ func renderProjectPromotionPreview(preview api.ProjectEnvironmentPromotionPrevie
 	printPromotionReleaseSet("target", preview.ToReleaseSet)
 	for _, change := range preview.Changes {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %-10s %s\n", change.WorkloadSlug, change.Kind, change.SourceRevision)
+		if change.ReleaseConfigurationHash != "" {
+			_, _ = fmt.Fprintln(osStdout, "    pinned variables; destination secrets and bindings retained")
+			for _, variable := range change.EnvironmentChanges {
+				_, _ = fmt.Fprintf(osStdout, "    variable %-24s %s\n", variable.Key, variable.Kind)
+			}
+		}
 	}
 	if preview.SyncConfig {
 		renderPromotionConfigChanges(preview.ConfigDiff.Changes)
 	}
 }
 
-func renderPromotionConfigChanges(changes []api.ProjectEnvironmentConfigChange) {
-	_, _ = fmt.Fprintln(osStdout, "Non-secret configuration to copy:")
+func renderPromotionConfigChanges(changes []api.ProjectEnvironmentConfigChange, resolved ...bool) {
+	label := "Non-secret configuration to copy:"
+	if len(resolved) > 0 && resolved[0] {
+		label = "Source configuration differences (service bindings resolve at destination):"
+	}
+	_, _ = fmt.Fprintln(osStdout, label)
 	if len(changes) == 0 {
 		_, _ = fmt.Fprintln(osStdout, "  no changes")
 		return

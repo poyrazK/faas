@@ -1,4 +1,4 @@
-import {PostgresPoolBinding} from "./runtime/postgres-pool-runtime.js";
+import {PostgresPoolBinding, registerFunctionPostgresResource} from "./runtime/postgres-pool-runtime.js";
 import {SecretReloadCoordinator} from "./runtime/secret-reload-runtime.js";
 
 // Pool sockets must not be captured in a VM snapshot: before_checkpoint drains
@@ -60,6 +60,10 @@ export function createDatabase(poolFactory, {
   const managed = requireReload || contractKeys.some(key => env[key] !== undefined);
   const local = Object.freeze({DATABASE_URL: env.DATABASE_URL});
   if (env.MIGRATION_DATABASE_URL) throw new DatabaseError("migration_credentials_forbidden");
+  // Qualified function adapters install the registry before application import.
+  // Reserve an owner before start() can invoke the driver's factory. Ordinary
+  // HTTP applications retain the same explicit checkpoint/restore hooks.
+  const unregister = registerFunctionPostgresResource({beforeCheckpoint: checkpoint, afterRestore: restore});
   const binding = new PostgresPoolBinding("DATABASE_URL", config => {
     const pool = poolFactory(config);
     pool.on("error", () => log("database_idle_connection_lost"));
@@ -256,7 +260,9 @@ export function createDatabase(poolFactory, {
     restoreRequest?.controller.abort();
     checkpointRequest?.controller.abort();
     for (const work of active) work.controller.abort();
-    closing = binding.waitForRetirement(AbortSignal.timeout(shutdownTimeoutMS));
+    // Keep registration through a timed-out close until actual retirement.
+    const retired = binding.waitForRetirement().then(() => { unregister?.(); });
+    closing = bounded(retired, AbortSignal.timeout(shutdownTimeoutMS));
     return closing;
   }
 

@@ -77,7 +77,7 @@ func DeployTarball(c *Client, ctx context.Context, slug, path, runtime, handler 
 func DeployTarballWithSourceRoot(c *Client, ctx context.Context, slug, path, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations) (api.DeploymentResponse, error) {
 	f, err := openCustomerFile(path)
 	if err != nil {
-		return api.DeploymentResponse{}, err
+		return api.DeploymentResponse{}, submissionError(deploySubmissionRejected, err)
 	}
 	defer func() { _ = f.Close() }()
 	return c.DeployMultipartWithSourceRoot(ctx, slug, f, filepath.Base(path), runtime, handler, dockerfile, sourceRoot, ann)
@@ -88,7 +88,7 @@ func DeployTarballWithSourceRoot(c *Client, ctx context.Context, slug, path, run
 func DeployDevSourceTarball(c *Client, ctx context.Context, slug, sourcePath, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations, baseRevision, targetRevision string, deleted []string) (api.DeploymentResponse, error) {
 	f, err := openCustomerFile(sourcePath)
 	if err != nil {
-		return api.DeploymentResponse{}, err
+		return api.DeploymentResponse{}, submissionError(deploySubmissionRejected, err)
 	}
 	defer func() { _ = f.Close() }()
 	return c.DeployDevSource(ctx, slug, f, filepath.Base(sourcePath), runtime, handler, dockerfile, sourceRoot, ann, baseRevision, targetRevision, deleted)

@@ -240,6 +240,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	} else {
 		PrintOK(osStdout, "Deployed. %s", appURL)
 	}
+	renderCronActivation(ctx, final)
 	switch {
 	case darkDeploy:
 	case noHTTP:
@@ -455,13 +456,17 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		receipt.WaitStage = stage
 		receipt.ResumeCommand = resumeCommand
 		receipt.Recovery = newDeployRecovery(stage, appSlug, receiptDep.ID, "", deadline, waitForRollout)
-		if code := jsonOut(writeJSON(receipt)); code != 0 {
+		if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 			return code
 		}
 		if receipt.Interrupted {
-			return printDeploymentWaitRecovery(context.Canceled, receiptDep, appSlug, stage, deadline, waitForRollout, 130)
+			return printSessionWaitRecovery(ctx, context.Canceled, receiptDep, appSlug, stage, deadline, waitForRollout, 130)
 		}
-		return printDeploymentWaitRecovery(context.DeadlineExceeded, receiptDep, appSlug, stage, deadline, waitForRollout, 3)
+		return printSessionWaitRecovery(ctx, context.DeadlineExceeded, receiptDep, appSlug, stage, deadline, waitForRollout, 3)
+	}
+	var configurationErr error
+	if session := sessionFromContext(ctx); session != nil && final.Status == statusLive && (!waitForRollout || final.RolloutState != rolloutStateAborted) && (!darkDeploy || final.TrafficPercent == 0) {
+		configurationErr = session.applySettings(ctx, c)
 	}
 	receipt := newDeployReceipt(final, prov, appURL, sourceSHA256, simplePlans...)
 	receipt.IssueSourceMaps = sourceMaps
@@ -485,8 +490,15 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		receipt.Recovery.NextCommand = failedDeploymentRecovery(appSlug, final).NextCommand
 		receipt.Recovery.Hint = "The deployment or rollout reached a failed terminal state. Inspect the deployment and its logs before submitting a corrected deployment."
 	}
-	if code := jsonOut(writeJSON(receipt)); code != 0 {
+	if configurationErr != nil {
+		receipt.WaitStage = "configuration"
+		receipt.Recovery = sessionFromContext(ctx).recovery("configuration")
+	}
+	if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 		return code
+	}
+	if configurationErr != nil {
+		return sessionFromContext(ctx).failure("Saved deploy settings remain pending", "configuration", configurationErr)
 	}
 	if waitForRollout && final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
 		return 1

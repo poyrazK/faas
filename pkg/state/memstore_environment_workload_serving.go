@@ -138,7 +138,9 @@ func (m *MemStore) recordEnvironmentGitOpsQueueServingAcknowledgementLocked(
 			now := time.Now().UTC()
 			receipt.Serving, receipt.ServedAt = true, &now
 		}
-		m.environmentWorkloadServingReceipts[matchedGraph.ID] = cloneEnvironmentWorkloadServingReceipt(receipt)
+		if err := m.publishRecoveryServingReceiptLocked(receipt); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -281,7 +283,9 @@ func (m *MemStore) PrepareEnvironmentGitOpsWorkloadServing(ctx context.Context, 
 		receipt.Serving = true
 		receipt.ServedAt = &now
 	}
-	m.environmentWorkloadServingReceipts[graph.ID] = cloneEnvironmentWorkloadServingReceipt(receipt)
+	if err := m.publishRecoveryServingReceiptLocked(receipt); err != nil {
+		return EnvironmentWorkloadServingReceipt{}, false, err
+	}
 	return cloneEnvironmentWorkloadServingReceipt(receipt), receipt.Serving, nil
 }
 
@@ -360,7 +364,9 @@ func (m *MemStore) AcknowledgeEnvironmentGitOpsWorkloadServing(ctx context.Conte
 		receipt.Serving = true
 		receipt.ServedAt = &now
 	}
-	m.environmentWorkloadServingReceipts[graphID] = cloneEnvironmentWorkloadServingReceipt(receipt)
+	if err := m.publishRecoveryServingReceiptLocked(receipt); err != nil {
+		return EnvironmentWorkloadServingReceipt{}, false, err
+	}
 	return cloneEnvironmentWorkloadServingReceipt(receipt), receipt.Serving, nil
 }
 
