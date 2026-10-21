@@ -2788,6 +2788,9 @@ gregale ai logs <integration-id> --limit 20
 gregale ai tags <integration-id> --key feature
 gregale ai tags export <integration-id> --from 2026-10-01 --to 2026-10-31 --key customer > ai-tags.csv
 gregale ai tag-limits <integration-id> --set feature=search:20
+gregale ai traces <integration-id> --limit 20
+gregale ai traces <integration-id> <trace-id>
+gregale ai policy <integration-id> --trace-max-calls 50 --trace-max-cost 2 --trace-max-repeated-tool-calls 3
 gregale ai logs show <integration-id> <request-id>
 gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'
 gregale ai content-policy <integration-id> --response-email redact --response-secrets block --response-terms block --response-moderation flag
@@ -2800,7 +2803,7 @@ gregale ai tokens create --app my-api --name laptop --expires-in-hours 24
 
 Set the AI provider and token or cost limits (unchanged flags keep their values)
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <USD>] [--monthly-cost <USD>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <USD>] [--log-export <on|off>] [--allow-unmetered <on|off>] [--prompt-cache <on|off>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <USD>] [--monthly-cost <USD>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <USD>] [--log-export <on|off>] [--allow-unmetered <on|off>] [--prompt-cache <on|off>] [--trace-max-calls <N>] [--trace-max-cost <USD>] [--trace-max-repeated-tool-calls <N>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2815,6 +2818,9 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 | `--log-export <on|off>` | send each app call&#39;s metadata to the app&#39;s log drains | one of `on` · `off` |
 | `--allow-unmetered <on|off>` | let through calls the gateway cannot meter (realtime client secrets, vector stores, fine-tuning), outside the caps | one of `on` · `off` |
 | `--prompt-cache <on|off>` | add prompt-cache breakpoints to Claude requests that carry none: after a repeated system prompt or tools, and after a continuing conversation | one of `on` · `off` |
+| `--trace-max-calls <N>` | calls each AI trace (X-Gregale-AI-Trace or traceparent) may make, or none |  |
+| `--trace-max-cost <USD>` | cost each AI trace may reach in USD, or none |  |
+| `--trace-max-repeated-tool-calls <N>` | consecutive calls of a trace that may request the same tools with the same arguments, or none |  |
 
 ### ai content-policy
 
@@ -2857,6 +2863,18 @@ Show one UTC day&#39;s AI usage by X-Gregale-AI-Tags tag, with each tag&#39;s li
 | `--from <YYYY-MM-DD>` | export: first UTC day within the last 31 days (default today) |  |
 | `--to <YYYY-MM-DD>` | export: last UTC day (default today) |  |
 | `--format <FORMAT>` | export: csv (default) or ndjson | one of `csv` · `ndjson` |
+
+### ai traces
+
+List an integration&#39;s AI traces, newest first, or show one trace&#39;s calls: traces &lt;integration-id&gt; &lt;trace-id&gt;
+
+`gregale ai traces [--app <ID>] [--user <ID>] [--limit <N>] <integration-id> [trace-id]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <ID>` | only traces whose first call came from this app (UUID) |  |
+| `--user <ID>` | only traces whose first call named this end user |  |
+| `--limit <N>` | traces to show, 1 to 200 |  |
 
 ### ai tag-limits
 

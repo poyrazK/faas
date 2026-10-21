@@ -55,6 +55,10 @@ account during the preview; contact support to have it turned on for yours.
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.
+- **AI traces.** Group an agent's calls into one task with
+  `X-Gregale-AI-Trace` or your existing `traceparent`, see each task's calls,
+  cost and requested tools in order, and stop a task that makes too many
+  calls, costs too much or asks for the same tool call again and again.
 - **Usage tags.** Name up to five `key=value` tags per call, such as
   `feature=search` or `tier=free`, to see and export cost by your own
   dimensions, and cap one tag's daily cost with alerts at 80% and 100%.
@@ -132,6 +136,15 @@ gregale ai tag-limits <id> --set feature=search:20     # USD per UTC day
 gregale ai tags export <id> --from 2026-10-01 --to 2026-10-31 > ai-tags.csv
 ```
 
+Send `X-Gregale-AI-Trace: <task-id>` on every call of one agent task (or just
+your usual `traceparent`) to see the task as one trace, and limit each task:
+
+```sh
+gregale ai traces <id>
+gregale ai traces <id> <trace-id>
+gregale ai policy <id> --trace-max-calls 50 --trace-max-cost 2 --trace-max-repeated-tool-calls 3
+```
+
 ### Outside Gregale
 
 To call the gateway from your laptop, CI or a notebook as one of your apps,
@@ -159,7 +172,8 @@ canary only if the new model does not do worse.
 
 | Response | Meaning |
 | --- | --- |
-| `429` with `X-Gregale-Outbound-Rejection` | A cap or rate limit was reached; `Retry-After` says when it resets. |
+| `429` with `X-Gregale-Outbound-Rejection` | A cap or rate limit was reached; `Retry-After` says when it resets. Trace limits (`trace_call_limit`, `trace_cost_limit`, `trace_tool_loop`) never reset: start a new trace. |
+| `400 outbound_ai_trace_invalid` | `X-Gregale-AI-Trace` is empty, longer than 64 characters or has a character outside `A-Z a-z 0-9 . _ : @ + = / \| -`. |
 | `400 outbound_ai_content_blocked` | The content policy blocked the request. The problem names the detector, never the content. |
 | `402 plan_feature_gated` | Your plan does not include the AI gateway. |
 | `403 outbound_ai_gateway_unavailable` | The AI gateway is not enabled for your account yet. |

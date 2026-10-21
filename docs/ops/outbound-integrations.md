@@ -945,6 +945,69 @@ output_tokens, tokens, cost_millicents`. The API's default format is NDJSON.
 The tag check joins admission's existing database read, so it adds no round
 trip.
 
+## AI traces
+
+An AI trace groups the calls of one task, such as one agent run that calls the
+model, a tool and the model again (ADR 20261020202035). A call belongs to the
+trace named by:
+
+- `X-Gregale-AI-Trace`: an ID of 1 to 64 letters, digits or
+  `. _ : @ + = / | -`. A malformed header gets `400 outbound_ai_trace_invalid`.
+  The gateway never forwards it.
+- otherwise the trace ID of a valid W3C `traceparent` header, so apps that
+  already trace their requests get AI traces with no change. `traceparent` is
+  still forwarded.
+
+A call with neither belongs to no trace.
+
+**Recording.** Traces are recorded when the integration keeps a request log or
+has trace limits.
+
+- Each trace keeps its first and last call, calls, errors, calls with unknown
+  usage, tokens, cost, the tool calls the model requested, and up to 8 models.
+  The first call's app and end user name the trace.
+- The gateway reads the tool calls a model requests from OpenAI Chat
+  Completions and Responses, Anthropic Messages (also through Bedrock),
+  Gemini, Vertex and Bedrock Converse responses, streamed or not, up to 16 per
+  response. It keeps the tool names and a hash of the arguments, never the
+  arguments themselves.
+- Request-log entries carry `trace_id` and `tool_calls`. The log-export line
+  carries `trace_id`, and OTLP drains get `gregale.ai.trace_id`.
+- Each integration records up to 100,000 new traces per UTC day. Calls of
+  later new traces still settle and are logged, but no trace is recorded.
+- Traces are kept for 7 days, like the request log.
+- A realtime session belongs to the trace of its upgrade request. Each
+  response or Live turn adds to the trace, but its tool calls are not read.
+
+**Viewing.** `gregale ai traces <id> [--app APP-ID] [--user USER] [--limit N]`
+(or `GET .../ai-traces?app_id=&end_user=&before=&limit=`) lists traces, newest
+last call first, up to 200 per page. `gregale ai traces <id> <trace-id>` (or
+`GET .../ai-traces/{trace}`) shows one trace and up to 500 of its logged
+calls in order, with each call's model, status, tokens, cost, duration, time
+to first byte and requested tools. Without a request log the trace has totals
+but no calls.
+
+**Limits.** `gregale ai policy <id>` takes:
+
+| Flag | Policy field | Refuses a trace's next call when |
+| --- | --- | --- |
+| `--trace-max-calls N` | `trace_max_calls` | the trace's settled and in-flight calls reach N (1 to 1,000,000) |
+| `--trace-max-cost USD` | `trace_max_cost_millicents` | settled cost, plus in-flight reservations, plus the call's own reservation would pass the limit |
+| `--trace-max-repeated-tool-calls N` | `trace_max_repeated_tool_calls` | N consecutive calls requested the same tools with the same arguments (1 to 1,000) |
+
+`none` clears a limit. A refused call gets `429 outbound_budget_exhausted`
+with `X-Gregale-Outbound-Rejection` set to `trace_call_limit`,
+`trace_cost_limit` or `trace_tool_loop`, and no `Retry-After`: a trace never
+resets, so start a new one.
+
+- A response with no tool calls ends a repeat streak; an error leaves it as it
+  was.
+- Calls of one trace can run in parallel, so "consecutive" is the order they
+  settle in, and the calls already in flight when a limit is reached can pass
+  it by up to their reservations.
+- With trace limits set, a call of a new trace past the day's 100,000 is
+  refused with `trace_untracked`, since it could not be limited.
+
 ## Provider key pools
 
 `gregale ai keys add <id> --label second --from-stdin` adds an extra sealed
