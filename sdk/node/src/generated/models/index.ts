@@ -2260,6 +2260,9 @@ export type { ProjectEnvironmentSecretCellResponse } from './ProjectEnvironmentS
 export type { ProjectEnvironmentSecretChangeResponse } from './ProjectEnvironmentSecretChangeResponse.js';
 export type { ProjectEnvironmentSecretResponse } from './ProjectEnvironmentSecretResponse.js';
 export type { ProjectEnvironmentSharedResourceResponse } from './ProjectEnvironmentSharedResourceResponse.js';
+export type { ProjectEnvironmentSharedSecret } from './ProjectEnvironmentSharedSecret.js';
+export type { ProjectEnvironmentSharedSecretResponse } from './ProjectEnvironmentSharedSecretResponse.js';
+export type { ProjectEnvironmentSharedSecretsResponse } from './ProjectEnvironmentSharedSecretsResponse.js';
 export type { ProjectEnvironmentStateResponse } from './ProjectEnvironmentStateResponse.js';
 export type { ProjectEnvironmentStateWorkloadResponse } from './ProjectEnvironmentStateWorkloadResponse.js';
 export type { ProjectEnvironmentVariableChangeResponse } from './ProjectEnvironmentVariableChangeResponse.js';
@@ -2792,6 +2795,7 @@ export type { SetPlatformTenantCredentialPolicyRequest } from './SetPlatformTena
 export type { SetPlatformTenantHostnamePolicyRequest } from './SetPlatformTenantHostnamePolicyRequest.js';
 export type { SetPlatformTenantRequestBudgetRequest } from './SetPlatformTenantRequestBudgetRequest.js';
 export type { SetPlatformTenantStatusRequest } from './SetPlatformTenantStatusRequest.js';
+export type { SetProjectEnvironmentSharedSecretRequest } from './SetProjectEnvironmentSharedSecretRequest.js';
 export type { SetQueueBindingReleasePolicyRequest } from './SetQueueBindingReleasePolicyRequest.js';
 export type { SetRouteHealthGateRequest } from './SetRouteHealthGateRequest.js';
 export type { SetRouteMonitorRequest } from './SetRouteMonitorRequest.js';

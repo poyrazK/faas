@@ -4435,6 +4435,9 @@ from .project_environment_secret_response_managed_by import ProjectEnvironmentSe
 from .project_environment_shared_resource_response import ProjectEnvironmentSharedResourceResponse
 from .project_environment_shared_resource_response_kind import ProjectEnvironmentSharedResourceResponseKind
 from .project_environment_shared_resource_response_ownership import ProjectEnvironmentSharedResourceResponseOwnership
+from .project_environment_shared_secret import ProjectEnvironmentSharedSecret
+from .project_environment_shared_secret_response import ProjectEnvironmentSharedSecretResponse
+from .project_environment_shared_secrets_response import ProjectEnvironmentSharedSecretsResponse
 from .project_environment_state_response import ProjectEnvironmentStateResponse
 from .project_environment_state_response_release_set_status import ProjectEnvironmentStateResponseReleaseSetStatus
 from .project_environment_state_workload_response import ProjectEnvironmentStateWorkloadResponse
@@ -5404,6 +5407,7 @@ from .set_platform_tenant_hostname_policy_request import SetPlatformTenantHostna
 from .set_platform_tenant_request_budget_request import SetPlatformTenantRequestBudgetRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
 from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
+from .set_project_environment_shared_secret_request import SetProjectEnvironmentSharedSecretRequest
 from .set_queue_binding_release_policy_request import SetQueueBindingReleasePolicyRequest
 from .set_route_health_gate_request import SetRouteHealthGateRequest
 from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
@@ -10112,6 +10116,9 @@ __all__ = (
     "ProjectEnvironmentSharedResourceResponse",
     "ProjectEnvironmentSharedResourceResponseKind",
     "ProjectEnvironmentSharedResourceResponseOwnership",
+    "ProjectEnvironmentSharedSecret",
+    "ProjectEnvironmentSharedSecretResponse",
+    "ProjectEnvironmentSharedSecretsResponse",
     "ProjectEnvironmentStateResponse",
     "ProjectEnvironmentStateResponseReleaseSetStatus",
     "ProjectEnvironmentStateWorkloadResponse",
@@ -11059,6 +11066,7 @@ __all__ = (
     "SetPlatformTenantRequestBudgetRequest",
     "SetPlatformTenantStatusRequest",
     "SetPlatformTenantStatusRequestStatus",
+    "SetProjectEnvironmentSharedSecretRequest",
     "SetQueueBindingReleasePolicyRequest",
     "SetRouteHealthGateRequest",
     "SetRouteHealthGateRequestMode",
