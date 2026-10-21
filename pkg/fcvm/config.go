@@ -267,6 +267,9 @@ type ColdBootSpec struct {
 	// ExecutionMode constrains the host-derived characterization class. Empty
 	// preserves the legacy inference contract for older vmmd callers.
 	ExecutionMode string
+	// WorkerPushDelivery lets a worker-mode app with a push queue binding
+	// bind its private delivery port at startup (WakeRequest field).
+	WorkerPushDelivery bool
 	// SkipReady suppresses readiness probing for builder VMs. Builder guests
 	// run a finite build and power off instead of binding port 8080.
 	// Networkless execution guests use the vsock execution protocol instead of

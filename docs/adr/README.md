@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Push-bound workers may listen for their deliveries](20261021153953-push-bound-worker-delivery-listener.md)
 - [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
 - [Compose build arguments and target stage for Dockerfile builds](20261019142544-compose-build-args-and-target.md)

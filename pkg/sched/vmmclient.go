@@ -451,6 +451,9 @@ type AppSpec struct {
 	// ExecutionMode constrains vmmd's characterization result. Empty preserves
 	// legacy inference for callers predating ADR-137.
 	ExecutionMode string
+	// WorkerPushDelivery marks a worker-mode app with a push queue binding;
+	// vmmd accepts its private HTTP delivery listener at startup.
+	WorkerPushDelivery bool
 	// Plan and AccountID are request-level admission context. Keeping them
 	// with the flat spec makes deploy prime and ordinary wakes carry the same
 	// cgroup and metrics identity to vmmd.
@@ -1912,6 +1915,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		StartupDeadlineS:           a.StartupDeadlineS,
 		DisableStartupCpuBoost:     a.DisableStartupCPUBoost,
 		ExecutionMode:              a.ExecutionMode,
+		WorkerPushDelivery:         a.WorkerPushDelivery,
 		PrivateNetworkCidrs:        a.PrivateNetworkCIDRs,
 		PrivateNetworkId:           a.PrivateNetworkID,
 		PrivateNetworkAddress:      a.PrivateNetworkAddress,
