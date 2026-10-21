@@ -231,6 +231,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go batchWorker.Run(ctx)
 	evaluationWorker := &outbound.AIEvaluationWorker{Store: backend, Handler: handler, Log: log}
 	go evaluationWorker.Run(ctx)
+	// ADR 20261021171712: sampled calls are scored by the integration's
+	// judge model, and quality drift alerts are checked.
+	onlineEvaluationWorker := &outbound.AIOnlineEvaluationWorker{Store: backend, Handler: handler, Log: log}
+	go onlineEvaluationWorker.Run(ctx)
 	relayHandler := outbound.WithSimulationRelay(trace.HTTPHandler("outboundd-relay", handler), handler.SimulationHandler)
 	shutdownRelay, err := startRelay(ctx, cfg, pool, relayHandler, identityVerifier, outboundMetrics, log)
 	if err != nil {

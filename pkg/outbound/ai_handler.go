@@ -101,6 +101,9 @@ func observeAIResponse(integration Integration, r *http.Request, resp *http.Resp
 		observer = newAIUsageObserver(integration.AIProvider, resp.Header.Get("Content-Type"), time.Now)
 	}
 	observer.applyHeaders(resp.Header)
+	if !cacheHit {
+		observer.quality = newAIQuality(plan, ai)
+	}
 	_, replaying := replayPrincipalFromContext(r.Context())
 	_, internal := internalPrincipalFromContext(r.Context())
 	if integration.AIRequestLogEnabled && integration.AIRequestLogContent && !replaying && !internal && !cacheHit {
@@ -148,6 +151,10 @@ type aiSettlement struct {
 	codeGB int64
 	// leaseID keys the settlement (ADR-1120).
 	leaseID string
+	// callID is the call's ID, returned in X-Gregale-AI-Call and used as
+	// its request-log entry ID (ADR 20261021171712); empty lets the store
+	// choose one.
+	callID string
 	// route places a route attempt in its route, and moderation is the
 	// call's moderation result (ADR-1340).
 	route      routeAttempt
@@ -263,6 +270,9 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	if outcome != AIUsageOutcomeError {
 		settled.toolCalls, settled.toolSignature = observer.toolCalls()
 	}
+	if outcome == AIUsageOutcomeKnown {
+		settled.qualityFlags = observer.qualityFlags()
+	}
 	h.recordSettledAIUsage(ctx, integration, appID, settlement, settled, span, metricIntegrationID)
 }
 
@@ -277,6 +287,8 @@ type settledAIUsage struct {
 	// (ADR 20261020202035).
 	toolCalls     []string
 	toolSignature []byte
+	// qualityFlags mark what went wrong with an answer (ADR 20261021171712).
+	qualityFlags []string
 }
 
 // recordSettledAIUsage counts and writes one call's settled usage: metrics,
@@ -321,12 +333,17 @@ func (h *Handler) recordSettledAIUsage(ctx context.Context, integration Integrat
 		EndUser: settlement.endUser, Tags: settlement.tags, LeaseID: settlement.leaseID,
 		PromptCacheSavedMillicents: promptCacheSavedMillicents(integration, usage, cost),
 		TraceID:                    settlement.traceID, ToolCalls: settled.toolCalls, ToolSignature: settled.toolSignature,
+		CallID: settlement.callID, QualityFlags: settled.qualityFlags,
+	}
+	for _, flag := range settled.qualityFlags {
+		h.Metrics.ObserveAIQualityFlag(metricIntegrationID, flag)
 	}
 	if integration.AIRequestLogEnabled {
 		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())
 		if settled.capture != nil {
 			record.Log.Content = settled.capture.finish()
 		}
+		record.EvaluationSampled = sampleForOnlineEvaluation(integration, record)
 	}
 	if settlement.route.tracked {
 		record.Route = aiRouteAttemptFor(settlement.route, outcome, timeToFirstByte)

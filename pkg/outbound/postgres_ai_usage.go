@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -183,6 +184,7 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 		content:  record.Log != nil && record.Log.Content != nil,
 		route:    record.Route != nil,
 	}
+	plan.evaluation = plan.content && record.EvaluationSampled
 	batch := &pgx.Batch{}
 	queueAIUsageRollup(batch, integrationID, record)
 	if plan.endUser {
@@ -201,6 +203,9 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 	if plan.content {
 		queueAIRequestContent(batch, integrationID, opened.logID, record.Log.Content)
 	}
+	if plan.evaluation {
+		queueAIOnlineEvaluation(batch, integrationID, opened.logID)
+	}
 	if plan.route {
 		queueAIRouteAttempt(batch, record)
 	}
@@ -214,7 +219,7 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 
 // aiSettlementPlan names the statements one settlement sends.
 type aiSettlementPlan struct {
-	endUser, tags, trace, counters, binding, lease, content, route bool
+	endUser, tags, trace, counters, binding, lease, content, evaluation, route bool
 }
 
 // queueAIRouteAttempt adds a route attempt to its target's row for the
@@ -366,6 +371,11 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 			}
 		}
 	}
+	if plan.evaluation {
+		if _, err := results.Exec(); err != nil {
+			return nil, err
+		}
+	}
 	if plan.route {
 		if _, err := results.Exec(); err != nil {
 			return nil, err
@@ -402,7 +412,8 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		    (integration_id, usage_date, caller, model, requests, error_requests, usage_unknown_requests,
 		     input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
 		     images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb,
-		     cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens)
+		     cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens,
+		     truncated_requests, refused_requests, empty_requests, invalid_json_requests, tool_error_requests)
 		SELECT $1, day.today, $2,
 		       CASE WHEN EXISTS (SELECT 1 FROM outbound_ai_usage_daily existing
 		                          WHERE existing.integration_id = $1 AND existing.usage_date = day.today
@@ -410,7 +421,8 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		              OR (SELECT count(DISTINCT existing.model) FROM outbound_ai_usage_daily existing
 		                   WHERE existing.integration_id = $1 AND existing.usage_date = day.today) < $4
 		            THEN $3 ELSE $5 END,
-		       1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+		       1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
+		       $25, $26, $27, $28, $29
 		  FROM (SELECT (now() AT TIME ZONE 'UTC')::date AS today) day
 		ON CONFLICT (integration_id, usage_date, caller, model) DO UPDATE SET
 		    requests = usage.requests + 1,
@@ -433,12 +445,27 @@ func queueAIUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsag
 		    prompt_cache_saved_millicents = usage.prompt_cache_saved_millicents + EXCLUDED.prompt_cache_saved_millicents,
 		    input_audio_tokens = usage.input_audio_tokens + EXCLUDED.input_audio_tokens,
 		    output_audio_tokens = usage.output_audio_tokens + EXCLUDED.output_audio_tokens,
+		    truncated_requests = usage.truncated_requests + EXCLUDED.truncated_requests,
+		    refused_requests = usage.refused_requests + EXCLUDED.refused_requests,
+		    empty_requests = usage.empty_requests + EXCLUDED.empty_requests,
+		    invalid_json_requests = usage.invalid_json_requests + EXCLUDED.invalid_json_requests,
+		    tool_error_requests = usage.tool_error_requests + EXCLUDED.tool_error_requests,
 		    updated_at = now()`,
 		integrationID, record.Caller, usage.Model, api.OutboundAIUsageModelsPerDay, aiUsageOverflowModel,
 		errorRequests, unknownRequests, usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens,
 		usage.OutputTokens, record.CostMillicents, usage.Images, usage.AudioSeconds, usage.Characters, usage.VideoSeconds,
 		usage.WebSearches, usage.FileSearches, usage.CodeSessionGB, cachedRequests(record), record.CacheSavedMillicents,
-		record.PromptCacheSavedMillicents, usage.InputAudioTokens, usage.OutputAudioTokens)
+		record.PromptCacheSavedMillicents, usage.InputAudioTokens, usage.OutputAudioTokens,
+		flagged(record, AIQualityTruncated), flagged(record, AIQualityRefused), flagged(record, AIQualityEmpty),
+		flagged(record, AIQualityInvalidJSON), flagged(record, AIQualityToolError))
+}
+
+// flagged counts a call carrying a quality flag (ADR 20261021171712).
+func flagged(record AIUsageRecord, flag string) int64 {
+	if slices.Contains(record.QualityFlags, flag) {
+		return 1
+	}
+	return 0
 }
 
 // recordAIBudgetAlerts stores first-time alerts and enqueues one
@@ -547,13 +574,32 @@ func queueAIRequestLog(batch *pgx.Batch, integrationID uuid.UUID, record AIUsage
 		INSERT INTO outbound_ai_request_log
 		    (integration_id, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens,
 		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, tags,
-		     trace_id, tool_calls)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''), $16, NULLIF($17, ''), $18)
+		     trace_id, tool_calls, id, quality_flags)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''), $16, NULLIF($17, ''), $18,
+		        COALESCE($19::uuid, gen_random_uuid()), $20)
 		RETURNING id`,
 		integrationID, record.Caller, routeID, usage.Model, record.Log.Status, string(record.Outcome), usage.InputTokens,
 		usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens, record.CostMillicents,
 		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser, nilIfEmpty(record.Tags),
-		record.TraceID, nilIfEmpty(record.ToolCalls))
+		record.TraceID, nilIfEmpty(record.ToolCalls), nullableAppID(record.CallID), nilIfEmpty(record.QualityFlags))
+}
+
+// queueAIOnlineEvaluation marks a sampled call pending for the online
+// evaluation worker when both its bodies were captured whole and the
+// integration has evaluations left today (ADR 20261021171712).
+func queueAIOnlineEvaluation(batch *pgx.Batch, integrationID, logID uuid.UUID) {
+	batch.Queue(`
+		WITH slot AS (
+		    INSERT INTO outbound_ai_online_evaluation_days AS days (integration_id, usage_date, evaluations)
+		    SELECT $1, (now() AT TIME ZONE 'UTC')::date, 1
+		     WHERE EXISTS (SELECT 1 FROM outbound_ai_request_content content
+		                    WHERE content.log_id = $2 AND NOT content.request_truncated AND NOT content.response_truncated)
+		    ON CONFLICT (integration_id, usage_date) DO UPDATE SET evaluations = days.evaluations + 1 WHERE days.evaluations < $3
+		    RETURNING 1
+		)
+		UPDATE outbound_ai_request_log SET evaluation_state = 'pending'
+		 WHERE id = $2 AND integration_id = $1 AND EXISTS (SELECT 1 FROM slot)`,
+		integrationID, logID, api.OutboundAIOnlineEvaluationsPerDay)
 }
 
 // queueAIRequestContent stores a logged call's captured bodies while the

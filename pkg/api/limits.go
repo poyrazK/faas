@@ -1521,6 +1521,7 @@ const (
 	OutboundAIFeedbackLabelMaxBytes          = 32
 	OutboundAIOnlineEvaluationsPerDay        = 1_000
 	OutboundAIOnlineEvaluationRubricMaxBytes = 1_000
+	OutboundAIOnlineEvaluationClaimMinutes   = 10
 	OutboundAIQualityDriftCheckMinutes       = 10
 	OutboundAIQualityDriftBaselineDays       = 7
 	OutboundAIQualityDriftMinCalls           = 100

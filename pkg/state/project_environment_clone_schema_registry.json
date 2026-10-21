@@ -11570,6 +11570,7 @@
       "created_at",
       "duration_ms",
       "end_user",
+      "evaluation_claimed_at",
       "evaluation_score",
       "evaluation_state",
       "feedback",

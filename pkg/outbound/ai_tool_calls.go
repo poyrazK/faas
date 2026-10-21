@@ -18,10 +18,27 @@ import (
 // are hashed as they arrive and never kept.
 
 // aiToolCall is one requested tool call. A streamed call's arguments arrive
-// in fragments, hashed in order.
+// in fragments, hashed in order. raw keeps them, up to
+// OutboundAIQualityToolArgumentsMaxBytes, to check that they parse
+// (ADR 20261021171712); longer arguments are not checked.
 type aiToolCall struct {
-	name string
-	args hash.Hash
+	name     string
+	args     hash.Hash
+	raw      []byte
+	overflow bool
+}
+
+// write adds the next bytes of the call's arguments.
+func (c *aiToolCall) write(p []byte) {
+	c.args.Write(p)
+	if c.overflow {
+		return
+	}
+	if len(c.raw)+len(p) > api.OutboundAIQualityToolArgumentsMaxBytes {
+		c.raw, c.overflow = nil, true
+		return
+	}
+	c.raw = append(c.raw, p...)
 }
 
 // aiToolCalls collects one response's tool calls. byKey finds a call by
@@ -62,7 +79,7 @@ func (t *aiToolCalls) call(key, name string) (*aiToolCall, bool) {
 // ignored.
 func (t *aiToolCalls) complete(key, name string, args []byte) {
 	if call, added := t.call(key, name); added {
-		call.args.Write(args)
+		call.write(args)
 	}
 }
 
@@ -70,7 +87,7 @@ func (t *aiToolCalls) complete(key, name string, args []byte) {
 // it, and the next fragment of its arguments.
 func (t *aiToolCalls) fragment(key, name string, args []byte) {
 	if call, _ := t.call(key, name); call != nil {
-		call.args.Write(args)
+		call.write(args)
 	}
 }
 
@@ -83,6 +100,17 @@ func (t *aiToolCalls) names() []string {
 		}
 	}
 	return names
+}
+
+// invalidArguments reports a named call whose arguments, when checked, do
+// not parse as JSON. Empty arguments are a call without parameters.
+func (t *aiToolCalls) invalidArguments() bool {
+	for _, call := range t.calls {
+		if call.name != "" && !call.overflow && len(bytes.TrimSpace(call.raw)) > 0 && !json.Valid(call.raw) {
+			return true
+		}
+	}
+	return false
 }
 
 // signature is a 16-byte hash of the named calls and their arguments, in
@@ -159,7 +187,7 @@ func (o *aiUsageObserver) noteToolCalls(envelope aiEnvelope) {
 		}
 		if json.Unmarshal(envelope.Delta, &delta) == nil {
 			if call := tools.byKey["anthropic:"+strconv.Itoa(index)]; call != nil {
-				call.args.Write([]byte(delta.PartialJSON))
+				call.write([]byte(delta.PartialJSON))
 			}
 		}
 	}
@@ -365,7 +393,7 @@ func noteBedrockStreamToolUse(tools *aiToolCalls, index int, start, delta json.R
 		}
 		if json.Unmarshal(delta, &block) == nil && block.ToolUse != nil {
 			if call := tools.byKey[key]; call != nil {
-				call.args.Write([]byte(block.ToolUse.Input))
+				call.write([]byte(block.ToolUse.Input))
 			}
 		}
 	}

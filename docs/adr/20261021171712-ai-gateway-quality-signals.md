@@ -24,7 +24,7 @@
     | `truncated` | the model stopped at the output-token limit: `finish_reason` `length`, Responses `incomplete_details.reason` `max_output_tokens`, Anthropic `stop_reason` `max_tokens`, Gemini `finishReason` `MAX_TOKENS`, Bedrock `stopReason` `max_tokens` |
     | `refused` | the provider refused or filtered it: an OpenAI `refusal` or `finish_reason` `content_filter`, a Responses `refusal` part, Anthropic `stop_reason` `refusal`, a Gemini block reason or `finishReason` `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT` or `SPII`, Bedrock `stopReason` `guardrail_intervened` or `content_filtered` |
     | `empty` | the answer carried no text and requested no tools |
-    | `invalid_json` | the request asked for JSON (OpenAI `response_format` or Responses `text.format` of type `json_object` or `json_schema`, Gemini `responseMimeType` `application/json`) and the answer text is not JSON; or a requested tool call's arguments are not JSON |
+    | `invalid_json` | the request asked for JSON (OpenAI `response_format` or Responses `text.format` of type `json_object` or `json_schema`, Gemini `responseMimeType` `application/json`) and the answer text is not JSON; a requested tool call's arguments are not JSON; or Gemini reports `MALFORMED_FUNCTION_CALL` |
     | `tool_error` | the request's newest turn reports a failed tool: an Anthropic `tool_result` with `is_error: true`, or a Bedrock Converse `toolResult` with `status` `error` |
 
     - Only the newest turn counts for `tool_error`. Every later request repeats the history, and that would count the same failure again.
@@ -34,7 +34,7 @@
       - the call's request-log entry (`quality_flags`);
       - the log-export line, and `gregale.ai.quality_flags` for OTLP drains;
       - the daily usage rollup, which counts calls per flag for each caller and model;
-      - `outbound_ai_quality_flags_total{flag}`.
+      - `outbound_ai_quality_flags_total{integration_id, flag}`.
   - **Feedback.** An app rates one of its calls with `POST /i/{integration}/_gregale/feedback`, as `{"call_id": "...", "rating": "good"|"bad", "label": "wrong_answer"}`.
     - The app authenticates as it does for AI calls: by its workload identity, or by an access token.
     - The call must be in the integration's request log and made by the same app; otherwise the reply is `404 outbound_ai_call_not_found`.
@@ -52,7 +52,7 @@
     - Settlement samples it at random and marks its log entry pending.
     - An integration evaluates at most `OutboundAIOnlineEvaluationsPerDay` calls per UTC day.
 
-    **Judging.** A worker in outboundd sends each pending call's redacted request text and answer text to the judge.
+    **Judging.** A worker in outboundd claims pending calls (a claim older than `OutboundAIOnlineEvaluationClaimMinutes` is taken again) and sends each call's redacted request text and answer text to the judge.
     - It uses the ADR-1431 machinery: an in-process call through the customer's judge integration, metered and capped under the caller `evaluation`.
     - The judge replies `{"score": 1-5}`. The score goes on the log entry.
     - The daily rollup adds evaluated calls, the sum of scores and judge errors.
@@ -82,7 +82,7 @@
 - **Consequences:**
   - **Request log ID:** the gateway now chooses each request-log row's ID. Its column default stays, for older writers.
   - **New columns:**
-    - `outbound_ai_request_log`: `quality_flags`, `feedback`, `feedback_label`, `feedback_at`, `evaluation_state` and `evaluation_score`;
+    - `outbound_ai_request_log`: `quality_flags`, `feedback`, `feedback_label`, `feedback_at`, `evaluation_state`, `evaluation_claimed_at` and `evaluation_score`;
     - `outbound_ai_usage_daily`: seven counters (one per flag, plus good and bad ratings) and three evaluation totals;
     - `outbound_integrations`: the online-evaluation settings and `ai_quality_alerts`.
   - **New tables:** `outbound_ai_online_evaluation_days` and `outbound_ai_quality_alerts`.

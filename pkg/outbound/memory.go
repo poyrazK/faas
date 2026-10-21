@@ -65,6 +65,11 @@ type memoryState struct {
 	bindingTokenLimits map[string]*int64
 	aiAlerts           []AIBudgetAlert
 	aiRequestLog       []AIUsageRecord
+	// feedback holds the ratings of logged calls by call ID, and
+	// pendingEvaluations the calls sampled for online evaluation
+	// (ADR 20261021171712).
+	feedback           map[string]AIFeedback
+	pendingEvaluations []string
 	// contentCaptures counts today's captured calls (ADR-996).
 	contentCaptures int
 	// settledLeases keys today's settlements (ADR-1120).
@@ -699,6 +704,13 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 				state.contentCaptures++
 			}
 			record.Log = &logged
+		}
+		if record.CallID == "" {
+			record.CallID = uuid.NewString()
+		}
+		if content := record.Log.Content; record.EvaluationSampled && content != nil && !content.RequestTruncated &&
+			!content.ResponseTruncated {
+			state.pendingEvaluations = append(state.pendingEvaluations, record.CallID)
 		}
 		state.aiRequestLog = append(state.aiRequestLog, record)
 		if len(state.aiRequestLog) > memoryAIRequestLogMax {

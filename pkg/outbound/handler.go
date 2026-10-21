@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
@@ -308,6 +309,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		principalID = appID
 	}
+	if integration.AIProvider != "" && path == AIFeedbackPath && !isReplay && !isInternal {
+		h.serveAIFeedback(w, r, integration, appID)
+		return
+	}
 	var allowedRoute bool
 	if isExecution || isReplay || isInternal {
 		allowedRoute = integration.AllowsRequest(r.Method, path)
@@ -475,6 +480,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Metrics.ObserveAdmission(metricIntegrationID, "granted")
 	h.Metrics.IncInFlight(metricIntegrationID)
+	var aiCallID string
+	if aiPlan != nil {
+		// ADR 20261021171712: the call's ID, which feedback names.
+		aiCallID = uuid.NewString()
+		w.Header().Set(api.OutboundAICallHeader, aiCallID)
+	}
 
 	ctx := r.Context()
 	requestTimeout := decision.RequestTimeout
@@ -747,7 +758,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Deferred so an aborted stream still settles the tokens it used.
 		settlement := aiSettlement{
 			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
-			endUser: aiEndUser, tags: aiTags, traceID: aiTrace, leaseID: decision.LeaseID, route: routeAttemptFromContext(r.Context()),
+			endUser: aiEndUser, tags: aiTags, traceID: aiTrace, leaseID: decision.LeaseID, callID: aiCallID,
+			route:      routeAttemptFromContext(r.Context()),
 			moderation: moderation,
 			response:   responseCheck, cacheHit: cacheHit,
 		}

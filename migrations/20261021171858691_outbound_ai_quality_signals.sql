@@ -16,6 +16,7 @@ ALTER TABLE outbound_ai_request_log
     ADD COLUMN IF NOT EXISTS feedback_label text,
     ADD COLUMN IF NOT EXISTS feedback_at timestamptz,
     ADD COLUMN IF NOT EXISTS evaluation_state text,
+    ADD COLUMN IF NOT EXISTS evaluation_claimed_at timestamptz,
     ADD COLUMN IF NOT EXISTS evaluation_score smallint;
 
 ALTER TABLE outbound_ai_usage_daily
@@ -41,7 +42,8 @@ BEGIN
                    AND (feedback IS NULL OR feedback IN ('good', 'bad'))
                    AND (feedback_label IS NULL OR (feedback IS NOT NULL AND feedback_label ~ '^[a-z][a-z0-9_.-]{0,31}$'))
                    AND ((feedback IS NULL) = (feedback_at IS NULL))
-                   AND (evaluation_state IS NULL OR evaluation_state IN ('pending', 'done', 'error'))
+                   AND (evaluation_state IS NULL OR evaluation_state IN ('pending', 'running', 'done', 'error'))
+                   AND ((evaluation_state = 'running') = (evaluation_claimed_at IS NOT NULL))
                    AND (evaluation_score IS NULL OR (evaluation_state = 'done' AND evaluation_score BETWEEN 1 AND 5))) NOT VALID;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint
@@ -64,6 +66,7 @@ ALTER TABLE outbound_ai_usage_daily DROP CONSTRAINT IF EXISTS outbound_ai_usage_
     DROP COLUMN IF EXISTS invalid_json_requests, DROP COLUMN IF EXISTS empty_requests, DROP COLUMN IF EXISTS refused_requests,
     DROP COLUMN IF EXISTS truncated_requests;
 ALTER TABLE outbound_ai_request_log DROP CONSTRAINT IF EXISTS outbound_ai_request_log_quality_chk,
-    DROP COLUMN IF EXISTS evaluation_score, DROP COLUMN IF EXISTS evaluation_state, DROP COLUMN IF EXISTS feedback_at,
+    DROP COLUMN IF EXISTS evaluation_score, DROP COLUMN IF EXISTS evaluation_claimed_at,
+    DROP COLUMN IF EXISTS evaluation_state, DROP COLUMN IF EXISTS feedback_at,
     DROP COLUMN IF EXISTS feedback_label, DROP COLUMN IF EXISTS feedback, DROP COLUMN IF EXISTS quality_flags;
 -- +goose StatementEnd

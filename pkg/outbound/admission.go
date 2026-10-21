@@ -147,6 +147,10 @@ type Integration struct {
 	AITraceMaxCalls             *int64
 	AITraceMaxCostMillicents    *int64
 	AITraceMaxRepeatedToolCalls *int64
+	// AIOnlineEvalPercent samples this share of answered, captured app
+	// calls for the online evaluation worker; zero is off
+	// (ADR 20261021171712).
+	AIOnlineEvalPercent int
 }
 
 // AIGuardrails are one app binding's AI restrictions; nil fields are unset.
