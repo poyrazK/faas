@@ -197,7 +197,7 @@ func (e *Engine) preflightQualificationGraphServiceListener(ctx context.Context,
 	}
 	needsListener := false
 	for _, request := range requests {
-		needsListener = needsListener || len(request.FrozenInputs.ServiceBindings) > 0
+		needsListener = needsListener || len(request.FrozenInputs.ServiceBindings) > 0 || qualificationNeedsPullLease(request)
 	}
 	if !needsListener {
 		return ctx, nil
@@ -207,25 +207,32 @@ func (e *Engine) preflightQualificationGraphServiceListener(ctx context.Context,
 	}
 	bases := make(map[api.ServiceBindingTransport]string, 2)
 	for _, request := range requests {
-		if len(request.FrozenInputs.ServiceBindings) == 0 {
-			continue
+		var transports []api.ServiceBindingTransport
+		if len(request.FrozenInputs.ServiceBindings) > 0 {
+			manifest, err := state.EffectiveEnvironmentWorkloadManifest(request.FrozenInputs)
+			if err != nil {
+				return ctx, err
+			}
+			transports = append(transports, manifest.EffectiveServiceBindingTransport())
 		}
-		manifest, err := state.EffectiveEnvironmentWorkloadManifest(request.FrozenInputs)
-		if err != nil {
-			return ctx, err
+		if qualificationNeedsPullLease(request) {
+			// The candidate's drop-by-default egress always admits the
+			// plaintext node-local proxy; its lease route needs no CA.
+			transports = append(transports, api.ServiceBindingTransportHTTP)
 		}
-		transport := manifest.EffectiveServiceBindingTransport()
-		if _, ok := bases[transport]; ok {
-			continue
+		for _, transport := range transports {
+			if _, ok := bases[transport]; ok {
+				continue
+			}
+			raw, err := e.resolveEnvironmentQualificationServiceURL(ctx, nodeID, transport)
+			if err != nil {
+				return ctx, err
+			}
+			if _, err := parseQualificationServiceBase(raw, transport); err != nil {
+				return ctx, err
+			}
+			bases[transport] = raw
 		}
-		raw, err := e.resolveEnvironmentQualificationServiceURL(ctx, nodeID, transport)
-		if err != nil {
-			return ctx, err
-		}
-		if _, err := parseQualificationServiceBase(raw, transport); err != nil {
-			return ctx, err
-		}
-		bases[transport] = raw
 	}
 	listener := qualificationGraphServiceListener{nodeID: nodeID, bases: bases}
 	return context.WithValue(ctx, qualificationGraphServiceListenerContextKey{}, listener), nil
@@ -502,6 +509,59 @@ func (e *Engine) prepareQualificationServiceBindings(ctx context.Context, claime
 		base.Path = api.EnvironmentQualificationServicePrefix + claimed.GraphID + "/" + name
 		spec.APIEnv = append(spec.APIEnv, fcvm.APIEnvEntry{Key: binding.EnvKey, Value: strings.TrimSuffix(base.String(), "/")})
 	}
+	return nil
+}
+
+// qualificationNeedsPullLease reports a worker candidate with an enabled pull
+// binding, whose consumer leases its reviewed smoke through the node-local
+// proxy (ADR-20261022155812).
+func qualificationNeedsPullLease(request state.EnvironmentWorkloadQualificationRequest) bool {
+	if request.ExecutionMode != api.ExecutionModeWorker {
+		return false
+	}
+	for _, binding := range request.FrozenInputs.QueueBindings {
+		if binding.Contract.Mode == "pull" && binding.Contract.Enabled != nil && *binding.Contract.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// prepareQualificationPullLease stamps the platform-owned lease base into a
+// pull-worker candidate. Its egress reaches only the node-local proxy, which
+// resolves the candidate from its network slot and serves only this attempt's
+// reviewed smoke message; no credential is issued to candidate code.
+func (e *Engine) prepareQualificationPullLease(ctx context.Context, claimed state.EnvironmentWorkloadQualificationRequest, nodeID string, spec *AppSpec) error {
+	if !qualificationNeedsPullLease(claimed) {
+		return nil
+	}
+	if !e.hasEnvironmentQualificationServiceProxy() || ctx.Value(qualificationGraphContextKey{}) != claimed.GraphID {
+		return state.ErrEnvironmentWorkloadPreparationUnavailable
+	}
+	listener, ok := ctx.Value(qualificationGraphServiceListenerContextKey{}).(qualificationGraphServiceListener)
+	if !ok || listener.nodeID != nodeID {
+		return state.ErrEnvironmentWorkloadPreparationUnavailable
+	}
+	raw, ok := listener.bases[api.ServiceBindingTransportHTTP]
+	if !ok {
+		return state.ErrEnvironmentWorkloadPreparationUnavailable
+	}
+	base, err := parseQualificationServiceBase(raw, api.ServiceBindingTransportHTTP)
+	if err != nil {
+		return err
+	}
+	for _, entry := range spec.APIEnv {
+		if entry.Key == api.QueueLeaseURLEnv {
+			return fmt.Errorf("qualification pull lease collides with environment key %q: %w", api.QueueLeaseURLEnv, state.ErrConflict)
+		}
+	}
+	for _, entry := range spec.SealedEnv {
+		if entry.Key == api.QueueLeaseURLEnv {
+			return fmt.Errorf("qualification pull lease collides with environment key %q: %w", api.QueueLeaseURLEnv, state.ErrConflict)
+		}
+	}
+	base.Path = api.EnvironmentQualificationQueuePrefix
+	spec.APIEnv = append(spec.APIEnv, fcvm.APIEnvEntry{Key: api.QueueLeaseURLEnv, Value: base.String()})
 	return nil
 }
 

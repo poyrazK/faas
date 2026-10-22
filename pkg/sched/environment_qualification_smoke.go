@@ -138,12 +138,22 @@ func (e *Engine) probeEnvironmentQualificationGraph(ctx context.Context, instanc
 			if request.ExecutionMode == api.ExecutionModeRequest && request.FrozenInputs.AppType == state.AppTypeFunction {
 				queueInstanceMode = string(state.InstanceModeNormal)
 			}
-			if !queueProbeOK || instance.Mode != queueInstanceMode {
+			if instance.Mode != queueInstanceMode {
 				return nil, state.ErrEnvironmentWorkloadPreparationUnavailable
 			}
 			results := make([]EnvironmentQualificationQueueProbeResult, 0, len(policy.QueueMessages))
 			for _, message := range policy.QueueMessages {
-				queueResult, err := queueProbe.ProbeEnvironmentQualificationQueue(ctx, status.Execution, request, instance, message.BindingName)
+				var queueResult EnvironmentQualificationQueueProbeResult
+				var err error
+				switch {
+				case message.Mode == "pull":
+					// A pull consumer never listens; it leases this message itself.
+					queueResult, err = e.probeQualificationPullSmoke(ctx, request, instance, message)
+				case queueProbeOK:
+					queueResult, err = queueProbe.ProbeEnvironmentQualificationQueue(ctx, status.Execution, request, instance, message.BindingName)
+				default:
+					return nil, state.ErrEnvironmentWorkloadPreparationUnavailable
+				}
 				if err != nil {
 					return nil, fmt.Errorf("%s qualification queue probe for %s/%s: %w", phase, request.Resource, message.BindingName, err)
 				}

@@ -104,7 +104,10 @@ func candidateBindingPolicySupported(request EnvironmentWorkloadQualificationReq
 		return false
 	}
 	for name, b := range f.QueueBindings {
-		if request.ExecutionMode != api.ExecutionModeWorker || b.Contract.Mode != "push" || b.Contract.Enabled == nil || !*b.Contract.Enabled || c.Policy.QueueRequirements[name] != api.QueueEvidenceHandlerCompletion {
+		// ADR-20261022155812: a pull worker's smoke is the reviewed message it
+		// leased and acknowledged, so it is handler completion too.
+		pushOrPull := b.Contract.Mode == "push" || b.Contract.Mode == "pull"
+		if request.ExecutionMode != api.ExecutionModeWorker || !pushOrPull || b.Contract.Enabled == nil || !*b.Contract.Enabled || c.Policy.QueueRequirements[name] != api.QueueEvidenceHandlerCompletion {
 			return false
 		}
 	}

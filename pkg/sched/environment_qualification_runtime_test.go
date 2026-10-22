@@ -38,6 +38,13 @@ func queuedQualificationExecutionFixtureWithBindings(t *testing.T, bindings map[
 }
 
 func queuedQualificationExecutionFixtureWithBindingsAndTransport(t *testing.T, bindings map[string]api.EnvironmentServiceBinding, transport api.ServiceBindingTransport, modes ...string) (*state.MemStore, state.EnvironmentGitSource, []state.EnvironmentWorkloadQualificationRequest) {
+	return queuedQualificationExecutionFixtureWithWorkloads(t, bindings, transport, nil, modes...)
+}
+
+// queuedQualificationExecutionFixtureWithWorkloads lets a test adjust the
+// reviewed workloads (for example queue bindings) before they are compiled.
+func queuedQualificationExecutionFixtureWithWorkloads(t *testing.T, bindings map[string]api.EnvironmentServiceBinding, transport api.ServiceBindingTransport,
+	mutate func(map[string]api.EnvironmentWorkload), modes ...string) (*state.MemStore, state.EnvironmentGitSource, []state.EnvironmentWorkloadQualificationRequest) {
 	t.Helper()
 	ctx, store := t.Context(), state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "qualification@example.test", api.PlanPro)
@@ -105,6 +112,9 @@ func queuedQualificationExecutionFixtureWithBindingsAndTransport(t *testing.T, b
 		caller := workloads["api"]
 		caller.ServiceBindings = bindings
 		workloads["api"] = caller
+	}
+	if mutate != nil {
+		mutate(workloads)
 	}
 	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: "shop", Environment: "production", Workloads: workloads})
 	if err != nil {

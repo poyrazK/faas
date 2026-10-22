@@ -6,6 +6,9 @@
 // at half the visibility timeout so slow work is not redelivered. Inside a
 // Gregale VM the consumer authenticates with a workload-identity token for
 // audience gregale:queues; elsewhere it takes an API key with queues:consume.
+// A qualification candidate has neither: Gregale sets GREGALE_QUEUE_LEASE_URL
+// to its node-local proxy, which serves only the reviewed smoke message and
+// needs no credential (ADR-20261022155812). That base takes precedence.
 
 export const DEFAULT_GREGALE_API_URL = 'https://api.gregale.dev';
 const QUEUES_AUDIENCE = 'gregale:queues';
@@ -38,7 +41,7 @@ export interface QueueConsumerOptions {
   app: string;
   /** Queue name of the pull binding. */
   queue: string;
-  /** apid base URL. Defaults to GREGALE_API_URL, then https://api.gregale.dev. HTTPS required. */
+  /** apid base URL. Defaults to GREGALE_API_URL, then https://api.gregale.dev. HTTPS required. GREGALE_QUEUE_LEASE_URL, set by Gregale inside a qualification candidate, overrides it and the credentials. */
   apiURL?: string;
   /** API key with queues:consume. Without one the consumer uses workload identity. */
   apiKey?: string;
@@ -75,6 +78,7 @@ interface SettleResponse {
 export class GregaleQueueConsumer<T = unknown> {
   private readonly leasesURL: URL;
   private readonly identityURL?: URL;
+  private readonly platformLease: boolean;
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly concurrency: number;
   private readonly visibility: number;
@@ -86,10 +90,18 @@ export class GregaleQueueConsumer<T = unknown> {
   private token?: { value: string; refreshAt: number };
 
   constructor(private readonly options: QueueConsumerOptions, private readonly handler: QueueHandler<T>) {
-    const base = new URL(options.apiURL ?? process.env.GREGALE_API_URL ?? DEFAULT_GREGALE_API_URL);
-    if (base.protocol !== 'https:') throw new Error('Queue consumer requires an HTTPS API URL');
     if (!options.app || !options.queue) throw new Error('Queue consumer requires app and queue');
-    this.leasesURL = new URL(`/v1/apps/${encodeURIComponent(options.app)}/queues/${encodeURIComponent(options.queue)}/leases`, base);
+    const leasesPath = `/v1/apps/${encodeURIComponent(options.app)}/queues/${encodeURIComponent(options.queue)}/leases`;
+    const platform = process.env.GREGALE_QUEUE_LEASE_URL;
+    this.platformLease = Boolean(platform);
+    if (platform) {
+      const base = platformLeaseBase(platform);
+      this.leasesURL = new URL(base.pathname.replace(/\/+$/, '') + leasesPath, base);
+    } else {
+      const base = new URL(options.apiURL ?? process.env.GREGALE_API_URL ?? DEFAULT_GREGALE_API_URL);
+      if (base.protocol !== 'https:') throw new Error('Queue consumer requires an HTTPS API URL');
+      this.leasesURL = new URL(leasesPath, base);
+    }
     this.concurrency = options.concurrency ?? 1;
     this.visibility = options.visibilityTimeoutSeconds ?? 30;
     this.wait = options.waitSeconds ?? MAX_WAIT_SECONDS;
@@ -98,7 +110,7 @@ export class GregaleQueueConsumer<T = unknown> {
     if (!(Number.isInteger(this.visibility) && this.visibility >= 2)) throw new Error('visibilityTimeoutSeconds must be at least 2');
     if (!(Number.isInteger(this.wait) && this.wait >= 0 && this.wait <= MAX_WAIT_SECONDS)) throw new Error('waitSeconds must be 0-20');
     if (!(Number.isInteger(this.retryDelay) && this.retryDelay >= 0)) throw new Error('retryDelaySeconds must be a non-negative integer');
-    if (!options.apiKey) {
+    if (!options.apiKey && !this.platformLease) {
       this.identityURL = new URL(options.identityEndpoint ?? process.env.FAAS_WORKLOAD_IDENTITY_ENDPOINT ?? '');
       if (this.identityURL.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(this.identityURL.hostname)) {
         throw new Error('Workload identity endpoint must be loopback HTTP; pass apiKey outside a Gregale VM');
@@ -203,7 +215,9 @@ export class GregaleQueueConsumer<T = unknown> {
     const timeout = AbortSignal.timeout(waitMs + CALL_SLACK_MS);
     const response = await this.fetchImpl(url, {
       method: 'POST', signal: stop ? AbortSignal.any([stop, timeout]) : timeout, redirect: 'error', cache: 'no-store',
-      headers: { Authorization: `Bearer ${await this.credential()}`, 'Content-Type': 'application/json' },
+      headers: this.platformLease
+        ? { 'Content-Type': 'application/json' }
+        : { Authorization: `Bearer ${await this.credential()}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     if (response.status === 401) this.token = undefined;
@@ -255,6 +269,22 @@ export function consumeQueue<T = unknown>(options: ConsumeQueueOptions, handler:
     process.once('SIGINT', onSignal);
   }
   return consumer;
+}
+
+// The platform lease base is HTTPS, or plain HTTP to the node's private bridge
+// address; a candidate's egress reaches nothing else.
+function platformLeaseBase(raw: string): URL {
+  const base = new URL(raw);
+  if (base.username || base.password || base.search || base.hash) throw new Error('Invalid GREGALE_QUEUE_LEASE_URL');
+  if (base.protocol === 'https:' || (base.protocol === 'http:' && privateIPv4(base.hostname))) return base;
+  throw new Error('GREGALE_QUEUE_LEASE_URL must be HTTPS or a private IPv4 HTTP address');
+}
+
+function privateIPv4(host: string): boolean {
+  const parts = host.split('.');
+  if (parts.length !== 4 || !parts.every(part => /^(0|[1-9][0-9]{0,2})$/.test(part) && Number(part) <= 255)) return false;
+  const [a = -1, b = -1] = parts.map(Number);
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
 function errorText(error: unknown): string {

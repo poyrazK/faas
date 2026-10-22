@@ -200,3 +200,40 @@ def test_rejects_unsafe_options(bad):
     settings.update(bad)
     with pytest.raises(ValueError):
         QueueConsumer(handler=lambda message: None, **settings)
+
+
+@pytest.mark.asyncio
+async def test_qualification_candidate_leases_through_platform_url(monkeypatch):
+    fake = FakeQueue([{"smoke": True}])
+    urls = []
+
+    async def recording(request):
+        urls.append(str(request.url))
+        return await fake.handle(request)
+
+    monkeypatch.setenv("GREGALE_QUEUE_LEASE_URL", "http://10.100.0.1:10081/v1/internal/environment-qualification-queues")
+    monkeypatch.delenv("FAAS_WORKLOAD_IDENTITY_ENDPOINT", raising=False)
+    consumer = QueueConsumer(
+        app="worker",
+        queue="jobs",
+        handler=lambda message: None,
+        api_url="https://api.test",
+        async_client=httpx.AsyncClient(transport=httpx.MockTransport(recording)),
+    )
+    task = asyncio.create_task(consumer.run())
+    await until(lambda: fake.verbs("ack"))
+    consumer.stop()
+    await task
+    assert all(call[2] is None and not call[0].startswith("identity") for call in fake.calls)
+    leases = "http://10.100.0.1:10081/v1/internal/environment-qualification-queues/v1/apps/worker/queues/jobs/leases"
+    assert all(url.startswith(leases) for url in urls), urls
+    assert any(url.endswith("/leases:ack") for url in urls)
+
+
+@pytest.mark.parametrize(
+    "bad", ["http://api.gregale.dev", "http://8.8.8.8:10081", "http://127.0.0.1:10081", "http://u@10.0.0.1", "ftp://10.0.0.1"]
+)
+def test_rejects_a_public_platform_lease_url(monkeypatch, bad):
+    monkeypatch.setenv("GREGALE_QUEUE_LEASE_URL", bad)
+    with pytest.raises(ValueError):
+        QueueConsumer(app="worker", queue="jobs", handler=lambda message: None)

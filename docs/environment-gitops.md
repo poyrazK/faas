@@ -201,10 +201,16 @@ incomplete reports `environment_activation_before_qualification` as a safety
 violation. A worker with an enabled push or pull binding and no current
 queue-smoke receipt reports `environment_worker_queue_smoke_contract_missing`.
 Push probes exercise the frozen trigger route and check the synthetic item
-acknowledgement. Pull probes exercise the generic queue invocation contract
-(`POST /`, source `queue`) and treat a complete 2xx response as its
-acknowledgement. Both run directly against the attempt-bound private candidate;
-neither creates a customer invocation or queue row. HTTP functions continue to
+acknowledgement. A pull consumer never listens, so its probe is a lease: Gregale
+arms the reviewed message for the exact candidate execution and the candidate's
+own consumer leases it from the node-local qualification proxy, at the
+`GREGALE_QUEUE_LEASE_URL` Gregale sets in the candidate. The ack is the
+acknowledgement, a nack fails the smoke, and the message must be settled within
+60 seconds. The Node and Python SDK consumers honor the variable; other pull
+clients must use it in place of the public API and send no credential
+([ADR 20261022155812](adr/20261022155812-qualification-pull-queue-smoke-leases.md)).
+Both run directly against the attempt-bound private candidate; neither creates a
+customer invocation or queue row. HTTP functions continue to
 use push bindings only. Push and pull workers may activate dark after
 qualification; Gregale reports them serving only after a successfully completed
 named-queue or generic pull invocation is atomically recorded against the

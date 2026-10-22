@@ -8623,7 +8623,7 @@ BEGIN
     AND environment_runtime_inputs_fresh(q.app_id,e.slug,(restored.runtime_inputs->>'boundary')::timestamptz,restored.runtime_inputs->'variables',restored.runtime_inputs->'secret_versions',(restored.runtime_inputs->>'all_secrets')::boolean,restored.runtime_inputs->'secret_refs',coalesce(restored.runtime_inputs->'sidecar_secret_versions','{}'::jsonb))) THEN RETURN NULL; END IF;
   IF (SELECT count(*) FROM jsonb_each(coalesce(q.frozen_inputs->'queue_bindings','{}'::jsonb)))<>(SELECT count(*) FROM jsonb_each(p.queue_requirements)) OR
    EXISTS(SELECT 1 FROM jsonb_each(coalesce(q.frozen_inputs->'queue_bindings','{}'::jsonb)) b
-    WHERE q.execution_mode<>'worker' OR b.value->'contract'->>'mode'<>'push' OR b.value->'contract'->>'enabled' IS DISTINCT FROM 'true' OR
+    WHERE q.execution_mode<>'worker' OR b.value->'contract'->>'mode' NOT IN ('push','pull') OR b.value->'contract'->>'enabled' IS DISTINCT FROM 'true' OR
      p.queue_requirements->>b.key IS DISTINCT FROM 'handler_completion' OR NOT coalesce(q.frozen_inputs->'queue_smoke','{}'::jsonb) ? b.key) THEN RETURN NULL; END IF;
   deadline:=least(q.lease_until,smoke.recorded_at+p.max_age_seconds*interval '1 second');
   -- LEAST ignores NULL, so a missing PostgreSQL receipt must stop here.
@@ -34925,6 +34925,36 @@ CREATE TABLE public.environment_qualification_postgres_receipts (
 
 
 --
+-- Name: environment_qualification_pull_smokes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_qualification_pull_smokes (
+    request_id uuid NOT NULL,
+    attempt bigint NOT NULL,
+    instance_id uuid NOT NULL,
+    binding text NOT NULL,
+    queue_name text NOT NULL,
+    message_id uuid NOT NULL,
+    payload jsonb NOT NULL,
+    deadline timestamp with time zone NOT NULL,
+    receipt_sha256 text DEFAULT ''::text NOT NULL,
+    lease_expires_at timestamp with time zone,
+    deliveries integer DEFAULT 0 NOT NULL,
+    outcome text DEFAULT ''::text NOT NULL,
+    settled_at timestamp with time zone,
+    armed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_qualification_pull_smokes_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT environment_qualification_pull_smokes_binding_check CHECK ((binding ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT environment_qualification_pull_smokes_deliveries_check CHECK ((deliveries >= 0)),
+    CONSTRAINT environment_qualification_pull_smokes_leased CHECK (((receipt_sha256 = ''::text) = (lease_expires_at IS NULL))),
+    CONSTRAINT environment_qualification_pull_smokes_outcome_check CHECK ((outcome = ANY (ARRAY[''::text, 'acked'::text, 'nacked'::text]))),
+    CONSTRAINT environment_qualification_pull_smokes_queue_name_check CHECK ((queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT environment_qualification_pull_smokes_receipt_sha256_check CHECK (((receipt_sha256 = ''::text) OR (receipt_sha256 ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT environment_qualification_pull_smokes_settled CHECK (((outcome = ''::text) = (settled_at IS NULL)))
+);
+
+
+--
 -- Name: environment_qualification_restore_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -57518,6 +57548,14 @@ ALTER TABLE ONLY public.environment_qualification_outbound_receipts
 
 ALTER TABLE ONLY public.environment_qualification_postgres_receipts
     ADD CONSTRAINT environment_qualification_postgres_receipts_pkey PRIMARY KEY (request_id, attempt, binding_id, credential_generation, delivery_version);
+
+
+--
+-- Name: environment_qualification_pull_smokes environment_qualification_pull_smokes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_pull_smokes
+    ADD CONSTRAINT environment_qualification_pull_smokes_pkey PRIMARY KEY (request_id, attempt, instance_id, binding);
 
 
 --
@@ -86847,6 +86885,14 @@ ALTER TABLE ONLY public.environment_qualification_outbound_receipts
 
 ALTER TABLE ONLY public.environment_qualification_postgres_receipts
     ADD CONSTRAINT environment_qualification_postgres_receipts_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.environment_workload_qualification_requests(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_qualification_pull_smokes environment_qualification_pull_smokes_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_qualification_pull_smokes
+    ADD CONSTRAINT environment_qualification_pull_smokes_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.environment_workload_qualification_requests(id) ON DELETE CASCADE;
 
 
 --

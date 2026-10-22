@@ -1085,6 +1085,17 @@ const EnvironmentGitOpsQualificationWorkerIDMaxBytes = 256
 // Check revocation while a qualification VM effect or evidence check is running.
 const EnvironmentGitOpsQualificationRuntimeCheckInterval = time.Second
 
+// A candidate's pull consumer must lease and settle its reviewed smoke message
+// within this window (ADR-20261022155812). It covers a long-poll opened before
+// capture that the restored consumer only abandons at its client timeout
+// (QueueLeaseMaxWaitSeconds plus SDK slack), then the handler itself. The
+// qualification lease still bounds it.
+const EnvironmentGitOpsQualificationPullSmokeWindow = 60 * time.Second
+
+// The node-local proxy rechecks an armed pull smoke at this interval while a
+// candidate's lease call long-polls.
+const EnvironmentGitOpsQualificationPullSmokePoll = 250 * time.Millisecond
+
 // Recovery pages bound work on one original execution host. Failed retirements
 // keep their holdings and are retried on a later pass through the cursor.
 const EnvironmentGitOpsQualificationRecoveryBatchMax = 100

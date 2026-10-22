@@ -6,7 +6,10 @@ binding's policy) on an exception. While a handler runs, its lease is
 extended at half the visibility timeout so slow work is not redelivered.
 Inside a Gregale VM the consumer authenticates with a workload-identity token
 for audience ``gregale:queues``; elsewhere it takes an API key with
-``queues:consume``.
+``queues:consume``. A qualification candidate has neither: Gregale sets
+``GREGALE_QUEUE_LEASE_URL`` to its node-local proxy, which serves only the
+reviewed smoke message and needs no credential (ADR-20261022155812). That
+base takes precedence over ``api_url`` and the credentials.
 
     from faas_sdk.queue_consumer import consume_queue
 
@@ -21,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import ipaddress
 import os
 import signal
 import time
@@ -82,10 +86,15 @@ class QueueConsumer:
         on_error: Callable[[BaseException], None] | None = None,
         async_client: httpx.AsyncClient | None = None,
     ) -> None:
-        base = api_url or os.environ.get("GREGALE_API_URL") or DEFAULT_GREGALE_API_URL
-        parts = urlsplit(base)
-        if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
-            raise ValueError("Queue consumer requires an HTTPS API URL")
+        platform = os.environ.get("GREGALE_QUEUE_LEASE_URL")
+        self._platform_lease = bool(platform)
+        if platform:
+            parts = _platform_lease_base(platform)
+        else:
+            base = api_url or os.environ.get("GREGALE_API_URL") or DEFAULT_GREGALE_API_URL
+            parts = urlsplit(base)
+            if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
+                raise ValueError("Queue consumer requires an HTTPS API URL")
         if not app or not queue:
             raise ValueError("Queue consumer requires app and queue")
         for name, value, low, high in (
@@ -98,7 +107,7 @@ class QueueConsumer:
             if isinstance(value, bool) or not in_range:
                 raise ValueError(f"{name} is out of range")
         self._identity_url: str | None = None
-        if not api_key:
+        if not api_key and not self._platform_lease:
             endpoint = identity_endpoint or os.environ.get("FAAS_WORKLOAD_IDENTITY_ENDPOINT", "")
             identity = urlsplit(endpoint)
             if (
@@ -112,7 +121,8 @@ class QueueConsumer:
             query.append(("audience", _QUEUES_AUDIENCE))
             self._identity_url = urlunsplit((identity.scheme, identity.netloc, identity.path, urlencode(query), ""))
         path = f"/v1/apps/{quote(app, safe='')}/queues/{quote(queue, safe='')}/leases"
-        self._leases_url = urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+        prefix = parts.path.rstrip("/") if self._platform_lease else ""
+        self._leases_url = urlunsplit((parts.scheme, parts.netloc, prefix + path, "", ""))
         self._handler = handler
         self._api_key = api_key
         self._concurrency = concurrency
@@ -253,10 +263,11 @@ class QueueConsumer:
 
     async def _call(self, verb: str, body: Mapping[str, Any], wait_seconds: float) -> Any:
         client = self._http_client()
+        headers = {} if self._platform_lease else {"Authorization": f"Bearer {await self._credential()}"}
         response = await client.post(
             self._leases_url + verb,
             json=body,
-            headers={"Authorization": f"Bearer {await self._credential()}"},
+            headers=headers,
             timeout=wait_seconds + _CALL_SLACK_SECONDS,
         )
         if response.status_code == 401:
@@ -327,3 +338,20 @@ def _parse_time(value: Any) -> datetime:
         with contextlib.suppress(ValueError):
             return datetime.fromisoformat(value.replace("Z", "+00:00"))
     return datetime.fromtimestamp(0).astimezone()
+
+
+def _platform_lease_base(raw: str) -> Any:
+    """The platform lease base is HTTPS, or plain HTTP to the node's private
+    bridge address; a candidate's egress reaches nothing else."""
+    parts = urlsplit(raw)
+    if not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
+        raise ValueError("Invalid GREGALE_QUEUE_LEASE_URL")
+    if parts.scheme == "https":
+        return parts
+    try:
+        address = ipaddress.ip_address(parts.hostname)
+    except ValueError:
+        address = None
+    if parts.scheme == "http" and isinstance(address, ipaddress.IPv4Address) and address.is_private and not address.is_loopback:
+        return parts
+    raise ValueError("GREGALE_QUEUE_LEASE_URL must be HTTPS or a private IPv4 HTTP address")

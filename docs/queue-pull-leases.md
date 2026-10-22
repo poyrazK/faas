@@ -94,6 +94,13 @@ separately in `succeeded` and `failed`.
   when the pool scales in.
 - **From anywhere else:** an API key with the `queues:consume` scope
   (`deploy:write` and `admin` keys also work).
+- **During GitOps qualification:** a candidate VM has no identity and no
+  public egress. Gregale sets `GREGALE_QUEUE_LEASE_URL` to the node-local
+  qualification proxy; lease there, with the same paths and bodies and no
+  `Authorization` header. Only the reviewed `queue_smoke` message is served,
+  and acking it qualifies the binding. The SDK consumers do this
+  automatically; an HTTP client must check the variable first
+  ([ADR 20261022155812](adr/20261022155812-qualification-pull-queue-smoke-leases.md)).
 
 ## Limits
 

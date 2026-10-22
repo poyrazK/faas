@@ -153,3 +153,31 @@ test('rejects unsafe options', () => {
     assert.throws(() => new GregaleQueueConsumer({ ...base, ...bad }, () => {}), Error, JSON.stringify(bad));
   }
 });
+
+test('a qualification candidate leases through GREGALE_QUEUE_LEASE_URL without a credential', async () => {
+  const fake = fakeQueue([{ smoke: true }]);
+  const urls: string[] = [];
+  const recording = (async (input: string | URL | Request, init?: RequestInit) => {
+    urls.push(String(input));
+    return fake.fetch(input, init);
+  }) as typeof globalThis.fetch;
+  const previous = process.env.GREGALE_QUEUE_LEASE_URL;
+  process.env.GREGALE_QUEUE_LEASE_URL = 'http://10.100.0.1:10081/v1/internal/environment-qualification-queues';
+  try {
+    const c = new GregaleQueueConsumer({ app: 'worker', queue: 'jobs', apiURL: 'https://api.test', fetch: recording }, () => {});
+    void c.run();
+    await until(() => fake.calls.some(call => call.verb === 'ack'));
+    await c.stop();
+    assert.ok(fake.calls.every(call => !call.verb.startsWith('identity') && call.auth === null), 'no identity token or credential');
+    const leases = 'http://10.100.0.1:10081/v1/internal/environment-qualification-queues/v1/apps/worker/queues/jobs/leases';
+    assert.ok(urls.every(url => url.startsWith(leases)), urls.join(','));
+    assert.ok(urls.some(url => url.endsWith('/leases:ack')));
+    for (const bad of ['http://api.gregale.dev', 'http://8.8.8.8:10081', 'http://10.0.0.1@evil.test', 'ftp://10.0.0.1']) {
+      process.env.GREGALE_QUEUE_LEASE_URL = bad;
+      assert.throws(() => new GregaleQueueConsumer({ app: 'worker', queue: 'jobs', fetch: recording }, () => {}), Error, bad);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.GREGALE_QUEUE_LEASE_URL;
+    else process.env.GREGALE_QUEUE_LEASE_URL = previous;
+  }
+});

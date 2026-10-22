@@ -49,7 +49,10 @@ func (p *environmentQualificationServiceProxy) ServeHTTP(w http.ResponseWriter, 
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "private service caller lookup is unavailable")
 		return
 	}
-	private := strings.HasPrefix(r.URL.Path, EnvironmentQualificationServicePrefix)
+	// ADR-20261022155812: a candidate's pull consumer leases its reviewed
+	// smoke message here; the route never reaches the ordinary service proxy.
+	lease := strings.HasPrefix(r.URL.Path, api.EnvironmentQualificationQueuePrefix+"/")
+	private := lease || strings.HasPrefix(r.URL.Path, EnvironmentQualificationServicePrefix)
 	if nodeID == "" {
 		if !private && p.config.Next != nil {
 			p.config.Next.ServeHTTP(w, r)
@@ -69,6 +72,10 @@ func (p *environmentQualificationServiceProxy) ServeHTTP(w http.ResponseWriter, 
 	}
 	if !held || !private {
 		serviceProxyProblem(w, http.StatusForbidden, "qualification callers require their private graph binding")
+		return
+	}
+	if lease {
+		p.servePullLease(w, r, nodeID, ip.String())
 		return
 	}
 	p.servePrivate(w, r, nodeID, ip.String())

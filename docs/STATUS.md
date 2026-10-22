@@ -7,6 +7,23 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Pull-queue workers in candidate qualification — 2026-10-22
+
+Enforced managed GitOps graphs now admit pull-queue workers. A real pull
+consumer never listens and candidates have no identity or public egress, so
+the old `POST /` smoke could not reach one. Instead, schedd arms the reviewed
+smoke message for the exact candidate execution. The candidate's own consumer
+leases it from the node-local qualification proxy at `GREGALE_QUEUE_LEASE_URL`,
+which Gregale sets in the candidate, and the ack becomes `handler_completion`
+evidence. The proxy identifies the caller by its network slot and serves only
+that attempt's message; no token is minted and no customer queue row is
+touched. The Node and Python SDK consumers honor the variable.
+
+Portable memory, PostgreSQL, gateway, scheduler and SDK tests cover this.
+Native acceptance waits for the closed capture gate (ADR-568). Deploy
+gatewayd-internal before schedd.
+See [ADR 20261022155812](adr/20261022155812-qualification-pull-queue-smoke-leases.md).
+
 ## Event substrate benchmark (V12) — 2026-10-20
 
 `make bench-event-substrate` measures event publish, fanout routing, the

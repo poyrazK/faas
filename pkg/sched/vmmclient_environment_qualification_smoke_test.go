@@ -3,8 +3,8 @@ package sched
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
-	"net/http"
 	"strings"
 	"testing"
 
@@ -211,40 +211,21 @@ func TestVMMClientEnvironmentQualificationQueueUsesReviewedTriggerAndAcknowledge
 	}
 }
 
-func TestVMMClientEnvironmentQualificationPullQueueUsesGenericInvocationAcknowledgement(t *testing.T) {
+// ADR-20261022155812: a pull consumer never listens, so its smoke is a lease
+// through the node-local proxy and the VMM probe never sends one over HTTP.
+func TestVMMClientEnvironmentQualificationQueueRefusesPull(t *testing.T) {
 	request, frame, instance := qualificationWorkerQueueProbeFixture()
 	binding := request.FrozenInputs.QueueBindings["orders"]
 	binding.TriggerID = ""
 	binding.Contract.Mode = "pull"
 	request.FrozenInputs.QueueBindings["orders"] = binding
-	stream := &qualificationSmokeHTTPStream{responses: []*vmmdpb.ForwardHTTPStreamResponse{
-		{Frame: &vmmdpb.ForwardHTTPStreamResponse_Init{Init: &vmmdpb.ForwardHTTPResponseInit{Status: 204}}},
-		{Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{BodyChunk: []byte(`{"ignored":"private response"}`)}},
-	}}
+	stream := &qualificationSmokeHTTPStream{}
 	client := &VMMClient{cli: &qualificationSmokeHTTPClient{stream: stream}}
-	result, err := client.ProbeEnvironmentQualificationQueue(t.Context(), frame, request, instance, "orders")
-	if err != nil || result != (EnvironmentQualificationQueueProbeResult{StatusCode: 204, Completed: true}) {
-		t.Fatalf("pull qualification result = %+v, %v", result, err)
+	if _, err := client.ProbeEnvironmentQualificationQueue(t.Context(), frame, request, instance, "orders"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("pull probe err = %v, want conflict", err)
 	}
-	if !stream.closed || len(stream.sent) != 2 {
-		t.Fatalf("pull qualification stream = closed:%t sent:%d, want closed with init and message", stream.closed, len(stream.sent))
-	}
-	init := stream.sent[0].GetInit()
-	if init == nil || init.GetInstance() != instance.ID || init.GetMethod() != http.MethodPost || init.GetRequestUri() != "/" ||
-		init.GetPort() != 8087 || !init.GetContentLengthKnown() || init.GetContentLength() != int64(len(`{"idempotency_key":"qualification-1"}`)) {
-		t.Fatalf("pull qualification request did not use the generic invocation contract: %+v", init)
-	}
-	var invocationID, invocationSource string
-	for _, header := range init.GetHeaders() {
-		switch strings.ToLower(header.GetName()) {
-		case strings.ToLower(api.InvocationIDHeader):
-			invocationID = header.GetValue()
-		case strings.ToLower(api.InvocationSourceHeader):
-			invocationSource = header.GetValue()
-		}
-	}
-	if invocationID != qualificationQueueSmokeMessageID(request, binding.BindingID) || invocationSource != string(state.InvocationQueue) {
-		t.Fatalf("pull invocation headers id=%q source=%q", invocationID, invocationSource)
+	if len(stream.sent) != 0 {
+		t.Fatalf("pull probe sent %d frames to the candidate", len(stream.sent))
 	}
 }
 

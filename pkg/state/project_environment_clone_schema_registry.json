@@ -5394,6 +5394,26 @@
     "kind": "operational"
   },
   {
+    "table": "environment_qualification_pull_smokes",
+    "columns": [
+      "armed_at",
+      "attempt",
+      "binding",
+      "deadline",
+      "deliveries",
+      "instance_id",
+      "lease_expires_at",
+      "message_id",
+      "outcome",
+      "payload",
+      "queue_name",
+      "receipt_sha256",
+      "request_id",
+      "settled_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_qualification_service_receipts",
     "columns": [
       "attempt",

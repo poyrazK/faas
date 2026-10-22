@@ -122,18 +122,11 @@ func (c *VMMClient) ProbeEnvironmentQualificationQueue(ctx context.Context, fram
 			break
 		}
 	}
-	if message == nil || message.Method != http.MethodPost || message.Path == "" ||
-		message.Mode != "push" && message.Mode != "pull" || policy.Port < 1 || policy.Port > 65535 {
-		return result, state.ErrConflict
-	}
-	if message.Mode == "push" && message.TriggerID == "" || message.Mode == "pull" && message.TriggerID != "" {
-		return result, state.ErrConflict
-	}
-	expectedPath := "/"
-	if message.Mode == "push" {
-		expectedPath = "/_triggers/esm/" + message.TriggerID
-	}
-	if message.Path != expectedPath {
+	// ADR-20261022155812: a pull consumer never listens, so its smoke is a
+	// lease through the node-local proxy (probeQualificationPullSmoke), never
+	// an HTTP delivery to the candidate.
+	if message == nil || message.Method != http.MethodPost || message.Mode != "push" || message.TriggerID == "" ||
+		message.Path != "/_triggers/esm/"+message.TriggerID || policy.Port < 1 || policy.Port > 65535 {
 		return result, state.ErrConflict
 	}
 	messageID := qualificationQueueSmokeMessageID(request, message.BindingID)
@@ -141,13 +134,9 @@ func (c *VMMClient) ProbeEnvironmentQualificationQueue(ctx context.Context, fram
 	api.PlatformIdentity{RequestID: frame.RequestID, AppID: frame.AppID, DeploymentID: frame.DeploymentID,
 		InstanceID: frame.InstanceID, NodeID: frame.NodeID}.ApplyGuestHeaders(headers)
 	headers.Set(api.InvocationIDHeader, messageID)
-	source := string(state.InvocationQueue)
-	if message.Mode == "push" {
-		// Trigger dispatch uses the guest-visible source "esm" even when
-		// the backing broker is Gregale's in-platform queue.
-		source = "esm"
-	}
-	headers.Set(api.InvocationSourceHeader, source)
+	// Trigger dispatch uses the guest-visible source "esm" even when the
+	// backing broker is Gregale's in-platform queue.
+	headers.Set(api.InvocationSourceHeader, "esm")
 	headers.Set("Content-Type", "application/json")
 	protoHeaders := make([]*vmmdpb.Header, 0, len(headers))
 	for name, values := range headers {
@@ -201,20 +190,13 @@ func (c *VMMClient) ProbeEnvironmentQualificationQueue(ctx context.Context, fram
 				return result, fmt.Errorf("private qualification queue response exceeded smoke limits: %w", state.ErrConflict)
 			}
 			responseBytes += len(responseFrame.BodyChunk)
-			if message.Mode == "push" {
-				body = append(body, responseFrame.BodyChunk...)
-			}
+			body = append(body, responseFrame.BodyChunk...)
 		default:
 			return result, fmt.Errorf("private qualification queue response frame is unsupported: %w", state.ErrConflict)
 		}
 	}
 	if result.StatusCode == 0 {
 		return result, fmt.Errorf("private qualification queue response was empty: %w", state.ErrConflict)
-	}
-	if message.Mode == "pull" {
-		result.Completed = true
-		result.Failed = result.StatusCode < http.StatusOK || result.StatusCode >= http.StatusMultipleChoices
-		return result, nil
 	}
 	failed, err := qualificationWorkerQueueItemFailed(body, messageID)
 	if err != nil {

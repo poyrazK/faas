@@ -349,6 +349,8 @@ type MemStore struct {
 	// Smoke evidence is attempt-bound to the same retired restore target.
 	qualificationSmokeReceipts    map[string]EnvironmentQualificationSmokeReceipt
 	qualificationJobSmokeReceipts map[string]EnvironmentQualificationJobSmokeReceipt
+	// Pull smoke leases are attempt-bound to one candidate execution (ADR-20261022155812).
+	qualificationPullSmokes map[string]*memQualificationPullSmoke
 	// environmentWorkloadServingReceipts records durable per-graph route
 	// generations and gateway acknowledgements for the final serving phase.
 	environmentWorkloadServingReceipts map[string]EnvironmentWorkloadServingReceipt

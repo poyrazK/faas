@@ -28,7 +28,8 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if !executionOK || !nativeOK {
 		return fmt.Errorf("qualification requires attempt-aware VM execution and retirement: %w", state.ErrConflict)
 	}
-	if len(claimed.FrozenInputs.ServiceBindings) != 0 && (!e.hasEnvironmentQualificationServiceProxy() || ctx.Value(qualificationGraphContextKey{}) != claimed.GraphID) {
+	needsProxy := len(claimed.FrozenInputs.ServiceBindings) != 0 || qualificationNeedsPullLease(claimed)
+	if needsProxy && (!e.hasEnvironmentQualificationServiceProxy() || ctx.Value(qualificationGraphContextKey{}) != claimed.GraphID) {
 		return state.ErrEnvironmentWorkloadPreparationUnavailable
 	}
 	ctx, deadlineCancel := context.WithDeadline(WithScope(ctx, claimed.FrozenInputs.Scope), *claimed.LeaseUntil)
@@ -167,6 +168,9 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	}
 	if err := e.prepareQualificationServiceBindings(ctx, claimed, placement.NodeID, &prepared.Spec); err != nil {
 		return fmt.Errorf("prepare qualification service bindings: %w", err)
+	}
+	if err := e.prepareQualificationPullLease(ctx, claimed, placement.NodeID, &prepared.Spec); err != nil {
+		return fmt.Errorf("prepare qualification pull lease: %w", err)
 	}
 	prepared.Spec.WorkerPushDelivery = qualificationWorkerPushDelivery(claimed)
 	var configDigest string
