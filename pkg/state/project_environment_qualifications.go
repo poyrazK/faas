@@ -284,6 +284,14 @@ func (s *PgStore) CreateProjectEnvironmentQualification(ctx context.Context, acc
 	if !sameProjectEnvironmentSecretRevisionHashes(normalizedSecretRevisionHashes, currentSecretRevisionHashes) {
 		return ProjectEnvironmentQualification{}, ErrConflict
 	}
+	// ADR-1139: the server records the shared secrets the probes ran with.
+	projectSecrets, err := projectEnvironmentSecretsDB(ctx, tx, accountID, projectID, environment)
+	if err != nil {
+		return ProjectEnvironmentQualification{}, err
+	}
+	if normalizedSecretRevisionHashes, err = WithProjectSecretRevision(normalizedSecretRevisionHashes, projectSecrets); err != nil {
+		return ProjectEnvironmentQualification{}, err
+	}
 	if err := validateQualificationResultsForReleaseSet(ctx, tx, accountID, releaseSetID, normalized); err != nil {
 		return ProjectEnvironmentQualification{}, err
 	}

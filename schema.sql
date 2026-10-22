@@ -32372,9 +32372,9 @@ CREATE TABLE public.data_api_runtime_connection_observations (
     CONSTRAINT data_api_runtime_connection_observa_credential_generation_check CHECK ((credential_generation > 0)),
     CONSTRAINT data_api_runtime_connection_observati_database_generation_check CHECK ((database_generation > 0)),
     CONSTRAINT data_api_runtime_connection_observati_refresh_connections_check CHECK (((refresh_connections >= 0) AND (refresh_connections <= 1))),
-    CONSTRAINT data_api_runtime_connection_observatio_engine_connections_check CHECK (((engine_connections >= 1) AND (engine_connections <= 2))),
-    CONSTRAINT data_api_runtime_connection_observations_check CHECK (((engine_connections + refresh_connections) = 2)),
     CONSTRAINT data_api_runtime_connection_observations_check1 CHECK (((expires_at > observed_at) AND (expires_at <= (observed_at + '00:00:30'::interval)))),
+    CONSTRAINT data_api_runtime_connection_observations_engine_pool_check CHECK (((engine_connections >= 1) AND (engine_connections <= 8))),
+    CONSTRAINT data_api_runtime_connection_observations_pool_check CHECK ((((engine_connections + refresh_connections) >= 1) AND ((engine_connections + refresh_connections) <= 8))),
     CONSTRAINT data_api_runtime_connection_observations_runtime_model_check CHECK ((runtime_model = 'postgrest-14.3-pools-v1'::text)),
     CONSTRAINT data_api_runtime_connection_observations_state_check CHECK ((state = ANY (ARRAY['observed'::text, 'unknown'::text])))
 );

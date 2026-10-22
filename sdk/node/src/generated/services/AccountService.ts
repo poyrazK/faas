@@ -23,6 +23,8 @@ import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
 import type { CreateBillingRunRequest } from '../models/CreateBillingRunRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
+import type { Preview } from '../models/Preview.js';
+import type { PreviewList } from '../models/PreviewList.js';
 import type { PutBillingConnectionRequest } from '../models/PutBillingConnectionRequest.js';
 import type { PutBillingRunScheduleRequest } from '../models/PutBillingRunScheduleRequest.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
@@ -1021,6 +1023,98 @@ export class AccountService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
+   * List the platform previews you can join.
+   * Self-serve platform previews (ADR 20261021080640): the previews an
+   * operator opened to self-serve, plus any you joined that have since
+   * closed, so you can still leave them. `eligible` says whether your plan
+   * may join; `enabled` whether the preview is on for you now, for any
+   * reason.
+   *
+   * @returns PreviewList The previews.
+   * @throws ApiError
+   */
+  public static listPreviews(): CancelablePromise<PreviewList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/previews',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Join a platform preview.
+   * Opts your account in. Joining twice changes nothing. A preview never
+   * grants a plan entitlement, and an operator can still exclude an
+   * account.
+   *
+   * @returns Preview The preview after joining.
+   * @throws ApiError
+   */
+  public static joinPreview({
+    key,
+  }: {
+    /**
+     * Platform preview key, as GET /v1/previews lists it.
+     */
+    key: string,
+  }): CancelablePromise<Preview> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/previews/{key}',
+      path: {
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `\`preview_plan_not_eligible\`: your plan cannot join this preview.`,
+        404: `\`preview_not_offered\`: not a preview open to self-serve.`,
+        409: `\`preview_full\` (with limit and observed) or a concurrent change.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Leave a platform preview.
+   * Removes your account's opt-in. Leaving is always allowed, even after the preview closed; leaving one you never joined changes nothing.
+   * @returns Preview The preview after leaving.
+   * @throws ApiError
+   */
+  public static leavePreview({
+    key,
+  }: {
+    /**
+     * Platform preview key, as GET /v1/previews lists it.
+     */
+    key: string,
+  }): CancelablePromise<Preview> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/previews/{key}',
+      path: {
+        'key': key,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `\`preview_not_offered\`: not a platform preview.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
       },
     });
   }

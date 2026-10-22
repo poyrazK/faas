@@ -35,6 +35,10 @@ export type AppBindingInventory = {
    * Scope of the selected verification deployment.
    */
   verification_scope?: string;
+  /**
+   * Whether this control-plane host can run bindings verify probes (deployment-attached app tasks). False means probe evidence cannot be produced here; absent from older servers.
+   */
+  verification_probes_available?: boolean;
   runtime_freshness?: BindingRuntimeFreshness;
   /**
    * All binding sections could be read; this does not mean that bindings are healthy or verified.

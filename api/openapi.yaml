@@ -9839,6 +9839,16 @@ paths:
           required: true
           schema: { type: string, format: uuid }
           description: Account to evaluate.
+        - name: org_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+          description: Organization the request would act under (ADR 20261021080640); omit to evaluate outside any organization.
+        - name: at
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Decide as of this moment instead of now, to check scheduled rules.
       responses:
         '200':
           description: Decision
@@ -49699,6 +49709,69 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/previews:
+    get:
+      tags: [account]
+      operationId: listPreviews
+      summary: List the platform previews you can join.
+      description: |
+        Self-serve platform previews (ADR 20261021080640): the previews an
+        operator opened to self-serve, plus any you joined that have since
+        closed, so you can still leave them. `eligible` says whether your plan
+        may join; `enabled` whether the preview is on for you now, for any
+        reason.
+      responses:
+        '200':
+          description: The previews.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/previews/{key}:
+    parameters:
+      - $ref: '#/components/parameters/PreviewKey'
+    put:
+      tags: [account]
+      operationId: joinPreview
+      summary: Join a platform preview.
+      description: |
+        Opts your account in. Joining twice changes nothing. A preview never
+        grants a plan entitlement, and an operator can still exclude an
+        account.
+      responses:
+        '200':
+          description: The preview after joining.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "`preview_plan_not_eligible`: your plan cannot join this preview."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404':
+          description: "`preview_not_offered`: not a preview open to self-serve."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '409':
+          description: "`preview_full` (with limit and observed) or a concurrent change."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [account]
+      operationId: leavePreview
+      summary: Leave a platform preview.
+      description: "Removes your account's opt-in. Leaving is always allowed, even after the preview closed; leaving one you never joined changes nothing."
+      responses:
+        '200':
+          description: The preview after leaving.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: "`preview_not_offered`: not a platform preview."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/invocations/{id}:
     get:
       tags: [invocations]
@@ -54243,6 +54316,81 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/previews:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgPreviews
+      summary: List the platform previews the organization can join.
+      description: |
+        Like `GET /v1/previews`, for the organization: `joined` is the
+        company's opt-in, and `enabled` is decided for you acting under the
+        company. Previews released per account only are not listed. Requires
+        `org.view`.
+      responses:
+        '200':
+          description: The previews the organization can join or already joined.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "`org_role_forbidden`: you are not a member of the organization."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/orgs/{slug}/previews/{key}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - $ref: '#/components/parameters/PreviewKey'
+    put:
+      tags: [orgs]
+      operationId: joinOrgPreview
+      summary: Join a platform preview for the organization.
+      description: |
+        Opts the organization in: every member gets the preview while acting
+        for the company, if their plan is eligible. Requires
+        `org.manage_previews` (owner or admin).
+      responses:
+        '200':
+          description: The preview after the organization joined.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "`org_role_forbidden` or `preview_plan_not_eligible`."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404':
+          description: "`preview_not_offered`, or the organization does not exist."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '409':
+          description: "`preview_full`, `preview_org_unsupported` (the preview is released per account only) or a concurrent change."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [orgs]
+      operationId: leaveOrgPreview
+      summary: Leave a platform preview for the organization.
+      description: "Removes the organization's opt-in. Requires `org.manage_previews` (owner or admin)."
+      responses:
+        '200':
+          description: The preview after the organization left.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "`org_role_forbidden`: only an owner or admin can leave for the organization."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404':
+          description: "`preview_not_offered` (not a platform preview), or the organization does not exist."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '409':
+          description: "`preview_org_unsupported`."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/orgs/{slug}/members/{user_id}:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -64762,6 +64910,14 @@ components:
     # Slug matches the canonical regex in pkg/api/errors.go::OrgSlugPattern.
     # Max 32 chars (LoadOrg middleware caps at 64; oversize values
     # degrade to passthrough rather than a SQL CHECK 500).
+    PreviewKey:
+      name: key
+      in: path
+      required: true
+      description: "Platform preview key, as GET /v1/previews lists it."
+      schema:
+        type: string
+        pattern: '^[a-z][a-z0-9_-]{0,63}$'
     OrgSlug:
       name: slug
       in: path
@@ -76812,6 +76968,7 @@ components:
         requested_deployment_id: { type: string, format: uuid, description: 'Confirms that the explicit deployment_id selector was applied. Absent for default selection.' }
         verification_deployment_id: { type: string, format: uuid, description: 'Deployment selected for evidence: explicit selector or current manual-task deployment.' }
         verification_scope: { type: string, description: 'Scope of the selected verification deployment.' }
+        verification_probes_available: { type: boolean, description: 'Whether this control-plane host can run bindings verify probes (deployment-attached app tasks). False means probe evidence cannot be produced here; absent from older servers.' }
         runtime_freshness: { $ref: '#/components/schemas/BindingRuntimeFreshness' }
         complete: { type: boolean, description: 'All binding sections could be read; this does not mean that bindings are healthy or verified.' }
         bindings:
@@ -80970,7 +81127,7 @@ components:
         label: { type: string }
         description: { type: string }
         category: { type: string }
-        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups] }
+        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups, platform_flag_opt_ins] }
         default_value: {}
         desired_value: {}
         effective_value: {}
@@ -81038,8 +81195,29 @@ components:
 
     # ─── Platform flags (ADR-1700) ───────────────────────────────────────
 
+    Preview:
+      description: "One self-serve platform preview (ADR 20261021080640)."
+      type: object
+      required: [key, label, description, joined, eligible, enabled]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        label: { type: string }
+        description: { type: string }
+        retire_by: { type: string, format: date, description: "Planned end of the preview, by general availability or removal." }
+        joined: { type: boolean, description: "Whether you (or, under /v1/orgs/{slug}, the organization) opted in." }
+        eligible: { type: boolean, description: "Whether the preview is open to self-serve and your plan may join it." }
+        enabled: { type: boolean, description: "Whether the preview is on for you now, for any reason." }
+
+    PreviewList:
+      description: "Platform previews you can join or already joined."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Preview' }
     PlatformFlagRule:
-      description: "One targeting rule of a platform flag. Accounts, group, plans and rollout combine with AND; the first matching rule decides."
+      description: "One targeting rule of a platform flag. Accounts, orgs, group, plans and rollout combine with AND; the first matching rule decides. Orgs match the organization a request acts under (ADR 20261021080640)."
       type: object
       required: [id, value]
       properties:
@@ -81048,12 +81226,37 @@ components:
           type: array
           maxItems: 1000
           items: { type: string, format: uuid }
+        orgs:
+          type: array
+          maxItems: 1000
+          items: { type: string, format: uuid }
         group: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
         plans:
           type: array
           items: { type: string, enum: [free, hobby, pro, scale] }
         rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of the accounts the other constraints admit." }
+        starts_at: { type: string, format: date-time, description: "The rule applies from this moment (inclusive); stored in UTC." }
+        ends_at: { type: string, format: date-time, description: "The rule stops applying at this moment (exclusive); must be after starts_at." }
+        ramp: { $ref: '#/components/schemas/PlatformFlagRamp' }
         value: { type: boolean }
+
+    PlatformFlagRamp:
+      description: "Advances the rule's rollout stage by stage (ADR 20261021080640). The rollout is the current stage; apid moves it on once the flag's version has held for interval_seconds and its health routes stayed under max_5xx_basis_points over that window with at least min_requests requests. On a breach it pauses (and for rollback returns one stage); a paused ramp waits for an operator to clear paused."
+      type: object
+      required: [stages, interval_seconds, max_5xx_basis_points, min_requests, on_breach]
+      properties:
+        stages:
+          type: array
+          minItems: 2
+          maxItems: 10
+          description: "Strictly ascending basis points; the rollout must be one of them."
+          items: { type: integer, minimum: 1, maximum: 10000 }
+        interval_seconds: { type: integer, minimum: 300, maximum: 604800 }
+        max_5xx_basis_points: { type: integer, minimum: 0, maximum: 10000 }
+        min_requests: { type: integer, format: int64, minimum: 0 }
+        on_breach: { type: string, enum: [pause, rollback] }
+        paused: { type: boolean }
+        paused_reason: { type: string, maxLength: 500 }
 
     PlatformFlagDefinition:
       description: "Stored value of a platform flag. Enabled is the kill switch; default applies to accounts no rule matches."
@@ -81066,6 +81269,35 @@ components:
           type: array
           maxItems: 32
           items: { $ref: '#/components/schemas/PlatformFlagRule' }
+        self_serve: { $ref: '#/components/schemas/PlatformFlagSelfServe' }
+
+    PlatformFlagSelfServe:
+      description: "Lets customers join the preview themselves (ADR 20261021080640). An opted-in account or organization on an eligible plan gets the flag when no rule matched. Disabling it ignores existing opt-ins without deleting them."
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        plans:
+          type: array
+          description: "Eligible plans; empty means every plan. A flag that releases a paid capability must list only entitled plans."
+          items: { type: string, enum: [free, hobby, pro, scale] }
+        max_subjects: { type: integer, minimum: 0, maximum: 5000, description: "Cap on opted-in accounts plus organizations; 0 means 5000." }
+
+    PlatformFlagOptIns:
+      description: "Stored value of platform_flag_opt_ins.<key>: the accounts and organizations that joined a self-serve preview."
+      type: object
+      properties:
+        accounts: { type: array, items: { type: string, format: uuid } }
+        orgs: { type: array, items: { type: string, format: uuid } }
+
+    OperatorPlatformFlagOptIns:
+      description: "How many accounts and organizations joined a self-serve preview, and the opt-in row's version."
+      type: object
+      required: [accounts, orgs, version]
+      properties:
+        accounts: { type: integer, minimum: 0 }
+        orgs: { type: integer, minimum: 0 }
+        version: { type: integer, format: int64 }
 
     OperatorRuntimeConfigApplyReceipt:
       description: "What one daemon instance reported applying for a runtime-configuration key."
@@ -81092,8 +81324,8 @@ components:
     OperatorPlatformFlag:
       description: "One catalogued platform flag with its live definition, apply receipts and convergence."
       type: object
-      required: [key, config_key, label, description, adr, consumers, legacy_env, definition,
-                 source, version, status, receipts, convergence]
+      required: [key, config_key, label, description, adr, consumers, attributes, legacy_env, definition,
+                 source, version, status, receipts, convergence, opt_ins]
       properties:
         key: { type: string }
         config_key: { type: string, description: "Runtime-configuration key that stores the flag; write it with PATCH /v1/admin/config/{key}." }
@@ -81102,6 +81334,10 @@ components:
         capability: { type: string }
         adr: { type: string }
         consumers: { type: array, items: { type: string } }
+        attributes:
+          type: array
+          description: "Subject attributes every consumer can supply, so rules may constrain them; a write using any other is refused (ADR 20261021080640)."
+          items: { type: string, enum: [account, plan, org] }
         legacy_env: { type: array, items: { type: string } }
         retire_by: { type: string, format: date }
         definition: { $ref: '#/components/schemas/PlatformFlagDefinition' }
@@ -81114,6 +81350,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/OperatorRuntimeConfigApplyReceipt' }
         convergence: { $ref: '#/components/schemas/OperatorPlatformFlagConvergence' }
+        opt_ins: { $ref: '#/components/schemas/OperatorPlatformFlagOptIns' }
 
     OperatorPlatformFlagGroups:
       description: "Shared named account sets referenced by platform-flag rules."
@@ -81147,14 +81384,19 @@ components:
       properties:
         flag: { type: string }
         account_id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid, description: "Organization the decision was made under, when the inspector was given one." }
         plan: { type: string }
         enabled: { type: boolean }
-        reason: { type: string, enum: [unknown_flag, flag_disabled, account_missing, rule_match, default] }
+        reason: { type: string, enum: [unknown_flag, flag_disabled, account_missing, rule_match, opt_in, default] }
         rule_id: { type: string }
         bucket: { type: integer, minimum: 0, maximum: 9999 }
         version: { type: integer, format: int64 }
         entitled: { type: boolean }
         available: { type: boolean }
+        scheduled_rule_id: { type: string, description: "First rule that matched but was outside its window." }
+        schedule_state: { type: string, enum: [rule_not_started, rule_ended] }
+        at: { type: string, format: date-time, description: "Decision time, when the inspector was asked about another moment than now." }
+        opt_in: { type: string, enum: [account, org], description: "Whose self-serve opt-in decided, when one did." }
 
     OperatorAccountPlatformFlags:
       description: "Every platform flag decided for one account."
@@ -101058,6 +101300,10 @@ components:
           type: integer
           minimum: 0
           description: Destination-to-source references copied under the new catalog environment identity. Git source bindings, ownership, overrides and runtime receipts are not copied.
+        project_secrets_copied:
+          type: integer
+          minimum: 0
+          description: Secrets the source environment shares with every service, copied to the new environment (ADR-1139). Values are never returned.
         workloads_copied: { type: integer, minimum: 0 }
         bindings_copied: { type: integer, minimum: 0 }
         routes_copied: { type: integer, minimum: 0 }

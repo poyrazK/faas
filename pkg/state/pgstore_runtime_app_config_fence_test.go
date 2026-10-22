@@ -253,3 +253,8 @@ func TestPgRuntimePublicationDoesNotWaitOnBlockedConfigTuple(t *testing.T) {
 		})
 	}
 }
+
+func TestPgRecordObservedWorkloadClass(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testRecordObservedWorkloadClass(t, store)
+}
