@@ -71,6 +71,10 @@ func TestGrxPrefilterSound(t *testing.T) {
 		{"a�b", []string{"a\xffb"}},
 		{`(?i)union\s+select`, []string{"UNION  SELECT", "union\nselect"}},
 		{`^abc$`, []string{"x\nabc\ny"}},
+		// One-character requirements: punctuation and control bytes.
+		{`(?i)\b(?:system|exec)[^0-9A-Z_a-z]*\(`, []string{"SYSTEM (", "exec(", "exec\t("}},
+		{`(?:^|[^\x5c])\x5c[cdeg]`, []string{`a\c`, `\d`}},
+		{`[^&\-]#.*?[\s\x0b]|;?\x00`, []string{"a# x", ";\x00", "\x00"}},
 	} {
 		checkSound(t, tc.pattern, tc.values...)
 	}
@@ -298,7 +302,7 @@ func TestGrxCachePerApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := op.(*grx)
-	c := &rxMemo{}
+	c := newRxMemo()
 	if ok, m := c.lookup("app-a", p, "x42", false); !ok || m != nil {
 		t.Fatalf("first lookup = %v %v, want a match without indexes", ok, m)
 	}

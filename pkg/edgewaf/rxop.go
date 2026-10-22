@@ -11,7 +11,9 @@ package edgewaf
 //   - a bounded cache of results by (app, pattern, value), so a value an
 //     app's traffic repeats, such as its User-Agent or Accept headers, is
 //     matched once. The app is part of the key, so one app's requests can
-//     never be timed to learn what another app's requests contained.
+//     never be timed to learn what another app's requests contained, and
+//     the value is kept only as two seeded hashes, so the cache holds no
+//     request data.
 //
 // CRS is loaded with @rx renamed to @grx (rxfs.go). The stock operator stays
 // registered, so tests compare the two engines on the same rules.
@@ -23,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/corazawaf/coraza/v3/experimental/plugins"
@@ -114,10 +117,12 @@ func (p *grx) Evaluate(tx plugintypes.TransactionState, value string) bool {
 			return false
 		}
 		m = idx
-	} else if !capturing {
-		return p.re.MatchString(value)
-	} else if m = p.re.FindStringSubmatchIndex(value); m == nil {
+	} else if !p.re.MatchString(value) {
 		return false
+	} else if !capturing {
+		return true
+	} else {
+		m = p.re.FindStringSubmatchIndex(value)
 	}
 	if capturing {
 		// As Coraza's @rx: capture fields 0 to 8.
@@ -226,10 +231,14 @@ func rxRequired(re *syntax.Regexp) rxRequirement {
 	switch re.Op {
 	case syntax.OpLiteral:
 		s := string(re.Rune)
-		fold := re.Flags&syntax.FoldCase != 0
+		// Case only matters to letters.
+		fold := re.Flags&syntax.FoldCase != 0 && strings.ContainsFunc(s, unicode.IsLetter)
 		// U+FFFD matches any invalid byte, and folding outside ASCII is
-		// not a plain substring test; neither is pre-filtered.
-		if len(s) < 2 || strings.ContainsRune(s, utf8.RuneError) || fold && !isASCII(s) {
+		// not a plain substring test; neither is pre-filtered. One
+		// character is worth testing for only if it is punctuation or a
+		// control character, such as the ( every function-call pattern
+		// ends in.
+		if len(s) == 0 || len(s) == 1 && !rxRareByte(s[0]) || strings.ContainsRune(s, utf8.RuneError) || fold && !isASCII(s) {
 			return nil
 		}
 		if fold {
@@ -335,6 +344,13 @@ func (r rxRequirement) mayMatch(value string) bool {
 	return true
 }
 
+// rxRareByte reports whether c, alone, is selective enough to pre-filter
+// on: ASCII punctuation or a control character, not a letter, digit or
+// space.
+func rxRareByte(c byte) bool {
+	return c < utf8.RuneSelf && c != ' ' && !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9')
+}
+
 func isASCII(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] >= utf8.RuneSelf {
@@ -410,10 +426,14 @@ func rxMinLen(re *syntax.Regexp) int {
 
 // --- result cache --------------------------------------------------------
 
+// rxMemoKey names a value by two independent 64-bit hashes under seeds
+// chosen at start, and its length, so the cache never holds request data
+// such as cookies or tokens; a false hit would need both hashes to collide.
 type rxMemoKey struct {
-	scope string
-	rx    uint32
-	value string
+	scope  string
+	rx     uint32
+	n      int
+	h1, h2 uint64
 }
 
 // rxMemoEntry is a cached result; m is the submatch indexes of a match,
@@ -429,39 +449,40 @@ type rxMemoShard struct {
 }
 
 type rxMemo struct {
-	seed   maphash.Seed
-	shards [rxMemoShards]rxMemoShard
+	seed1, seed2 maphash.Seed
+	shards       [rxMemoShards]rxMemoShard
 }
 
-var rxResults = &rxMemo{seed: maphash.MakeSeed()}
+var rxResults = newRxMemo()
+
+func newRxMemo() *rxMemo {
+	return &rxMemo{seed1: maphash.MakeSeed(), seed2: maphash.MakeSeed()}
+}
 
 // lookup reports whether p matches value, and with capturing the submatch
 // indexes, from the cache of scope's results; a miss matches and caches.
 func (c *rxMemo) lookup(scope string, p *grx, value string, capturing bool) (bool, []int) {
-	var h maphash.Hash
-	h.SetSeed(c.seed)
-	_, _ = h.WriteString(scope)
-	_, _ = h.WriteString(value)
-	s := &c.shards[(h.Sum64()^uint64(p.id))%rxMemoShards]
-	key := rxMemoKey{scope: scope, rx: p.id, value: value}
+	key := rxMemoKey{scope: scope, rx: p.id, n: len(value), h1: maphash.String(c.seed1, value), h2: maphash.String(c.seed2, value)}
+	s := &c.shards[(key.h1^uint64(p.id)*0x9e3779b97f4a7c15)%rxMemoShards]
 	s.mu.Lock()
 	e, ok := s.m[key]
 	s.mu.Unlock()
 	if ok && (!e.matched || !capturing || e.m != nil) {
 		return e.matched, e.m
 	}
-	if capturing {
-		e.m = p.re.FindStringSubmatchIndex(value)
-		e.matched = e.m != nil
-	} else {
+	// Most values do not match, and matching without tracking captures is
+	// cheaper, so indexes are found only for a match a rule captures.
+	if !ok {
 		e.matched = p.re.MatchString(value)
+	}
+	if e.matched && capturing {
+		e.m = p.re.FindStringSubmatchIndex(value)
 	}
 	s.mu.Lock()
 	if s.m == nil || len(s.m) >= rxMemoShardEntries {
 		s.m = make(map[rxMemoKey]rxMemoEntry, rxMemoShardEntries)
 	}
-	// The key keeps its own copies of the strings it was given.
-	key.scope, key.value = strings.Clone(scope), strings.Clone(value)
+	key.scope = strings.Clone(scope)
 	s.m[key] = e
 	s.mu.Unlock()
 	return e.matched, e.m

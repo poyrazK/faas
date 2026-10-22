@@ -80,8 +80,11 @@ type engineOptions struct {
 	ownRx bool
 }
 
-// engine is the configuration the inspector compiles.
-var engine = engineOptions{}
+// engine is the configuration the inspector compiles: @grx, whose verdicts
+// match stock @rx on the CRS regression corpus
+// (TestCRSRegressionCorpusOwnRxEquivalence). Coraza's own pre-filter stays
+// off (TestRxPrefilterKnownFalseNegative).
+var engine = engineOptions{ownRx: true}
 
 // rootFS is the rule files the engine loads.
 func (o engineOptions) rootFS() fs.FS {

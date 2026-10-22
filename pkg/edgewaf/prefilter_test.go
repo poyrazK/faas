@@ -9,10 +9,14 @@ package edgewaf
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/corazawaf/coraza/v3"
 
@@ -190,6 +194,56 @@ func BenchmarkInlinePrefilter(b *testing.B) {
 			b.ReportAllocs()
 			for n := range b.N {
 				s := samples[n%len(samples)]
+				s.AppID = v.app
+				if _, err := evaluate(waf, s); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// variedSample is base as one of many visitors would send it: a session
+// cookie and a query value no other request repeats, a page number and a
+// User-Agent from small pools, so @grx's cache can only help with what real
+// traffic repeats.
+func variedSample(base gateway.WAFSample, n int) gateway.WAFSample {
+	agents := []string{
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+		"Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0",
+		"Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36",
+		"curl/8.7.1", "python-requests/2.32.3", "Go-http-client/1.1",
+	}
+	s := base
+	s.Header = base.Header.Clone()
+	sep := "?"
+	if strings.Contains(s.URI, "?") {
+		sep = "&"
+	}
+	s.URI += sep + "page=" + strconv.Itoa(n%50) + "&t=" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	s.Header.Set("Cookie", "theme=dark; session="+strconv.FormatUint(rand.Uint64(), 36)+strconv.FormatUint(rand.Uint64(), 36))
+	s.Header.Set("User-Agent", agents[n%len(agents)])
+	return s
+}
+
+// BenchmarkInlineVaried is BenchmarkInlinePrefilter on variedSample
+// traffic: the cache's gain without the repeated samples' best case.
+func BenchmarkInlineVaried(b *testing.B) {
+	samples := inPathBenchSamples()
+	for _, v := range []struct {
+		name string
+		opts engineOptions
+		app  string
+	}{{"stock", engineOptions{}, ""}, {"grx", ownRxOn, ""}, {"grx-cached", ownRxOn, "app-bench"}} {
+		waf, err := compileInlineWith(v.opts)
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Run(v.name, func(b *testing.B) {
+			for n := range b.N {
+				s := variedSample(samples[n%len(samples)], n)
 				s.AppID = v.app
 				if _, err := evaluate(waf, s); err != nil {
 					b.Fatal(err)

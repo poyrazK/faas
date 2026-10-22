@@ -881,3 +881,71 @@ command-injection rules (10%) together would bring the median to about
 1.4 ms, still short of a 2 ms p95, so memoizing regex results (proposal
 5) or running `warn` alongside the request (proposal 6) is likely needed
 as well.
+
+## Amendment 10 (2026-10-22): `@grx`, a cheaper in-path check that keeps every verdict
+
+Amendment 9 showed the check itself has to get cheaper. The product owner
+chose to start with the changes that keep detection unchanged; dropping
+rules stays a last resort.
+
+### What changed
+
+CRS is loaded with `@rx` renamed to `@grx`, the gateway's own operator
+(`pkg/edgewaf/rxop.go`), registered through Coraza's operator plugin API.
+No Coraza fork is carried. `@grx` matches exactly as `@rx` does (RE2 with
+`(?sm)`, capture fields 0 to 8, the binary matcher for patterns that match
+non-UTF-8 bytes) and adds three things that never change a verdict:
+
+- **A sound pre-filter.** At load time each pattern yields a minimum input
+  length and up to three clauses of literals; an input missing any clause
+  skips the regex. Every literal is one whole literal node of the pattern,
+  so no literal is ever made by joining nodes, the cause of
+  corazawaf/coraza#1790. A single character counts when it is punctuation
+  or a control character, such as the `(` every function-call pattern ends
+  in. Case-insensitive literals are compared as ASCII only when the input is
+  ASCII, since Unicode folding matches `k` with U+212A and `s` with U+017F.
+  249 of the 316 CRS patterns get a pre-filter.
+- **Match before capture.** Most values do not match, so the regex runs
+  without capture tracking first and finds capture positions only for a
+  match a capturing rule needs.
+- **A result cache.** Results are cached by app, pattern and value, for
+  values up to 256 bytes, in 64 shards of 512 entries (a full shard is
+  emptied). The app is part of the key (the transaction ID carries it), so
+  one app's requests can never be timed to learn what another app's
+  requests contained. The value is kept only as two 64-bit hashes under
+  seeds chosen at start, so the cache holds no request data such as
+  cookies or tokens.
+
+### Evidence
+
+- **Same verdicts.** `TestCRSRegressionCorpusOwnRxEquivalence`: on the 4,621
+  replayable CRS v4.25.0 regression tests, the sampled PL1 and PL2 engines
+  and the in-path engine match the same rules with the same score with and
+  without `@grx`, on a first pass and again from the cache.
+  `TestGrxPrefilterSoundOnCRS`: across the 316 CRS patterns and 26,822
+  values from that corpus and the package's samples, the pre-filter never
+  skips a value its regex matches. The input Coraza's own pre-filter misses
+  for rule 942220 is detected.
+- **Cheaper check.** `BenchmarkInlinePrefilter` replays the in-path benign
+  samples, the cache's best case; `BenchmarkInlineVaried` gives every
+  request a unique session cookie and query value and draws User-Agents
+  from a pool of eight. On a laptop under heavy load from other work, so
+  ranges are wide:
+
+  | Traffic | Stock `@rx` | `@grx` | `@grx` with cache |
+  |---|---|---|---|
+  | Repeated samples | 560-650 µs | 390-470 µs | 225-245 µs |
+  | Varied | 615-725 µs | 450-535 µs | 320-355 µs |
+
+  On varied traffic the check takes about half the time. The regex share of
+  that traffic fell from about 0.9-1.1 s to 0.52 s per 6,000 values.
+
+### What it does not yet do
+
+Applied to amendment 9's production numbers, half the check time would put
+the median near 1 ms and p95 near 2 ms at 100-250 requests per second, at
+the gate rather than clearly under it, so `warn` and `block` stay in preview
+until a production measurement shows it. The largest remaining regex cost
+is rule 932237's list of unix commands in request headers, which has no
+literal or punctuation every match must contain; a sound keyword index for
+such lists is the next step before rules are dropped.
