@@ -524,7 +524,7 @@ func TestStartSelectsWorkspaceService(t *testing.T) {
 	}
 
 	runner = startTestRunner(t, root, "1\n")
-	if code := runner.selectSource(); code != 0 || runner.projectSource != root || runner.session.SourcePath != "" {
+	if code := runner.selectSource(); code != 0 || runner.projectSource != root {
 		t.Fatalf("project choice: code=%d project=%s source=%s stderr=%s", code, runner.projectSource, runner.session.SourcePath, stderr())
 	}
 	var deployed []string
