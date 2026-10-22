@@ -9,10 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
+
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func seedLogSearchRule(t *testing.T, store *state.MemStore, query string, threshold float64) (state.AlertRule, func(time.Time) int) {
+func seedLogSearchRule(t *testing.T, store *state.MemStore, query string, threshold float64) (state.AlertRule, *age.X25519Identity, func(time.Time) int) {
 	t.Helper()
 	ctx := context.Background()
 	base, ident, _ := seedRule(t, store, state.AlertMetricLogSearchMatches, state.AlertGt, threshold)
@@ -24,7 +26,7 @@ func seedLogSearchRule(t *testing.T, store *state.MemStore, query string, thresh
 	if err != nil {
 		t.Fatal(err)
 	}
-	return rule, func(now time.Time) int { return evaluateSynthetic(t, store, ident, now).Fired }
+	return rule, ident, func(now time.Time) int { return evaluateSynthetic(t, store, ident, now).Fired }
 }
 
 func insertLogEvent(t *testing.T, store *state.MemStore, rule state.AlertRule, at time.Time, level, message string, occurrences int) {
@@ -59,7 +61,7 @@ func TestEvaluator_LogSearchMatches(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := state.NewMemStore()
-			rule, evaluate := seedLogSearchRule(t, store, "level=error&q=timeout", 2)
+			rule, _, evaluate := seedLogSearchRule(t, store, "level=error&q=timeout", 2)
 			tt.seed(t, store, rule)
 			if fired := evaluate(now); fired != tt.wantFired {
 				t.Fatalf("fired = %d, want %d", fired, tt.wantFired)

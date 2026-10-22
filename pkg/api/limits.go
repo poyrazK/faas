@@ -13118,6 +13118,15 @@ const (
 	LogSavedSearchesPerApp = 25
 )
 
+// Alert log context (ADR-20261022172052): a firing app alert reads the log
+// ledger over its window (capped at the text search bound) and the deploys
+// of the hour before it.
+const (
+	AlertLogContextMaxWindow      = 24 * time.Hour
+	AlertLogContextDeployLookback = time.Hour
+	AlertLogContextDeploysMax     = 3
+)
+
 // Runtime log projection into the ledger (ADR-20261018083536 slice B). vmmd
 // forwards warn and error lines within a per-app, per-node minute budget and
 // reports the overflow as one system line per app and minute; apid caps each

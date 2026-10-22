@@ -136,6 +136,25 @@ and no channel stops notifying. The app dashboard's Alerts panel shows where
 each rule delivers ("Delivers to") and lists every channel with its last
 delivery or error, so a rule delivering nowhere or a revoked Slack webhook is
 visible before an incident.
+
+### What the logs show
+
+Where log search is enabled (preview), an app alert that fires also says what
+the app's logs show over the alert window (up to 24 hours), so you can tell at
+a glance whether something is erroring and whether something just shipped:
+
+```text
+Logs in the window: 132 errors, 18 warnings, 87 HTTP 5xx (most errors on /checkout: 91)
+deploy traffic changed from 10% to 100% at 14:02 UTC
+Search the logs: https://…/dashboard/apps/shop/log-search?since=…&until=…&level=error%2Cfatal
+```
+
+Slack, PagerDuty and email show these lines on the fire; webhooks receive the
+same data as `log_context` (`errors`, `warnings`, `http_5xx`,
+`busiest_error_route`, `recent_deploys` from the window and the hour before
+it, and `search_path`). Resolve messages and account-wide rules carry none,
+and if the logs cannot be read in time the alert is delivered without them.
+
 ## Alert on unusual values
 
 A fixed threshold has to be chosen in advance: 1% errors is an emergency for
