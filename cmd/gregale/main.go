@@ -1010,6 +1010,7 @@ func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []str
 		_, _ = fmt.Fprintln(w, "\nExamples:")
 		printCLIExamples(w, sub.Examples)
 	}
+	printHelpNotes(w, sub.Notes)
 	if takesAppArgument(sub.Flags, sub.Positionals, sub.Subcommands) {
 		_, _ = fmt.Fprintf(w, "\nThe app can also be the first argument: %s my-api\n", localHelpSubcommandPath(command, names))
 	}

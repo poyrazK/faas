@@ -74,6 +74,7 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 			if len(s.Examples) > 0 {
 				writeMarkdownExamples(w, s.Examples)
 			}
+			writeMarkdownNotes(w, s.Notes)
 			for _, child := range s.Subcommands {
 				renderMarkdownSubtree(w, c, []string{s.Name}, child, 4)
 			}
@@ -91,6 +92,7 @@ func renderMarkdownSubtree(w io.Writer, command cliCommand, ancestors []string, 
 	if len(child.Examples) > 0 {
 		writeMarkdownExamples(w, child.Examples)
 	}
+	writeMarkdownNotes(w, child.Notes)
 	for _, next := range child.Subcommands {
 		renderMarkdownSubtree(w, command, names, next, depth+1)
 	}
@@ -126,6 +128,12 @@ func mdSubSynopsis(command cliCommand, names, positionals []string, flags []cliF
 		parts = append(parts, "<"+terminal.subcommandChoice()+">")
 	}
 	return strings.Join(parts, " ")
+}
+
+func writeMarkdownNotes(w io.Writer, notes []string) {
+	for _, note := range notes {
+		_, _ = fmt.Fprintf(w, "%s\n\n", mdText(note))
+	}
 }
 
 func writeMarkdownExamples(w io.Writer, examples []string) {
