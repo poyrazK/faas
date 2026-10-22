@@ -7020,6 +7020,12 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 				continue
 			}
 			acted++
+		case state.StateFrozen:
+			// A frozen VM is still resident. ParkApp skipped it, so
+			// `gregale park`, account suspension and the parked-app sweep
+			// left it frozen while the park waited (Hunt 12 H12-53).
+			e.parkFrozenLocked(ctx, fresh, "park")
+			acted++
 		case state.StateWaking, state.StateColdBooting:
 			// A wake drops appMu during the vmmd RPC. If the park
 			// notification wins that interleaving, destroy the in-flight
