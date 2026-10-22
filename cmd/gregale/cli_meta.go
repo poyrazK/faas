@@ -591,8 +591,8 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "restore", Short: "Cancel a pending deletion"},
 			{Name: "status", Short: "Show account status"},
-			{Name: "dpa", Short: "Show DPA metadata", Flags: []cliFlag{
-				{Name: "o", ShortName: "o", Short: "write DPA metadata to a file", Value: "PATH"},
+			{Name: "dpa", Short: "Print the Data Processing Agreement template (placeholders are filled when the agreement is signed)", Flags: []cliFlag{
+				{Name: "o", ShortName: "o", Short: "write the DPA template to a file", Value: "PATH"},
 			}},
 			{Name: "slo", Short: "Account-wide SLO panel"},
 			{Name: "billing-connection", Short: "Connect, show, or disconnect a Stripe, Paddle or Lago key for statement invoice exports; connect reads the key from stdin", Positionals: []string{"{connect|status|disconnect}", "{stripe|paddle|lago}"}, Flags: []cliFlag{
@@ -2079,7 +2079,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "workers",
 		Short:   "Inspect and manage background worker pools",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List background worker pools"},
+			{Name: "list", Short: "List background worker pools, or one pool by app", Positionals: []string{"[<app>]"}},
 			{Name: "status", Short: "Show real-time status and autoscaling for a worker pool", Positionals: []string{"[<app>]"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (optional; defaults to linked context)", Value: "slug"},
 			}},
@@ -2899,7 +2899,7 @@ var cliCommands = []cliCommand{
 		}}, {Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
-			{Name: "source", Short: "application source directory", Value: "DIR"},
+			{Name: "source", Short: "application source directory, relative to the manifest (default: the workload holding --from, else .)", Value: "DIR"},
 			{Name: "scenario", Short: "scenario name", Value: "NAME"},
 			{Name: "output", Short: "new manifest path", Value: "PATH"},
 		}}, {Name: "recovery-trend", Short: "Render offline recovery performance trends from ordered campaign reports", Flags: []cliFlag{
