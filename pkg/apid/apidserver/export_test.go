@@ -1559,3 +1559,16 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
+
+// ApplyManifestPathRoutesForTest reconciles manifest routes on app
+// (ADR-20261021223225). rollback undoes the changes it recorded.
+func (s *server) ApplyManifestPathRoutesForTest(ctx context.Context, acct state.Account, app state.App, routes []gregalemanifest.PathRoute) (rollback func() error, problem *api.Problem) {
+	staged := sourceRefManifestStaged{accountID: acct.ID, appID: app.ID}
+	problem = s.applySourceRefManifestPathRoutes(ctx, acct, app, routes, &staged)
+	return func() error { return s.rollbackSourceRefManifest(ctx, staged) }, problem
+}
+
+var ManifestPathRouteKeyPrefix = manifestPathRouteKeyPrefix
+var ProjectPathRoutesForApp = projectPathRoutesForApp
+var ProjectPathRoutePlanWarning = projectPathRoutePlanWarning
+var ValidateProjectManifestPathRoutes = validateProjectManifestPathRoutes

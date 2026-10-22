@@ -417,6 +417,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				return staged, problem
 			}
 		}
+		if m.Routes != nil {
+			if problem := s.applySourceRefManifestPathRoutes(ctx, acct, app, m.Routes, &staged); problem != nil {
+				return staged, problem
+			}
+		}
 		return staged, nil
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
@@ -673,6 +678,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	}
 	if m.AsyncRoutes != nil {
 		if problem := s.applySourceRefManifestAsyncRoutes(ctx, acct, app, m.AsyncRoutes, &staged); problem != nil {
+			return staged, problem
+		}
+	}
+	if m.Routes != nil {
+		if problem := s.applySourceRefManifestPathRoutes(ctx, acct, app, m.Routes, &staged); problem != nil {
 			return staged, problem
 		}
 	}
