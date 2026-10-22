@@ -23,6 +23,7 @@ import (
 	"filippo.io/age"
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/onebox-faas/faas/pkg/crashcrypt"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -202,19 +203,11 @@ func encryptCrashCapture(ctx context.Context, be storage.StorageBackend, recipie
 // decryptCrashCapture restores every plaintext object from its encrypted
 // twin. An optional object that was never there has no twin.
 func decryptCrashCapture(ctx context.Context, be storage.StorageBackend, identities []*age.X25519Identity, capture state.CrashCapture) error {
-	if len(identities) == 0 || len(capture.SealedKey) == 0 {
-		return errors.New("no key to open the capture")
-	}
-	namespace, raw, err := secretbox.OpenBytesMulti(identities, capture.SealedKey)
+	// crashcrypt owns the capture key format (the same namespace and bound
+	// as crashCaptureNamespace and crashCaptureSealedKeyMax).
+	identity, err := crashcrypt.OpenKey(identities, capture.ID, capture.SealedKey)
 	if err != nil {
-		return fmt.Errorf("open sealed key: %w", err)
-	}
-	if namespace != crashCaptureNamespace(capture.ID) {
-		return errors.New("sealed key belongs to another capture")
-	}
-	identity, err := age.ParseX25519Identity(string(raw))
-	if err != nil {
-		return fmt.Errorf("parse capture key: %w", err)
+		return err
 	}
 	for i, key := range crashCaptureKeys(capture) {
 		err := decryptObject(ctx, be, key, identity)
