@@ -10,8 +10,10 @@ package edgewaf
 
 import (
 	"fmt"
+	"io/fs"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
 	"github.com/corazawaf/coraza/v3"
@@ -72,10 +74,30 @@ type engineOptions struct {
 	// load time each regex yields a minimum input length and literals any
 	// match must contain, and an input without them skips the regex.
 	rxPrefilter bool
+	// ownRx loads CRS with @rx renamed to the gateway's @grx (rxop.go):
+	// a pre-filter without corazawaf/coraza#1790, and results cached per
+	// app (ADR-831 amendment 10).
+	ownRx bool
 }
 
 // engine is the configuration the inspector compiles.
 var engine = engineOptions{}
+
+// rootFS is the rule files the engine loads.
+func (o engineOptions) rootFS() fs.FS {
+	if o.ownRx {
+		return rxRenameFS{coreruleset.FS}
+	}
+	return coreruleset.FS
+}
+
+// rules returns directives with @rx renamed when the engine uses @grx.
+func (o engineOptions) rules(directives string) string {
+	if o.ownRx {
+		return rxRenamer.Replace(directives)
+	}
+	return directives
+}
 
 // directive returns the engine's directives, to follow
 // coraza.conf-recommended (which sets SecRxPreFilter Off) and precede the
@@ -109,18 +131,22 @@ SecResponseBodyAccess Off
 SecRequestBodyLimit %d
 SecRequestBodyInMemoryLimit %d
 SecRequestBodyLimitAction ProcessPartial`,
-		opts.directive(), paranoiaLevel, platformPolicy, platformOverrides, api.MaxEdgeWAFInspectBodyBytes, api.MaxEdgeWAFInspectBodyBytes)
-	waf, err := coraza.NewWAF(coraza.NewWAFConfig().WithRootFS(coreruleset.FS).WithDirectives(directives))
+		opts.directive(), paranoiaLevel, platformPolicy, opts.rules(platformOverrides), api.MaxEdgeWAFInspectBodyBytes, api.MaxEdgeWAFInspectBodyBytes)
+	waf, err := coraza.NewWAF(coraza.NewWAFConfig().WithRootFS(opts.rootFS()).WithDirectives(directives))
 	if err != nil {
 		return nil, fmt.Errorf("compile OWASP CRS at paranoia level %d: %w", paranoiaLevel, err)
 	}
 	return waf, nil
 }
 
+// txSeq numbers transactions so each ID is unique.
+var txSeq atomic.Uint64
+
 // evaluate runs one sample through waf and scores it against the sample's
-// threshold and exclusions.
+// threshold and exclusions. The transaction ID names the app, which keys
+// @grx's result cache (rxop.go).
 func evaluate(waf coraza.WAF, s gateway.WAFSample) (Result, error) {
-	tx := waf.NewTransaction()
+	tx := waf.NewTransactionWithID(rxTransactionID(s.AppID, txSeq.Add(1)))
 	defer func() { _ = tx.Close() }()
 	tx.ProcessConnection(s.ClientIP, 0, "", 0)
 	tx.SetServerName(s.Host)

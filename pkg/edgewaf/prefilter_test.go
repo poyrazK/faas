@@ -172,17 +172,26 @@ func inPathBenchSamples() []gateway.WAFSample {
 	return out
 }
 
+// BenchmarkInlinePrefilter compares the in-path engines: stock @rx, with
+// Coraza's pre-filter, and @grx (ADR-831 amendment 10) without an app (no
+// cache) and with one, whose cache the repeated samples hit.
 func BenchmarkInlinePrefilter(b *testing.B) {
 	samples := inPathBenchSamples()
-	for _, opts := range []engineOptions{{}, prefilterOn} {
-		waf, err := compileInlineWith(opts)
+	for _, v := range []struct {
+		name string
+		opts engineOptions
+		app  string
+	}{{"stock", engineOptions{}, ""}, {"prefilter", prefilterOn, ""}, {"grx", ownRxOn, ""}, {"grx-cached", ownRxOn, "app-bench"}} {
+		waf, err := compileInlineWith(v.opts)
 		if err != nil {
 			b.Fatal(err)
 		}
-		b.Run(fmt.Sprintf("prefilter=%v", opts.rxPrefilter), func(b *testing.B) {
+		b.Run(v.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for n := range b.N {
-				if _, err := evaluate(waf, samples[n%len(samples)]); err != nil {
+				s := samples[n%len(samples)]
+				s.AppID = v.app
+				if _, err := evaluate(waf, s); err != nil {
 					b.Fatal(err)
 				}
 			}
