@@ -309,6 +309,9 @@ type LogLine struct {
 type PingOutcome struct {
 	FcVersion  string
 	ServerTime time.Time
+	// BaseGenerations is vmmd's report on each configured runtime base
+	// (ADR-20261022184531). Empty from a vmmd that predates the report.
+	BaseGenerations []BaseGenerationReadiness
 }
 
 // StatsSnapshot is the typed wrapper over vmmdpb.StatsResponse.
@@ -1736,6 +1739,12 @@ func (c *VMMClient) Ping(ctx context.Context) (*PingOutcome, error) {
 	out := &PingOutcome{FcVersion: resp.GetFcVersion()}
 	if t := resp.GetServerTime(); t != nil {
 		out.ServerTime = t.AsTime()
+	}
+	for _, base := range resp.GetBaseGenerations() {
+		out.BaseGenerations = append(out.BaseGenerations, BaseGenerationReadiness{
+			BaseKey: base.GetBaseKey(), Generation: base.GetGeneration(),
+			Adoptable: base.GetAdoptable(), Reason: base.GetReason(),
+		})
 	}
 	return out, nil
 }
