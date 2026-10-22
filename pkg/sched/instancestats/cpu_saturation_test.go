@@ -1,5 +1,7 @@
 package instancestats
 
+// adr: 1155 pins CPU saturation episodes that queue automatic CPU captures.
+
 import (
 	"context"
 	"errors"

@@ -1,5 +1,7 @@
 package gateway
 
+// adr: 1155 pins slow-request reports that trigger automatic stack captures.
+
 import (
 	"context"
 	"net/http/httptest"

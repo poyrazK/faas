@@ -1,5 +1,7 @@
 package fcvm
 
+// adr: 1155 pins the on-demand capture exchange with the guest and its refusals.
+
 import (
 	"encoding/binary"
 	"encoding/json"

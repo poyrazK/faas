@@ -1,5 +1,7 @@
 package sched
 
+// adr: 1155 pins the admitted CPU quota the CPU saturation trigger measures against.
+
 import (
 	"testing"
 	"time"

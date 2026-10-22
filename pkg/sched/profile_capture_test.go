@@ -1,5 +1,7 @@
 package sched
 
+// adr: 1155 pins capture claims, runs and customer-facing failure reasons.
+
 import (
 	"strings"
 	"testing"

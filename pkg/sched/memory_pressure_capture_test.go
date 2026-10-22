@@ -1,5 +1,7 @@
 package sched
 
+// adr: 1155 pins automatic heap captures on guest memory pressure.
+
 import (
 	"errors"
 	"strings"
