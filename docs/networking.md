@@ -253,8 +253,18 @@ they may call every service in their own project without listing it, while
 calls to services outside the project need `depends_on` and get 403 without
 it. A target's `x-gregale-allow-callers` list still applies. Existing apps
 retain their persisted policy on reapply; set `x-gregale-service-policy:
-project` to move one over, or `declared` to require `depends_on` for every
-call. An undeclared sibling has no
+project` on a service to move it over, or `declared` to require `depends_on`
+for every call. A top-level `x-gregale-service-policy` sets the policy of
+every service that sets none, which moves a whole project over in one change:
+
+```yaml
+x-gregale-service-policy: project
+services:
+  web:
+    build: ./web
+  billing:
+    build: ./billing
+``` An undeclared sibling has no
 injected URL or `.internal` alias; call it at
 `http://<app-slug>.svc.gregale:10081`. For an intentional same-account escape
 hatch, set `x-gregale-service-policy: account` on the caller. Under the
