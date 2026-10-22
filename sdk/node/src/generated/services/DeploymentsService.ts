@@ -698,6 +698,10 @@ export class DeploymentsService {
        * JSON string array of canonical archive paths removed since dev_source_base.
        */
       dev_source_deleted?: string;
+      /**
+       * Set to true to build this sync at once even when it reaches the running instance as a live patch (ADR-20261021221906). Without it, such a sync's build waits until the developer stops saving and a later sync replaces it.
+       */
+      dev_source_build_now?: string;
       dockerfile?: boolean;
       runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313' | 'binary';
       handler?: string;
