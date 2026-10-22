@@ -6338,6 +6338,22 @@ const (
 	// EdgeChallengeTokenTTLSeconds is how long a served challenge may be
 	// solved and submitted.
 	EdgeChallengeTokenTTLSeconds = 300
+	// Raising the difficulty under attack (ADR-831 amendment 8). A rule
+	// with max_difficulty above its difficulty steps up by
+	// EdgeChallengeRaiseStepBits (4x the work) after a minute in which one
+	// gateway served more than EdgeChallengeRaiseFactor times the rule's
+	// usual challenge pages per minute, and never fewer than
+	// EdgeChallengeRaiseFloorPerMinute. It steps back down after each
+	// minute below half that. The usual rate is an average over about
+	// EdgeChallengeBaselineMinutes, and it does not move while the
+	// difficulty is raised, so a long attack does not become the norm.
+	// While a rule is newer than EdgeChallengeBaselineMinutes the
+	// threshold is EdgeChallengeRaiseFactor x
+	// EdgeChallengeRaiseFloorPerMinute pages per minute.
+	EdgeChallengeRaiseStepBits       = 2
+	EdgeChallengeRaiseFactor         = 4
+	EdgeChallengeRaiseFloorPerMinute = 60
+	EdgeChallengeBaselineMinutes     = 15
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 

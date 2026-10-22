@@ -38249,6 +38249,11 @@ paths:
           required: false
           description: Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
           schema: { type: string, enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed] }
+        - name: request_id
+          in: query
+          required: false
+          description: Only events for this request ID, such as the reference a visitor without JavaScript sees on the challenge page (ADR-831 amendment 8).
+          schema: { type: string, maxLength: 128 }
         - name: since
           in: query
           required: false
@@ -85761,6 +85766,7 @@ components:
             passed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a pass from an earlier solve." }
             bypassed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a verified API key, consumer key or JWT." }
             invalid: { type: integer, format: int64, minimum: 0, description: "Solutions refused: wrong work or an expired token." }
+            raised: { type: integer, format: int64, minimum: 0, description: "The part of issued served at a difficulty raised under attack (ADR-831 amendment 8)." }
 
     PreAuthEnforcementSuggestion:
       description: |
@@ -105182,6 +105188,11 @@ components:
           maximum: 86400
           default: 3600
           description: How long a solved challenge lets the browser through.
+        max_difficulty:
+          type: integer
+          minimum: 10
+          maximum: 22
+          description: When above difficulty, the gateway raises the difficulty up to this while the rule serves far more challenge pages than usual, two bits (4x the work) per minute, and lowers it again as the load eases (ADR-831 amendment 8). Must be at least difficulty. Omitted or equal to difficulty keeps the difficulty fixed.
     EdgeRuleAsyncAction:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).

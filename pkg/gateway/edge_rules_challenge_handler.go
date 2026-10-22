@@ -69,16 +69,36 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 		h.recordChallengeEvent(r, rule.ID, app.ID, EdgeRuleEventRejected)
 		return true
 	}
+	difficulty := h.challengeDifficulty(rule, app.ID, now)
 	nonce := make([]byte, 16)
 	_, _ = rand.Read(nonce)
 	token := sealChallenge(h.challengeKey, "token", challengeTokenPrefix, challengeToken{
-		AppID: app.ID, RuleID: rule.ID, Nonce: nonce, Difficulty: rule.Difficulty, PassTTL: rule.PassTTLSeconds,
+		AppID: app.ID, RuleID: rule.ID, Nonce: nonce, Difficulty: difficulty, PassTTL: rule.PassTTLSeconds,
 		Expires: now.Add(api.EdgeChallengeTokenTTLSeconds * time.Second).Unix(),
 	}, bindingFor(r))
-	writeChallengePage(w, r, token, rule.Difficulty)
+	writeChallengePage(w, r, token, difficulty)
 	h.metrics.ObserveEdgeChallenge(app.ID, "issued")
+	if difficulty > rule.Difficulty {
+		h.metrics.ObserveEdgeChallengeRaised(app.ID)
+	}
 	h.recordChallengeEvent(r, rule.ID, app.ID, EdgeRuleEventChallenged)
 	return true
+}
+
+// challengeDifficulty is the difficulty for the challenge page served now:
+// the rule's own, raised while this gateway serves the rule far more pages
+// than usual (ADR-831 amendment 8). A step up or down is logged.
+func (h *Handler) challengeDifficulty(rule *EdgeRuleChallengeResolved, appID string, now time.Time) int {
+	difficulty, moved := h.challengeLoad.issue(rule, now)
+	if moved != 0 && h.log != nil {
+		msg := "edge challenge difficulty raised under load"
+		if moved < 0 {
+			msg = "edge challenge difficulty lowered as load eased"
+		}
+		h.log.Info(msg, "app_id", appID, "rule_id", rule.ID, "difficulty", difficulty,
+			"base_difficulty", rule.Difficulty, "max_difficulty", rule.MaxDifficulty)
+	}
+	return difficulty
 }
 
 // handleChallengeSolve checks a solution posted to ChallengeSolvePath and,

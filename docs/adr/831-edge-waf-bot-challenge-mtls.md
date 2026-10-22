@@ -732,3 +732,72 @@ follow-up above:
   an online replacement that keeps its name (added NOT VALID under a
   temporary name, validated, swapped). The read API, `gregale edge-rules
   events --outcome` and the dashboard filter accept them.
+
+## Amendment 8 (2026-10-22): raising the difficulty under attack, and visitors without JavaScript
+
+The two items amendment 7 left open.
+
+### Raising the difficulty under attack
+
+A fixed difficulty is a trade-off made once: high enough to cost an
+attacker who solves challenges with headless browsers, low enough for slow
+phones. Under attack the right trade-off moves.
+
+- **Opt-in cap.** `max_difficulty` (optional, from `difficulty` up to 22)
+  on the challenge action. Omitted or equal to `difficulty` keeps the
+  difficulty fixed, as before. CLI `--challenge-max-difficulty`.
+- **Signal.** Challenge pages served by the rule, per gateway, per minute.
+  A page is what an unsolved client gets, so a flood of them is the attack
+  itself, whether or not the clients ever solve. Each gateway decides
+  alone: no shared state, no extra round trip, and a token carries the
+  difficulty it was issued at, so verifying a solution never depends on
+  which gateway issued it or on what that gateway decided since.
+- **Rule.** After a minute in which the gateway served the rule more than
+  4 x its usual pages per minute, and never fewer than 60, the difficulty
+  rises by 2 bits (4 x the work), up to `max_difficulty`. After each minute
+  below half that threshold it falls by 2 bits, back to `difficulty`.
+  Between the two it holds, so a rate near the threshold does not flap.
+- **Usual rate.** An average over about 15 minutes, learned only from
+  minutes at the rule's own difficulty, so a long attack does not become
+  the norm. A rule newer than 15 minutes has no usual rate yet: it rises
+  above a fixed 240 pages a minute and learns from every minute, so a rule
+  created during an attack (for example by attack mode,
+  ADR-20261021220456) is raised at once, and a busy rule raised by mistake
+  falls back once its warm-up has learned its real traffic. A gateway
+  restart, or two hours without a page, starts the rule over.
+- **Bounds.** A gateway tracks at most 10,000 rules; a rule past that keeps
+  its difficulty. The constants live in `pkg/api/limits.go`
+  (`EdgeChallengeRaise*`, `EdgeChallengeBaselineMinutes`).
+- **Signals.** `gateway_edge_challenge_raised_total{app}` counts pages
+  served at a raised difficulty (a subset of `issued`); the edge-protection
+  summary reports it as `challenge.raised`. Each step up or down is logged
+  with the rule, the new difficulty and the bounds.
+
+What it does not do: it does not raise the difficulty for clients that
+already hold a pass (a pass is not re-checked against the difficulty), and
+it does not help against clients that never solve, which the challenge
+already stops at the page.
+
+### Visitors without JavaScript
+
+The challenge needs JavaScript; that stays. A no-JavaScript proof (a form
+the visitor submits, a wait, an audio or image puzzle) is either trivial
+for a bot or an accessibility barrier, and a third-party widget is what
+section 2 rejected. Instead the ways through are the ones that already
+exist, made findable:
+
+- verified credentials (API key, consumer key, JWT) and verified bots
+  (`verified_bot missing` in the suggested rule) are never challenged;
+- the owner can exempt a client by a match condition on the rule, such as
+  `{"not":{"field":"client_ip","op":"in_list","list":"..."}}` (ADR-963).
+
+To make the second one usable, the page's no-JavaScript message now gives
+the visitor the request ID as a reference to send the site's owner, and
+the events API, `gregale edge-rules events --request-id` and the SDKs
+filter by request ID, so the owner finds the `challenged` event with the
+visitor's address and User-Agent. Events are sampled (10 per rule per
+minute per gateway), so under heavy load the reference may not have been
+kept; outside an attack it is.
+
+The challenge stays a preview with `kind=waf` warn and block; leaving
+preview is the product owner's call recorded under amendment 6.
