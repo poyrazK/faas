@@ -441,3 +441,20 @@ func TestInspectRecommendations_LiveReleaseWithoutTraffic(t *testing.T) {
 		}
 	}
 }
+
+// Production-us 2026-10-22: inspect said a parked h12-fnrs "does not run or
+// wake on its own", but a plain request woke it, as `gregale park` documents
+// ("until its next request"). Hunt 12 H12-60.
+func TestInspectRecommendations_ParkedAppWakesOnNextRequest(t *testing.T) {
+	for _, reason := range []string{"", "admin_park", "liveness_exhausted"} {
+		recs := main.InspectRecommendations(main.InspectSummary{
+			App:     main.InspectAppSummary{Slug: "h12-fnrs", Status: "evicted_cold", ParkedReason: reason},
+			Release: main.InspectReleaseSummary{Available: true, Status: "live", TrafficPercent: 100},
+			Runtime: main.InspectRuntimeSummary{Health: &main.InspectHealthSummary{Status: apihostingreceipt.SmokeVerified}},
+		})
+		if len(recs) == 0 || recs[0].Code != "app_parked" || strings.Contains(recs[0].Message, "does not run or wake") ||
+			!strings.Contains(recs[0].Message, "next request") {
+			t.Fatalf("reason %q: recommendations = %+v; want the parked message to say the next request wakes it", reason, recs)
+		}
+	}
+}

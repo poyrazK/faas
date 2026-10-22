@@ -506,10 +506,13 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	// hunt #8 (H8-23): a parked worker showed only "evicted_cold" and advice
 	// to redeploy, which never restarts a parked app.
 	if summary.App.Status == "evicted_cold" && summary.App.ParkedReason != "security_scan_regressed" {
-		message := "This app is parked; it does not run or wake on its own."
-		next := "Run `gregale wake " + summary.App.Slug + "` to start it again."
+		// The next request wakes a parked app (gregale park: "until its next
+		// request"); "does not run or wake on its own" read as if requests
+		// were refused (Hunt 12 H12-60).
+		message := "This app is parked: its instances are stopped until the next request wakes it."
+		next := "Send a request, or run `gregale wake " + summary.App.Slug + "` to start it now."
 		if summary.App.ParkedReason == "liveness_exhausted" {
-			message = "This app is parked because its instances repeatedly failed liveness checks or crashed."
+			message = "This app is parked because its instances repeatedly failed liveness checks or crashed; the next request starts it again."
 			next = "Fix the failure (see `gregale logs " + summary.App.Slug + " --since 1h`), deploy, then run `gregale wake " + summary.App.Slug + "`."
 		}
 		add("app_parked", "error", message, next)
