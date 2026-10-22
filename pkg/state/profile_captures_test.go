@@ -12,11 +12,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type profileCaptureBackend interface {
-	state.Store
-	state.ProfileCaptureStore
-	state.ProfileCaptureQueue
-}
+// profileCaptureBackend aliases the shared contract store, which lists the
+// capture interfaces; a Store-sized interface of its own would cost the
+// compiler a wrapper per method (teststorecheck).
+type profileCaptureBackend = contractTestStore
 
 func TestProfileCaptureLifecycle(t *testing.T) {
 	t.Setenv(pgtest.UseTemplateDatabase, "1")
