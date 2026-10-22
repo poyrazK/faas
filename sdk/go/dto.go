@@ -291,6 +291,7 @@ const (
 	ServiceBindingTransportHTTPS = api.ServiceBindingTransportHTTPS
 	ServiceBindingPolicyAccount  = api.ServiceBindingPolicyAccount
 	ServiceBindingPolicyDeclared = api.ServiceBindingPolicyDeclared
+	ServiceBindingPolicyProject  = api.ServiceBindingPolicyProject
 	PreviewServiceCallsAllow     = api.PreviewServiceCallsAllow
 	PreviewServiceCallsDeny      = api.PreviewServiceCallsDeny
 )

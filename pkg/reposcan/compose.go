@@ -413,8 +413,10 @@ func normalizeServiceBindingPolicy(value string) (ServiceBindingPolicy, error) {
 		return ServiceBindingPolicyAccount, nil
 	case string(ServiceBindingPolicyDeclared):
 		return ServiceBindingPolicyDeclared, nil
+	case string(ServiceBindingPolicyProject):
+		return ServiceBindingPolicyProject, nil
 	default:
-		return "", fmt.Errorf("x-gregale-service-policy must be account or declared")
+		return "", fmt.Errorf("x-gregale-service-policy must be project, declared or account")
 	}
 }
 

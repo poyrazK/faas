@@ -157,7 +157,7 @@ gregale bindings service explain public-api billing --method GET --path /invoice
 
 The command reads both apps through the selected account connection, without
 creating tasks or sending application requests. It evaluates the caller's
-outbound account/declared policy, the target's caller list, and the target's
+outbound account, declared or project policy, the target's caller list, and the target's
 caller method/path scopes. Both inbound restrictions must permit the caller.
 Invalid per-target reliability policies also block calls at the gateway.
 

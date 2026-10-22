@@ -22,6 +22,10 @@ const (
 	// ServiceBindingPolicyDeclared limits the caller to targets present in its
 	// repository-declared service binding inventory.
 	ServiceBindingPolicyDeclared ServiceBindingPolicy = "declared"
+	// ServiceBindingPolicyProject lets the caller reach any service in its own
+	// project and limits every other target to its declared bindings
+	// (ADR-20261022111119).
+	ServiceBindingPolicyProject ServiceBindingPolicy = "project"
 )
 
 // Effective returns the policy used at runtime. Unknown non-empty values fail
@@ -33,6 +37,8 @@ func (p ServiceBindingPolicy) Effective() ServiceBindingPolicy {
 		return ServiceBindingPolicyAccount
 	case ServiceBindingPolicyDeclared:
 		return ServiceBindingPolicyDeclared
+	case ServiceBindingPolicyProject:
+		return ServiceBindingPolicyProject
 	default:
 		return ServiceBindingPolicyDeclared
 	}

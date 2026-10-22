@@ -50,9 +50,11 @@ canary companions (for example,
 `GREGALE_SERVICE_API_HTTPS_URL=https://api.internal`). The private DNS and
 proxy path provides the endpoint even when the target app is cold; denylisted
 stateful image services remain customer-provided and are not given a Gregale URL.
-Compose services may set `x-gregale-service-policy: declared` to make this
-dependency list an outbound authorization allowlist. The omitted/default
-`account` policy preserves same-account reachability for existing projects.
+New project workloads use the `declared` policy, which makes this dependency
+list an outbound authorization allowlist (ADR-266). Compose services may set
+`x-gregale-service-policy: project` to also allow calls to every service in
+their own project, or `account` for same-account reachability. Existing
+workloads keep their stored policy when the extension is omitted.
 The target-side `x-gregale-preview-calls: deny` extension rejects internal
 calls from preview apps to that production workload before it wakes. Its
 default is `allow`.
