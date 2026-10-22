@@ -44,7 +44,8 @@
   precedence (ADR-053).
 - **Source builds:** These keys on a `build:` service are not applied: the
   Dockerfile owns ENTRYPOINT, USER, WORKDIR and STOPSIGNAL there. The scan
-  warns, as it already does for healthchecks (ADR-682).
+  warns, as it already does for healthchecks (ADR-682). ADR-20261022160000
+  later applies them to built services.
 
 ## env_file
 
