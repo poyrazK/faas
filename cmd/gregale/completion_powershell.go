@@ -192,7 +192,7 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    if ('--non-interactive' -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new('--non-interactive', '--non-interactive', 'ParameterName', 'Disable prompts and browser launches') }")
 	for _, c := range customerCliCommands() {
 		_, _ = fmt.Fprintf(w, "    if (%s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
-			psQuote(c.Name), psQuote(c.Name), psQuote(c.Name), psQuote(c.Short))
+			psLiteral(c.Name), psLiteral(c.Name), psLiteral(c.Name), psLiteral(c.Short))
 	}
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
@@ -321,7 +321,7 @@ func renderPowershellCommand(w io.Writer, c cliCommand) {
 		for _, s := range c.Subcommands {
 			for _, spelling := range s.completionSpellings() {
 				_, _ = fmt.Fprintf(w, "      if (%s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
-					psQuote(spelling), psQuote(spelling), psQuote(spelling), psQuote(s.Short))
+					psLiteral(spelling), psLiteral(spelling), psLiteral(spelling), psLiteral(s.Short))
 			}
 		}
 		for _, f := range c.Flags {
@@ -354,7 +354,7 @@ func renderPowershellCommand(w io.Writer, c cliCommand) {
 		for _, child := range parent.Subcommands {
 			for _, spelling := range child.completionSpellings() {
 				_, _ = fmt.Fprintf(w, "      if (%s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
-					psQuote(spelling), psQuote(spelling), psQuote(spelling), psQuote(child.Short))
+					psLiteral(spelling), psLiteral(spelling), psLiteral(spelling), psLiteral(child.Short))
 			}
 		}
 		_, _ = fmt.Fprintln(w, "      return")
@@ -377,7 +377,7 @@ func renderPowershellCommand(w io.Writer, c cliCommand) {
 	if len(c.ClosedSet) > 0 {
 		for _, v := range c.ClosedSet {
 			_, _ = fmt.Fprintf(w, "    if (%s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%s, %s, 'ParameterValue', %s) }\n",
-				psQuote(v), psQuote(v), psQuote(v), psQuote(v))
+				psLiteral(v), psLiteral(v), psLiteral(v), psLiteral(v))
 		}
 	}
 	// Flags.
@@ -419,14 +419,14 @@ func renderPowershellFlag(w io.Writer, f cliFlag) {
 			_, _ = fmt.Fprintln(w, "      }")
 		}
 		_, _ = fmt.Fprintf(w, "      if (%s -like \"$wordToComplete*\") { [System.Management.Automation.CompletionResult]::new(%s, %s, 'ParameterName', %s) }\n",
-			psQuote(spelling), psQuote(spelling), psQuote(spelling), psQuote(f.Short))
+			psLiteral(spelling), psLiteral(spelling), psLiteral(spelling), psLiteral(f.Short))
 	}
 }
 
 func powershellStringArray(values []string) string {
 	quoted := make([]string, 0, len(values))
 	for _, value := range values {
-		quoted = append(quoted, psQuote(value))
+		quoted = append(quoted, psLiteral(value))
 	}
 	return strings.Join(quoted, ", ")
 }
@@ -439,17 +439,19 @@ func renderPowershellFooter(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "}")
 }
 
-// psQuote renders s as a PowerShell single-quoted literal. A single-quoted
-// string expands nothing, so descriptions keep their double quotes, dollar
-// signs and backticks as written; a Go-quoted (%q) string is not valid
-// PowerShell once the text holds a double quote.
-func psQuote(s string) string {
-	return "'" + escapePS(s) + "'"
+// escapePS escapes s for a PowerShell single-quoted string. PowerShell also
+// closes such a string on the typographic single quotes, so they are doubled
+// too.
+func escapePS(s string) string {
+	return psSingleQuote.Replace(s)
 }
 
-// escapePS doubles single quotes for PowerShell single-quoted strings.
-// PowerShell also ends such a string at the typographic single quotes
-// U+2018, U+2019, U+201A and U+201B, so those are doubled too.
-func escapePS(s string) string {
-	return strings.NewReplacer("'", "''", "\u2018", "\u2018\u2018", "\u2019", "\u2019\u2019", "\u201a", "\u201a\u201a", "\u201b", "\u201b\u201b").Replace(s)
+var psSingleQuote = strings.NewReplacer("'", "''", "\u2018", "\u2018\u2018", "\u2019", "\u2019\u2019", "\u201a", "\u201a\u201a", "\u201b", "\u201b\u201b")
+
+// psLiteral renders s as a PowerShell single-quoted literal. Help text must not
+// use Go's %q: a double-quoted PowerShell string has no \" escape and expands
+// $variables, so a description such as `--at "2026-10-22 02:00"` broke the
+// generated script.
+func psLiteral(s string) string {
+	return "'" + escapePS(s) + "'"
 }

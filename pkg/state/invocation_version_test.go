@@ -170,3 +170,64 @@ func TestResolveInvocationVersionUsesCapturedProjectScope(t *testing.T) {
 		t.Fatalf("invalid captured scope accepted: %v", err)
 	}
 }
+
+// A project app without a release graph dispatches production work to the
+// lane the gateway routes as production: the legacy default scope until a
+// named production deployment carries traffic.
+func TestResolveInvocationVersionProjectProductionLane(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		scopes []string
+		want   string
+	}{
+		{name: "legacy default lane only", scopes: []string{state.DefaultEnvScope}, want: state.DefaultEnvScope},
+		{name: "named production lane only", scopes: []string{"production"}, want: "production"},
+		{name: "named production lane takes precedence", scopes: []string{state.DefaultEnvScope, "production"}, want: "production"},
+		{name: "no live deployment", want: "production"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			account, err := store.CreateAccount(ctx, "lane-"+uuid.NewString()+"@example.test", api.PlanPro)
+			if err != nil {
+				t.Fatal(err)
+			}
+			project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "lane"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "lane-api", Status: state.AppActive,
+				Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, scope := range tc.scopes {
+				dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: scope, ImageDigest: "sha256:" + scope})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, ingress := range []bool{false, true} {
+				request := state.Invocation{AppID: app.ID}
+				var inv state.Invocation
+				var selected state.InvocationVersion
+				if ingress {
+					inv, selected, err = state.ResolveInvocationVersionForEnvironment(ctx, store, request, "")
+				} else {
+					inv, selected, err = state.ResolveInvocationVersion(ctx, store, request)
+				}
+				if err != nil || selected.Scope != tc.want || selected.DeploymentID != "" || inv.DeploymentScope != "production" {
+					t.Fatalf("ingress=%v: version = %+v, captured scope %q, %v; want dispatch scope %q", ingress, selected, inv.DeploymentScope, err, tc.want)
+				}
+				if len(tc.scopes) > 0 {
+					if _, err := store.LiveDeploymentForScope(ctx, app.ID, selected.Scope); err != nil {
+						t.Fatalf("ingress=%v: dispatch scope %q has no live deployment to wake: %v", ingress, selected.Scope, err)
+					}
+				}
+			}
+		})
+	}
+}
