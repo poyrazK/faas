@@ -186,9 +186,12 @@ apply within the startup deadline. A failed or missing result blocks promotion;
 boot, restore, and warm-pool resume cannot reuse a previous pass. `NONE` and
 absent checks retain ordinary readiness. Previously assembled deployments need
 reassembly or redeployment to gain this gate. Native boot/restore qualification
-remains pending. Compose dependency release gates are described above. Compose
-healthcheck overrides on source-built services are not applied and produce a
-scan warning.
+remains pending. Compose dependency release gates are described above. A Compose
+healthcheck on a source-built service is merged onto the built image's
+HEALTHCHECK and enforced the same way
+([ADR-20261019195000](adr/20261019195000-compose-healthcheck-on-built-services.md));
+a source build without one keeps ordinary readiness, even when its Dockerfile
+declares a HEALTHCHECK.
 See [ADR-682](adr/682-compose-image-healthchecks.md) and
 [ADR-683](adr/683-image-healthcheck-readiness.md).
 
@@ -308,7 +311,7 @@ The scan reports every other Compose key instead of dropping it silently:
 
 | Keys | Result |
 |---|---|
-| `build` (`context`, `dockerfile`, `args`, `target`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied (process keys and `healthcheck` only on prebuilt images). |
+| `build` (`context`, `dockerfile`, `args`, `target`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied (process keys only on prebuilt images). |
 | `container_name`, `init`, `stdin_open`, `tty`, `platform: linux/amd64`, `x-*` extensions | Ignored without a warning; they have no effect on a microVM service. |
 | `volumes`, `tmpfs` | Warning: no persistent volumes or bind mounts; each start gets a fresh filesystem. |
 | `deploy`, `scale`, `cpus`, `mem_limit` and other resource keys | Warning: CPU, memory and replicas come from the plan and app scaling. |

@@ -1758,6 +1758,12 @@ remain open; production admission is disabled.
   (2026-10-19): the scan resolves `extends` (same file, other file, chains)
   and top-level `include` (with their own paths), replacing the ADR-1337
   warnings. Unit tests pass; no native run.
+- **Compose healthchecks on built services.**
+  [ADR-20261019195000](adr/20261019195000-compose-healthcheck-on-built-services.md)
+  (2026-10-22): a source-built service's Compose `healthcheck` is frozen per
+  deployment, merged onto the built image's HEALTHCHECK and enforced by the
+  ADR-683/684 readiness gate and recovery. Unit and conformance tests pass; no
+  native run.
 - **No native run recorded.** The `containers` native lane has no recorded
   passing run; [container qualification](container-qualification.md) remains
   the coverage plan.

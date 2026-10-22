@@ -449,15 +449,15 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	manifest.ProjectImage = w.Image
 	manifest.ProjectImageCommand = nil
 	manifest.ProjectImagePort = 0
-	manifest.ProjectImageHealthcheck = nil
 	manifest.ProjectImageProcess = nil
 	if manifest.ExecutionMode == "" {
 		manifest.ExecutionMode = scanExecutionMode(w)
 	}
+	// A Compose healthcheck applies to built images too (ADR-20261019195000).
+	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
 	if w.Image == "" {
 		return
 	}
-	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
 	manifest.ProjectImageProcess = w.ImageProcess.Clone()
 	manifest.ProjectImageCommand = append([]string(nil), w.Command...)
 	if w.CommandShell && len(w.Command) > 0 {

@@ -20,6 +20,7 @@
 - [Source archives are capped by their expanded size](20261020160500-source-archive-expanded-size-cap.md)
 - [Guests reach only the bridge services and the public edge on the host](20261020123000-tenant-bridge-host-input-narrowed.md)
 - [DNS proof takes over another account's pending hostname claim](20261020090500-dns-proof-takes-over-pending-claims.md)
+- [Compose healthchecks on source-built services](20261019195000-compose-healthcheck-on-built-services.md)
 - [Product Control plan fees, included starts and overage](20261021154511-product-control-plan-fees-and-overage.md)
 - [Data API file storage](20261021101510-data-api-file-storage.md)
 - [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)
