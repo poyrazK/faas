@@ -5653,12 +5653,16 @@ type Querier interface {
 	ScenarioActionSnapshotSummary(ctx context.Context, db DBTX, arg ScenarioActionSnapshotSummaryParams) (ScenarioActionSnapshotSummaryRow, error)
 	ScenarioCaptureReceiver(ctx context.Context, db DBTX, webhookID string) (ScenarioCaptureReceiverRow, error)
 	ScenarioCapturedActions(ctx context.Context, db DBTX, arg ScenarioCapturedActionsParams) ([]ScenarioCapturedActionsRow, error)
+	ScenarioCapturedEventByIdentity(ctx context.Context, db DBTX, arg ScenarioCapturedEventByIdentityParams) (ScenarioCapturedEventByIdentityRow, error)
 	// Whether a captured event with this source and ID carries the same type,
 	// schema version and data. A run's events are few and read under the run
 	// lock, so the run index bounds this lookup (ADR-20261021120000).
 	ScenarioCapturedEventIdentity(ctx context.Context, db DBTX, arg ScenarioCapturedEventIdentityParams) (bool, error)
 	ScenarioCapturedEvents(ctx context.Context, db DBTX, arg ScenarioCapturedEventsParams) ([]ScenarioCapturedEventsRow, error)
+	ScenarioCapturedPlatformCallByID(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallByIDParams) (ScenarioCapturedPlatformCallByIDRow, error)
 	ScenarioCapturedPlatformCalls(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallsParams) ([]ScenarioCapturedPlatformCallsRow, error)
+	// A capture is read back only inside its own run (ADR-20261022082721).
+	ScenarioCapturedQueueMessageByID(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessageByIDParams) (ScenarioCapturedQueueMessageByIDRow, error)
 	ScenarioCapturedQueueMessages(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessagesParams) ([]ScenarioCapturedQueueMessagesRow, error)
 	// A captured workflow run is named by its starter, target, workflow and
 	// start ordinal, so a later event to it compares across sibling runs.

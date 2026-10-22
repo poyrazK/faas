@@ -264,6 +264,17 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchBreakGlass,
+		DocSlug: "break-glass",
+		Short:   "Incident containment: pause releases platform-wide, revoke every control-plane credential (ADR 20261022140000)",
+		Subcommands: []cliSub{
+			{Name: "pause", Short: "Refuse new deployments and hold queued builds platform-wide", Flags: []cliFlag{{Name: "reason", Short: "why (recorded)"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "resume", Short: "Lift the release pause", Flags: []cliFlag{{Name: "reason", Short: "why (recorded)"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "status", Short: "Show the release pause and live credential counts", Flags: []cliFlag{{Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "revoke-credentials", Short: "Revoke every live session, API key and access token (dry run without --yes)", Flags: []cliFlag{{Name: "kinds", Short: "credential kinds to revoke"}, {Name: "reason", Short: "why (recorded)"}, {Name: "yes", Short: "revoke instead of counting"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
 		Name:    dispatchSealDomain,
 		DocSlug: "seal-domain",
 		Short:   "Provision, verify, and migrate per-reader seal domains (ADR 20261022111812)",
