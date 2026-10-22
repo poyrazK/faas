@@ -58,9 +58,11 @@ func TestStripeSignupCustomerAndCardOnFile(t *testing.T) {
 		forms[0]["email"] != "ada@example.com" || forms[0]["name"] != "Ada's workspace" || forms[0]["metadata[gregale_app]"] != "exports" {
 		t.Fatalf("CreateCustomer = %q %v %v %v", id, err, idempotency, forms[0])
 	}
-	session, err := c.CreateSetupCheckout(ctx, key, "", "cus_new", "EUR", "https://gregale.example/p?checkout={CHECKOUT_SESSION_ID}", "https://gregale.example/p?checkout=cancelled")
+	session, err := c.CreateSetupCheckout(ctx, key, "", SetupCheckoutParams{Customer: "cus_new", Currency: "EUR",
+		SuccessURL: "https://gregale.example/p?checkout={CHECKOUT_SESSION_ID}", CancelURL: "https://gregale.example/p?checkout=cancelled"})
 	f := forms[1]
 	if err != nil || session.URL != "https://checkout.stripe.com/c/pay/cs_test_1" || f["mode"] != "setup" || f["customer"] != "cus_new" || f["currency"] != "eur" ||
+		f["payment_method_types[0]"] != "" || f["expires_at"] != "" ||
 		f["success_url"] != "https://gregale.example/p?checkout={CHECKOUT_SESSION_ID}" || f["cancel_url"] != "https://gregale.example/p?checkout=cancelled" || idempotency[1] != "" {
 		t.Fatalf("CreateSetupCheckout = %+v %v %v", session, err, f)
 	}
