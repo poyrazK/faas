@@ -356,8 +356,18 @@ func cmdThrottleSuggestions(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	renderThrottleSuggestions(osStdout, resp)
+	renderThrottleSuggestions(osStdout, slug, resp)
 	return 0
+}
+
+// formatObservedRPS keeps a real but small rate from printing as 0.00:
+// the server lists only routes with traffic, so "observed=0.00" beside a
+// 1 rps suggestion read as a limit derived from nothing (Hunt 12 H12-55).
+func formatObservedRPS(rps float64) string {
+	if rps > 0 && rps < 0.01 {
+		return "<0.01"
+	}
+	return fmt.Sprintf("%.2f", rps)
 }
 
 // renderThrottleSuggestions writes the human-mode labelled block
@@ -370,11 +380,15 @@ func cmdThrottleSuggestions(args []string) int {
 // today; see ADR-104 amendment 5). Empty suggestions / empty
 // preview render as "(none)" so a customer reading the output
 // doesn't mistake silence for a bug.
-func renderThrottleSuggestions(w io.Writer, r api.ThrottleSuggestionsResponse) {
+func renderThrottleSuggestions(w io.Writer, slug string, r api.ThrottleSuggestionsResponse) {
 	if r.Source != "" && r.Source != "prometheus" {
 		_, _ = fmt.Fprintf(w, "Note: source=%s (values below may be zero — Prometheus is unavailable)\n", r.Source)
 	}
 	_, _ = fmt.Fprintf(w, "App:           %s\n", r.AppID)
+	// Same App/Slug pair as `gregale metrics` (Hunt 12 H12-55).
+	if slug != "" {
+		_, _ = fmt.Fprintf(w, "Slug:          %s\n", slug)
+	}
 	_, _ = fmt.Fprintf(w, "Range:         %s\n", r.Range)
 	if r.AsOf != "" {
 		_, _ = fmt.Fprintf(w, "As of:         %s\n", r.AsOf)
@@ -396,8 +410,8 @@ func renderThrottleSuggestions(w io.Writer, r api.ThrottleSuggestionsResponse) {
 	} else {
 		_, _ = fmt.Fprintln(w, "\nSuggestions:")
 		for _, s := range r.Suggestions {
-			_, _ = fmt.Fprintf(w, "  %-40s observed=%-6.2f rps  suggested=%-6.2f rps (burst=%d)\n",
-				s.Route, s.ObservedRPS, s.SuggestedRPS, s.SuggestedBurst)
+			_, _ = fmt.Fprintf(w, "  %-40s observed=%-6s rps  suggested=%-6.2f rps (burst=%d)\n",
+				s.Route, formatObservedRPS(s.ObservedRPS), s.SuggestedRPS, s.SuggestedBurst)
 		}
 	}
 	if !r.DryRun {
