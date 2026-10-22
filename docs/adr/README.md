@@ -1,6 +1,7 @@
 # Architecture Decision Records
 
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
+- [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
 - [ADR-20261022140000: Break-glass controls for a compromised secret store](20261022140000-break-glass-controls.md)
 - [ADR-20261022111812: Seal domains: a sealed value opens only where it is read](20261022111812-seal-domains-per-reader.md)
 - [ADR-20261022082721: Rehearsal reads of captured work, inbox and async invoke](20261022082721-rehearsal-captured-reads-inbox-async-invoke.md)

@@ -318,16 +318,15 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
 		}
-		if image != "" {
-			process, err = composeProcess(s, len(command) > 0)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
-			}
-		} else {
-			if keys := composeProcessKeys(s); len(keys) > 0 {
-				warnings = append(warnings, "reposcan: "+src+": "+name+": "+strings.Join(keys, ", ")+
-					" ignored: Compose process overrides apply only to prebuilt images; set ENTRYPOINT, USER, WORKDIR or STOPSIGNAL in the Dockerfile")
-			}
+		process, err = composeProcess(s, len(command) > 0)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+		}
+		if image == "" {
+			// A built service takes the same overrides (ADR-20261022160000):
+			// its entrypoint joins the start command, and imaged applies the
+			// rest to the built image.
+			command, commandShell, process = builtServiceProcess(process, command, commandShell)
 			rawBuild, _ := rawService["build"].(map[string]any)
 			var buildWarnings []string
 			dockerfileBuild, buildWarnings, err = composeDockerfileBuild(fsys, s.Build, rawBuild, composeEnv, ctx, df)
