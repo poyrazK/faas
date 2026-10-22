@@ -1625,6 +1625,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_capacity_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "object_storage_usage.go"),
 		filepath.Join(root, "pkg", "api", workflowFile),
+		filepath.Join(root, "pkg", "api", "workflow_code.go"), // ADR-20261021204307 code-first workflow spec
 		filepath.Join(root, "pkg", "api", "workflow_schedules.go"),
 		filepath.Join(root, "pkg", "api", "workflow_queued_cancel.go"),
 		filepath.Join(root, "pkg", "api", "automations.go"),
