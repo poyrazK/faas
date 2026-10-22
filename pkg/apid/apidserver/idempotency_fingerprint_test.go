@@ -52,8 +52,9 @@ func TestIdempotent_KeyIsBoundToItsRequest(t *testing.T) {
 		{name: "project apply key names an intent", family: "intent", retry: `{"queue":"jobs","body":"two"}`, wantStatus: http.StatusCreated, wantReplayed: true, wantRuns: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if !tc.noHostKey {
-				withIdempotencyHostKey(t)
+			withIdempotencyHostKey(t)
+			if tc.noHostKey {
+				*apidserver.HostHMACKey = nil
 			}
 			e := apidserver.Setup(t, api.PlanPro)
 			var runs atomic.Int32

@@ -11,7 +11,6 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"net/url"
 	"strings"
 	"unicode/utf8"
 )
@@ -27,8 +26,10 @@ var idempotencyFingerprintHeaders = []string{"If-Match", "If-None-Match", "If-Wo
 
 // IdempotencyFingerprint returns the keyed request fingerprint that an
 // Idempotency-Key is bound to (ADR-20261022204036): an HMAC-SHA256 under key
-// over the method, path, sorted query, the Content-Type media type, the
-// precondition headers and the canonical body. Equivalent JSON bodies and
+// over the method, path, the Content-Type media type, the precondition
+// headers and the canonical body. The query is left out: a selector that
+// names the default, such as ?environment=production, must still replay the
+// receipt of the request that omitted it. Equivalent JSON bodies and
 // multipart bodies that differ only in their boundary get one fingerprint.
 // The MAC is keyed so a stored fingerprint cannot be brute-forced back to a
 // low-entropy secret carried in the body.
@@ -57,7 +58,6 @@ func IdempotencyFingerprint(r *http.Request, key []byte) []byte {
 	writeFingerprintField(mac, "gregale idempotency request fingerprint v1")
 	writeFingerprintField(mac, r.Method)
 	writeFingerprintField(mac, r.URL.Path)
-	writeFingerprintField(mac, canonicalQuery(r.URL.RawQuery))
 	writeFingerprintField(mac, mediaType)
 	for _, name := range idempotencyFingerprintHeaders {
 		writeFingerprintField(mac, name+":"+strings.Join(r.Header.Values(name), "\x00"))
@@ -82,14 +82,6 @@ func writeFingerprintField(w io.Writer, field string) {
 	binary.BigEndian.PutUint64(n[:], uint64(len(field)))
 	_, _ = w.Write(n[:])
 	_, _ = io.WriteString(w, field)
-}
-
-func canonicalQuery(raw string) string {
-	values, err := url.ParseQuery(raw)
-	if err != nil {
-		return raw
-	}
-	return values.Encode()
 }
 
 // canonicalBody returns the body in a form that is equal for equivalent

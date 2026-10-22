@@ -5638,11 +5638,12 @@ func (s *server) idempotentDeploy(next accountHandler) accountHandler {
 	return s.idempotentWithInEnvironment("", next, s.deployReplayIsStale, false)
 }
 
-// idempotentIntent is idempotent for project applies, whose keys the CLI
-// derives from the deploy intent (source digest and flags) rather than from
-// the request: a re-run carries a fresh plan token and the current commit as
-// provenance, yet must replay the earlier apply. These keys are not bound to
-// a request fingerprint (ADR-20261022204036).
+// idempotentIntent is idempotent for routes whose keys name an intent rather
+// than one request, so they are not bound to a request fingerprint
+// (ADR-20261022204036). The CLI derives project apply keys from the source
+// digest and flags, while a re-run carries a fresh plan token and the current
+// commit; meterd's safe-deploy workers retry a deterministic recovery key
+// with the reason and evidence of their latest tick. Both must replay.
 func (s *server) idempotentIntent(next accountHandler) accountHandler {
 	return s.idempotentWithInEnvironment("", next, nil, false)
 }

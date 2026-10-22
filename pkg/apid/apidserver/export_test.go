@@ -1124,7 +1124,7 @@ func (r *server) GitOpsPreviewArchiveForTest(t *testing.T, definition, resolvedS
 	r.githubd = &environmentGitOpsClient{repositories: []Repo{{ID: 123, FullName: "example/shop"}},
 		archive: environmentGitOpsArchiveDefinition(t, definition), resolvedSHA: resolvedSHA}
 }
-func (r *server) Idempotent(p0 accountHandler) accountHandler { return r.idempotent(p0) }
+func (r *server) Idempotent(p0 accountHandler) accountHandler       { return r.idempotent(p0) }
 func (r *server) IdempotentDeploy(p0 accountHandler) accountHandler { return r.idempotentDeploy(p0) }
 func (r *server) IdempotentIntent(p0 accountHandler) accountHandler { return r.idempotentIntent(p0) }
 func (r *server) ImagedMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {

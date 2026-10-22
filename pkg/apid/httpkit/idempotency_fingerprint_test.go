@@ -56,8 +56,7 @@ func multipartBody(t *testing.T, boundary string, fields [][2]string) (string, s
 
 // TestIdempotencyFingerprint pins H12-26: one Idempotency-Key reused with a
 // new payload replayed the first response. Requests that mean the same thing
-// share a fingerprint; requests that differ in body, query or precondition do
-// not.
+// share a fingerprint; requests that differ in body or precondition do not.
 func TestIdempotencyFingerprint(t *testing.T) {
 	mpA, bodyA := multipartBody(t, "boundary-one", [][2]string{{"slug", "a"}, {"runtime", "node22"}})
 	mpB, bodyB := multipartBody(t, "boundary-two", [][2]string{{"slug", "a"}, {"runtime", "node22"}})
@@ -75,8 +74,7 @@ func TestIdempotencyFingerprint(t *testing.T) {
 		{"octet-stream compares bytes", fingerprintRequest{contentType: "application/octet-stream", body: `{"a":1,"b":2}`}, fingerprintRequest{contentType: "application/octet-stream", body: `{"b":2,"a":1}`}, false},
 		{"multipart boundary ignored", fingerprintRequest{contentType: mpA, body: bodyA}, fingerprintRequest{contentType: mpB, body: bodyB}, true},
 		{"multipart field value differs", fingerprintRequest{contentType: mpA, body: bodyA}, fingerprintRequest{contentType: mpC, body: bodyC}, false},
-		{"query order ignored", fingerprintRequest{target: "/v1/x?a=1&b=2"}, fingerprintRequest{target: "/v1/x?b=2&a=1"}, true},
-		{"query value differs", fingerprintRequest{target: "/v1/x?dry_run=true"}, fingerprintRequest{target: "/v1/x?dry_run=false"}, false},
+		{"query left out", fingerprintRequest{target: "/v1/x"}, fingerprintRequest{target: "/v1/x?environment=production"}, true},
 		{"precondition differs", fingerprintRequest{header: map[string]string{"If-Match": `"v1"`}}, fingerprintRequest{header: map[string]string{"If-Match": `"v2"`}}, false},
 		{"transport headers ignored", fingerprintRequest{header: map[string]string{"User-Agent": "gregale/1", "X-Request-Id": "r1"}}, fingerprintRequest{header: map[string]string{"User-Agent": "gregale/2", "X-Request-Id": "r2"}}, true},
 		{"media type differs", fingerprintRequest{contentType: "text/plain", body: "x"}, fingerprintRequest{contentType: "application/octet-stream", body: "x"}, false},
