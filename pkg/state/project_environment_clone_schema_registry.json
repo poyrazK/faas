@@ -414,6 +414,17 @@
     "kind": "operational"
   },
   {
+    "table": "alert_episodes",
+    "columns": [
+      "account_id",
+      "id",
+      "opened_at",
+      "resolved_at",
+      "rule_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_historical_rollback_claims",
     "columns": [
       "deployment_id",

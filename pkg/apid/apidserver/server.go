@@ -34,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 
 	"github.com/onebox-faas/faas/pkg/apid/dashboards"
+	"github.com/onebox-faas/faas/pkg/apid/incidents"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
 	"github.com/onebox-faas/faas/pkg/apid/logsearch"
@@ -149,6 +150,7 @@ type server struct {
 	serviceMap                             servicemap.Service // ADR-1131; Host wired in newServer
 	logSearch                              logsearch.Service  // ADR-20261018083536; Host wired in newServer
 	dashboards                             dashboards.Service // ADR-20261022173833; Host wired in newServer
+	incidents                              incidents.Service  // ADR-20261022193512; Host wired in newServer
 	// configGuardTelemetry overrides the store's request telemetry for
 	// config guards (ADR-1451); nil reads it from the store.
 	configGuardTelemetry state.ConfigGuardTelemetryStore
@@ -1453,6 +1455,7 @@ func newServerWithDeps(
 	s.platformFlagAdmin.Host = platformFlagAdminHost{s}
 	s.logSearch.Host = logSearchHost{s}
 	s.dashboards.Host = dashboardsHost{s}
+	s.incidents.Host = incidentsHost{s}
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
 	// checkPointsToGregale has the configured Gregale apex in
@@ -2336,6 +2339,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/dashboards/{id}/data", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.dashboards.Data)))
 	mux.HandleFunc("PUT /v1/dashboards/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboards.Replace)))
 	mux.HandleFunc("DELETE /v1/dashboards/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboards.Delete)))
+	mux.HandleFunc("GET /v1/incidents", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.incidents.List)))
+	mux.HandleFunc("GET /v1/incidents/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.incidents.Get)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/log-searches/{name}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.logSearch.PutSaved)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/log-searches/{name}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.logSearch.DeleteSaved)))
 	// Issue #696 / ADR-082 — per-app SLO panel. Closed-set

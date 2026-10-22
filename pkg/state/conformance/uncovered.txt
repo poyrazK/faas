@@ -499,7 +499,6 @@ SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow
 SetAccountPassword
 SetAlertRuleLastEvaluated
-SetAlertRuleState
 SetAppMinInstances
 SetAppWorkloadClass
 SetComputeNodeRole

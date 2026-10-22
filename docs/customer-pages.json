@@ -19,6 +19,7 @@
     {"path": "change-timeline", "source": "docs/change-timeline.md"},
     {"path": "log-search", "source": "docs/log-search.md"},
     {"path": "dashboards", "source": "docs/dashboards.md"},
+    {"path": "incidents", "source": "docs/incidents.md"},
     {"path": "cli", "source": "docs/cli-reference.md"},
     {"path": "companions", "source": "docs/companions.md"},
     {"path": "custom-domains", "source": "docs/domains.md"},

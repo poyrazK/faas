@@ -1066,6 +1066,19 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "incidents",
+		DocSlug: "incidents",
+		Short:   "List open and recent incidents: alerts, route monitors and platform status",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List open incidents and those resolved in the window", Flags: []cliFlag{
+				{Name: "app", Short: "keep one app's incidents", Value: "SLUG"},
+				{Name: "open", Short: "open incidents only"},
+				{Name: "since", Short: "resolved incidents from this long ago (default 7d, at most 30d)", Value: "DURATION"},
+			}, Examples: []string{"gregale incidents list", "gregale incidents list --app shop --open"}},
+			{Name: "show", Short: "Show an incident with its notifications, log context and changes", Positionals: []string{"<incident-id>"}, Examples: []string{"gregale incidents show INCIDENT_ID"}},
+		},
+	},
+	{
 		Name:    "slos",
 		DocSlug: "slos",
 		Short:   "Define SLOs and track their error budgets",

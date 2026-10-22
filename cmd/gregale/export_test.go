@@ -785,6 +785,7 @@ var CmdCronsUpdate = cmdCronsUpdate
 var CmdDLQPurge = cmdDLQPurge
 var CmdDashboard = cmdDashboard
 var CmdDashboards = cmdDashboards
+var CmdIncidents = cmdIncidents
 var CmdDataAPI = cmdDataAPI
 var CmdDataAPICreate = cmdDataAPICreate
 var CmdDataAPIDev = cmdDataAPIDev

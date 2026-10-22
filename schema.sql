@@ -27251,6 +27251,20 @@ CREATE TABLE public.alert_deliveries (
 
 
 --
+-- Name: alert_episodes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_episodes (
+    id uuid NOT NULL,
+    rule_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    opened_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    CONSTRAINT alert_episodes_resolved_after_open CHECK (((resolved_at IS NULL) OR (resolved_at >= opened_at)))
+);
+
+
+--
 -- Name: alert_historical_rollback_claims; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -53673,6 +53687,14 @@ ALTER TABLE ONLY public.alert_deliveries
 
 
 --
+-- Name: alert_episodes alert_episodes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_episodes
+    ADD CONSTRAINT alert_episodes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: alert_historical_rollback_claims alert_historical_rollback_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -65487,6 +65509,34 @@ CREATE INDEX alert_deliveries_rule_fired_idx ON public.alert_deliveries USING bt
 --
 
 CREATE INDEX alert_deliveries_rule_fired_production_idx ON public.alert_deliveries USING btree (rule_id, fired_at DESC) WHERE (is_test = false);
+
+
+--
+-- Name: alert_episodes_account_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_episodes_account_open_idx ON public.alert_episodes USING btree (account_id) WHERE (resolved_at IS NULL);
+
+
+--
+-- Name: alert_episodes_account_resolved_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_episodes_account_resolved_idx ON public.alert_episodes USING btree (account_id, resolved_at DESC) WHERE (resolved_at IS NOT NULL);
+
+
+--
+-- Name: alert_episodes_one_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX alert_episodes_one_open_idx ON public.alert_episodes USING btree (rule_id) WHERE (resolved_at IS NULL);
+
+
+--
+-- Name: alert_episodes_rule_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_episodes_rule_idx ON public.alert_episodes USING btree (rule_id, opened_at DESC);
 
 
 --
@@ -81761,6 +81811,22 @@ ALTER TABLE ONLY public.alert_deliveries
 
 ALTER TABLE ONLY public.alert_deliveries
     ADD CONSTRAINT alert_deliveries_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_episodes alert_episodes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_episodes
+    ADD CONSTRAINT alert_episodes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_episodes alert_episodes_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_episodes
+    ADD CONSTRAINT alert_episodes_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
 
 
 --

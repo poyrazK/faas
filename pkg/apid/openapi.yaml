@@ -20605,6 +20605,67 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/incidents:
+    get:
+      tags: [observability]
+      operationId: listIncidents
+      summary: List the account's incidents.
+      description: |
+        ADR-20261022193512 internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
+        One list of alert rule firing periods, route monitor incidents and
+        platform incidents from the status page: everything open plus what
+        resolved since `since`, open first, then newest first, at most 100.
+        A source that cannot be read is named in `unavailable_sources`.
+      parameters:
+        - name: app
+          in: query
+          required: false
+          description: Keep one app's incidents (platform incidents always show).
+          schema: { type: string }
+        - name: status
+          in: query
+          required: false
+          description: "`open` lists open incidents only; `all` (the default) adds resolved ones."
+          schema: { type: string, enum: [open, all] }
+        - name: since
+          in: query
+          required: false
+          description: RFC 3339; resolved incidents from here on. Default 7 days ago, at most 30.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: The incidents.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentsResponse' }
+        default:
+          description: An invalid query, an unknown app, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/incidents/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IncidentID'
+    get:
+      tags: [observability]
+      operationId: getIncident
+      summary: Read an incident and its evidence.
+      description: |
+        The incident with what the platform has for it: an alert's
+        notifications and the log context its newest one carried, a platform
+        incident's status updates, and for an app incident the app's change
+        timeline from an hour before it opened until it resolved.
+      responses:
+        '200':
+          description: The incident.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentDetail' }
+        default:
+          description: No such incident (incident_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/log-searches:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -64997,6 +65058,12 @@ components:
       in: query
       description: Name of one of the app's saved log searches. Its filters apply unless the request sets the same parameter.
       schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+    IncidentID:
+      name: id
+      in: path
+      required: true
+      description: Incident id, prefixed with its source (`alert-`, `route-`, `platform-`).
+      schema: { type: string }
     DashboardID:
       name: id
       in: path
@@ -111047,6 +111114,72 @@ components:
           type: array
           maxItems: 24
           items: { $ref: '#/components/schemas/DashboardWidget' }
+    Incident:
+      type: object
+      description: An alert rule's firing period, a route monitor incident, or a platform incident.
+      required: [id, source, status, title, opened_at]
+      properties:
+        id: { type: string }
+        source: { type: string, enum: [alert, route_monitor, platform] }
+        status: { type: string, enum: [open, resolved] }
+        title: { type: string }
+        app: { type: string, description: The app's slug; absent for account-wide alerts and platform incidents. }
+        opened_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        rule_id: { type: string, format: uuid, description: An alert incident's rule. }
+        metric: { type: string, description: An alert incident's rule metric. }
+        deployment_id: { type: string, format: uuid, description: The deployment a route monitor incident watched. }
+        impact: { type: string, description: A platform incident's status page impact. }
+    IncidentsResponse:
+      type: object
+      required: [since, incidents, truncated, unavailable_sources]
+      properties:
+        since: { type: string, format: date-time }
+        incidents:
+          type: array
+          items: { $ref: '#/components/schemas/Incident' }
+        truncated: { type: boolean }
+        unavailable_sources:
+          type: array
+          items: { type: string }
+    IncidentFire:
+      type: object
+      description: One notification an alert incident sent.
+      required: [at, observed, status]
+      properties:
+        at: { type: string, format: date-time }
+        observed: { type: number, format: double }
+        status: { type: string }
+    IncidentUpdate:
+      type: object
+      description: One status page update of a platform incident.
+      required: [at, state, message]
+      properties:
+        at: { type: string, format: date-time }
+        state: { type: string }
+        message: { type: string }
+    IncidentDetail:
+      type: object
+      required: [incident, unavailable_sources]
+      properties:
+        incident: { $ref: '#/components/schemas/Incident' }
+        fires:
+          type: array
+          items: { $ref: '#/components/schemas/IncidentFire' }
+        log_context:
+          type: object
+          additionalProperties: true
+          description: What the logs showed at the newest fire, when log search was on.
+        updates:
+          type: array
+          items: { $ref: '#/components/schemas/IncidentUpdate' }
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/AppChangeEvent' }
+        changes_truncated: { type: boolean }
+        unavailable_sources:
+          type: array
+          items: { type: string }
     DashboardPoint:
       type: object
       description: One time-series sample.

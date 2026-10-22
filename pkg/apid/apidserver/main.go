@@ -1611,6 +1611,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.serviceMap.Enabled = deps.getenv("FAAS_SERVICE_MAP_ENABLED") == "1"
 	srv.logSearch.Enabled = deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1"
 	srv.dashboards.Enabled = deps.getenv("FAAS_CUSTOM_DASHBOARDS_ENABLED") == "1"
+	srv.incidents.Enabled = deps.getenv("FAAS_INCIDENTS_ENABLED") == "1"
 	if srv.logSearch.Enabled {
 		// ADR-20261018083536 slice C: build and deploy events into the ledger.
 		go logsearch.NewProjector(srv.store, time.Now, ops.Registry(), log).Run(ctx)

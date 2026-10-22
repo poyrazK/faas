@@ -13137,6 +13137,20 @@ const (
 // DashboardWindows are the windows a dashboard widget may read.
 var DashboardWindows = []string{"5m", "1h", "6h", "24h", "7d"}
 
+// Unified incidents (ADR-20261022193512). A rule keeps its newest episodes
+// so a flapping rule cannot grow alert_episodes without bound. The list
+// shows everything open plus what resolved inside the window, capped; each
+// source reads one row past the cap. An app incident's detail carries the
+// app's changes from IncidentChangeLookback before it opened.
+const (
+	AlertEpisodesPerRule   = 200
+	IncidentsDefaultWindow = 7 * 24 * time.Hour
+	IncidentsMaxWindow     = 30 * 24 * time.Hour
+	IncidentsMaxEntries    = 100
+	IncidentChangeLookback = time.Hour
+	IncidentFiresMax       = 20
+)
+
 // Runtime log projection into the ledger (ADR-20261018083536 slice B). vmmd
 // forwards warn and error lines within a per-app, per-node minute budget and
 // reports the overflow as one system line per app and minute; apid caps each

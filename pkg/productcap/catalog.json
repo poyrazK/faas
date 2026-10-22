@@ -338,6 +338,17 @@
       "acceptance_test": "cmd/e2e/commit_e2e_test.go::TestE2E_CommitProducerDeathReachesCompletedInvocation"
     },
     {
+      "id": "incidents",
+      "name": "Incidents",
+      "category": "observability",
+      "description": "One list of an account's open and recent incidents: alert rule firing periods, route monitor incidents and platform status incidents, each with its notifications, log context and the app's changes.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261022193512-unified-incidents",
+      "operator_flag": "FAAS_INCIDENTS_ENABLED",
+      "acceptance_test": "pkg/apid/incidents/service_test.go::TestListMergesSourcesOpenFirst"
+    },
+    {
       "id": "internal-services",
       "name": "Internal services",
       "category": "runtime",

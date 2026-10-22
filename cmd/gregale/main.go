@@ -562,6 +562,9 @@ func run(args []string) (status int) {
 	case "dashboards":
 		// ADR-20261022173833: saved custom dashboards.
 		return cmdDashboards(args[1:])
+	case "incidents":
+		// ADR-20261022193512: the unified incident list.
+		return cmdIncidents(args[1:])
 	case "slos":
 		// ADR-747: customer-defined SLO definitions (distinct from `slo`).
 		return cmdSLOs(args[1:])

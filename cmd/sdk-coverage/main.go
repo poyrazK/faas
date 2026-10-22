@@ -768,6 +768,10 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/dashboards/{id}":      "ReplaceDashboard",
 	"DELETE /v1/dashboards/{id}":   "DeleteDashboard",
 	"GET /v1/dashboards/{id}/data": "GetDashboardData",
+
+	// ADR-20261022193512 unified incidents.
+	"GET /v1/incidents":      "ListIncidents",
+	"GET /v1/incidents/{id}": "GetIncident",
 	// ADR-745: hyphenated custom-metrics segment.
 	"GET /v1/apps/{slug}/custom-metrics/{name}/series": "GetCustomMetricSeries",
 	// ADR-1131: the hyphenated path segment has no derivable Go identifier.

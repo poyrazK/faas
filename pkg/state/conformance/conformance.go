@@ -220,6 +220,8 @@ func Run(t *testing.T, open Open) {
 		{"log_saved_searches", testLogSavedSearches},
 		{"log_search_alert_rule_round_trips", testLogSearchAlertRuleRoundTrips},
 		{"dashboards_are_account_scoped", testDashboards},
+		{"alert_episodes_follow_rule_state", testAlertEpisodesFollowRuleState},
+		{"route_monitor_incident_summaries_are_account_scoped", testRouteMonitorIncidentSummariesAreAccountScoped},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},
