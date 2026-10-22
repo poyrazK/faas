@@ -105,3 +105,68 @@ func TestServiceAliasAllowedUsesScopedQualificationBinding(t *testing.T) {
 		t.Fatalf("qualification alias store failure = %v, %v", ok, err)
 	}
 }
+
+// ADR-20261022160248: under the project policy the alias names every service
+// of the caller's own project, as the proxy already admits those calls.
+func TestServiceAliasAllowedNamesProjectServicesUnderProjectPolicy(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "project-alias@local", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "search"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(app state.App) state.App {
+		t.Helper()
+		app.AccountID, app.Type, app.RAMMB = account.ID, state.AppTypeApp, 128
+		if app.Status == "" {
+			app.Status = state.AppActive
+		}
+		created, err := store.CreateApp(ctx, app)
+		if err != nil {
+			t.Fatalf("CreateApp(%s): %v", app.Slug, err)
+		}
+		return created
+	}
+	projectPolicy := state.AppManifest{ServiceBindingPolicy: api.ServiceBindingPolicyProject}
+	caller := create(state.App{ProjectID: project.ID, Slug: "shop-web", WorkloadName: "web", Manifest: projectPolicy})
+	create(state.App{ProjectID: project.ID, Slug: "shop-billing", WorkloadName: "billing"})
+	create(state.App{ProjectID: project.ID, Slug: "shop-ledger", WorkloadName: "ledger", Status: state.AppDeleted})
+	create(state.App{ProjectID: other.ID, Slug: "search-index", WorkloadName: "index"})
+	create(state.App{Slug: "standalone"})
+	declared := create(state.App{ProjectID: project.ID, Slug: "shop-worker", WorkloadName: "worker",
+		Manifest: state.AppManifest{ServiceBindingPolicy: api.ServiceBindingPolicyDeclared}})
+	preview := create(state.App{ProjectID: project.ID, Slug: "pr-7-shop-web", WorkloadName: "web",
+		PreviewOfSlug: caller.Slug, PreviewPrNumber: 7, Manifest: projectPolicy})
+	scenario := create(state.App{ProjectID: project.ID, Slug: "test-shop-web", WorkloadName: "web",
+		PreviewOfSlug: caller.Slug, Manifest: projectPolicy})
+
+	allowed := newServiceAliasAllowed(store)
+	for _, tc := range []struct {
+		name, caller, service string
+		want                  bool
+	}{
+		{"sibling by service name", caller.ID, "billing", true},
+		{"sibling by app slug", caller.ID, "shop-billing", true},
+		{"service names are case-insensitive", caller.ID, "Billing", true},
+		{"deleted sibling", caller.ID, "ledger", false},
+		{"another project's service", caller.ID, "search-index", false},
+		{"standalone app", caller.ID, "standalone", false},
+		{"unknown name", caller.ID, "payments", false},
+		{"declared policy keeps the binding inventory", declared.ID, "billing", false},
+		{"PR preview names its project's services", preview.ID, "billing", true},
+		{"scenario-test member keeps the binding inventory", scenario.ID, "billing", false},
+	} {
+		got, err := allowed(ctx, tc.caller, tc.service)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: alias %q = %v, %v; want %v", tc.name, tc.service, got, err, tc.want)
+		}
+	}
+}
