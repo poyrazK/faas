@@ -67,17 +67,25 @@ func TestPgEventOrderingSnapshotWritesOnlyOrderedEvents(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
+		// A backend flushes table counters at most about once a second, so
+		// the transaction view can still hold an earlier transaction's
+		// updates: count the difference across the insert.
+		const outboxUpdates = `SELECT coalesce((SELECT n_tup_upd FROM pg_stat_xact_user_tables WHERE relname = 'event_fanout_outbox'), 0)`
+		var before int64
+		if err := tx.QueryRow(ctx, outboxUpdates).Scan(&before); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO events (actor, kind, subject, data) VALUES ('apid', 'event.published', $1, $2)`,
 			uuid.MustParse(account.ID), payload); err != nil {
 			t.Fatal(err)
 		}
 		var raw []byte
-		if err := tx.QueryRow(ctx, `SELECT
-			(SELECT n_tup_upd FROM pg_stat_xact_user_tables WHERE relname = 'event_fanout_outbox'),
+		if err := tx.QueryRow(ctx, `SELECT (`+outboxUpdates+`),
 			(SELECT recipient_snapshot FROM event_fanout_outbox WHERE account_id = $1 AND event_id = $2)`,
 			uuid.MustParse(account.ID), id).Scan(&updates, &raw); err != nil {
 			t.Fatal(err)
 		}
+		updates -= before
 		if err := json.Unmarshal(raw, &snapshot); err != nil {
 			t.Fatal(err)
 		}
