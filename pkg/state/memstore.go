@@ -27878,6 +27878,13 @@ func unifiedDeadLetterEventID(source, sourceID string) string {
 	return uuid.NewSHA1(uuid.Nil, []byte(source+":"+sourceID)).String()
 }
 
+// queueReceiptDeadLetterOrigin mirrors production_dead_letter_events
+// (ADR-20261022203653): a queue message's push receipt is audit evidence, and
+// its invocation is the message's one unified dead-letter entry.
+func queueReceiptDeadLetterOrigin(source, origin string) bool {
+	return source == "trigger_record" && origin == "queue"
+}
+
 func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 	out := make([]DeadLetterEvent, 0)
 	for _, inv := range m.invocations {
@@ -27922,7 +27929,7 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 			continue
 		}
 		trigger, ok := m.triggers[dl.TriggerID.String()]
-		if !ok || !sameMemUUID(trigger.AppID.String(), appID) {
+		if !ok || !sameMemUUID(trigger.AppID.String(), appID) || queueReceiptDeadLetterOrigin("trigger_record", trigger.Kind) {
 			continue
 		}
 		createdAt := time.Time{}
@@ -28049,7 +28056,7 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 		seen[ev.ID] = struct{}{}
 	}
 	for id, ev := range m.deadLetterSnapshots {
-		if _, purged := m.deadLetterPurged[id]; purged {
+		if _, purged := m.deadLetterPurged[id]; purged || queueReceiptDeadLetterOrigin(ev.Source, ev.Origin) {
 			continue
 		}
 		if ev.Source == "invocation" {
