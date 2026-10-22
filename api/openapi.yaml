@@ -103398,6 +103398,10 @@ components:
         platform_tenant_required:
           type: boolean
           description: "Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override. Omitted preserves existing app policy; new apps default to false."
+        visibility:
+          type: string
+          enum: [internal]
+          description: "Present when the app is or will be internal (no public route): an existing internal app, or a new Compose service without `ports:` (ADR-20261022131852). Omitted means public."
         root_dir:
           type: string
           example: ""

@@ -9,6 +9,7 @@ from attrs import field as _attrs_field
 from ..models.plan_workload_action import PlanWorkloadAction, check_plan_workload_action
 from ..models.plan_workload_class import PlanWorkloadClass, check_plan_workload_class
 from ..models.plan_workload_tier import PlanWorkloadTier, check_plan_workload_tier
+from ..models.plan_workload_visibility import PlanWorkloadVisibility, check_plan_workload_visibility
 from ..models.preview_service_calls_policy import PreviewServiceCallsPolicy, check_preview_service_calls_policy
 from ..models.service_binding_policy import ServiceBindingPolicy, check_service_binding_policy
 from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
@@ -46,6 +47,9 @@ class PlanWorkload:
     platform_tenant_required: bool | Unset = UNSET
     """Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
     Omitted preserves existing app policy; new apps default to false."""
+    visibility: PlanWorkloadVisibility | Unset = UNSET
+    """Present when the app is or will be internal (no public route): an existing internal app, or a new Compose
+    service without `ports:` (ADR-20261022131852). Omitted means public."""
     dockerfile: str | Unset = UNSET
     image: str | Unset = UNSET
     """Normalized prebuilt OCI image for a workload without build. Tags are resolved and pinned by the image worker
@@ -128,6 +132,10 @@ class PlanWorkload:
         app_slug = self.app_slug
 
         platform_tenant_required = self.platform_tenant_required
+
+        visibility: str | Unset = UNSET
+        if not isinstance(self.visibility, Unset):
+            visibility = self.visibility
 
         dockerfile = self.dockerfile
 
@@ -225,6 +233,8 @@ class PlanWorkload:
             field_dict["app_slug"] = app_slug
         if platform_tenant_required is not UNSET:
             field_dict["platform_tenant_required"] = platform_tenant_required
+        if visibility is not UNSET:
+            field_dict["visibility"] = visibility
         if dockerfile is not UNSET:
             field_dict["dockerfile"] = dockerfile
         if image is not UNSET:
@@ -297,6 +307,13 @@ class PlanWorkload:
         app_slug = d.pop("app_slug", UNSET)
 
         platform_tenant_required = d.pop("platform_tenant_required", UNSET)
+
+        _visibility = d.pop("visibility", UNSET)
+        visibility: PlanWorkloadVisibility | Unset
+        if isinstance(_visibility, Unset):
+            visibility = UNSET
+        else:
+            visibility = check_plan_workload_visibility(_visibility)
 
         dockerfile = d.pop("dockerfile", UNSET)
 
@@ -412,6 +429,7 @@ class PlanWorkload:
             public_url=public_url,
             app_slug=app_slug,
             platform_tenant_required=platform_tenant_required,
+            visibility=visibility,
             dockerfile=dockerfile,
             image=image,
             image_healthcheck=image_healthcheck,
