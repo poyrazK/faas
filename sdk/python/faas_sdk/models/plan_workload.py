@@ -70,7 +70,8 @@ class PlanWorkload:
     release on the captured same-project, same-environment dependency deployment."""
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
     """Caller-side authorization policy for internal service requests. `account` preserves same-account
-    reachability; `declared` permits only targets present in the caller's service bindings."""
+    reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits
+    every service in the caller's own project (ADR-20261022111119)."""
     service_reliability: ServiceReliabilityPolicies | Unset = UNSET
     """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
     bindings may appear."""
