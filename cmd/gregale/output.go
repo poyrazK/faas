@@ -22,9 +22,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -300,6 +302,9 @@ func PrintUsage(w io.Writer, usage, topic string) {
 // PrintUsage remains the public call site so the doc-slug audit can continue
 // checking literal command topics.
 func printUsage(w io.Writer, usage, topic string) {
+	if flagHelpPrinted {
+		return
+	}
 	if jsonOutput && !jsonUsageHelp {
 		_ = writeJSONProblemWithExit(w, api.Problem{
 			Type:    docsSiteURL + "/errors/invalid-request",
@@ -311,8 +316,83 @@ func printUsage(w io.Writer, usage, topic string) {
 		}, 1)
 		return
 	}
-	_, _ = fmt.Fprintf(w, "%s\n", usage)
+	_, _ = fmt.Fprintf(w, "%s\n", compactUsage(usage))
 	_, _ = fmt.Fprintf(w, "  Docs: %s\n", docsURLForTopic(topic))
+}
+
+// usageSynopsisLimit bounds the usage line printed after a bad invocation.
+// Longer synopses list every flag on one line; --help groups and explains
+// them. JSON problems keep the full synopsis for scripts.
+const usageSynopsisLimit = 160
+
+var (
+	usageCommandWord = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	usagePlaceholder = regexp.MustCompile(`^(<[^<>|\[\]]+>|[A-Z][A-Z0-9_]*)$`)
+	usageVerbChoice  = regexp.MustCompile(`^[<\[(]?[a-z][a-z0-9-]*\|`)
+)
+
+// compactUsage shortens an over-long synopsis to its command path and
+// leading positionals, then names the --help command that lists every
+// option. The pointer stops at the first placeholder so it always runs as
+// typed. Lines after the first, such as the specific error, are kept.
+func compactUsage(usage string) string {
+	first, rest, hasRest := strings.Cut(usage, "\n")
+	if utf8.RuneCountInString(first) <= usageSynopsisLimit {
+		return usage
+	}
+	const prefix = "usage: gregale "
+	body, ok := strings.CutPrefix(first, prefix)
+	if !ok {
+		return usage
+	}
+	// A trailing "; <prose>" after the synopsis says what was wrong; keep it.
+	note := ""
+	if i := strings.LastIndex(body, "; "); i >= 0 && !strings.ContainsAny(body[i+2:], "[]<>|") {
+		body, note = body[:i], body[i+2:]
+	}
+	fields := strings.Fields(body)
+	var synopsis, helpPath []string
+	i := 0
+	for ; i < len(fields); i++ {
+		field := fields[i]
+		if usageCommandWord.MatchString(field) {
+			synopsis = append(synopsis, field)
+			if len(synopsis) == len(helpPath)+1 {
+				helpPath = append(helpPath, field)
+			}
+			continue
+		}
+		if !usagePlaceholder.MatchString(field) {
+			break
+		}
+		synopsis = append(synopsis, field)
+	}
+	if len(helpPath) == 0 {
+		return usage
+	}
+	remaining := strings.Join(fields[i:], " ")
+	hasFlags := strings.Contains(remaining, "--")
+	switch {
+	case remaining == "":
+	case usageVerbChoice.MatchString(remaining) && strings.HasPrefix(remaining, "<"):
+		synopsis = append(synopsis, "<command>")
+	case usageVerbChoice.MatchString(remaining):
+		synopsis = append(synopsis, "[command]")
+	case !hasFlags:
+		synopsis = append(synopsis, "...")
+	}
+	if hasFlags {
+		synopsis = append(synopsis, "[flags]")
+	}
+	out := prefix + strings.Join(synopsis, " ")
+	if note != "" {
+		out += "\n  " + note
+	}
+	out += "\n  All options: gregale " + strings.Join(helpPath, " ") + " --help"
+	if hasRest {
+		out += "\n" + rest
+	}
+	return out
 }
 
 // LiveTicker is a per-command redraw buffer for tabular progress UI
