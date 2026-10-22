@@ -68,7 +68,7 @@ export type UploadDeployOptions = {
    */
   release_at?: string;
   /**
-   * Slack or email notification channels told when the scheduled release starts or cannot start; requires release_at.
+   * Slack or email notification channels told when this upload, scheduled with release_at, starts or cannot start.
    */
   release_notify?: Array<string>;
 };

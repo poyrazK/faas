@@ -110,8 +110,8 @@ class CreateDeploymentRequest:
     """Build this deployment now, keep it live without traffic, and start its production rollout at this time;
     deploy freezes are checked at that time (ADR-20261021152201)."""
     release_notify: list[str] | Unset = UNSET
-    """Slack or email notification channels told when the scheduled release starts or cannot start; requires
-    release_at."""
+    """Slack or email notification channels told when this deployment, scheduled with release_at, starts or cannot
+    start."""
     disable_startup_cpu_boost: bool | None | Unset = UNSET
     """Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."""
     full_rootfs_allow_auto: bool | None | Unset = UNSET

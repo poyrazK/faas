@@ -89415,7 +89415,7 @@ components:
           type: array
           maxItems: 5
           items: { type: string, minLength: 1, maxLength: 256 }
-          description: "Slack or email notification channels told when the scheduled release starts or cannot start; requires release_at."
+          description: "Slack or email notification channels told when this upload, scheduled with release_at, starts or cannot start."
 
     UploadStartResponse:
       description: "Body of POST /v1/uploads response. The session row persists for 24h; the reaper (cmd/apid/upload_session_reaper.go) flips `status='open'` rows whose `expires_at` has passed to 'expired' on a 5-min ticker. `chunk_size` is server-decided (8 MiB default; 16 MiB for Scale)."
@@ -90278,7 +90278,7 @@ components:
           type: array
           maxItems: 5
           items: { type: string, minLength: 1, maxLength: 256 }
-          description: "Slack or email notification channels told when the scheduled release starts or cannot start; requires release_at."
+          description: "Slack or email notification channels told when this source tarball, scheduled with release_at, starts or cannot start."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -98751,7 +98751,7 @@ components:
           type: array
           maxItems: 5
           items: { type: string, minLength: 1, maxLength: 256 }
-          description: "Slack or email notification channels told when the scheduled release starts or cannot start; requires release_at."
+          description: "Slack or email notification channels told when this deployment, scheduled with release_at, starts or cannot start."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -102492,7 +102492,7 @@ components:
           type: array
           maxItems: 5
           items: { type: string, minLength: 1, maxLength: 256 }
-          description: "Slack or email notification channels told when the scheduled release starts or cannot start; requires release_at."
+          description: "Slack or email notification channels told when this source ref, scheduled with release_at, starts or cannot start."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
