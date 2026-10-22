@@ -4198,6 +4198,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			followRollout:   !*noTraffic && followRolloutByDefault(),
 			darkDeploy:      *noTraffic,
 		})
+		// A source deploy that waited in human mode returned here without
+		// applying gregale.yaml's saved settings (worker, lifecycle, scaling,
+		// retry_policy); only JSON waits and image deploys applied them
+		// (Hunt 12 H12-30).
+		if code == 0 {
+			if err := applyManifestScaling(); err != nil {
+				return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
+			}
+		}
 		return code
 	}
 	// Issue #977 / ADR-116: the image-deploy path uses the JSON wire
