@@ -20,6 +20,11 @@ func TestParkAppParksFrozenInstances(t *testing.T) {
 		t.Fatalf("FreezeIdle = %v, %v; want frozen", handled, err)
 	}
 	destroys := *(*f.Vmm()).Destroys()
+	// `gregale park` sets the app's status, then schedd parks its instances.
+	parked := state.AppEvictedCold
+	if _, err := store.UpdateApp(ctx, f.App().ID, state.UpdateAppParams{Status: &parked}); err != nil {
+		t.Fatal(err)
+	}
 
 	acted, err := e.ParkApp(ctx, f.App().ID)
 	if err != nil {
