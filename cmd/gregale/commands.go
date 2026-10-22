@@ -458,6 +458,10 @@ func withoutRepeatedTitle(title, detail string) string {
 // Otherwise (UX §3.2), the leading `✗` glyph is dropped when stdout is
 // not a TTY or NO_COLOR is set; the body of each line is unchanged.
 func printErr(title string, err error) int {
+	if flagHelpPrinted {
+		// The parse failure that carried --help already answered it.
+		return 1
+	}
 	if errors.Is(err, context.Canceled) {
 		var recovery *deployRecoveryError
 		if !errors.As(err, &recovery) {
@@ -579,12 +583,32 @@ func printErr(title string, err error) int {
 
 const transportErrorCode = "transport_error"
 
+// submitsDeployments reports whether a command path can submit or change a
+// deployment, so a lost reply may hide an accepted release. Only these
+// commands tell the user to inspect deployment status before retrying.
+func submitsDeployments(path string) bool {
+	switch first, _, _ := strings.Cut(path, " "); first {
+	case "deploy", "start", "dev", "rollback", "init", "deploys", "deployment", "deployments", "traffic", "canary", "preview", "rollouts", "sites":
+		return true
+	}
+	switch path {
+	case "mcp deploy", "data-api deploy", "data-api release", "projects apply", "projects promote":
+		return true
+	}
+	return false
+}
+
 // transportProblem gives network failures the same stable, actionable shape
 // in human and JSON output. Keeping this client-local avoids pretending the
 // server returned a Problem when the request never reached it.
 func transportProblem(err error) api.Problem {
 	detail := "The Gregale API could not be reached."
-	hint := "Check your network connection and FAAS_API endpoint; run gregale profile check. Inspect deployment status before retrying a deploy."
+	hint := "Check your network connection and FAAS_API endpoint; run gregale profile check."
+	canceledHint := "Canceling the CLI request does not guarantee the server stopped it; check the result before retrying a change."
+	if submitsDeployments(invokedCommandPath) {
+		hint += " Inspect deployment status before retrying a deploy."
+		canceledHint = "Inspect deployment status before retrying a deploy; canceling the CLI request does not guarantee the server stopped it."
+	}
 	var dns *net.DNSError
 	var unknownCA x509.UnknownAuthorityError
 	var invalidCertificate x509.CertificateInvalidError
@@ -596,7 +620,7 @@ func transportProblem(err error) api.Problem {
 		detail = "The request timed out before the Gregale API responded."
 	case errors.Is(err, context.Canceled):
 		detail = "The request was canceled before the Gregale API responded."
-		hint = "Inspect deployment status before retrying a deploy; canceling the CLI request does not guarantee the server stopped it."
+		hint = canceledHint
 	case errors.As(err, &network) && network.Timeout():
 		detail = "The request timed out before the Gregale API responded."
 	case errors.As(err, &dns):

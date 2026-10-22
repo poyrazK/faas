@@ -351,3 +351,48 @@ func TestEvaluateCannotUseAnotherDeploymentsPassedEvidence(t *testing.T) {
 		t.Fatalf("confirmed selector blocked: %+v %v", report, err)
 	}
 }
+
+// A host that cannot run binding probes must not ask for `bindings verify`,
+// which it rejects as not implemented: missing evidence there is a coverage
+// gap the operator can waive, while a recorded failure still blocks.
+func TestEvaluateProbesUnavailableReportsWaivableCoverageGap(t *testing.T) {
+	unavailable, available := false, true
+	for _, tc := range []struct {
+		name          string
+		probes        *bool
+		status        string
+		allow         bool
+		wantPassed    bool
+		wantCode      string
+		wantStatus    string
+		wantPartially bool
+	}{
+		{name: "missing evidence without probes blocks honestly", probes: &unavailable, status: "unknown", wantCode: "verification_unavailable", wantStatus: "unsupported", wantPartially: true},
+		{name: "stale evidence without probes blocks honestly", probes: &unavailable, status: "stale", wantCode: "verification_unavailable", wantStatus: "unsupported", wantPartially: true},
+		{name: "explicit waiver passes with partial coverage", probes: &unavailable, status: "unknown", allow: true, wantPassed: true, wantStatus: "unsupported", wantPartially: true},
+		{name: "a recorded failure still blocks", probes: &unavailable, status: "failed", allow: true, wantCode: "verification_failed", wantStatus: "blocked"},
+		{name: "probes available keeps asking for verify", probes: &available, status: "unknown", allow: true, wantCode: "verification_unknown", wantStatus: "blocked"},
+		{name: "older server keeps asking for verify", status: "unknown", allow: true, wantCode: "verification_unknown", wantStatus: "blocked"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inventory, policy, now := fixture()
+			policy.AllowUnsupported = tc.allow
+			inventory.VerificationProbesAvailable = tc.probes
+			inventory.Bindings = inventory.Bindings[:1] // the service binding
+			inventory.Bindings[0].VerificationStatus, inventory.Bindings[0].Verification = tc.status, nil
+			report, err := Evaluate(inventory, policy, now)
+			if err != nil || report.Passed != tc.wantPassed || report.Bindings[0].Status != tc.wantStatus || (report.Coverage == "partial") != tc.wantPartially {
+				t.Fatalf("report = %+v, %v", report, err)
+			}
+			if tc.wantCode != "" && !slices.Contains(codes(report.Blockers), tc.wantCode) {
+				t.Fatalf("blockers = %v, want %s", codes(report.Blockers), tc.wantCode)
+			}
+			if tc.probes == &unavailable && slices.Contains(codes(report.Blockers), "verification_unknown") {
+				t.Fatalf("a host without probes still asks for bindings verify: %v", codes(report.Blockers))
+			}
+			if tc.allow && tc.wantPassed && !slices.Contains(codes(report.Warnings), "verification_unavailable") {
+				t.Fatalf("waived gap was not reported: %v", codes(report.Warnings))
+			}
+		})
+	}
+}

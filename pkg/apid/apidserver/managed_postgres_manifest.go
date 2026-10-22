@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -167,7 +168,7 @@ func (s *server) resolveManifestPostgresBindings(
 		environmentKey := dependency.EffectiveEnvironmentKey()
 		access := managedpostgres.CredentialAccess(dependency.EffectiveAccess())
 		// Application Auth is a dark launch: without it the mode is unknown.
-		if access == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(acct) {
+		if access == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: managedpostgres.Organization(ctx)}) {
 			return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid,
 				"Invalid manifest", fmt.Sprintf("database[%d]: access %q not in {read_write, read_only, migration, data_api}", i, access))
 		}

@@ -2,7 +2,9 @@
 
 - Status: Proposed. Built behind schedd's `owner_cache` switch, off by
   default. Amended 2026-10-21 ("Amendment: coordinated wakes"): the cache
-  serves a coordinated wake whose selection is the entry's.
+  serves a coordinated wake whose selection is the entry's. Amended
+  2026-10-22 ("Amendment: team organizations"): the cache serves no app of
+  a team organization.
 - Date: 2026-10-16
 - Builds on: ADR-1740 (frozen fast path), ADR-1151 (pause tiers), the
   scaling roadmap's wake rule (zero control-plane round trips per request,
@@ -335,5 +337,24 @@ restores alike.
 `EnsureWake`'s own reads before the coordinator (app, account, production
 deployment, scaling owner, budget) are not served from the cache. The app
 read decides ownership (`apps.node_id`), which the generation does not
-cover.
+cover. (A wake a thaw ticket serves takes the rest of its selection from
+the ticket instead; see ADR-1740's amendment of 2026-10-22.)
+
+## Amendment: team organizations (2026-10-22)
+
+An entry read the app's own account (`AccountByID`). The ordinary path
+admits under `state.AppResourceAccount`, which for an app of a team
+organization takes the status, plan and abuse hold from the organization's
+row, and `orgs` moves no generation. An entry could therefore admit a
+suspended organization's app, or admit it under the member's plan.
+
+The cache now serves only apps outside any organization or in a personal
+one, whose resource account is their own accounts row. For an app of a
+team organization the load stops after the app read and keeps a marker at
+the app's generation, so later wakes skip the cache without repeating that
+load; moving the app to another organization moves the generation.
+`schedd_owner_cache_total{outcome="organization"}` counts those wakes.
+Adding generation triggers on `orgs` (status, plan, abuse hold, deletion,
+resource ownership, fanning out to the organization's apps) would let the
+cache serve them too.
 

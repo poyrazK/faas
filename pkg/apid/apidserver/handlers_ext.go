@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/orgbilling"
 	"github.com/onebox-faas/faas/pkg/apid/release"
@@ -979,9 +980,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, environmentProblem)
 		return
 	}
-	var req api.UpdateAppRequest
-	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+	req, decodeErr := httpkit.DecodeUpdateAppRequest(r)
+	if decodeErr != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", decodeErr.Error()))
 		return
 	}
 	if problem := validateDeploySettingsCondition(req, environment); problem != nil {
@@ -1085,7 +1086,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("CPU profiling is unavailable on this installation"))
 		return
 	}
-	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingFor(acct) {
 		api.WriteProblem(w, api.ErrCapacity("request tracing is unavailable on this installation"))
 		return
 	}

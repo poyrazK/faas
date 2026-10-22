@@ -55,7 +55,7 @@ func explainServiceAuthorization(r *serviceAuthorizationExplanation, caller, tar
 		r.Result = "denied"
 		return
 	}
-	if caller.ServiceBindingPolicy != "" && caller.ServiceBindingPolicy != api.ServiceBindingPolicyAccount && caller.ServiceBindingPolicy != api.ServiceBindingPolicyDeclared {
+	if caller.ServiceBindingPolicy != "" && caller.ServiceBindingPolicy.Effective() != caller.ServiceBindingPolicy {
 		r.add("outbound", "indeterminate", "unknown_outbound_policy", "service_binding_policy", "Update the CLI to understand this policy.")
 		return
 	}
@@ -87,6 +87,8 @@ func explainServiceAuthorization(r *serviceAuthorizationExplanation, caller, tar
 	}
 	if caller.ServiceBindingPolicy.Effective() == api.ServiceBindingPolicyAccount {
 		r.add("outbound", "allowed", "account_policy", "service_binding_policy", "")
+	} else if caller.ServiceBindingPolicy == api.ServiceBindingPolicyProject && caller.ProjectID != "" && caller.ProjectID == target.ProjectID {
+		r.add("outbound", "allowed", "same_project", "service_binding_policy", "")
 	} else {
 		declared := false
 		for _, binding := range caller.ServiceBindings {

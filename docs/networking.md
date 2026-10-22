@@ -248,9 +248,17 @@ The same declared edges are exposed as service bindings by the app API and by
 `gregale bindings public-api`, alongside database, object-storage, queue,
 and outbound integration bindings. New project workloads use the `declared` caller policy: the gateway
 returns 403 for calls to services not listed in `depends_on`. Existing apps
-retain their persisted policy on reapply. For an intentional same-account
-escape hatch, set `x-gregale-service-policy: account` on the caller. The CLI
-reports declared service bindings as `enforced`.
+retain their persisted policy on reapply. To let a workload call every service
+in its own project without listing each one, set
+`x-gregale-service-policy: project` on the caller
+([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)).
+Calls to services outside the project still need `depends_on`, and a target's
+`x-gregale-allow-callers` list still applies. An undeclared sibling has no
+injected URL or `.internal` alias; call it at
+`http://<app-slug>.svc.gregale:10081`. For an intentional same-account escape
+hatch, set `x-gregale-service-policy: account` on the caller. Under the
+`declared` policy the CLI reports service bindings as `enforced`; under
+`project` and `account` it reports them as `declared`.
 
 `GET /v1/apps/{slug}/bindings` provides the shared binding inventory used by
 the CLI and SDKs. It batches app-scoped catalog reads for services, PostgreSQL,
@@ -505,7 +513,11 @@ Human output identifies blockers and remediation. JSON includes `passed`, the
 applied policy, scope and deployment, per-binding coverage, runtime counts,
 inventory issues and stable blocker codes such as `verification_expired`,
 `verification_scope_mismatch`, `runtime_stale`, `rotation_pending` and
-`verification_unsupported`. This is a point-in-time policy result from a
+`verification_unsupported`. On a control-plane host that does not run binding
+probes (deployment-attached app tasks disabled), missing or stale evidence is
+reported as `verification_unavailable` instead of asking for `bindings verify`;
+`--allow-unsupported` waives it like an unsupported probe, and a recorded
+failure still blocks. This is a point-in-time policy result from a
 best-effort projection. It does not prove application readiness or resident
 credential use; object-storage evidence covers bucket-list read access only.
 
@@ -1445,8 +1457,9 @@ redis-cli -h "$GREGALE_SERVICE_CACHE_HOST" -p 6379 PING
 ```
 
 The same caller policy as HTTP service calls applies when the connection
-opens: same account, the caller's `depends_on` (under the `declared` policy),
-the target's allowed callers, and preview scoping. A target that grants a
+opens: same account, the caller's `depends_on` (under the `declared` policy,
+and for targets outside the caller's project under `project`), the target's
+allowed callers, and preview scoping. A target that grants a
 caller only method/path scopes (`x-gregale-allow-call-scopes`) refuses that
 caller's raw TCP connections, because those scopes cannot be enforced on raw
 bytes.

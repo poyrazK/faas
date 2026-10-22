@@ -44,7 +44,7 @@ func (s *server) featureFlagScope(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Account key required", "project-wide flags require an account-scoped credential"))
 		return state.FeatureFlagScope{}, nil, false
 	}
-	if !s.platformFlagEnabled(platformflags.CustomerFlags, acct) {
+	if !s.platformFlagFor(platformflags.CustomerFlags, flagSubject(r, acct)) {
 		// Without a hint the CLI falls back to its generic 403 advice to
 		// check the profile and credentials, which this is not (hunt #9 H9-43).
 		hint := "Feature flags are not enabled on this Gregale installation; an operator must qualify them first. Your credentials are not the cause."
@@ -244,7 +244,7 @@ func (s *server) runtimeFeatureFlagScope(r *http.Request) (state.FeatureFlagScop
 	if environment == "" || environment == "default" {
 		environment = "production"
 	}
-	if !s.platformFlagEnabled(platformflags.CustomerFlags, acct) {
+	if !s.platformFlagFor(platformflags.CustomerFlags, appFlagSubject(acct, app)) {
 		return state.FeatureFlagScope{}, errFlagsNotReleased
 	}
 	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, app.ProjectID, environment)

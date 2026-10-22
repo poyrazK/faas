@@ -15,7 +15,7 @@ import (
 
 // waitApplicationReady applies the command gate after either network readiness
 // or an allowed no-bind characterization, within the same startup budget.
-func (v *JailerVMM) waitApplicationReady(ctx context.Context, l Lease, path string, grpc bool, service string, startupS int, mode string, required bool, receipt *characterizationReceipt) error {
+func (v *JailerVMM) waitApplicationReady(ctx context.Context, l Lease, path string, grpc bool, service string, startupS int, mode string, workerPushDelivery bool, required bool, receipt *characterizationReceipt) error {
 	if required {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, readyTimeoutFor(v.readyTimeout, startupS))
@@ -23,7 +23,7 @@ func (v *JailerVMM) waitApplicationReady(ctx context.Context, l Lease, path stri
 	}
 	var err error
 	if receipt != nil {
-		err = v.waitReadyOrCharacterized(ctx, l, path, grpc, service, startupS, mode, receipt)
+		err = v.waitReadyOrCharacterized(ctx, l, path, grpc, service, startupS, mode, workerPushDelivery, receipt)
 	} else {
 		err = v.waitReadyWithProbe(ctx, l, path, grpc, service, startupS)
 	}

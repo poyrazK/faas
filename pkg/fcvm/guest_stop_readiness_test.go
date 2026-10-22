@@ -155,7 +155,7 @@ func TestGuestStoppedDuringStartupAttributesSupervisedCrashesToTheApp(t *testing
 // spec: §6.1, §12
 // A characterization report of a startup exit is the workload's own exit code.
 func TestCharacterizationStartupExitIsAnAppStartupCrash(t *testing.T) {
-	terminal, err := characterizationBootOutcome(api.CharacterizationReport{ExitCode: 17, LogTail: "boom"}, api.ExecutionModeRequest)
+	terminal, err := characterizationBootOutcome(api.CharacterizationReport{ExitCode: 17, LogTail: "boom"}, api.ExecutionModeRequest, false)
 	p := api.AsProblem(err)
 	if !terminal || p == nil || p.Code != api.CodeAppStartupCrash || !strings.Contains(p.Detail, "code 17") || !strings.Contains(p.Detail, "boom") {
 		t.Fatalf("startup exit = (%v, %#v), want terminal %s with exit code and tail", terminal, err, api.CodeAppStartupCrash)
@@ -177,7 +177,7 @@ func TestExecutionModeConflictIsCustomerCaused(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			terminal, err := characterizationBootOutcome(tt.report, tt.mode)
+			terminal, err := characterizationBootOutcome(tt.report, tt.mode, false)
 			p := api.AsProblem(err)
 			if !terminal || p == nil || p.Code != api.CodeExecutionModeConflict || p.Status != 422 || !strings.Contains(p.Detail, tt.report.ObservedClass) {
 				t.Fatalf("conflict = (%v, %#v), want terminal 422 %s naming %q", terminal, err, api.CodeExecutionModeConflict, tt.report.ObservedClass)
@@ -186,6 +186,34 @@ func TestExecutionModeConflictIsCustomerCaused(t *testing.T) {
 	}
 	if !slices.Contains(api.CustomerCausedDeploymentFailureCodes(), api.CodeExecutionModeConflict) {
 		t.Fatalf("%s is not customer-caused; the status page would count it as a platform failure", api.CodeExecutionModeConflict)
+	}
+}
+
+// spec: §6.1, ADR 20261021153953
+// Push deliveries are private HTTP POSTs, so a push-bound worker may boot with
+// its delivery listener bound. Every other server shape still conflicts.
+func TestPushBoundWorkerMayBindItsDeliveryListener(t *testing.T) {
+	bound := api.CharacterizationReport{ObservedClass: "http", ObservedPort: 8080, ExitCode: -1}
+	if terminal, err := characterizationBootOutcome(bound, api.ExecutionModeWorker, true); !terminal || err != nil {
+		t.Fatalf("push-bound worker with listener = (%v, %v), want ready", terminal, err)
+	}
+	noBind := api.CharacterizationReport{ObservedClass: "worker", ExitCode: -1}
+	if terminal, err := characterizationBootOutcome(noBind, api.ExecutionModeWorker, true); !terminal || err != nil {
+		t.Fatalf("push-bound worker without listener = (%v, %v), want ready", terminal, err)
+	}
+	for _, report := range []api.CharacterizationReport{
+		{ObservedClass: "job", ExitCode: 0},
+		{ObservedClass: "grpc", ObservedPort: 50051, ExitCode: -1},
+		{ObservedClass: "graphql", ObservedPort: 8080, ExitCode: -1},
+	} {
+		terminal, err := characterizationBootOutcome(report, api.ExecutionModeWorker, true)
+		if p := api.AsProblem(err); !terminal || p == nil || p.Code != api.CodeExecutionModeConflict {
+			t.Fatalf("push-bound worker %q = (%v, %v), want %s", report.ObservedClass, terminal, err, api.CodeExecutionModeConflict)
+		}
+	}
+	// The flag never widens other modes: a job that serves still conflicts.
+	if terminal, err := characterizationBootOutcome(bound, api.ExecutionModeJob, true); api.AsProblem(err) == nil || !terminal {
+		t.Fatalf("job with push flag serving = (%v, %v), want conflict", terminal, err)
 	}
 }
 

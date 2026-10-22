@@ -509,6 +509,9 @@ type Querier interface {
 	// catalog identity. Ownership and runtime evidence are deliberately absent.
 	CopyProjectEnvironmentSecretReferences(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretReferencesParams) (int64, error)
 	CopyProjectEnvironmentSecretSuppressions(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretSuppressionsParams) error
+	// An environment clone copies the source environment's shared secrets as it
+	// copies app secrets: the envelope is not bound to an environment.
+	CopyProjectEnvironmentSecrets(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretsParams) (int64, error)
 	CountActiveBindingVerificationRuns(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountActiveMigrationVerifications(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountActiveMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
@@ -931,6 +934,12 @@ type Querier interface {
 	// Holding a deployment is independent of whether its execution lease expired.
 	EnvironmentQualificationNetworkInstances(ctx context.Context, db DBTX, arg EnvironmentQualificationNetworkInstancesParams) ([]EnvironmentQualificationNetworkInstancesRow, error)
 	EnvironmentQualificationNodeUsedMB(ctx context.Context, db DBTX, arg EnvironmentQualificationNodeUsedMBParams) (int64, error)
+	// NULL blocks activation; 'infinity' means the candidate has no object storage binding.
+	EnvironmentQualificationObjectStorageDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationObjectStorageDeadlineParams) (pgtype.Timestamptz, error)
+	// NULL blocks activation; 'infinity' means the candidate has no active outbound binding.
+	EnvironmentQualificationOutboundDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationOutboundDeadlineParams) (pgtype.Timestamptz, error)
+	// NULL blocks activation; 'infinity' means the candidate has no PostgreSQL binding.
+	EnvironmentQualificationPostgresDeadline(ctx context.Context, db DBTX, arg EnvironmentQualificationPostgresDeadlineParams) (pgtype.Timestamptz, error)
 	EnvironmentQualificationRestoreCurrent(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreCurrentParams) (bool, error)
 	EnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error)
 	EnvironmentQualificationRestoreReservation(ctx context.Context, db DBTX, arg EnvironmentQualificationRestoreReservationParams) (EnvironmentQualificationRestoreReservation, error)
@@ -4302,6 +4311,15 @@ type Querier interface {
 	PeekProductionQueue(ctx context.Context, db DBTX, arg PeekProductionQueueParams) ([]Invocation, error)
 	PendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsEffect, error)
 	PendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsRuntimeEffect, error)
+	// ADR-20261019121546: settled managed S3 credentials of a graph's enforced
+	// candidates without a receipt for this attempt, with their sealed deliveries.
+	PendingEnvironmentQualificationObjectStorageChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationObjectStorageChecksRow, error)
+	// ADR-20261019152416: probe-ready outbound bindings of enforced candidates
+	// with a live lease and no receipt for their current revision, soonest lease first.
+	PendingEnvironmentQualificationOutboundProbes(ctx context.Context, db DBTX, rowLimit int32) ([]PendingEnvironmentQualificationOutboundProbesRow, error)
+	// ADR-20261019072523: settled managed PostgreSQL deliveries of a graph's
+	// enforced candidates that have no receipt for their current credential.
+	PendingEnvironmentQualificationPostgresChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationPostgresChecksRow, error)
 	PendingLayerArtifactDeletions(ctx context.Context, db DBTX) ([]PendingLayerArtifactDeletionsRow, error)
 	PendingManagedPostgresCutoverPreflights(ctx context.Context, db DBTX, batchSize int32) ([]ManagedPostgresCutover, error)
 	PendingPromotionHealth(ctx context.Context, db DBTX, batchSize int32) ([]PendingPromotionHealthRow, error)
@@ -4362,7 +4380,11 @@ type Querier interface {
 	ProductBillingStatement(ctx context.Context, db DBTX, arg ProductBillingStatementParams) (ProductControlBillingDocument, error)
 	ProductBillingWaive(ctx context.Context, db DBTX, arg ProductBillingWaiveParams) error
 	ProductControlCountStarts(ctx context.Context, db DBTX, arg ProductControlCountStartsParams) (int64, error)
+	// A feature's starts admitted during the customer's trial, which count toward
+	// no included starts (ADR-20261021195901).
+	ProductControlCountTrialStarts(ctx context.Context, db DBTX, arg ProductControlCountTrialStartsParams) (int64, error)
 	ProductControlCustomerByAuthOrganization(ctx context.Context, db DBTX, arg ProductControlCustomerByAuthOrganizationParams) (ProductControlCustomerByAuthOrganizationRow, error)
+	ProductControlCustomerForUpdate(ctx context.Context, db DBTX, arg ProductControlCustomerForUpdateParams) (ProductControlCustomerForUpdateRow, error)
 	ProductControlGetCustomer(ctx context.Context, db DBTX, arg ProductControlGetCustomerParams) (ProductControlGetCustomerRow, error)
 	ProductControlGetHead(ctx context.Context, db DBTX, arg ProductControlGetHeadParams) (ProductControlGetHeadRow, error)
 	ProductControlGetReceipt(ctx context.Context, db DBTX, arg ProductControlGetReceiptParams) (ProductControlGetReceiptRow, error)
@@ -4371,17 +4393,23 @@ type Querier interface {
 	ProductControlListCustomers(ctx context.Context, db DBTX, arg ProductControlListCustomersParams) ([]ProductControlListCustomersRow, error)
 	ProductControlLiveDefinition(ctx context.Context, db DBTX, arg ProductControlLiveDefinitionParams) (string, error)
 	ProductControlManagedApp(ctx context.Context, db DBTX, arg ProductControlManagedAppParams) (bool, error)
-	// The plans a customer held in a month: the one in force when it starts and
-	// those assigned during it, each with when it was first held and whether it
-	// includes their first assignment ever (ADR-20261021154511).
+	// The assignments a customer held during a month, each from since until the
+	// next one (null while still held), and whether it was their first ever
+	// (ADR-20261021154511, ADR-20261021195901).
 	ProductControlMonthPlans(ctx context.Context, db DBTX, arg ProductControlMonthPlansParams) ([]ProductControlMonthPlansRow, error)
 	ProductControlOwnedApp(ctx context.Context, db DBTX, arg ProductControlOwnedAppParams) (pgtype.UUID, error)
 	ProductControlPutRevision(ctx context.Context, db DBTX, arg ProductControlPutRevisionParams) error
 	// A change of revision or plan is appended to the plan history in the same
-	// statement, so every writer records it (ADR-20261021154511).
+	// statement, so every writer records it (ADR-20261021154511). A customer
+	// without a trial starts one when assigned a plan offering it, and keeps
+	// any trial they had (ADR-20261021195901).
 	ProductControlSetCustomer(ctx context.Context, db DBTX, arg ProductControlSetCustomerParams) error
 	ProductControlSetHead(ctx context.Context, db DBTX, arg ProductControlSetHeadParams) error
+	// Moves a running trial's end (ADR-20261021195901); the caller checked it
+	// under the row lock.
+	ProductControlSetTrialEnd(ctx context.Context, db DBTX, arg ProductControlSetTrialEndParams) error
 	ProductControlSettleReceipt(ctx context.Context, db DBTX, arg ProductControlSettleReceiptParams) error
+	ProductControlTrialStartsByFeature(ctx context.Context, db DBTX, arg ProductControlTrialStartsByFeatureParams) ([]ProductControlTrialStartsByFeatureRow, error)
 	ProductControlUsage(ctx context.Context, db DBTX, arg ProductControlUsageParams) ([]ProductControlUsageRow, error)
 	// One statement observes all sources with one PostgreSQL snapshot. No customer
 	// Operations or Auth journals are read; no signed reviews, inputs or result payloads are returned.
@@ -5112,6 +5140,9 @@ type Querier interface {
 	RecordEnvironmentGitOpsEvent(ctx context.Context, db DBTX, arg RecordEnvironmentGitOpsEventParams) error
 	RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg RecordEnvironmentGitSourcePollParams) error
 	RecordEnvironmentQualificationJobSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationJobSmokeReceiptParams) (EnvironmentQualificationJobSmokeReceipt, error)
+	RecordEnvironmentQualificationObjectStorageReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationObjectStorageReceiptParams) error
+	RecordEnvironmentQualificationOutboundReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationOutboundReceiptParams) error
+	RecordEnvironmentQualificationPostgresReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationPostgresReceiptParams) error
 	RecordEnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error)
 	RecordEnvironmentQualificationServiceExchange(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationServiceExchangeParams) error
 	RecordEnvironmentQualificationSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSmokeReceiptParams) (EnvironmentQualificationSmokeReceipt, error)
@@ -5412,6 +5443,10 @@ type Querier interface {
 	// Resolve an app's active insights that no evaluation has observed since
 	// stale_before.
 	ResolveStaleRouteInsights(ctx context.Context, db DBTX, arg ResolveStaleRouteInsightsParams) (int64, error)
+	// ADR-051 amendment (2026-10-22): moves a booted instance's proof from the
+	// fingerprint it was published with to the one its own observed workload
+	// class gives. Only the current wake's proof, and only from that fingerprint.
+	RestampRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg RestampRuntimeInstanceConfigProofParams) (int64, error)
 	RestoreCanaryBaselineDefault(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	RestoreDeploymentHTTPcrons(ctx context.Context, db DBTX, arg RestoreDeploymentHTTPcronsParams) (int64, error)
 	RestoreProfileGateStableTraffic(ctx context.Context, db DBTX, arg RestoreProfileGateStableTrafficParams) (int64, error)
@@ -5760,6 +5795,9 @@ type Querier interface {
 	SetMigrationAdmissionCleaned(ctx context.Context, db DBTX, arg SetMigrationAdmissionCleanedParams) (int64, error)
 	SetMigrationAdmissionCleaning(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	SetMigrationSourceRetiring(ctx context.Context, db DBTX, leaseToken string) (int64, error)
+	// ADR-051: the workload class a cold boot observed. The caller holds the app
+	// row exclusively.
+	SetObservedAppWorkloadClass(ctx context.Context, db DBTX, arg SetObservedAppWorkloadClassParams) (int64, error)
 	SetOperationScheduleState(ctx context.Context, db DBTX, arg SetOperationScheduleStateParams) (CustomerOperationSchedule, error)
 	SetOperatorParkBarrier(ctx context.Context, db DBTX, arg SetOperatorParkBarrierParams) (int64, error)
 	SetOperatorParkInstanceState(ctx context.Context, db DBTX, arg SetOperatorParkInstanceStateParams) (int64, error)

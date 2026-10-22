@@ -25,14 +25,14 @@ func triggerDeliveryOrDefault(delivery string) string {
 // nil means record delivery. Batch delivery is a preview until
 // FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED=1, or until the
 // trigger_batch_delivery platform flag (ADR-1700) includes the account.
-func (s *server) requestedTriggerDelivery(acct state.Account, kind api.TriggerKind, requested *string) (string, *api.Problem) {
+func (s *server) requestedTriggerDelivery(subject platformflags.Subject, kind api.TriggerKind, requested *string) (string, *api.Problem) {
 	if requested == nil {
 		return api.TriggerDeliveryRecord, nil
 	}
 	if err := api.ValidateTriggerDelivery(kind, *requested); err != nil {
 		return "", api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger delivery", err.Error())
 	}
-	if *requested == api.TriggerDeliveryBatch && !s.platformFlagOr(platformflags.TriggerBatchDelivery, acct, s.triggerBatchDeliveryEnabled) {
+	if *requested == api.TriggerDeliveryBatch && !s.platformFlagOr(platformflags.TriggerBatchDelivery, subject, s.triggerBatchDeliveryEnabled) {
 		return "", api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger delivery",
 			"delivery: batch is a preview that is not enabled on this platform; use delivery: record")
 	}
