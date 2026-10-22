@@ -180,8 +180,11 @@ func tracedPgStore(t *testing.T) (*state.PgStore, *pgxpool.Pool, *statementTrace
 	tracer := &statementTracer{}
 	cfg.ConnConfig.Tracer = tracer
 	// Production pools keep idle connections; without them concurrent reads
-	// would wait for new connections and look sequential.
+	// would wait for new connections and look sequential. pgxpool's default
+	// size follows the CPU count (4 on a 2-CPU CI runner, one of them held
+	// for LISTEN below), so the pool takes schedd's production budget.
 	cfg.MinConns = 8
+	cfg.MaxConns = db.DaemonMaxConnections["schedd"]
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("traced pool: %v", err)
