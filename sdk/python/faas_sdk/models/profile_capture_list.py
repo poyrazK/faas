@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ProfileCaptureList")
 
 @_attrs_define
 class ProfileCaptureList:
+    """An app's profile captures, newest first."""
+
     captures: list[ProfileCapture]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

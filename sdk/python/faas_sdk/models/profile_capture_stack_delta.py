@@ -23,12 +23,12 @@ class ProfileCaptureStackDelta:
     baseline: int
     candidate: int
     delta: int
-    children: list[ProfileCaptureStackDelta]
     file: str | Unset = UNSET
     line: int | Unset = UNSET
     source: ProfileSourceLocation | Unset = UNSET
     """Safely mapped sampled source line at the deployment's recorded commit. Omitted for missing symbols, unknown
     paths, generated adapters, or exhausted link bounds. Private repository access is enforced by GitHub."""
+    children: list[ProfileCaptureStackDelta] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,11 +40,6 @@ class ProfileCaptureStackDelta:
 
         delta = self.delta
 
-        children = []
-        for children_item_data in self.children:
-            children_item = children_item_data.to_dict()
-            children.append(children_item)
-
         file = self.file
 
         line = self.line
@@ -52,6 +47,13 @@ class ProfileCaptureStackDelta:
         source: dict[str, Any] | Unset = UNSET
         if not isinstance(self.source, Unset):
             source = self.source.to_dict()
+
+        children: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.children, Unset):
+            children = []
+            for children_item_data in self.children:
+                children_item = children_item_data.to_dict()
+                children.append(children_item)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -61,7 +63,6 @@ class ProfileCaptureStackDelta:
                 "baseline": baseline,
                 "candidate": candidate,
                 "delta": delta,
-                "children": children,
             }
         )
         if file is not UNSET:
@@ -70,6 +71,8 @@ class ProfileCaptureStackDelta:
             field_dict["line"] = line
         if source is not UNSET:
             field_dict["source"] = source
+        if children is not UNSET:
+            field_dict["children"] = children
 
         return field_dict
 
@@ -86,13 +89,6 @@ class ProfileCaptureStackDelta:
 
         delta = d.pop("delta")
 
-        children = []
-        _children = d.pop("children")
-        for children_item_data in _children:
-            children_item = ProfileCaptureStackDelta.from_dict(children_item_data)
-
-            children.append(children_item)
-
         file = d.pop("file", UNSET)
 
         line = d.pop("line", UNSET)
@@ -104,15 +100,24 @@ class ProfileCaptureStackDelta:
         else:
             source = ProfileSourceLocation.from_dict(_source)
 
+        _children = d.pop("children", UNSET)
+        children: list[ProfileCaptureStackDelta] | Unset = UNSET
+        if _children is not UNSET:
+            children = []
+            for children_item_data in _children:
+                children_item = ProfileCaptureStackDelta.from_dict(children_item_data)
+
+                children.append(children_item)
+
         profile_capture_stack_delta = cls(
             name=name,
             baseline=baseline,
             candidate=candidate,
             delta=delta,
-            children=children,
             file=file,
             line=line,
             source=source,
+            children=children,
         )
 
         profile_capture_stack_delta.additional_properties = d
