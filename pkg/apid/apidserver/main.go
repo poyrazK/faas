@@ -888,16 +888,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
 		startProfileDeploymentChecks(ctx, srv, log)
-		// API monetization workers pause while its runtime setting is off
-		// (ADR-20261018090210).
-		srv.billingRuns.Enabled = srv.apiMonetizationEnabled
-		srv.statementInvoices.Enabled = srv.apiMonetizationEnabled
-		srv.consumerCredits.Enabled = srv.apiMonetizationEnabled
-		srv.consumerControls.Enabled = srv.apiMonetizationEnabled
+		// API monetization workers pause while no account has it
+		// (ADR-20261018090210) and skip accounts it is not released to
+		// (ADR-20261020170649).
+		monetizationOn := func() bool { return !srv.apiMonetizationOff() }
+		srv.billingRuns.Enabled, srv.billingRuns.Released = monetizationOn, srv.apiMonetizationFor
+		srv.statementInvoices.Enabled, srv.statementInvoices.Released = monetizationOn, srv.apiMonetizationFor
+		srv.consumerCredits.Enabled, srv.consumerCredits.Released = monetizationOn, srv.apiMonetizationFor
+		srv.consumerControls.Enabled, srv.consumerControls.Released = monetizationOn, srv.apiMonetizationFor
+		srv.consumerSignup.Enabled = monetizationOn
 		srv.billingRuns.Start(ctx, log)                // ADR-1503
 		srv.statementInvoices.Start(ctx, log)          // ADR-1504
 		srv.consumerCredits.Start(ctx, log)            // ADR-1306
 		srv.consumerControls.Start(ctx, log)           // ADR-1315
+		srv.consumerSignup.Start(ctx, log)             // ADR-20261021143000
 		srv.productControl.StartOverdueHolds(ctx, log) // ADR-20261018212918
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640

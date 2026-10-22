@@ -64,7 +64,7 @@ func TestSourceBuildAppliesComposeHealthcheck(t *testing.T) {
 		{"frozen override wins over the app's", nil, captured, &api.ComposeHealthcheck{Test: []string{"NONE"}}, []string{"CMD", "/app/check"}, 2, true, true},
 		{"timing override on the image's own check", []string{"CMD", "/image"}, freeze(&api.ComposeHealthcheck{Retries: 5}), nil, []string{"CMD", "/image"}, 5, true, true},
 		{"disabled override", []string{"CMD", "/image"}, freeze(&api.ComposeHealthcheck{Test: []string{"NONE"}}), nil, []string{"NONE"}, 0, false, true},
-		{"an app override alone is not applied (stage retries carry no profile)", []string{"CMD", "/image"}, nil, &api.ComposeHealthcheck{Retries: 5}, []string{"CMD", "/image"}, 0, false, false},
+		{"an app override alone is not applied", []string{"CMD", "/image"}, nil, &api.ComposeHealthcheck{Retries: 5}, []string{"CMD", "/image"}, 0, false, false},
 		{"no override keeps the image check unenforced", []string{"CMD", "/image"}, nil, nil, []string{"CMD", "/image"}, 0, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

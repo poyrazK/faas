@@ -238,6 +238,9 @@ func (s *Service) checkTenantsOnce(ctx context.Context) error {
 	}
 	var firstErr error
 	for _, c := range due {
+		if !s.released(c.AccountID) {
+			continue // rechecked when its lease ends
+		}
 		if _, err := s.checkTenant(ctx, c); err != nil && firstErr == nil {
 			firstErr = err
 		}

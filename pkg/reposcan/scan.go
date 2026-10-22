@@ -110,8 +110,9 @@ type Workload struct {
 	DockerfileBuild  *api.DockerfileBuildOptions
 	Image            string                  // prebuilt OCI image when the source declares one
 	ImageHealthcheck *api.ComposeHealthcheck // partial Compose healthcheck override, prebuilt or built
-	// ImageProcess carries a prebuilt image's Compose entrypoint, user,
-	// working_dir and stop contract (ADR-1337). Nil inherits the image.
+	// ImageProcess carries the Compose entrypoint, user, working_dir and stop
+	// contract (ADR-1337). A built service's entrypoint is folded into its
+	// Command instead (ADR-20261022160000). Nil inherits the image.
 	ImageProcess *api.ComposeProcess
 	Command      []string // start-command override (compose `command:`, Procfile rhs)
 	// CommandShell distinguishes shell-form strings from exec-form argv. The

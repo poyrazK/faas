@@ -310,7 +310,7 @@ func cmdWhoami() int {
 	}
 	acct, err := client.Whoami(context.Background())
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not read account", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(acct))
@@ -326,7 +326,7 @@ func cmdApps() int {
 	}
 	apps, err := client.ListApps(context.Background())
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list apps", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(apps))

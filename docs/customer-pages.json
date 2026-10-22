@@ -18,6 +18,7 @@
     {"path": "builds", "source": "docs/build.md"},
     {"path": "change-timeline", "source": "docs/change-timeline.md"},
     {"path": "cli", "source": "docs/cli-reference.md"},
+    {"path": "code-workflows", "source": "docs/code-workflows.md"},
     {"path": "companions", "source": "docs/companions.md"},
     {"path": "crash-snapshots", "source": "docs/crash-snapshots.md"},
     {"path": "custom-domains", "source": "docs/domains.md"},
