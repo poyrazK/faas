@@ -6516,6 +6516,16 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "seal_domain_probe",
+    "columns": [
+      "domain",
+      "recipient",
+      "sealed_blob",
+      "updated_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "function_migration_destinations",
     "columns": [
       "grant_data",
@@ -6709,6 +6719,7 @@
     "table": "github_webhook_secrets",
     "columns": [
       "installation_id",
+      "secret_sealed",
       "secret_value",
       "upgraded_at",
       "upgraded_by"
