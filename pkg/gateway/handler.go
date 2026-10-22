@@ -4232,7 +4232,7 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 	// Deny walks first.
 	if _, denied := rule.Deny[country]; denied {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-			api.CodeForbidden, "Country denied",
+			api.CodeGeoDenied, "Country denied",
 			"client country matches a deny entry on this edge rule"))
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.geo_blocked", nil, map[string]any{
@@ -4251,7 +4251,7 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 	if len(rule.Allow) > 0 {
 		if _, allowed := rule.Allow[country]; !allowed {
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-				api.CodeForbidden, "Country not allowed",
+				api.CodeGeoDenied, "Country not allowed",
 				"client country does not match any allow entry on this edge rule"))
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.geo_blocked", nil, map[string]any{
