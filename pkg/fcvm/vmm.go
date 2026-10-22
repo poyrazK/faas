@@ -309,6 +309,14 @@ type restoreTimingBreakdown struct {
 	WaitReadyMs      int64
 	TotalMs          int64
 	ResolveArtifacts []restoreArtifactTiming
+	// JournalSyncMs and JournalLockWaitMs are this wake's ADR-473 resource
+	// journal cost across all phases, from the lease intent to readiness:
+	// the fsyncs of its JournalCommits record commits, and the time those
+	// commits waited behind other wakes' commits. They overlap the staging
+	// phases above. Operator-only, like the TUN subphases.
+	JournalSyncMs     int64
+	JournalLockWaitMs int64
+	JournalCommits    int
 }
 
 // restoreArtifactTiming attributes one restore input to where its bytes came
@@ -2355,6 +2363,10 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		// the near-zero gap Manager marked when it started it.
 		breakdown.Prepare.SetupNetworkMs = networkSetup.Milliseconds()
 	}
+	journalTiming := v.resourceJournal.takeTiming(l.Instance)
+	breakdown.JournalSyncMs = journalTiming.Sync.Milliseconds()
+	breakdown.JournalLockWaitMs = journalTiming.LockWait.Milliseconds()
+	breakdown.JournalCommits = journalTiming.Commits
 	v.observeRestoreArtifacts(breakdown.ResolveArtifacts)
 	v.wakePhaseMetrics.ObserveRestorePhases(breakdown)
 	v.emitRestoreBreakdown(ctx, l, tDone, breakdown)
@@ -2396,6 +2408,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"load_snapshot_ms", breakdown.LoadSnapshotMs,
 		"resume_hook_ms", breakdown.ResumeHookMs,
 		"wait_ready_ms", breakdown.WaitReadyMs,
+		"journal_sync_ms", breakdown.JournalSyncMs,
+		"journal_lock_wait_ms", breakdown.JournalLockWaitMs,
+		"journal_commits", breakdown.JournalCommits,
 		"total_ms", breakdown.TotalMs,
 	)
 	return nil
