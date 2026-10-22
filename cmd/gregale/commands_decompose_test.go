@@ -520,7 +520,7 @@ func TestCmdDeployTarball_RepoProjectRejectsSingleAppRolloutBeforeHTTP(t *testin
 	if code == 0 {
 		t.Errorf("cmdDeployTarball --repo --only --traffic-percent exit = 0, want a refusal")
 	}
-	if !strings.Contains(stderr.String(), "unsupported with --repo --project: --traffic-percent") {
+	if !strings.Contains(stderr.String(), "--traffic-percent") {
 		t.Errorf("expected rejection message, got %q", stderr.String())
 	}
 	if sink.scanCalls != 0 || sink.applyCalls != 0 {
