@@ -642,3 +642,13 @@ func (r *warmHintBroadcaster) SubscriberCount() int { return r.subscriberCount()
 // Members of workPool
 func (r *workPool) Drain()                                          { r.drain() }
 func (r *workPool) Submit(p0 workKind, p1 string, p2 func()) string { return r.submit(p0, p1, p2) }
+
+// QueueRetryGroups exposes the queue retry last_error grouping (Hunt 12
+// H12-34).
+func QueueRetryGroups(items []string, statusByID map[string]TriggerDispatchResult) map[string][]string {
+	out := map[string][]string{}
+	for _, group := range queueRetryGroups(items, statusByID) {
+		out[group.reason] = group.items
+	}
+	return out
+}
