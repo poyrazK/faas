@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ProfileCapture } from './ProfileCapture.js';
+/**
+ * An app's profile captures, newest first.
+ */
 export type ProfileCaptureList = {
   captures: Array<ProfileCapture>;
 };

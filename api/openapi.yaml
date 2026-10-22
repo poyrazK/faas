@@ -23202,8 +23202,8 @@ paths:
       summary: Query the continuous live heap near a window end (ADR-1155).
       description: Requires profiling.kinds to include heap. The query is narrowed to the last collection window before end so merged snapshots are not summed. Values are live heap bytes.
       parameters:
-        - { name: deployment_id, in: query, required: true, description: Deployment belonging to the selected app., schema: { type: string, format: uuid } }
-        - { name: runtime, in: query, required: true, description: Runtime name attached by the compute broker., schema: { type: string } }
+        - { name: deployment_id, in: query, required: true, description: Deployment whose live heap to read., schema: { type: string, format: uuid } }
+        - { name: runtime, in: query, required: true, description: Runtime the heap snapshots were collected under., schema: { type: string } }
         - { name: start, in: query, required: true, description: Earliest acceptable snapshot time., schema: { type: string, format: date-time } }
         - { name: end, in: query, required: true, description: Point in time to inspect., schema: { type: string, format: date-time } }
       responses:
@@ -23290,7 +23290,7 @@ paths:
   /v1/apps/{slug}/profiles/captures/{id}/view:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - { name: id, in: path, required: true, description: Profile capture id., schema: { type: string, format: uuid } }
+      - { name: id, in: path, required: true, description: Capture whose merged view to read., schema: { type: string, format: uuid } }
     get:
       tags: [apps]
       operationId: getProfileCaptureView
@@ -23315,13 +23315,13 @@ paths:
   /v1/apps/{slug}/profiles/captures/{id}/pprof:
     parameters:
       - $ref: '#/components/parameters/Slug'
-      - { name: id, in: path, required: true, description: Profile capture id., schema: { type: string, format: uuid } }
+      - { name: id, in: path, required: true, description: Capture to download., schema: { type: string, format: uuid } }
     get:
       tags: [apps]
       operationId: downloadProfileCapture
       summary: Download one capture kind as a merged gzip pprof profile.
       parameters:
-        - { name: kind, in: query, required: false, description: 'cpu, heap, stacks, block or mutex; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+        - { name: kind, in: query, required: false, description: 'Kind to download as pprof: cpu, heap, stacks, block or mutex; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
       responses:
         '200':
           description: gzip-compressed pprof protobuf for go tool pprof, speedscope or Pyroscope.
@@ -117204,6 +117204,7 @@ components:
         completed_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
     ProfileCaptureList:
+      description: An app's profile captures, newest first.
       type: object
       required: [captures]
       properties:
@@ -117273,7 +117274,7 @@ components:
     ProfileCaptureStackDelta:
       description: One call path in both captures.
       type: object
-      required: [name, baseline, candidate, delta, children]
+      required: [name, baseline, candidate, delta]
       properties:
         name: { type: string }
         file: { type: string }

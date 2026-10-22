@@ -6620,11 +6620,11 @@ export class AppsService {
      */
     slug: string,
     /**
-     * Deployment belonging to the selected app.
+     * Deployment whose live heap to read.
      */
     deploymentId: string,
     /**
-     * Runtime name attached by the compute broker.
+     * Runtime the heap snapshots were collected under.
      */
     runtime: string,
     /**
@@ -6804,7 +6804,7 @@ export class AppsService {
      */
     slug: string,
     /**
-     * Profile capture id.
+     * Capture whose merged view to read.
      */
     id: string,
     /**
@@ -6856,11 +6856,11 @@ export class AppsService {
      */
     slug: string,
     /**
-     * Profile capture id.
+     * Capture to download.
      */
     id: string,
     /**
-     * cpu, heap, stacks, block or mutex; defaults to the capture's first kind.
+     * Kind to download as pprof: cpu, heap, stacks, block or mutex; defaults to the capture's first kind.
      */
     kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
   }): CancelablePromise<Blob> {

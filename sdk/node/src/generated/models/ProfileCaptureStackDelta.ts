@@ -14,6 +14,6 @@ export type ProfileCaptureStackDelta = {
   baseline: number;
   candidate: number;
   delta: number;
-  children: Array<ProfileCaptureStackDelta>;
+  children?: Array<ProfileCaptureStackDelta>;
 };
 
