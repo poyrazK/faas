@@ -21179,6 +21179,13 @@ BEGIN
           WHERE t.id=d.trigger_id AND t.app_id=d.app_id AND t.account_id=d.account_id AND t.kind='queue' AND t.source='queue')))))) THEN
       RETURN true;
     END IF;
+    -- Rehearsal evidence follows its run and is erased with the identity; only
+    -- a fixture that still holds a database or bucket blocks until its cleanup
+    -- finishes (ADR-20261022155043).
+    IF EXISTS (SELECT 1 FROM scenario_postgres_fixtures WHERE account_id=identity_id AND status NOT IN ('complete','deleted'))
+       OR EXISTS (SELECT 1 FROM scenario_object_fixtures WHERE account_id=identity_id AND status NOT IN ('complete','deleted')) THEN
+        RETURN true;
+    END IF;
     FOR resource_table IN SELECT unnest(ARRAY[
         'alert_deliveries',
         'alert_rules',
@@ -21316,16 +21323,6 @@ BEGIN
         'managed_postgres_connection_capacity',
         'data_api_runtime_connection_observations',
         'data_repair_rehearsals',
-        'scenario_cold_preparations',
-        'scenario_managed_work',
-        'scenario_object_fixtures',
-        'scenario_postgres_faults',
-        'scenario_postgres_fixtures',
-        'scenario_suspend_resumes',
-        'scenario_test_action_policies',
-        'scenario_test_chaos_matches',
-        'scenario_test_members',
-        'scenario_worker_faults',
         'schedule_occurrences',
         'tenant_surfaces',
         'workflow_automation_publish_receipts',

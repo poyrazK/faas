@@ -1003,6 +1003,7 @@ func printLocalPathHelp(w io.Writer, command cliCommand, sub cliSub, names []str
 		_, _ = fmt.Fprintln(w, "\nExamples:")
 		printCLIExamples(w, sub.Examples)
 	}
+	printHelpNotes(w, sub.Notes)
 	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", docsURLForTopic(command.DocSlug))
 }
 

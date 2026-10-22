@@ -176,7 +176,7 @@ func cmdJobsList(args []string) int {
 	})
 	out.Jobs, out.NextOffset = items, next
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list jobs", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
@@ -276,7 +276,7 @@ func cmdJobsAdd(args []string) int {
 	}
 	j, err := client.CreateJob(context.Background(), req)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create job", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(j))
@@ -431,7 +431,7 @@ func cmdJobsUpdate(args []string) int {
 	}
 	j, err := client.UpdateJob(context.Background(), name, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update job", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(j))
@@ -458,7 +458,7 @@ func cmdJobsRm(args []string) int {
 	}
 	_, err = client.DeleteJob(context.Background(), args[0])
 	if err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete job", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(map[string]any{"name": args[0], "deleted": true}))
@@ -780,7 +780,7 @@ func cmdJobsRuns(args []string) int {
 		return page.Runs, page.NextOffset, err
 	})
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list job runs", err)
 	}
 	if statusSet || *failedOnly {
 		filtered := make([]api.JobRunResponse, 0)
@@ -874,7 +874,7 @@ func cmdJobsOccurrences(args []string) int {
 	})
 	page.Occurrences, page.NextBefore = items, next
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list job schedule occurrences", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(struct {
@@ -1050,7 +1050,7 @@ func cmdJobsTasks(args []string) int {
 		out, err = client.ListJobRunTasksPage(ctx, args[0], runID, *limit, *offset)
 	}
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list job tasks", err)
 	}
 	if *unsuccessfulOnly {
 		filtered := make([]api.JobTaskResponse, 0)
@@ -1202,7 +1202,7 @@ func cmdJobsAttempts(args []string) int {
 	}
 	out, err := collectJobAttemptHistory(client, ctx, args[0], runID, taskIdx, *limit, *offset, *all)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list job attempts", err)
 	}
 	if *failedOnly || *unsuccessfulOnly {
 		filtered := make([]api.JobTaskAttemptResponse, 0)

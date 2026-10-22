@@ -31,7 +31,7 @@ func cmdCapabilities(args []string) int {
 	}
 	capabilities, err := client.GetCapabilities(context.Background())
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not read capabilities", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(capabilities))

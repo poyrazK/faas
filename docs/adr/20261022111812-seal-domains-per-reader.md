@@ -257,6 +257,8 @@ This ADR ships with:
   needs no private identity.
 - `scripts/ci/sealdomaincheck` and its baseline.
 
+Rollout checklist: [Seal domains rollout](../runbooks/seal-domains-rollout.md).
+
 Later slices: the other domains in the order above; the contract steps;
 moving the runtime re-seal out of apid's rekey runner; meterd sending test
 alerts; role-scoped staging in node join; an alert on
