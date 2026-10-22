@@ -62,12 +62,14 @@ func testLogProjectionSources(t *testing.T, fx *Fixture) {
 		t.Fatalf("CreateBuild: %v", err)
 	}
 	queued := seedQueuedBuild(t, fx) // never finishes, so never projected
-	claim, err := fx.Store.ClaimQueuedBuild(fx.Ctx, failed.ID)
-	if err != nil {
+	if _, err := fx.Store.ClaimQueuedBuild(fx.Ctx, failed.ID); err != nil {
 		t.Fatalf("ClaimQueuedBuild: %v", err)
 	}
-	if err := fx.Store.FailBuild(fx.Ctx, claim, state.FailureTimeout, "build exceeded 15m"); err != nil {
-		t.Fatalf("FailBuild: %v", err)
+	if err := fx.Store.UpdateBuildStatus(fx.Ctx, failed.ID, state.BuildFailed, state.FailureTimeout, false, true); err != nil {
+		t.Fatalf("UpdateBuildStatus: %v", err)
+	}
+	if err := fx.Store.UpdateDeploymentStatus(fx.Ctx, dep.ID, state.DeployFailed, "build exceeded 15m"); err != nil {
+		t.Fatalf("UpdateDeploymentStatus: %v", err)
 	}
 	outcomes, err := fx.Store.ListBuildOutcomesForLedger(fx.Ctx, start, "", time.Now().UTC().Add(time.Minute), 10)
 	if err != nil {

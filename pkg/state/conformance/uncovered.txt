@@ -20,7 +20,6 @@ AccountsByIDs
 ActiveComputeNodes
 AlertPresetByName
 AlertRuleByAccountAppAndPresetName
-AlertRuleByID
 AppBySlug
 AppLogDrainByID
 AppLogDrainHealthByDrainID
@@ -168,6 +167,7 @@ EditPublicStatusEventTitle
 EditPublicStatusUpdateMessage
 ExpireOrgInvitations
 ExpireUploadSession
+FailBuild
 FailRunningInstanceOnDeadNode
 FailSourceDeployment
 FinalizeServiceRollout
