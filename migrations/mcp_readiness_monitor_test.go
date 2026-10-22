@@ -1,7 +1,6 @@
 package migrations_test
 
 import (
-	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"os"
 	"strings"
@@ -9,11 +8,25 @@ import (
 )
 
 func TestMCPReadinessMonitorMigrations(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
 	ctx := t.Context()
-	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatal(err)
+	// A ledger replay of either Up on the complete schema is a no-op.
+	full := openMigrated(t)
+	for _, file := range []string{"20261017181314907_mcp_readiness_monitor.sql", "20261017181314925_mcp_readiness_monitor_alert.sql"} {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		up, _, _ := strings.Cut(string(raw), "-- +goose Down")
+		if _, err := full.Exec(ctx, up); err != nil {
+			t.Fatalf("replay %s: %v", file, err)
+		}
 	}
+	// Down is exercised at this migration's own point in history: on the
+	// complete schema it would restore a metric check that later presets
+	// (route_insights_detected, 20261020161647152) no longer satisfy, and goose
+	// only ever runs it after rolling those later migrations back.
+	pool := pgtest.Open(t)
+	migrateUpTo(t, ctx, pool, 20261017181314925)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
