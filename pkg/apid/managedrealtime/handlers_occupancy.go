@@ -6,6 +6,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -14,7 +15,7 @@ const realtimeOccupancyDocs = "https://gregale.dev/docs/realtime#channel-occupan
 // GetManagedRealtimeOccupancy reports how many subscriptions and presence
 // members each requested channel has across the fleet (ADR-1324).
 func (s *Service) GetManagedRealtimeOccupancy(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.OccupancyPreviewEnabled {
+	if !s.previewOn(r, acct, platformflags.RealtimeOccupancy, s.OccupancyPreviewEnabled) {
 		httpkit.NotFound(w, "channel occupancy preview unavailable")
 		return
 	}
