@@ -1158,6 +1158,9 @@ type WorkloadOOMFailed struct {
 	DeploymentID string
 	PeakMB       int
 	PlanMB       int
+	// DeploymentFailed is true when the kill failed the deployment (before
+	// it was fully live, ADR-121 amendment); a live release keeps serving.
+	DeploymentFailed bool
 }
 
 func (e WorkloadOOMFailed) Kind() string     { return InstanceWorkloadOOMFailed }
@@ -1165,11 +1168,12 @@ func (e WorkloadOOMFailed) At() time.Time    { return e.EmitAt }
 func (e WorkloadOOMFailed) Subject() *string { return nil }
 func (e WorkloadOOMFailed) Payload() map[string]any {
 	return map[string]any{
-		"instance_id":   e.InstanceID,
-		"app_id":        e.AppID,
-		"deployment_id": e.DeploymentID,
-		"peak_mb":       e.PeakMB,
-		"plan_mb":       e.PlanMB,
+		"instance_id":       e.InstanceID,
+		"app_id":            e.AppID,
+		"deployment_id":     e.DeploymentID,
+		"peak_mb":           e.PeakMB,
+		"plan_mb":           e.PlanMB,
+		"deployment_failed": e.DeploymentFailed,
 	}
 }
 

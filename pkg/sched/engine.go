@@ -9647,6 +9647,11 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	}
 	appID := fresh.AppID
 	deploymentID := fresh.DeploymentID
+	// A single-workload guest has no in-guest memory cap and reports
+	// plan 0; its plan RAM is the instance's (ADR-121 amendment).
+	if planMB <= 0 {
+		planMB = fresh.RAMMB
+	}
 
 	// Acquire the app lock so a parallel Wake / Park for the
 	// same app observes a consistent state. Mirrors the comment
@@ -9699,6 +9704,17 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 		return fmt.Errorf("sched: workload_oom: destroy instance %s: %w", instanceID, err)
 	}
 	e.ledger.Release(instanceID)
+	failDeployment := false
+	if deploymentID != "" {
+		dep, derr := e.store.DeploymentByID(ctx, deploymentID)
+		if derr != nil {
+			// Unknown release state: keep it serving. The kill is
+			// still recorded below and the instance is gone.
+			e.log.Warn("workload_oom: read deployment", "instance", instanceID, "deployment_id", deploymentID, "err", derr)
+		} else {
+			failDeployment = oomFailsDeployment(dep)
+		}
+	}
 
 	// Audit row (Cluster C / ADR-121). The audit kind is
 	// `instances.workload_oom_failed` so the customer's
@@ -9720,12 +9736,13 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	// audit row is now exactly one.
 	if e.events != nil {
 		e.events.Emit(ctx, events.WorkloadOOMFailed{
-			EmitAt:       now,
-			InstanceID:   instanceID,
-			AppID:        appID,
-			DeploymentID: deploymentID,
-			PeakMB:       peakMB,
-			PlanMB:       planMB,
+			EmitAt:           now,
+			InstanceID:       instanceID,
+			AppID:            appID,
+			DeploymentID:     deploymentID,
+			PeakMB:           peakMB,
+			PlanMB:           planMB,
+			DeploymentFailed: failDeployment,
 		})
 	}
 
@@ -9764,10 +9781,11 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	// the dashboard's `.error-explanation` section + the
 	// catalogue's Hint/Why/Fix pick up the same prose.
 	//
-	// Unconditional (no reason-gating like the liveness path) —
-	// every workload OOM gets the stamp because the cluster code
-	// is dedicated to this failure mode.
-	if deploymentID != "" {
+	// Only before the release is fully live (ADR-121 amendment):
+	// failing a live release moves its traffic away, or takes the
+	// app offline when there is no fallback, over one memory spike.
+	// A live release keeps serving; the debugger reads the event.
+	if failDeployment {
 		problem := &api.Problem{
 			Code:   api.CodeAppRuntimeOOM,
 			Status: 422,
@@ -9785,6 +9803,32 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 		}
 	}
 	return nil
+}
+
+// oomFailsDeployment reports whether an OOM kill of one of a deployment's
+// instances fails the deployment (ADR-121 amendment): while it is not live
+// yet, or live but still rolling out (a canary ladder, or a service handoff
+// with no ladder). A live release that has finished rolling out keeps
+// serving, and a failed, superseded or cancelled one is already out of
+// service. A live 'pending' row without a ladder is a release that predates
+// rollout tracking, which the safedeploy orchestrator completes on its next
+// tick; it counts as rolled out.
+func oomFailsDeployment(d state.Deployment) bool {
+	switch d.Status {
+	case state.DeployLive:
+		switch d.RolloutState {
+		case "rolling_out":
+			return true
+		case "pending":
+			return d.CanaryTotalSteps > 0 && d.CanaryStep < d.CanaryTotalSteps
+		default:
+			return false
+		}
+	case state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting:
+		return true
+	default:
+		return false
+	}
 }
 
 // ParkDeployment is the liveness-window-exhausted stop path

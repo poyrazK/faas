@@ -468,7 +468,8 @@ func boot() error {
 	// the engine's existing :8080 TCP-accept probe continues to
 	// gate readiness, so the customer doesn't lose the boot.
 	if err := runHealthcheckPoll(bootCtx, manifest, slog.Default(), healthcheckPollOptions{
-		Started: mainStarted,
+		Started:      mainStarted,
+		WorkloadLeaf: supRef.WorkloadLeaf,
 		Environment: func() []string {
 			currentSecrets := secrets
 			if rotatingSecrets != nil {
@@ -628,17 +629,21 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	// in-guest cgroup v2 partition for the main workload.
 	// mkdir + write memory.max BEFORE Start. The main
 	// workload gets a "main-app" leaf so its OOM is
-	// scoped separately from any sidecar's. Legacy
-	// single-workload wakes have no per-workload RAM value
-	// and therefore skip this child leaf; the host-side
-	// writePlanCgroup remains their authoritative cap.
-	mainLeaf, cgroupErr := prepareWorkloadCgroup("main", "app", ramMB, slog.Default(), cpuMillicoresOpt...)
+	// scoped separately from any sidecar's. Single-workload
+	// wakes have no per-workload RAM value: their leaf has no
+	// limit (the host-side writePlanCgroup remains the
+	// authoritative cap) and exists so their OOM kills are
+	// reported (ADR-121 amendment).
+	mainLeaf, cgroupErr := prepareMainWorkloadCgroup(ramMB, slog.Default(), cpuMillicoresOpt...)
 	if cgroupErr != nil {
 		return fmt.Errorf("prepare main workload cgroup: %w", cgroupErr)
 	}
 	cgroupFile, err := attachWorkloadCgroup(cmd, mainLeaf)
 	if err != nil {
 		return fmt.Errorf("attach main workload cgroup: %w", err)
+	}
+	if sup != nil {
+		sup.setWorkloadLeaf(mainLeaf)
 	}
 	if cgroupFile != nil {
 		defer func() { _ = cgroupFile.Close() }()
@@ -648,6 +653,20 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		return err
 	}
 	defer retireGeneration()
+	// Cluster C / ADR-121: the per-workload oom_kill listener
+	// (guest/init/cgroup_partition_linux.go::WatchOOM) runs
+	// for the workload's lifetime. It starts before the
+	// workload so a kill during startup is reported, and
+	// stopping it after Wait reports a kill that the exit
+	// raced past. The build VM classifies OOM separately
+	// (classify(exitCode=137) → FailureOOM).
+	oomWatch := startWorkloadOOMWatch(mainLeaf, ramMB, func(peakMB, planMB int) {
+		fmt.Fprintf(os.Stderr, "guest-init: app out of memory: the kernel killed a workload process (peak %d MB)\n", peakMB)
+		if err := EmitWorkloadOOM(context.Background(), peakMB, planMB); err != nil {
+			slog.Default().Warn("EmitWorkloadOOM failed", "peak_mb", peakMB, "plan_mb", planMB, "err", err)
+		}
+	}, slog.Default())
+	defer oomWatch.stop()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
@@ -678,38 +697,6 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 			}
 		}
 		sup.markHealthy()
-	}
-	// Cluster C / ADR-121: spawn the per-workload cgroup.events
-	// oom_kill listener (guest/init/cgroup_partition_linux.go::
-	// WatchOOM) for the duration of the main workload's lifetime.
-	// The listener exits on first fire (the workload is dead
-	// when an oom_kill lands) and on the context cancel that
-	// runAppWithEnv inherits from the boot path. This is the
-	// runtime-VM path — the build VM uses a different
-	// classification surface (classify(exitCode=137) →
-	// FailureOOM) and does not need this listener.
-	//
-	if mainLeaf != "" {
-		oomCtx, oomCancel := context.WithCancel(context.Background())
-		go func() {
-			defer oomCancel()
-			werr := WatchOOM(oomCtx, mainLeaf, ramMB,
-				func(peakMB, pMB int) {
-					if eerr := EmitWorkloadOOM(oomCtx, peakMB, pMB); eerr != nil {
-						slog.Default().Warn("EmitWorkloadOOM failed",
-							"peak_mb", peakMB, "plan_mb", pMB, "err", eerr)
-					}
-				}, slog.Default())
-			if werr != nil && !errors.Is(werr, context.Canceled) {
-				slog.Default().Debug("WatchOOM listener returned",
-					"err", werr, "leaf", mainLeaf)
-			}
-		}()
-		// Cancel the OOM listener when the workload exits
-		// (graceful or crash). The cmd.Wait() return is the
-		// lifecycle signal; the listener exits within one
-		// 1s poll tick on next wake.
-		defer func() { oomCancel() }()
 	}
 	if err := cmd.Wait(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)

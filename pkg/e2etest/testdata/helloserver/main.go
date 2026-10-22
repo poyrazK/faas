@@ -157,6 +157,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	registerTCPFixture(mux)
+	registerOOMFixture(mux)
 	if *identityProbe {
 		serveIdentityProbe(mux)
 	}

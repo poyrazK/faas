@@ -380,6 +380,11 @@ type instanceRecord struct {
 	exited      bool          // set by the watchdog when cmd.Wait completes
 	exitCode    int           // captured from cmd.Wait's ProcessState.ExitCode()
 	done        chan struct{} // closed by the watchdog; readers <-done to wake
+	// oomKilled records the guest's ADR-121 workload OOM report so a startup
+	// that then fails is explained as app_runtime_oom; guarded by JailerVMM.mu.
+	oomKilled bool
+	oomPeakMB int
+	oomPlanMB int
 }
 
 // ringWriter is a thin io.Writer that forwards every Write call to the
@@ -6787,6 +6792,50 @@ const guestExitReportGrace = 2 * time.Second
 // command crash-looped surfaced only "requires a valid characterization
 // report: context deadline exceeded" because the receipt failed first; the
 // workload's own error was in the console tail (H8-20).
+// NoteWorkloadOOM records a guest's workload OOM report (ADR-121) for the
+// instance's startup classification. Reports for unknown instances are ignored.
+func (v *JailerVMM) NoteWorkloadOOM(instance string, peakMB, planMB int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if rec := v.recs[instance]; rec != nil {
+		rec.oomKilled, rec.oomPeakMB, rec.oomPlanMB = true, peakMB, planMB
+	}
+}
+
+// startupOOMProblem explains a failed startup as app_runtime_oom when the
+// guest reported that the kernel killed a workload process for memory before
+// readiness (ADR-121 amendment). It returns nil when no OOM was reported.
+func (v *JailerVMM) startupOOMProblem(l Lease) *api.Problem {
+	v.mu.Lock()
+	rec := v.recs[l.Instance]
+	killed := rec != nil && rec.oomKilled
+	var peakMB, planMB int
+	if killed {
+		peakMB, planMB = rec.oomPeakMB, rec.oomPlanMB
+	}
+	v.mu.Unlock()
+	if !killed {
+		return nil
+	}
+	detail := "the kernel killed the app for running out of memory before it became ready"
+	switch {
+	case peakMB > 0 && planMB > 0:
+		detail += fmt.Sprintf(" (peak %d MB, plan %d MB)", peakMB, planMB)
+	case peakMB > 0:
+		detail += fmt.Sprintf(" (peak %d MB)", peakMB)
+	}
+	var lines []string
+	if ring := v.LogRing(l.Instance); ring != nil {
+		for _, line := range ring.Snapshot(1) {
+			lines = append(lines, line.Line)
+		}
+	}
+	if tail := workloadOutputTail(lines, 20); tail != "" {
+		detail += ": " + tail
+	}
+	return api.NewProblem(422, api.CodeAppRuntimeOOM, "app ran out of memory during startup", detail)
+}
+
 func (v *JailerVMM) guestExitedWithin(instance string, grace time.Duration) bool {
 	v.mu.Lock()
 	rec := v.recs[instance]

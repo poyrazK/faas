@@ -1994,6 +1994,11 @@ func (m *Manager) WithWorkloadOOMSink(relay WorkloadOOMSink) *Manager {
 // returning, then retries delivery independently of the receiver context
 // (ADR-471). A storage error is logged and retained for persistence retry.
 func (m *Manager) ReportWorkloadOOM(ctx context.Context, instanceID string, peakMB, planMB int) {
+	// A kill before readiness explains the failed startup (ADR-121
+	// amendment); schedd ignores reports for instances not yet RUNNING.
+	if noter, ok := m.vmm.(interface{ NoteWorkloadOOM(string, int, int) }); ok {
+		noter.NoteWorkloadOOM(instanceID, peakMB, planMB)
+	}
 	if m.workloadOOMRelay == nil {
 		return
 	}
