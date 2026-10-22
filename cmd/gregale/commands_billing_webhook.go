@@ -60,7 +60,27 @@ const webhookTestTimeout = 30 * time.Second
 // The dispatch model matches commands_billing.go::cmdBilling — the
 // CLI flag package stops at the first non-flag token, so the first
 // positional is the provider discriminator.
+// billingWebhookTestHelp documents the operator-only webhook signer, which
+// the customer help manifest deliberately does not advertise.
+const billingWebhookTestHelp = `Usage:
+  gregale billing webhook-test <paddle|stripe> (--url URL | --live) (--secret SECRET | --secret-file PATH) [--payload PATH] [--timeout SECONDS]
+
+Operator tool: sends a signed test webhook to a billing webhook endpoint.
+
+Flags:
+  --url URL             endpoint to post the signed webhook to
+  --live                post to the provider's sandbox API instead (paddle)
+  --secret SECRET       webhook signing secret
+  --secret-file PATH    read the signing secret from a file
+  --payload PATH        JSON payload to sign (default: a synthetic event)
+  --timeout SECONDS     request timeout (default 30)
+`
+
 func cmdBillingWebhookTest(args []string) int {
+	if hasHelpFlag(args) {
+		_, _ = fmt.Fprint(osStdout, billingWebhookTestHelp)
+		return 0
+	}
 	if len(args) == 0 {
 		printCommandValidation(os.Stderr, "usage: gregale billing webhook-test <paddle|stripe> [flags]\n")
 		return 1

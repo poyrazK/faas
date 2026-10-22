@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -1086,9 +1087,16 @@ func printCLIExamples(w io.Writer, examples []string) {
 	}
 }
 
+// findCliSubcommand resolves a verb by name, then by alias, so help for an
+// accepted spelling such as `orgs list` finds the `ls` entry.
 func findCliSubcommand(subcommands []cliSub, name string) (cliSub, bool) {
 	for _, sub := range subcommands {
 		if sub.Name == name {
+			return sub, true
+		}
+	}
+	for _, sub := range subcommands {
+		if slices.Contains(sub.Aliases, name) {
 			return sub, true
 		}
 	}
