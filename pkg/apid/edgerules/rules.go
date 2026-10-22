@@ -69,9 +69,40 @@ func EdgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 		Expired:      r.EdgeRuleExpired(time.Now()),
 		Match:        r.Match,
 		Mode:         edgeRuleResponseMode(r.Mode),
+		Penalty:      apiEdgeRulePenalty(r.Action.Penalty),
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}
+}
+
+// apiEdgeRulePenalty and stateEdgeRulePenalty convert the penalty box
+// (ADR-20261022105846) between its wire and stored shapes.
+func apiEdgeRulePenalty(p *state.EdgeRulePenalty) *api.EdgeRulePenalty {
+	if p == nil {
+		return nil
+	}
+	return &api.EdgeRulePenalty{Seconds: p.Seconds, After: p.After, WithinSeconds: p.WithinSeconds}
+}
+
+func stateEdgeRulePenalty(p *api.EdgeRulePenalty) *state.EdgeRulePenalty {
+	if p == nil {
+		return nil
+	}
+	return &state.EdgeRulePenalty{Seconds: p.Seconds, After: p.After, WithinSeconds: p.WithinSeconds}
+}
+
+// wafModeFromAction is a waf rule's effective mode from its wire action
+// ("" for other kinds); an unset mode is observe.
+func wafModeFromAction(kind string, raw json.RawMessage) string {
+	if kind != string(state.EdgeRuleKindWAF) {
+		return ""
+	}
+	var a api.EdgeRuleWAFAction
+	_ = json.Unmarshal(raw, &a)
+	if a.Mode == "" {
+		return api.EdgeWAFModeObserve
+	}
+	return a.Mode
 }
 
 // cloneValidateParameters copies the raw parameter schemas so the stored
@@ -484,6 +515,14 @@ func ValidateEdgeRuleBody(req *api.CreateEdgeRuleRequest, plan api.Plan) *api.Pr
 	}
 	if prob := ValidateEdgeRuleAction(req.Kind, req.Action, req.MatchPath, plan); prob != nil {
 		return prob
+	}
+	if req.Penalty != nil {
+		if prob := api.ValidateEdgeRulePenaltyKind(req.Kind, wafModeFromAction(req.Kind, req.Action)); prob != nil {
+			return prob
+		}
+		if prob := req.Penalty.Validate(); prob != nil {
+			return prob
+		}
 	}
 	return ValidateMCPRuleSelectors(req.Kind, req.MatchHost, req.MatchPath, req.MatchMethods, req.MatchHeaders, req.Action)
 }

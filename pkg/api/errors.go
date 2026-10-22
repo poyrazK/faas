@@ -649,6 +649,10 @@ const (
 	// navigation (ADR-831 amendment 7). A browser earns the pass by loading
 	// a page on the route; other clients need a verified credential.
 	CodeChallengeRequired = "challenge_required"
+	// CodePenaltyBox is returned by gatewayd for a request from a client
+	// an edge rule's penalty box holds (ADR-20261022105846). Retry-After
+	// says when the box ends.
+	CodePenaltyBox = "penalty_box"
 	// CodePreviewProductionDependencyDenied is returned by the internal
 	// service proxy when a project preview tries to call a production
 	// dependency while its preview_service_policy is deny. The rejection
@@ -2081,7 +2085,7 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeUnauthorized, CodeConsumerKeyRequired, CodeConsumerKeyInvalid, CodeConsumerKeyInactive:
 		return http.StatusUnauthorized
-	case CodeConsumerScopeMissing, CodePlatformTenantRequired, CodeChallengeRequired:
+	case CodeConsumerScopeMissing, CodePlatformTenantRequired, CodeChallengeRequired, CodePenaltyBox:
 		return http.StatusForbidden
 	case CodeSessionExpired, CodeSessionInvalid:
 		return http.StatusUnauthorized

@@ -24,6 +24,17 @@ type EdgeProtectionResponse struct {
 	// Challenge counts kind=challenge decisions (ADR-831 amendment 7). Its
 	// 403s also appear in Rejections under gate "challenge".
 	Challenge EdgeProtectionChallenge `json:"challenge"`
+	// Penalty counts penalty boxes (ADR-20261022105846): Boxed clients a
+	// rule's penalty boxed, Rejected requests refused from boxed clients.
+	// The refusals also appear in Rejections under gate "penalty".
+	Penalty EdgeProtectionPenalty `json:"penalty"`
+}
+
+// EdgeProtectionPenalty is the penalty-box part of an
+// EdgeProtectionResponse.
+type EdgeProtectionPenalty struct {
+	Boxed    int64 `json:"boxed"`
+	Rejected int64 `json:"rejected"`
 }
 
 // EdgeProtectionChallenge is the kind=challenge part of an

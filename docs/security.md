@@ -391,6 +391,46 @@ In log mode the rule's matches appear as `logged` events instead.
 gregale edge-rules events --app my-site --outcome rejected
 ```
 
+## Penalty box
+
+An edge rule judges each request on its own: a scanner refused at
+`/wp-login.php` simply tries `/.env` next. A **penalty** makes a rule keep
+refusing a client after it has caught it. Once the rule has refused the
+same client a number of times, every request from that client to your app
+is refused for a while, whatever path it asks for.
+
+Penalties work on rules that refuse clients: `ip` and `geo` rules,
+`throttle` rules (a client that keeps hitting the limit) and `waf` rules in
+block mode.
+
+```sh
+# Block anyone who probes a scanner path from the whole app for 30 minutes.
+gregale edge-rules recipe block-scanner-paths --app my-site --set penalty_minutes=30 --enforce
+
+# A sign-in throttle that boxes a client for 15 minutes after 5 refusals in a minute.
+gregale edge-rules update <rule-id> --penalty-for 15m --penalty-after 5 --penalty-within 1m
+
+# Remove the penalty; clients it holds are let go on their next request.
+gregale edge-rules update <rule-id> --clear-penalty
+```
+
+A boxed client gets `403` with code `penalty_box`, naming the rule, and a
+`Retry-After` header saying when it ends. Penalties last from 1 minute to
+24 hours.
+
+Some details to know:
+
+- The client is its IP address. For IPv6 it is the whole /64, which one
+  machine can rotate through.
+- Many people can share one address (offices, mobile carriers). A threshold
+  above 1 and a short penalty keep one of them from locking out the rest.
+- Each edge node keeps its own boxes in memory, so a client that reaches
+  several nodes is boxed on each one separately. A restart releases them.
+- Removing the penalty, disabling the rule, or switching it to log mode lets
+  its clients go. A log-mode rule never boxes anyone.
+- The edge protection summary shows how many clients were boxed and how many
+  of their requests were refused.
+
 ## Outbound connections and DNS
 
 Workloads reach the internet by name. Outbound TCP is allowed only to addresses
