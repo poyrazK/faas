@@ -708,13 +708,17 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			if wl.Image != "" {
 				imageSuffix = "  image=" + wl.Image
 			}
+			visibilitySuffix := ""
+			if wl.Visibility == api.AppVisibilityInternal {
+				visibilitySuffix = "  visibility=internal"
+			}
 			// plan.Workloads is the post-filter set: the scan
 			// service drops --only/--exclude slugs before populating
 			// it (scan_service.go:564-577). So no excluded row ever
 			// appears in this loop, and no "(excluded)" tag is
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
-			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, imageSuffix)
+			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, imageSuffix)
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}
