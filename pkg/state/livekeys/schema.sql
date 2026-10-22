@@ -30,3 +30,13 @@ CREATE TABLE managed_postgres_live_keys (
  created_at timestamptz NOT NULL DEFAULT now(),
  retires_at timestamptz
 );
+CREATE TABLE managed_postgres_live_logins (
+ database_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ sealed_login bytea NOT NULL,
+ recipient text NOT NULL,
+ provider_identity_id text NOT NULL,
+ slot text NOT NULL,
+ awake text NOT NULL DEFAULT '',
+ created_at timestamptz NOT NULL DEFAULT now()
+);

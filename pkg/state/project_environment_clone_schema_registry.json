@@ -8913,6 +8913,20 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_live_logins",
+    "columns": [
+      "account_id",
+      "awake",
+      "created_at",
+      "database_id",
+      "provider_identity_id",
+      "recipient",
+      "sealed_login",
+      "slot"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_resizes",
     "columns": [
       "account_id",

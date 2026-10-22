@@ -40875,6 +40875,34 @@ COMMENT ON TABLE public.managed_postgres_live_keys IS 'ADR-20261016151947 live-q
 
 
 --
+-- Name: managed_postgres_live_logins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_live_logins (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    sealed_login bytea NOT NULL,
+    recipient text NOT NULL,
+    provider_identity_id text NOT NULL,
+    slot text NOT NULL,
+    awake text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_live_logins_awake_check CHECK ((awake ~ '^(neon:[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64})?$'::text)),
+    CONSTRAINT managed_postgres_live_logins_provider_identity_id_check CHECK ((provider_identity_id ~ '^[a-z0-9_]{1,63}$'::text)),
+    CONSTRAINT managed_postgres_live_logins_recipient_check CHECK ((recipient ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT managed_postgres_live_logins_sealed_login_check CHECK (((octet_length(sealed_login) >= 1) AND (octet_length(sealed_login) <= 8192))),
+    CONSTRAINT managed_postgres_live_logins_slot_check CHECK ((slot ~ '^[a-z0-9_]{1,63}$'::text))
+);
+
+
+--
+-- Name: TABLE managed_postgres_live_logins; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_live_logins IS 'ADR-20261016151947 replication login per live managed database, sealed to livequeryd; livequeryd discovers its databases here.';
+
+
+--
 -- Name: managed_postgres_resizes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59685,6 +59713,14 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 ALTER TABLE ONLY public.managed_postgres_live_keys
     ADD CONSTRAINT managed_postgres_live_keys_pkey PRIMARY KEY (kid);
+
+
+--
+-- Name: managed_postgres_live_logins managed_postgres_live_logins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_live_logins
+    ADD CONSTRAINT managed_postgres_live_logins_pkey PRIMARY KEY (database_id);
 
 
 --
@@ -89191,6 +89227,14 @@ ALTER TABLE ONLY public.managed_postgres_health
 
 ALTER TABLE ONLY public.managed_postgres_live_keys
     ADD CONSTRAINT managed_postgres_live_keys_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_live_logins managed_postgres_live_logins_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_live_logins
+    ADD CONSTRAINT managed_postgres_live_logins_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --
