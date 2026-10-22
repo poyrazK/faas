@@ -1,5 +1,19 @@
 # Architecture Decision Records
 
+- [Platform flags: company targeting, full coverage, scheduled and automatic rollouts, self-serve previews](20261021080640-platform-flag-extensions.md)
+- [Product Control free trials](20261021195901-product-control-free-trials.md)
+- [ADR-20261021210000: Enrolled apps receive no account events](20261021210000-rehearsal-event-fanout-exclusion.md)
+- [Data API engine pool size and server-key limits](20261021180534-data-api-engine-pool-and-server-key-limits.md)
+- [ADR-20261021180000: Rehearsal capture of realtime publishes and signals](20261021180000-rehearsal-realtime-capture.md)
+- [ADR-20261021150000: Rehearsal capture of workflow starts and events](20261021150000-rehearsal-workflow-capture.md)
+- [ADR-20261021120000: Rehearsal capture of public-API event publishes](20261021120000-rehearsal-public-api-event-capture.md)
+- [ADR-20261021090000: Rehearsal queue capture](20261021090000-rehearsal-queue-capture.md)
+- [ADR-20261020200000: Rehearsal crons fire from the recipe, not the clock](20261020200000-rehearsal-crons-fire-from-the-recipe.md)
+- [ADR-20261020180000: Rehearsal PostgreSQL schema inventory](20261020180000-rehearsal-postgres-schema-inventory.md)
+- [ADR-20261020150000: Contained rehearsals run the candidate's release command](20261020150000-rehearsal-contained-release-commands.md)
+- [ADR-20261020090000: Rehearsal event capture](20261020090000-rehearsal-event-capture.md)
+- [ADR-20261019180000: Rehearsal side effects stay inside the run](20261019180000-rehearsal-side-effects-stay-inside-the-run.md)
+- [ADR-20261019120000: Rehearsal runtime hooks stay off ordinary hot paths](20261019120000-rehearsal-runtime-hot-path-isolation.md)
 - [Product Control plan fees, included starts and overage](20261021154511-product-control-plan-fees-and-overage.md)
 - [Data API file storage](20261021101510-data-api-file-storage.md)
 - [Keep the edge lane off the store type: edge store](20261021092138-edge-store-blast-radius.md)
@@ -7,6 +21,8 @@
 - [Product Control customers keep their billing details in the owner's Paddle](20261020120000-product-control-customer-billing-details.md)
 - [Safety rails for automatic per-unit deploys](20261020214632-automatic-unit-deploy-safety-rails.md)
 - [What a fix restarts: daemon blast radius](20261020160744-daemon-blast-radius.md)
+- [Object storage in budgets](20261020160000-object-storage-in-budgets.md)
+- [Budget alerts on notification channels, and projected overruns](20261019193500-budget-alert-channels.md)
 - [Finished invocations without a horizon get the plan default retention](20261019104819-invocation-default-retention.md)
 - [Resolve Compose extends and include](20261019190527-compose-extends-and-include.md)
 
@@ -811,6 +827,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1320 | [Object-storage plan allowances, plan ceilings, and the overage cap](1320-object-storage-plan-allowances-ceilings-and-overage-cap.md) | accepted; every plan at zero until pricing | `Limits.ObjectStorage` holds per-plan ceilings and allowances; allowances are removed before month-close pricing and follow plan history; ceilings tighten the operator policy at URL admission and gateway checks; the month-close charge is held under the overage cap after the month's compute and live egress |
 | 1239 | [Docker-compatible image process identity](1239-docker-compatible-image-process-identity.md) | accepted | Root-owned layer entries are published as root when imaged holds CAP_CHOWN; customer images without USER run as root; a numeric UID absent from passwd runs with GID 0 (amends ADR-411 and ADR-136 §5) |
 | 1430 | [USD pricing and plan entitlements from the October 2026 COGS report](1430-plan-entitlements-from-october-2026-cogs-report.md) | accepted | Billing in USD only at $0/$10/$30/$99 with $0.01/GB-h overage; RAM per app 256/512/1024/2048 MB and 20/200/1,000/3,000 included GB-h; 1/10/50/200 GiB included object storage with a Free hard stop (write/read split deferred); managed PostgreSQL 1/1/3/10 databases, pooled 0.5/1/5/20 GiB and 5/25/75/200 CU-h ceilings, Free gains one development database |
+| 20261019193600 | [Ledger dual-run reconciliation for compute delivery](20261019193600-ledger-dual-run-reconciliation.md) | accepted | meterd compares the ledger's net compute quantity with the pusher's provider receipts per paid account for the current and previous UTC month (match/pending/capped/incomplete/drift/failed); delivery stays on the pusher until a later ADR has a closed month with no drift |
 | 1180 | [Long async, queue and cron invocations](1180-long-async-invocations.md) | accepted | Background invocations run for the app's request timeout (≥30 s); leases renewed while the run lasts; long runs leave the drain tick and cron loop |
 | 1288 | [Compose-declared build context](1288-compose-declared-build-context.md) | accepted | Project apply stages a Compose-declared Dockerfile service's directory as its archive root (Docker Compose's context); every other workload keeps the repository archive (ADR-144). Keyed on the workload's detector, not the project scan source (H10-25) |
 | 1343 | [App edge on compute nodes behind Cloudflare Tunnel](1343-app-edge-on-compute-nodes.md) | proposed | Every compute node runs a `cloudflared` connector and a gatewayd-public that routes to its own gatewayd-internal socket; `*.<apps domain>` moves to the tunnel, platform hosts and custom domains stay on the control plane; credential-bound app paths are forwarded to the control plane; CPU/RAM hold-back, per-node monitoring and connector withdrawal before drain; off by default, on per manifest |

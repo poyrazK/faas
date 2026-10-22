@@ -18,7 +18,7 @@ var cliHelpGroups = []struct {
 		"deploy", "dev", "apps", "app", "build", "deploys", "deployment", "deployments", "rollback",
 		"preview", "projects", "diff", "invoke", "test", "chaos", "scan", "registry", "github", "connect",
 		"mcp", "openapi", "routes", "flags", "canary", "traffic", "mirror", "freeze", "release-gates",
-		"upload-cache",
+		"approvals", "scheduled-releases", "upload-cache",
 	}},
 	{"Operate & observe", []string{
 		"logs", "tail", "inspect", "debug", "trace", "metrics", "analytics", "status", "ps", "wake",

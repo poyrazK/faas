@@ -1,8 +1,10 @@
 package fcvm
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // defaultConsoleLogDir holds each VM's serial console copy,
@@ -79,6 +81,18 @@ func (v *JailerVMM) takeConsoleFile(instance string) *os.File {
 	}
 	<-o.done
 	return o.f
+}
+
+// PreserveFailedRestoreConsole keeps a failed restore's serial console, which
+// holds guest-init's resume-hook diagnosis, before the fallback cold boot of
+// the same instance reopens and truncates the console log.
+func (v *JailerVMM) PreserveFailedRestoreConsole(instance string) (string, error) {
+	src := v.consoleLogPath(instance)
+	dst := strings.TrimSuffix(src, ".console") + ".restore-failed.console"
+	if err := os.Rename(src, dst); err != nil {
+		return "", fmt.Errorf("vmm: keep failed restore console: %w", err)
+	}
+	return dst, nil
 }
 
 // closeConsoleFileOpen closes an untaken console file once its open ends,

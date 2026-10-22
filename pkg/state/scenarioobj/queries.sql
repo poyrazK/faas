@@ -45,4 +45,6 @@ UPDATE scenario_object_fixtures SET document=sqlc.arg(document)::jsonb,status=sq
 WHERE id=sqlc.arg(id)::uuid;
 
 -- name: Expired :many
-SELECT document FROM scenario_object_fixtures WHERE status IN ('ready','sealing') AND expires_at<now() ORDER BY expires_at LIMIT 16;
+-- Random order: rows whose cleanup keeps failing must not occupy every batch
+-- and starve newer expiries (ADR-20261019120000).
+SELECT document FROM scenario_object_fixtures WHERE status IN ('ready','sealing') AND expires_at<now() ORDER BY random() LIMIT 16;

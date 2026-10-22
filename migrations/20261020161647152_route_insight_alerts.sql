@@ -19,7 +19,9 @@ SET lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ DECLARE rules_base text; presets_base text;
 BEGIN
- IF EXISTS(SELECT 1 FROM pg_proc WHERE proname = 'route_insight_alert_metric_base') THEN RETURN; END IF;
+ -- Resolve through search_path like the calls below: another schema in the
+ -- same database (parallel PG tests) may hold its own copy.
+ IF to_regprocedure('route_insight_alert_metric_base(text)') IS NOT NULL THEN RETURN; END IF;
  SELECT pg_get_constraintdef(oid) INTO rules_base FROM pg_constraint WHERE conrelid = 'alert_rules'::regclass AND conname = 'alert_rules_metric_chk';
  SELECT pg_get_constraintdef(oid) INTO presets_base FROM pg_constraint WHERE conrelid = 'alert_presets'::regclass AND conname = 'alert_presets_metric_chk';
  EXECUTE format('CREATE FUNCTION route_insight_alert_metric_base(kind text) RETURNS text LANGUAGE sql IMMUTABLE AS %L',

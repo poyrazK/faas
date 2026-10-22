@@ -440,7 +440,7 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		return
 	}
 	// Application Auth is a dark launch: without it the mode is unknown.
-	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(acct) {
+	if managedpostgres.CredentialAccess(req.Access) == managedpostgres.CredentialAuth && !s.applicationAuthEnabled(flagSubject(r, acct)) {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)
 		return
 	}

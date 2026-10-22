@@ -36,6 +36,7 @@ import (
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
@@ -447,6 +448,17 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 			return nil, status.Error(codes.FailedPrecondition, freeze.Summary(app.Slug, active))
 		}
 		release.ApplyDefaultToEnqueue(ctx, g.store, g.log, app, acct.Plan, req.DeploymentScope, &params)
+		// ADR-20261020085706: a push to an app that requires approvals must
+		// wait in a canary; githubd reports the refusal on the commit.
+		if params.CanaryPreset == "" {
+			required, approvalErr := approval.CanaryRequired(ctx, g.store, app, req.DeploymentScope, "")
+			if approvalErr != nil {
+				return nil, status.Error(codes.Unavailable, "could not read the app's release approval policy")
+			}
+			if required {
+				return nil, status.Error(codes.FailedPrecondition, api.ErrReleaseApprovalCanaryRequired(app.Slug).Detail)
+			}
+		}
 	}
 	res, err := apidsource.Enqueue(ctx, g.store, g.notif, params)
 	if err != nil {

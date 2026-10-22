@@ -2070,6 +2070,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	fs.Var(&queueCanaryBindings, "queue-canary-binding", "declare safe handler-completion support for a manifest push HTTP binding (repeatable; this deployment only)")
 	mcpTaskMigrationOverride := fs.Bool("mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
 	overrideFreeze := fs.String("override-freeze", "", "release to production during a deploy freeze; the reason is audited (ADR-20261019071733)")
+	releaseAtFlag := fs.String("at", "", "build now and start the production rollout at this time; freezes are checked then")
+	releaseNotifyFlag := fs.String("release-notify", "", "Slack or email channels told when a scheduled release starts or cannot start (with --at)")
 	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses")
 	disableStartupCPUBoost := fs.Bool("disable-startup-cpu-boost", false, "disable the temporary CPU boost during VM startup")
 	// Issue #791 PR-C / ADR-090: skip the `gregale.yaml` triggers fan-out.
@@ -2388,6 +2390,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *safeDeploy && projectRequested {
 		return printErr("Invalid flags", errors.New("--safe currently supports single-app deploys only; use --canary-preset with a project deploy"))
 	}
+	releaseAt, releaseNotify, releaseAtErr := resolveDeployReleaseAt(*releaseAtFlag, *releaseNotifyFlag, explicit, *noTraffic,
+		projectRequested || *githubSnippet || *simplePlan || *dryRun || *diff || *serverDiff || *createOnly || developerSync != nil)
+	if releaseAtErr != nil {
+		return printErr("Invalid rollout policy", releaseAtErr)
+	}
+	// A scheduled release waits like a dark deployment until its time.
+	parkedDeploy := *noTraffic || releaseAt != ""
 	if *environment != "" {
 		if !api.ValidProjectEnvironmentSlug(*environment) {
 			return printErr("Invalid --environment", fmt.Errorf("must be a lowercase project environment slug; got %q", *environment))
@@ -2781,6 +2790,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck, NoTriggers: *noTriggers, RequireAuthn: requireAuthnPtr, PlatformTenantRequired: platformTenantRequiredPtr, PublicAuth: publicAuthPtr,
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride, OverrideFreeze: *overrideFreeze,
+			ReleaseAt: releaseAt, ReleaseNotify: releaseNotify,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -2815,8 +2825,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 			RollbackOn5xx:            rollbackOn5xxPtr,
 			DisableStartupCPUBoost:   disableStartupCPUBoostPtr, Healthcheck: healthcheck,
-			OverrideFreeze: *overrideFreeze,
-		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
+			OverrideFreeze: *overrideFreeze, ReleaseAt: releaseAt, ReleaseNotify: releaseNotify,
+		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, parkedDeploy,
 			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
 		return code
 	}
@@ -3574,6 +3584,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
 		MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude, OverrideFreeze: *overrideFreeze,
+		ReleaseAt: releaseAt, ReleaseNotify: releaseNotify,
 	}
 	if preparedIssueSourceMaps != nil {
 		deployIntent.IssueSourceMapsSHA256 = preparedIssueSourceMaps.Digest
@@ -3926,7 +3937,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// --no-triggers
 	// opts out of the entire fan-out.
 	var sessionLock *flock.Flock
-	savedSession, sessionLock, err := newSavedDeploySession(ctx, client, slug, resolvedApp.ID, sourceDir, deployKey, prov, *safeDeploy, *noTraffic)
+	savedSession, sessionLock, err := newSavedDeploySession(ctx, client, slug, resolvedApp.ID, sourceDir, deployKey, prov, *safeDeploy, parkedDeploy)
 	if err != nil {
 		return printErr("Could not save deploy session", err)
 	}
@@ -4058,6 +4069,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 			OverrideEnv:              execution.overrideEnv,
 			OverrideFreeze:           *overrideFreeze,
+			ReleaseAt:                releaseAt,
+			ReleaseNotify:            releaseNotify,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -4083,6 +4096,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers, OverrideFreeze: ann.OverrideFreeze,
+				ReleaseAt: ann.ReleaseAt, ReleaseNotify: ann.ReleaseNotify,
 			}
 			var progress resumableUploadProgress
 			if !jsonOutput {
@@ -4165,12 +4179,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if err := applyManifestScaling(); err != nil {
 				return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
 			}
-			renderQueuedDeployment(dep, appURL, *noTraffic)
+			renderQueuedDeployment(dep, appURL, parkedDeploy)
 			renderCronActivation(ctx)
 			return 0
 		}
 		if jsonWait {
-			code := writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx, client, dep, prov, appURL, sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, *noTraffic, issueMaps, resolvedSimplePlan)
+			code := writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx, client, dep, prov, appURL, sourceSHA256, slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, parkedDeploy, issueMaps, resolvedSimplePlan)
 			return code
 		}
 		code := streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{
@@ -4182,8 +4196,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			quiet:           streamLogsOnJSON || execution.compactProgress,
 			waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 			waitForRollout:  *safeDeploy,
-			followRollout:   !*noTraffic && followRolloutByDefault(),
-			darkDeploy:      *noTraffic,
+			followRollout:   !parkedDeploy && followRolloutByDefault(),
+			darkDeploy:      parkedDeploy,
 		})
 		return code
 	}
@@ -4211,6 +4225,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		DisableStartupCPUBoost:   disableStartupCPUBoostPtr,
 		MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
 		OverrideFreeze:           *overrideFreeze,
+		ReleaseAt:                releaseAt,
+		ReleaseNotify:            releaseNotify,
 		Overrides:                deployHealthcheckOverrides(healthcheck),
 		Workflows:                workflowDefs,
 		Companions:               sidecarDefs,
@@ -4246,12 +4262,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err := applyManifestScaling(); err != nil {
 			return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
 		}
-		renderQueuedDeployment(dep, appURL, *noTraffic)
+		renderQueuedDeployment(dep, appURL, parkedDeploy)
 		renderCronActivation(ctx)
 		return 0
 	}
 	if jsonWait {
-		code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, *noTraffic, resolvedSimplePlan)
+		code := writeWaitedDeploymentReceiptUntilWithOptions(ctx, client, dep, nil, appURL, "", slug, time.Duration(*waitTimeoutSeconds)*time.Second, *safeDeploy, parkedDeploy, resolvedSimplePlan)
 		if code == 0 {
 			if err := applyManifestScaling(); err != nil {
 				return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
@@ -4268,8 +4284,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		quiet:           streamLogsOnJSON || execution.compactProgress,
 		waitTimeout:     time.Duration(*waitTimeoutSeconds) * time.Second,
 		waitForRollout:  *safeDeploy,
-		followRollout:   !*noTraffic && followRolloutByDefault(),
-		darkDeploy:      *noTraffic,
+		followRollout:   !parkedDeploy && followRolloutByDefault(),
+		darkDeploy:      parkedDeploy,
 	})
 	if code == 0 {
 		if err := applyManifestScaling(); err != nil {
@@ -4706,6 +4722,8 @@ func cmdTrafficPromote(args []string) int {
 	removalMapping := fs.String("route-mapping", "", "reviewed successor mapping JSON")
 	removalApproval := fs.String("route-owner-approval", "", "owner attestation for this exact change")
 	removalAge := fs.Duration("route-evidence-max-age", 72*time.Hour, "maximum route evidence age (at most 72h)")
+	at := fs.String("at", "", "start the release's rollout at this time instead of now")
+	releaseNotify := fs.String("release-notify", "", "Slack or email channels told when the scheduled release starts or cannot start")
 	slug, args := peelLeadingSlug(args)
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -4752,6 +4770,9 @@ func cmdTrafficPromote(args []string) int {
 	deploymentID, err := resolveDeploymentArg(ctx, client, *app, *deployment)
 	if err != nil {
 		return printErr("Traffic promote failed", err)
+	}
+	if *at != "" || *releaseNotify != "" {
+		return scheduleTrafficPromotion(ctx, client, deploymentID, *at, *releaseNotify, ifServingSet || *requireBindings || removalPolicySet)
 	}
 	var servingID string
 	var servingDeployment api.DeploymentResponse

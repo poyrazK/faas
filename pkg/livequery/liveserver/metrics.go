@@ -32,6 +32,9 @@ type Metrics struct {
 	resumes        *prometheus.CounterVec
 	up             prometheus.Gauge
 	restarts       prometheus.Counter
+
+	reg        prometheus.Registerer
+	collectors []prometheus.Collector
 }
 
 // NewMetrics registers one hub's metrics with reg.
@@ -106,10 +109,24 @@ func newMetrics(reg prometheus.Registerer, memory prometheus.Gauge) *Metrics {
 		restarts: prometheus.NewCounter(prometheus.CounterOpts{Name: "livequery_hub_restarts_total",
 			Help: "Times the database's hub stopped on an error and was started again."}),
 	}
-	reg.MustRegister(m.subscriptions, m.queries, m.round, m.commitToDelta, m.recompute, m.resnapshots,
+	m.reg = reg
+	m.collectors = []prometheus.Collector{m.subscriptions, m.queries, m.round, m.commitToDelta, m.recompute, m.resnapshots,
 		m.slotLag, m.checkpoint, m.slowConsumers, m.windowRefills, m.appliedTxns, m.maintenanceSec, m.keys, m.keyRefreshes,
-		m.released, m.releases, m.resumes, m.up, m.restarts)
+		m.released, m.releases, m.resumes, m.up, m.restarts}
+	reg.MustRegister(m.collectors...)
 	return m
+}
+
+// Unregister removes the database's series, for a database the process no
+// longer serves: left behind, livequery_hub_up 0 would read as a database
+// that cannot be served. The shared memory gauge stays.
+func (m *Metrics) Unregister() {
+	if m == nil {
+		return
+	}
+	for _, c := range m.collectors {
+		m.reg.Unregister(c)
+	}
 }
 
 func (m *Metrics) observeRound(d time.Duration, before, after livequery.Stats, subs, queries int) {

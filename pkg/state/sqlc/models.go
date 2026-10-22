@@ -1128,6 +1128,20 @@ type AppRegistryCredential struct {
 	LastUsedAt        pgtype.Timestamptz
 }
 
+type AppReleaseApprovalPolicy struct {
+	AppID             pgtype.UUID
+	AccountID         pgtype.UUID
+	RequiredApprovals int16
+	AfterStage        int16
+	TimeoutMinutes    int32
+	Approvers         string
+	AllowSelfApproval bool
+	NotifyChannelIds  []pgtype.UUID
+	UpdatedBy         string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
 type AppReleaseGate struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
@@ -3680,6 +3694,19 @@ type DeploymentRegistryVerification struct {
 	ExpiresAt     pgtype.Timestamptz
 }
 
+type DeploymentReleaseApproval struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	DeploymentID      pgtype.UUID
+	ApproverAccountID pgtype.UUID
+	Approver          string
+	ApproverRole      string
+	Decision          string
+	Comment           string
+	CreatedAt         pgtype.Timestamptz
+}
+
 type DeploymentReleaseEnvSnapshot struct {
 	DeploymentID pgtype.UUID
 	ValuesJson   []byte
@@ -5255,6 +5282,26 @@ type FinancialBudgetAlert struct {
 	LastError           string
 }
 
+type FinancialBudgetAlertChannelDelivery struct {
+	AlertID       pgtype.UUID
+	Kind          string
+	ChannelID     pgtype.UUID
+	AccountID     pgtype.UUID
+	PolicyID      pgtype.UUID
+	State         string
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LeaseToken    pgtype.UUID
+	DeliveredAt   pgtype.Timestamptz
+	LastError     string
+}
+
+type FinancialBudgetChannel struct {
+	AccountID pgtype.UUID
+	PolicyID  pgtype.UUID
+	ChannelID pgtype.UUID
+}
+
 type FinancialBudgetEvaluation struct {
 	AccountID         pgtype.UUID
 	PolicyID          pgtype.UUID
@@ -5273,6 +5320,22 @@ type FinancialBudgetPolicy struct {
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
 	DeletedAt pgtype.Timestamptz
+}
+
+type FinancialBudgetProjectionAlert struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	PolicyID        pgtype.UUID
+	Revision        int64
+	PeriodStart     pgtype.Timestamptz
+	LimitMillicents int64
+	Payload         []byte
+	State           string
+	Attempts        int32
+	NextAttemptAt   pgtype.Timestamptz
+	LeaseToken      pgtype.UUID
+	DeliveredAt     pgtype.Timestamptz
+	LastError       string
 }
 
 type FinancialBudgetRevision struct {
@@ -5377,6 +5440,16 @@ type FinancialComputeOwner struct {
 	AccountComputeIncarnation pgtype.UUID
 	JobComputeIncarnation     pgtype.UUID
 	EgressBudgetIncarnation   pgtype.UUID
+	ScopeComputeIncarnation   pgtype.UUID
+}
+
+type FinancialComputeScopeBook struct {
+	AccountID   pgtype.UUID
+	ScopeKind   string
+	ScopeID     pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	Payload     []byte
 }
 
 type FinancialEvidenceCoverage struct {
@@ -5387,6 +5460,24 @@ type FinancialEvidenceCoverage struct {
 type FinancialFundingCurrency struct {
 	Singleton bool
 	Currency  string
+}
+
+type FinancialObjectStorageEstimate struct {
+	AccountID                    pgtype.UUID
+	PeriodStart                  pgtype.Timestamptz
+	ObservedAt                   pgtype.Timestamptz
+	UsageThrough                 pgtype.Timestamptz
+	Fresh                        bool
+	StoredByteHours              int64
+	RequestCount                 int64
+	EgressBytes                  int64
+	Currency                     string
+	StorageMillicentsPerGibMonth int64
+	RequestsMillicentsPerMillion int64
+	EgressMillicentsPerGib       int64
+	IncludedByteHours            int64
+	IncludedRequests             int64
+	IncludedEgressBytes          int64
 }
 
 type FinancialPreviewCommandRuntime struct {
@@ -7565,6 +7656,18 @@ type ManagedPostgresLiveKey struct {
 	Recipient    string
 	CreatedAt    pgtype.Timestamptz
 	RetiresAt    pgtype.Timestamptz
+}
+
+// ADR-20261016151947 replication login per live managed database, sealed to livequeryd; livequeryd discovers its databases here.
+type ManagedPostgresLiveLogin struct {
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	SealedLogin        []byte
+	Recipient          string
+	ProviderIdentityID string
+	Slot               string
+	Awake              string
+	CreatedAt          pgtype.Timestamptz
 }
 
 type ManagedPostgresResize struct {
@@ -10607,6 +10710,8 @@ type ProductControlCustomer struct {
 	Plan               string
 	Suspended          bool
 	AuthOrganizationID pgtype.UUID
+	TrialStartsAt      pgtype.Timestamptz
+	TrialEndsAt        pgtype.Timestamptz
 }
 
 type ProductControlCustomerChange struct {
@@ -12428,6 +12533,22 @@ type RecentBuildClaim struct {
 	OrgID     pgtype.UUID
 }
 
+type ReleaseApprovalEvent struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	Event         string
+	ChannelIds    []pgtype.UUID
+	Payload       []byte
+	State         string
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+	CreatedAt     pgtype.Timestamptz
+	DeliveredAt   pgtype.Timestamptz
+}
+
 type ReleaseBundle struct {
 	ID           pgtype.UUID
 	GitSha       string
@@ -13270,6 +13391,48 @@ type SavedRouteRequirement struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type ScenarioCapturedEvent struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	RunID         string
+	AppID         pgtype.UUID
+	Source        string
+	Type          string
+	SchemaVersion string
+	Data          []byte
+	Oversized     bool
+	CreatedAt     pgtype.Timestamptz
+	EventID       pgtype.Text
+}
+
+type ScenarioCapturedPlatformCall struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	RunID          string
+	AppID          pgtype.UUID
+	Kind           string
+	Target         string
+	Name           string
+	IdempotencyKey pgtype.Text
+	Message        []byte
+	Oversized      bool
+	CreatedAt      pgtype.Timestamptz
+}
+
+type ScenarioCapturedQueueMessage struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	RunID     string
+	AppID     pgtype.UUID
+	Kind      string
+	Target    string
+	QueueName string
+	Schedule  string
+	Message   []byte
+	Oversized bool
+	CreatedAt pgtype.Timestamptz
+}
+
 type ScenarioColdPreparation struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID
@@ -13461,6 +13624,25 @@ type ScheduleOccurrence struct {
 	OutcomeCode          string
 	WorkDecision         []byte
 	ExclusiveOperationID pgtype.UUID
+}
+
+type ScheduledRelease struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	DeploymentID      pgtype.UUID
+	ReleaseAt         pgtype.Timestamptz
+	Canary            []byte
+	NotifyChannelIds  []pgtype.UUID
+	OverrideFreeze    string
+	OverrideFreezeIds []pgtype.UUID
+	State             string
+	OutcomeCode       string
+	OutcomeDetail     string
+	ScheduledBy       string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	StartedAt         pgtype.Timestamptz
 }
 
 type ServiceCallerKey struct {

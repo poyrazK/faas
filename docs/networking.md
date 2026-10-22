@@ -505,7 +505,11 @@ Human output identifies blockers and remediation. JSON includes `passed`, the
 applied policy, scope and deployment, per-binding coverage, runtime counts,
 inventory issues and stable blocker codes such as `verification_expired`,
 `verification_scope_mismatch`, `runtime_stale`, `rotation_pending` and
-`verification_unsupported`. This is a point-in-time policy result from a
+`verification_unsupported`. On a control-plane host that does not run binding
+probes (deployment-attached app tasks disabled), missing or stale evidence is
+reported as `verification_unavailable` instead of asking for `bindings verify`;
+`--allow-unsupported` waives it like an unsupported probe, and a recorded
+failure still blocks. This is a point-in-time policy result from a
 best-effort projection. It does not prove application readiness or resident
 credential use; object-storage evidence covers bucket-list read access only.
 

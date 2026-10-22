@@ -91,6 +91,9 @@ const (
 	configRevisionsFile              = "config_revisions.go"     // ADR-1451 guarded, reversible config changes
 	releaseFreezesFile               = "release_freezes.go"      // ADR-20261019071733 deploy freezes
 	releaseGatesFile                 = "release_gates.go"        // ADR-20261019071734 release gates
+	releaseApprovalsFile             = "release_approvals.go"    // ADR-20261020085706 release approvals
+	releaseDiffFile                  = "release_diff.go"         // ADR-20261021101117 release diff
+	scheduledReleasesFile            = "scheduled_releases.go"   // ADR-20261021152201 scheduled releases
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 	operatorPlatformFlagsFile        = "operator_platform_flags.go"
@@ -517,6 +520,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":            true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
+	"GET /dashboard/releases/{id}/approval":                         true, // ADR-20261020085706 HTML page over GET/POST /v1/deployments/{id}/approvals
 	"GET /dashboard/apps/{slug}/custom-metrics":                     true, // ADR-745 HTML view of custom metric history
 	"GET /dashboard/apps/{slug}/automations":                        true, // ADR-1285 HTML authoring console
 	"POST /dashboard/apps/{slug}/automations/{action}":              true, // ADR-1285 app-bound CSRF forms
@@ -1712,6 +1716,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", envDiffFile),
 		filepath.Join(root, "pkg", "api", operatorConfigFile),
 		filepath.Join(root, "pkg", "api", operatorPlatformFlagsFile), // ADR-1700 — platform flags
+		filepath.Join(root, "pkg", "api", "previews.go"),             // ADR 20261021080640 — self-serve previews
 		filepath.Join(root, "pkg", "api", obsFile),
 		filepath.Join(root, "pkg", "api", "obs_triage.go"),
 		filepath.Join(root, "pkg", "api", "obs_triage_history.go"),
@@ -1789,6 +1794,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", configRevisionsFile),
 		filepath.Join(root, "pkg", "api", releaseFreezesFile),
 		filepath.Join(root, "pkg", "api", releaseGatesFile),
+		filepath.Join(root, "pkg", "api", releaseApprovalsFile),
+		filepath.Join(root, "pkg", "api", releaseDiffFile),
+		filepath.Join(root, "pkg", "api", scheduledReleasesFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),

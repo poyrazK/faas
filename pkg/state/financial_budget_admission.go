@@ -55,13 +55,17 @@ func FinancialBudgetStopsForDeployment(ctx context.Context, store Store, app App
 }
 
 func CheckFinancialBudgetAdmission(ctx context.Context, store Store, app App, deploymentID string, now time.Time) error {
-	if err := checkFinancialComputeHold(ctx, store, app, now); err != nil {
+	if err := checkFinancialComputeHold(ctx, store, app, func() (string, error) { return deploymentID, nil }, now); err != nil {
 		return err
 	}
 	return checkFinancialBudgetStops(ctx, store, app, deploymentID, now)
 }
 
-func checkFinancialComputeHold(ctx context.Context, store Store, app App, now time.Time) error {
+// checkFinancialComputeHold rejects work a held strict cap stops. An
+// environment cap holds only deployments in its environment; deployment is
+// resolved only when one applies. Without a deployment, vmmd's acquire and
+// renewal remain the environment's boundary.
+func checkFinancialComputeHold(ctx context.Context, store Store, app App, deployment func() (string, error), now time.Time) error {
 	compute, ok := store.(FinancialComputeStore)
 	if !ok {
 		return nil
@@ -70,9 +74,21 @@ func checkFinancialComputeHold(ctx context.Context, store Store, app App, now ti
 	if err != nil {
 		return errors.Join(err, api.ErrCapacity("compute budget admission unavailable"))
 	}
+	environment, resolved := "", false
 	for _, p := range policies {
 		if !p.Spec.Enabled || !financial.StrictCompute(p.Spec) {
 			continue
+		}
+		if p.Spec.Scope.Kind == "environment" {
+			if !resolved {
+				if environment, err = financialComputeEnvironment(ctx, compute, app, deployment); err != nil {
+					return errors.Join(err, api.ErrCapacity("compute budget admission unavailable"))
+				}
+				resolved = true
+			}
+			if environment == "" || p.Spec.Scope.ID != environment {
+				continue
+			}
 		}
 		balance, err := compute.FinancialComputeBalance(ctx, p, now)
 		if err != nil {
@@ -83,6 +99,18 @@ func checkFinancialComputeHold(ctx context.Context, store Store, app App, now ti
 		}
 	}
 	return nil
+}
+
+func financialComputeEnvironment(ctx context.Context, compute FinancialComputeStore, app App, deployment func() (string, error)) (string, error) {
+	id, err := deployment()
+	if err != nil || id == "" {
+		return "", err
+	}
+	environment, err := compute.FinancialComputeDeploymentEnvironment(ctx, app.AccountID, app.ID, id)
+	if errors.Is(err, ErrNotFound) {
+		return "", nil
+	}
+	return environment, err
 }
 
 func checkFinancialBudgetStops(ctx context.Context, store Store, app App, deploymentID string, now time.Time) error {
@@ -101,22 +129,29 @@ func checkFinancialBudgetStops(ctx context.Context, store Store, app App, deploy
 // environment is resolved through its deployment, never by matching its name to
 // a budget's environment UUID. Policies and stops are each read once.
 func CheckFinancialBudgetAdmissionForScope(ctx context.Context, store Store, app App, scope, deploymentID string, now time.Time) error {
-	if err := checkFinancialComputeHold(ctx, store, app, now); err != nil || app.PreviewOfSlug == "" {
+	resolved, resolveErr := deploymentID != "", error(nil)
+	deployment := func() (string, error) {
+		if !resolved {
+			resolved = true
+			dep, err := ResolveEnvironmentDeployment(ctx, store, app.ID, scope)
+			if err == nil {
+				deploymentID = dep.ID
+			} else if !errors.Is(err, ErrNotFound) {
+				resolveErr = err
+			}
+		}
+		return deploymentID, resolveErr
+	}
+	if err := checkFinancialComputeHold(ctx, store, app, deployment, now); err != nil || app.PreviewOfSlug == "" {
 		return err
 	}
-	if deploymentID == "" {
-		dep, err := ResolveEnvironmentDeployment(ctx, store, app.ID, scope)
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			// An account- or app-scoped stop still answers before the
-			// unresolved environment does.
-			if stopErr := checkFinancialBudgetStops(ctx, store, app, "", now); stopErr != nil {
-				return stopErr
-			}
-			return err
+	if _, err := deployment(); err != nil {
+		// An account- or app-scoped stop still answers before the
+		// unresolved environment does.
+		if stopErr := checkFinancialBudgetStops(ctx, store, app, "", now); stopErr != nil {
+			return stopErr
 		}
-		if err == nil {
-			deploymentID = dep.ID
-		}
+		return err
 	}
 	return checkFinancialBudgetStops(ctx, store, app, deploymentID, now)
 }

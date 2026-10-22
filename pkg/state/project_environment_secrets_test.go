@@ -23,6 +23,7 @@ type projectSecretTestStore interface {
 	CreateApp(context.Context, state.App) (state.App, error)
 	DeleteProjectEnvironment(context.Context, string, string, string) error
 	AppRuntimeConfigChangedAtInScope(context.Context, string, string) (time.Time, bool, error)
+	CloneProjectEnvironment(context.Context, state.ProjectEnvironmentClone, api.Limits) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error)
 }
 
 func TestProjectEnvironmentSecretStores(t *testing.T) {
@@ -147,6 +148,19 @@ func TestProjectEnvironmentSecretStores(t *testing.T) {
 			}
 			if err := s.DeleteProjectEnvironmentSecret(ctx, account.ID, project.ID, "staging", "PAYMENTS_KEY"); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("second delete = %v, want not found", err)
+			}
+
+			// A clone copies the shared secrets as they are: same value, kid
+			// and version, under the new environment.
+			if _, result, err := s.CloneProjectEnvironment(ctx, state.ProjectEnvironmentClone{
+				AccountID: account.ID, ProjectID: project.ID, SourceSlug: "staging", TargetSlug: "qa",
+			}, api.MustLimitsFor(api.PlanPro)); err != nil || result.ProjectSecretsCopied != 1 {
+				t.Fatalf("clone = %+v, %v; want one project secret copied", result, err)
+			}
+			copied, err := s.ListProjectEnvironmentSecrets(ctx, account.ID, project.ID, "qa")
+			if err != nil || len(copied) != 1 || copied[0].Key != "DATABASE_PASSWORD" || copied[0].ValueHash != "aa02" ||
+				copied[0].SecretVersion != 2 || copied[0].Kid != newKey {
+				t.Fatalf("cloned secrets = %+v, %v", copied, err)
 			}
 
 			// The environment's secrets leave with it: a new environment of the

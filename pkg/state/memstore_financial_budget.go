@@ -183,6 +183,11 @@ func memFinancialComputeActivation(t *memFinancialComputeTxn, spec financial.Bud
 		if err := t.initialize(financial.ComputeScopeKey(spec.Scope), true); err != nil {
 			return err
 		}
+		if financial.StrictAppCompute(spec) {
+			if err := computeClearEnvironmentOnly(t, spec.Scope.ID, financial.ComputeMonth(t.now)); err != nil {
+				return err
+			}
+		}
 	}
 	if financial.StrictAccountEgress(spec) && !continuing {
 		if err := t.initializeEgress(); err != nil {

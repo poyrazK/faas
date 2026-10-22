@@ -321,6 +321,10 @@ type MemStore struct {
 	financialBudgetEvaluations                 map[string]financialBudgetMemoryEvaluation
 	financialBudgetAlerts                      map[string]FinancialBudgetAlertDelivery
 	financialBudgetStops                       map[string]FinancialBudgetStop
+	financialBudgetChannels                    map[string][]string                            // policy id → channel ids (ADR-20261019193500)
+	financialBudgetChannelDeliveries           map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
+	financialBudgetProjections                 map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
+	financialObjectStorageEstimates            map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
 	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
 	financialComputeBooks                      map[string]financialComputeBook
 	financialComputeLeases                     map[string]financialComputeLease
@@ -365,6 +369,14 @@ type MemStore struct {
 	releaseFreezes map[string]ReleaseFreeze
 	// releaseGates mirrors app_release_gates (ADR-20261019071734).
 	releaseGates map[string]ReleaseGate
+	// releaseApprovalPolicies mirrors app_release_approval_policies, keyed by
+	// app ID; releaseApprovals mirrors deployment_release_approvals
+	// (ADR-20261020085706).
+	releaseApprovalPolicies map[string]ReleaseApprovalPolicy
+	releaseApprovals        map[string]ReleaseApproval
+	releaseApprovalEvents   map[string]ReleaseApprovalEvent
+	// scheduledReleases mirrors scheduled_releases (ADR-20261021152201).
+	scheduledReleases map[string]ScheduledRelease
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -465,6 +477,9 @@ type MemStore struct {
 	scenarioPostgres          map[string]rehearsalpg.Resource
 	scenarioObjects           map[string]rehearsalobj.Resource
 	scenarioActionPolicies    map[string]scenarioActionPolicy
+	scenarioCapturedEvents    []memScenarioCapturedEvent
+	scenarioQueueCaptures     []memScenarioCapturedQueueMessage
+	scenarioPlatformCalls     []memScenarioCapturedPlatformCall
 	scenarioTestChaosPlans    map[string]chaos.Lease
 	scenarioTestChaosMatches  map[string]map[string]int64
 	previewSets               map[string]PRPreviewSet
@@ -1164,7 +1179,7 @@ type MemStore struct {
 	// (migration 00050, issue #259).
 	invoices               map[string]Invoice
 	invoiceRefunds         map[string]InvoiceRefund
-	billingUsageDeliveries map[string]struct{}
+	billingUsageDeliveries map[string]billingUsageDelivery
 	// objectStorageBilling is the in-memory mirror of the finalized
 	// object-storage month-close ledger.
 	objectStorageBilling           map[string]ObjectStorageBillingRecord
@@ -1820,7 +1835,7 @@ func NewMemStore() *MemStore {
 		// PR B writes via UpsertInvoice (webhook ingestion).
 		invoices:                       map[string]Invoice{},
 		invoiceRefunds:                 map[string]InvoiceRefund{},
-		billingUsageDeliveries:         map[string]struct{}{},
+		billingUsageDeliveries:         map[string]billingUsageDelivery{},
 		objectStorageBilling:           map[string]ObjectStorageBillingRecord{},
 		objectStorageBillingDeliveries: map[string]ObjectStorageBillingDelivery{},
 		// accountCredits starts empty; the operator-only
@@ -5804,6 +5819,12 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	if d.Status != DeployLive {
 		return Deployment{}, ErrDeploymentNotLive
 	}
+	start, starting := scheduledStartFrom(ctx, id)
+	if starting {
+		if err := m.checkScheduledStartLocked(start, d); err != nil {
+			return Deployment{}, err
+		}
+	}
 	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
 	defer func() { m.finishMCPAdmissionLocked(admission, resultErr) }()
 	if err := m.checkMCPAccessPolicyLocked(ctx, d.AppID); err != nil {
@@ -5911,6 +5932,10 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	if sum != 100 {
 		return Deployment{}, ErrTrafficPercentSumInvalid
+	}
+	if starting {
+		applyScheduledStart(&d, start)
+		m.finishScheduledStartLocked(start)
 	}
 	m.putDeploymentLocked(id, d)
 	for i, sibling := range siblings {
@@ -6056,7 +6081,7 @@ func (m *MemStore) ListOwnedCronsByNodeID(_ context.Context, nodeID string) ([]C
 	var out []Cron
 	for _, c := range m.crons {
 		app, ok := m.apps[c.AppID]
-		if ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled {
+		if _, rehearsal := m.scenarioActionPolicies[c.AppID]; ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled && !rehearsal {
 			out = append(out, c)
 		}
 	}
@@ -13526,7 +13551,8 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 	defer m.mu.Unlock()
 	var out []Cron
 	for _, c := range m.crons {
-		if c.Enabled && c.SuspendedReason == "" {
+		// Mirrors PgStore: rehearsal-enrolled apps never fire from the clock.
+		if _, rehearsal := m.scenarioActionPolicies[c.AppID]; c.Enabled && c.SuspendedReason == "" && !rehearsal {
 			out = append(out, c)
 		}
 	}
@@ -13783,7 +13809,7 @@ func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error
 	defer m.mu.Unlock()
 	var out []sqlc.Trigger
 	for _, t := range m.triggers {
-		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) {
+		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) && !m.rehearsalBrokerTriggerLocked(t) {
 			out = append(out, t)
 		}
 	}
@@ -19991,6 +20017,15 @@ func (m *MemStore) UsageWindows(_ context.Context, start, end time.Time) ([]Usag
 	return out, nil
 }
 
+// billingUsageDelivery is one MemStore receipt; the first recorded quantity
+// wins, as in billing_usage_deliveries.
+type billingUsageDelivery struct {
+	provider, accountID string
+	meter               BillingMeter
+	hour                time.Time
+	quantity            int64
+}
+
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
 	return provider + "\x00" + accountID + "\x00" + string(meter) + "\x00" + hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
 }
@@ -20070,7 +20105,10 @@ func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.billingUsageDeliveries[billingUsageDeliveryKey(provider, accountID, meter, windowStart)] = struct{}{}
+	key := billingUsageDeliveryKey(provider, accountID, meter, windowStart)
+	if _, exists := m.billingUsageDeliveries[key]; !exists { // Postgres: ON CONFLICT DO NOTHING
+		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity}
+	}
 	return nil
 }
 
@@ -23409,6 +23447,26 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.financialBudgetAlerts, key)
 		}
 	}
+	for key, d := range m.financialBudgetChannelDeliveries {
+		if d.Alert.AccountID == id {
+			delete(m.financialBudgetChannelDeliveries, key)
+		}
+	}
+	for key, a := range m.financialBudgetProjections {
+		if a.AccountID == id {
+			delete(m.financialBudgetProjections, key)
+		}
+	}
+	for key, e := range m.financialObjectStorageEstimates {
+		if e.AccountID == id {
+			delete(m.financialObjectStorageEstimates, key)
+		}
+	}
+	for key := range m.financialBudgetChannels {
+		if p, ok := m.financialBudgets[key]; !ok || p.AccountID == id {
+			delete(m.financialBudgetChannels, key)
+		}
+	}
 	for key, stop := range m.financialBudgetStops {
 		if stop.AccountID == id {
 			delete(m.financialBudgetStops, key)
@@ -24460,6 +24518,9 @@ func (m *MemStore) CountFailedDeploymentsSince(_ context.Context, accountID, app
 		if appID != "" && d.AppID != appID {
 			continue
 		}
+		if m.rehearsalAlertExcludedLocked(appID, d.AppID) {
+			continue
+		}
 		if d.Status != DeployFailed {
 			continue
 		}
@@ -24482,6 +24543,9 @@ func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, app
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if m.rehearsalAlertExcludedLocked(appID, inv.AppID) {
 			continue
 		}
 		// MemStore keeps no request telemetry; mirror PgStore's
@@ -25026,6 +25090,9 @@ func (m *MemStore) CountFailedInvocationsSince(_ context.Context, accountID, app
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if m.rehearsalAlertExcludedLocked(appID, inv.AppID) {
 			continue
 		}
 		if source != "" && inv.Source != source {

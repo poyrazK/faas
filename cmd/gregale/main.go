@@ -271,6 +271,9 @@ func run(args []string) (status int) {
 		// switch in cmdPreview itself rather than living as
 		// siblings in main.go.
 		return cmdPreview(args[1:])
+	case "previews":
+		// ADR 20261021080640: join or leave self-serve platform previews.
+		return cmdPreviews(args[1:])
 	case "scan":
 		// Phase 3 (repo decomposition) — dry-run entry point. Prints
 		// the plan as a table or --json, never writes. The
@@ -430,6 +433,10 @@ func run(args []string) (status int) {
 		return cmdFreeze(args[1:])
 	case "release-gates":
 		return cmdReleaseGates(args[1:])
+	case "approvals":
+		return cmdApprovals(args[1:])
+	case "scheduled-releases":
+		return cmdScheduledReleases(args[1:])
 	case "plan":
 		return cmdPlan(args[1:])
 	case "dashboard":

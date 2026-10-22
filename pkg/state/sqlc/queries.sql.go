@@ -2379,6 +2379,9 @@ SELECT EXISTS(
  AND r.lease_until>clock_timestamp() AND s.status='running' AND a.status<>'deleted'
  AND NOT a.maintenance_mode AND (NOT a.platform_tenant_required OR r.platform_tenant_id IS NOT NULL)
  AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
+ -- A rehearsal-enrolled app never reaches a real provider with live
+ -- credentials from a workflow step (ADR-20261019180000).
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=a.id)
  AND COALESCE(r.platform_tenant_id::text, '')=COALESCE($7::text, '')
  AND (r.platform_tenant_id IS NULL OR EXISTS (
   SELECT 1 FROM platform_tenants t WHERE t.id=r.platform_tenant_id AND t.account_id=a.account_id AND t.status='active'
@@ -42914,7 +42917,9 @@ func (q *Queries) ListEgressCircuitCandidates(ctx context.Context, db DBTX, samp
 
 const listEnabledAppLogDrainsWithStandardBinding = `-- name: ListEnabledAppLogDrainsWithStandardBinding :many
 SELECT d.id, d.app_id, d.account_id, d.kind, d.target_url, d.auth_header_sealed, d.enabled, d.created_at, d.updated_at,coalesce(application_standard_log_binding(d.app_id,d.id),'null'::jsonb)::jsonb AS standard_binding
-FROM app_log_drains d WHERE d.enabled ORDER BY d.created_at,d.id
+FROM app_log_drains d WHERE d.enabled
+ AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
+ORDER BY d.created_at,d.id
 `
 
 type ListEnabledAppLogDrainsWithStandardBindingRow struct {
@@ -42930,6 +42935,8 @@ type ListEnabledAppLogDrainsWithStandardBindingRow struct {
 	StandardBinding  []byte
 }
 
+// A rehearsal-enrolled app's candidate output never leaves for a customer
+// log destination (ADR-20261019180000).
 func (q *Queries) ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context, db DBTX) ([]ListEnabledAppLogDrainsWithStandardBindingRow, error) {
 	rows, err := db.Query(ctx, listEnabledAppLogDrainsWithStandardBinding)
 	if err != nil {
@@ -43112,6 +43119,8 @@ select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, qu
        filter_criteria, delivery,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
+AND NOT (kind IN ('kafka','nats','redis_streams','sqs_compat')
+  AND EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=triggers.app_id))
 `
 
 type ListEnabledTriggersRow struct {
@@ -43146,6 +43155,9 @@ type ListEnabledTriggersRow struct {
 // ADR-118 / issue #757: filter_criteria is included so the dispatch
 // tick can evaluate per-record predicates without a second round-trip
 // (the column is JSONB; empty/null means "no filter").
+// A rehearsal-enrolled app never polls or commits offsets on a real external
+// broker; its queue, cron and realtime inputs stay inside the app
+// (ADR-20261019180000).
 func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error) {
 	rows, err := db.Query(ctx, listEnabledTriggers)
 	if err != nil {
@@ -85196,6 +85208,31 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 	return items, nil
 }
 
+const restampRuntimeInstanceConfigProof = `-- name: RestampRuntimeInstanceConfigProof :execrows
+UPDATE runtime_instance_config_proofs proof SET config_fingerprint=$1::text
+FROM instances i
+WHERE proof.instance_id=$2::uuid AND i.id=proof.instance_id AND i.wake_id=proof.wake_id
+    AND i.node_id=proof.node_id AND i.deployment_id=proof.deployment_id
+    AND proof.config_fingerprint=$3::text
+`
+
+type RestampRuntimeInstanceConfigProofParams struct {
+	ConfigFingerprint   string
+	InstanceID          pgtype.UUID
+	PreviousFingerprint string
+}
+
+// ADR-051 amendment (2026-10-22): moves a booted instance's proof from the
+// fingerprint it was published with to the one its own observed workload
+// class gives. Only the current wake's proof, and only from that fingerprint.
+func (q *Queries) RestampRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg RestampRuntimeInstanceConfigProofParams) (int64, error) {
+	result, err := db.Exec(ctx, restampRuntimeInstanceConfigProof, arg.ConfigFingerprint, arg.InstanceID, arg.PreviousFingerprint)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const restoreCanaryBaselineDefault = `-- name: RestoreCanaryBaselineDefault :execrows
 UPDATE project_release_sets SET active=true,expires_at=NULL WHERE id=$1::uuid AND NOT active
 `
@@ -89322,6 +89359,27 @@ func (q *Queries) SetInvoiceEnrichment(ctx context.Context, db DBTX, arg SetInvo
 		arg.UpdatedAt,
 	)
 	return err
+}
+
+const setObservedAppWorkloadClass = `-- name: SetObservedAppWorkloadClass :execrows
+UPDATE apps SET workload_class=$1::text
+WHERE id=$2::uuid AND account_id=$3::uuid AND status<>'deleted'
+`
+
+type SetObservedAppWorkloadClassParams struct {
+	WorkloadClass string
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+}
+
+// ADR-051: the workload class a cold boot observed. The caller holds the app
+// row exclusively.
+func (q *Queries) SetObservedAppWorkloadClass(ctx context.Context, db DBTX, arg SetObservedAppWorkloadClassParams) (int64, error) {
+	result, err := db.Exec(ctx, setObservedAppWorkloadClass, arg.WorkloadClass, arg.AppID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setOutboundBindingProbePolicy = `-- name: SetOutboundBindingProbePolicy :one
@@ -94015,6 +94073,8 @@ const workflowAlertSnapshot = `-- name: WorkflowAlertSnapshot :one
 WITH owned_apps AS (
  SELECT id FROM apps WHERE account_id = $3::uuid
  AND ($4::uuid IS NULL OR id = $4::uuid)
+ -- Account-wide rules skip rehearsal-enrolled apps (ADR-20261019180000).
+ AND ($4::uuid IS NOT NULL OR NOT EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id = apps.id))
 ), due_runs AS (
  -- Same wake/lease eligibility as automation queue health (ADR-730/643).
  SELECT r.created_at,CASE WHEN r.status='running'
