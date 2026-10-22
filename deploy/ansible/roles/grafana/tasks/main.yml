@@ -428,6 +428,7 @@
     - durable-entities.json
     - frozen-tier.json
     - customer-operations.json
+    - live-queries.json
   notify:
     - restart grafana-server
     - reload grafana provisioning

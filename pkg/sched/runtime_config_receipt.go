@@ -22,8 +22,12 @@ func addRuntimeSidecarSecretVersions(inputs *state.RuntimeConfigInputs, candidat
 }
 
 // snapshotRuntimeConfigFreshFor checks snap with its deployment in hand (nil
-// reads it). The receipt and whether one is required are independent reads
-// and run concurrently (ADR-1741); a missing receipt then needs no more.
+// reads it). Whether a receipt is required matters only when snap has none,
+// so it is read only then. ADR-1741 read both concurrently to save the missing
+// receipt's round trip, but environment_runtime_receipt_required is one of the
+// wake's heavier statements (7-26 ms on production-us's control plane,
+// 2026-10-21) and a restored snapshot almost always carries its receipt: the
+// concurrent read held every such wake for an answer it then discarded.
 func (e *Engine) snapshotRuntimeConfigFreshFor(ctx context.Context, snap state.Snapshot, dep *state.Deployment, receipt *snapshotReceipt) (bool, error) {
 	receipts, ok := e.store.(state.RuntimeConfigReceiptStore)
 	if !ok {
@@ -38,19 +42,9 @@ func (e *Engine) snapshotRuntimeConfigFreshFor(ctx context.Context, snap state.S
 			return false, err
 		}
 	}
-	var (
-		inputs                 state.RuntimeConfigInputs
-		exists, required       bool
-		receiptErr, requireErr error
-	)
-	concurrently(
-		func() { inputs, exists, receiptErr = receipts.SnapshotRuntimeConfigReceipt(ctx, snap.ID) },
-		func() {
-			required, requireErr = receipts.RuntimeConfigReceiptRequired(ctx, deployment.AppID, deployment.Scope)
-		},
-	)
-	if receiptErr != nil {
-		return false, receiptErr
+	inputs, exists, err := receipts.SnapshotRuntimeConfigReceipt(ctx, snap.ID)
+	if err != nil {
+		return false, err
 	}
 	if receipt != nil {
 		*receipt = snapshotReceipt{snapshotID: snap.ID, inputs: inputs, exists: exists}
@@ -68,7 +62,8 @@ func (e *Engine) snapshotRuntimeConfigFreshFor(ctx context.Context, snap state.S
 		}
 		return receipts.RuntimeConfigInputsFresh(ctx, deployment.AppID, inputs)
 	}
-	return !required, requireErr
+	required, err := receipts.RuntimeConfigReceiptRequired(ctx, deployment.AppID, deployment.Scope)
+	return !required, err
 }
 
 func (e *Engine) runtimeConfigReceiptStale(ctx context.Context, instance state.Instance, boundary time.Time, scope string) bool {

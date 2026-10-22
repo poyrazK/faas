@@ -665,6 +665,10 @@ type Engine struct {
 	// frozenTierApps (schedd `frozen_tier_apps`) extends the frozen tier
 	// from functions to request-mode apps.
 	frozenTierApps atomic.Bool
+	// frozenTierWorkers (schedd `frozen_tier_workers`) lets a worker pool
+	// freeze its surplus workers and thaw them before booting new ones
+	// (ADR-20261019103000).
+	frozenTierWorkers atomic.Bool
 	// restorePlacementMu serializes only the brief choose-and-reserve window
 	// for snapshot restores. restorePlacementInFlight approximates vmmd's
 	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns.

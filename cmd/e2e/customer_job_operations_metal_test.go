@@ -194,8 +194,10 @@ func TestCustomerJobOperationCancellationMetal(t *testing.T) {
 	mustCustomerJob(t, err)
 	task, err := f.store.JobTaskGet(t.Context(), operation.JobRunID, 0)
 	mustCustomerJob(t, err)
-	if task.Status != "cancelled" || task.Attempt != 0 || task.StartedAt != nil {
-		t.Fatal("queued cancellation started native work")
+	// A task that never started keeps its first attempt (job_tasks.attempt
+	// is 1..11) and has no start time.
+	if task.Status != "cancelled" || task.Attempt != 1 || task.StartedAt != nil {
+		t.Fatalf("queued cancellation started native work: status=%s attempt=%d started=%v", task.Status, task.Attempt, task.StartedAt)
 	}
 	f.h.MustRestartSchedd(t)
 	f.waitNoInstances(t)

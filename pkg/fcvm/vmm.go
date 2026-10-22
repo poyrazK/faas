@@ -5389,6 +5389,7 @@ func (v *JailerVMM) mkChrootLegacy(instance string) (string, error) {
 // this call so the lookup here is always non-nil. Firecracker writes its
 // own stderr only on configuration errors; that stream remains discarded
 // to avoid mixing error noise into the customer's log tail.
+
 func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...string) error {
 	if err := v.prepareJournalLaunch(l); err != nil {
 		return err

@@ -430,6 +430,10 @@ func run(args []string) (status int) {
 		return cmdFreeze(args[1:])
 	case "release-gates":
 		return cmdReleaseGates(args[1:])
+	case "approvals":
+		return cmdApprovals(args[1:])
+	case "scheduled-releases":
+		return cmdScheduledReleases(args[1:])
 	case "plan":
 		return cmdPlan(args[1:])
 	case "dashboard":

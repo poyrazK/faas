@@ -150,7 +150,8 @@ func (m *MemStore) recordDiscoveredRouteLocked(event APIConsumerUsageEvent) []by
 	entry.RequestCount++
 	m.discoveredAPIRoutes[key] = entry
 	m.discoveryReceipts[event.EventID] = struct{}{}
-	if !newRoute {
+	// Mirrors PgStore: a rehearsal-enrolled app's routes never fan out.
+	if _, enrolled := m.scenarioActionPolicies[event.AppID]; !newRoute || enrolled {
 		return nil
 	}
 	eventPayload, _, err := apiRouteDiscoveredPayloads(event.AccountID, event.AppID, route, when)

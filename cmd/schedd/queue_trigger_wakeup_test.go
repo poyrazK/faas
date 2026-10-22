@@ -27,3 +27,26 @@ func TestTriggerWakeNotification(t *testing.T) {
 		})
 	}
 }
+
+func TestQueueInvocationApp(t *testing.T) {
+	tests := []struct {
+		name string
+		n    db.Notification
+		want string
+	}{
+		{name: "queue message", n: db.Notification{Channel: db.NotifyInvocationDue, Payload: `{"app_id":"a1","source":"queue"}`}, want: "a1"},
+		{name: "queue message without app", n: db.Notification{Channel: db.NotifyInvocationDue, Payload: `{"source":"queue"}`}},
+		{name: "delayed task", n: db.Notification{Channel: db.NotifyInvocationDue, Payload: `{"app_id":"a1","source":"delayed_task"}`}},
+		{name: "async invocation", n: db.Notification{Channel: db.NotifyInvocationDue, Payload: `{"app_id":"a1","source":"async_invoke"}`}},
+		{name: "malformed payload", n: db.Notification{Channel: db.NotifyInvocationDue, Payload: "not-json"}},
+		{name: "trigger ready", n: db.Notification{Channel: db.NotifyTriggerReady, Payload: `{"app_id":"a1","source":"queue"}`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := queueInvocationApp(tt.n)
+			if got != tt.want || ok != (tt.want != "") {
+				t.Fatalf("queueInvocationApp() = %q, %v, want %q", got, ok, tt.want)
+			}
+		})
+	}
+}

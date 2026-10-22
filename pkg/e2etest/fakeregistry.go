@@ -174,6 +174,12 @@ func IdentityProbeImageAboveBase(repo, helloBody string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, helloBody, true, 8080, []string{"/hello-server", "-identity-probe"})
 }
 
+// QueueConsumerImageAboveBase is a pull-queue worker above BaseLayerImage: it
+// never listens and fetches a gregale:queues workload token on start.
+func QueueConsumerImageAboveBase(repo string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, "queue consumer", true, 8080, []string{"/hello-server", "-queue-consumer"})
+}
+
 func DurableCounterImageAboveBase(repo string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, "durable-counter", true, 8080, []string{"/hello-server", "-durable-counter"})
 }

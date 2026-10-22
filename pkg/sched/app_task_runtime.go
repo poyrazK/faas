@@ -143,6 +143,9 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task GitOps service bindings: %w", err)
 	}
+	if runID != "" {
+		apiEnv = appendRehearsalPlatformAPI(apiEnv)
+	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, request.ArtifactKey)

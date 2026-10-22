@@ -46,7 +46,7 @@ func TestReportLivenessFailedDetachesRelayContext(t *testing.T) {
 func TestProcessExitedDuringWakeHandoffIsRemembered(t *testing.T) {
 	manager := NewManager(&fakeRunner{}, &fakeVMM{}, Paths{Kernel: "/k"}, "test", nil, nil)
 	manager.mu.Lock()
-	manager.waking["vm-handoff"] = struct{}{}
+	manager.waking["vm-handoff"] = wakingInstance{}
 	manager.mu.Unlock()
 
 	manager.ProcessExited("vm-handoff", 137)
