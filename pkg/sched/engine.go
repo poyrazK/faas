@@ -8410,12 +8410,16 @@ func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state
 func (e *Engine) resolveLiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {
 	var dep state.Deployment
 	var err error
-	if scope := ScopeFrom(ctx); scope == "" {
+	scope := ScopeFrom(ctx)
+	if scope == "" {
 		dep, err = state.ResolveProductionDeployment(ctx, e.store, appID)
 	} else {
 		dep, err = e.store.LiveDeploymentForScope(ctx, appID, scope)
 	}
 	if err != nil {
+		if errors.Is(err, state.ErrNotFound) && scope == "" {
+			return state.Deployment{}, noProductionDeploymentErr(ctx, e.store, appID)
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			return state.Deployment{}, errors.Join(
 				ErrPermanentWake,
