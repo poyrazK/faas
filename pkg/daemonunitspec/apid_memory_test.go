@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// apid reloads by a two-generation hand-off (ADR-1580) and its cgroup holds
+// apid reloads by a two-generation hand-off (ADR-1736) and its cgroup holds
 // both generations while the old one drains (ADR 20261018132058). The unit
 // shipped by the generator and by the control-plane role must carry the
 // memory cap, the per-process soft limit, the hand-off reload and the API

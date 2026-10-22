@@ -50,11 +50,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/rootfs"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -527,6 +527,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if releasePhaseEnabled {
 		log.Info("imaged: deployment release phase enabled")
 	}
+	// Same gate and semantics as apid's contained recipe commands
+	// (ADR-20261020150000): a contained rehearsal's release runs only when the
+	// operator has qualified and enabled contained command execution.
+	h.WithRehearsalCommandsEnabled(getenv("FAAS_REHEARSAL_COMMAND_EXECUTION") == "1")
 	// Public-beta compute nodes require a configured public-origin smoke. The
 	// verifier remains optional for single-box/offline development, but the
 	// required flag installs it even when the URL is missing so deployments
@@ -703,12 +707,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	arch := imaged.BuilderArch()
 	basePath := builderBasePathFromEnv(arch)
 	// #96 / ADR-025 axis 2: EnsureBaseExt4 publishes via the StorageBackend
-	// under sched.BaseKeyForArch / sched.BaseDigestKeyForArch, partitioned
+	// under storagekey.BaseForArch / storagekey.BaseDigestForArch, partitioned
 	// by the imaged binary's host arch (issue #197 B3.3). basePath is the
 	// canonical local resolution target for Grype and builderd identity checks;
 	// explicit FAAS_BUILDER_BASE_PATH remains a development harness override.
-	baseKey := sched.BaseKeyForArch("builder", arch)
-	digestKey := sched.BaseDigestKeyForArch("builder", arch)
+	baseKey := storagekey.BaseForArch("builder", arch)
+	digestKey := storagekey.BaseDigestForArch("builder", arch)
 	baseRes, err := h.EnsureBaseExt4(ctx, baseRef, baseKey, digestKey, basePath, "", "")
 	if err != nil {
 		return fmt.Errorf("imaged: stage builder base %s → %s: %w", baseRef, basePath, err)
@@ -855,7 +859,7 @@ func envOr(key, fallback string) string {
 
 // builderBasePathFromEnv returns the host-local compatibility path for the
 // canonical builder storage key. Production storage is partitioned by host
-// architecture, so the path must agree with sched.BaseKeyForArch and
+// architecture, so the path must agree with storagekey.BaseForArch and
 // builderd's default. Keep an explicit override for native/e2e harnesses,
 // but never make a fresh production node silently stage the legacy
 // builder-base.ext4 spelling again.

@@ -220,6 +220,7 @@ Resumption restores active credentials; revoked keys remain revoked. Usage comes
 from Gregale's attributed request counters and may lag while its outbox drains;
 this starter does not invent counters or turn them into invoices.
 
+<!-- gregale:api-monetization -->
 ## Review a completed billing month
 
 Configure an app or tenant request rate card through the Gregale owner API
@@ -284,6 +285,7 @@ backlogs to drain before approval. Gateway exit-time metering can still miss a
 served request on a crash before fsync; this workflow does not strengthen that
 financial completeness guarantee.
 
+<!-- /gregale:api-monetization -->
 ## Isolation contract and extension points
 
 The app trusts `X-Faas-Platform-Tenant-Id` only on Gregale's private guest listener.
@@ -335,9 +337,12 @@ suspension, resumption, and usage lookup. It requires disposable `DATABASE_URL`
 and `CUSTOMER_DATABASE_URL` databases, plus `CUSTOMER_MIGRATION_DATABASE_URL`
 for schema changes; no KVM is needed.
 
+<!-- gregale:api-monetization -->
 The gate also exercises monthly draft review, explicit finalization, replayable
 invoice handoff, and late-usage adjustments through the real owner API and
 PostgreSQL. Dependency-free billing tests cover a full-minute 31-day/two-app
 month against a simulated accounting service; that volume test is not a
-production metering benchmark. Native VM qualification is tracked in
+production metering benchmark.
+<!-- /gregale:api-monetization -->
+Native VM qualification is tracked in
 `docs/reference-platform-qualification.md` in the Gregale repository.

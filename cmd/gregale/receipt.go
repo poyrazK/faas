@@ -28,6 +28,8 @@
 //                     --no-traffic deploy when preview hosting is enabled.
 //   - promotion_command: copy-paste command that moves a waited
 //                     --no-traffic deployment to 100% production traffic.
+//   - issue_source_maps: confirmed deployment-bound artifact metadata when
+//                     opt-in publication completed, including in --no-wait mode.
 
 package main
 
@@ -68,19 +70,23 @@ type SimpleAppReceiptPlan struct {
 // cmd/gregale/receipt.go header comment for field provenance.
 type DeployReceipt struct {
 	api.DeploymentResponse
-	AppURL           string                `json:"app_url,omitempty"`
-	CommitSHA        string                `json:"commit_sha,omitempty"`
-	Dirty            bool                  `json:"dirty,omitempty"`
-	SourceSHA256     string                `json:"source_sha256,omitempty"`
-	Interrupted      bool                  `json:"interrupted,omitempty"`
-	WaitStage        string                `json:"wait_stage,omitempty"`
-	Recovery         *deployRecovery       `json:"recovery,omitempty"`
-	TimedOut         bool                  `json:"timed_out,omitempty"`
-	ResumeCommand    string                `json:"resume_command,omitempty"`
-	PreviewURL       string                `json:"preview_url,omitempty"`
-	PromotionCommand string                `json:"promotion_command,omitempty"`
-	ReleaseSummary   *DeployReleaseSummary `json:"release_summary,omitempty"`
-	SimpleAppPlan    *SimpleAppReceiptPlan `json:"simple_app_plan,omitempty"`
+	AppURL                string                       `json:"app_url,omitempty"`
+	CommitSHA             string                       `json:"commit_sha,omitempty"`
+	Dirty                 bool                         `json:"dirty,omitempty"`
+	SourceSHA256          string                       `json:"source_sha256,omitempty"`
+	Interrupted           bool                         `json:"interrupted,omitempty"`
+	WaitStage             string                       `json:"wait_stage,omitempty"`
+	Recovery              *deployRecovery              `json:"recovery,omitempty"`
+	TimedOut              bool                         `json:"timed_out,omitempty"`
+	ResumeCommand         string                       `json:"resume_command,omitempty"`
+	PreviewURL            string                       `json:"preview_url,omitempty"`
+	PromotionCommand      string                       `json:"promotion_command,omitempty"`
+	ReleaseSummary        *DeployReleaseSummary        `json:"release_summary,omitempty"`
+	SimpleAppPlan         *SimpleAppReceiptPlan        `json:"simple_app_plan,omitempty"`
+	SessionID             string                       `json:"session_id,omitempty"`
+	CronActivation        string                       `json:"cron_activation,omitempty"`
+	ConfigurationComplete *bool                        `json:"configuration_complete,omitempty"`
+	IssueSourceMaps       *api.IssueSourceMapsMetadata `json:"issue_source_maps,omitempty"`
 }
 
 // newDeployReceipt builds a DeployReceipt from the post-deploy
@@ -102,6 +108,11 @@ func newDeployReceipt(dep api.DeploymentResponse, prov *zeroConfigProvenance, ap
 	r := &DeployReceipt{
 		DeploymentResponse: dep,
 		SourceSHA256:       sourceSHA256,
+	}
+	if dep.Configuration != nil {
+		complete := dep.Configuration.Complete
+		r.ConfigurationComplete = &complete
+		r.CronActivation = dep.Configuration.Crons.Status
 	}
 	if appURL != "" {
 		r.AppURL = appURL

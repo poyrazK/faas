@@ -1,7 +1,7 @@
 // spec: §4.4
 // adr: 171
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,15 +18,15 @@ type streamingExecutionSession struct {
 	destroy func(context.Context) error
 }
 
-func (s streamingExecutionSession) Execute(context.Context, ExecutionPayload) (ExecutionOutcome, error) {
-	return ExecutionOutcome{}, nil
+func (s streamingExecutionSession) Execute(context.Context, sched.ExecutionPayload) (sched.ExecutionOutcome, error) {
+	return sched.ExecutionOutcome{}, nil
 }
 
-func (s streamingExecutionSession) ExecuteWithOutput(ctx context.Context, _ ExecutionPayload, receive executionproto.OutputReceiver) (ExecutionOutcome, error) {
+func (s streamingExecutionSession) ExecuteWithOutput(ctx context.Context, _ sched.ExecutionPayload, receive executionproto.OutputReceiver) (sched.ExecutionOutcome, error) {
 	if err := receive(ctx, "stdout", []byte("live\n")); err != nil {
-		return ExecutionOutcome{}, err
+		return sched.ExecutionOutcome{}, err
 	}
-	return ExecutionOutcome{Status: api.ExecutionStatusSucceeded, Result: json.RawMessage(`{"ok":true}`), Stdout: "live\n"}, nil
+	return sched.ExecutionOutcome{Status: api.ExecutionStatusSucceeded, Result: json.RawMessage(`{"ok":true}`), Stdout: "live\n"}, nil
 }
 
 func (s streamingExecutionSession) Destroy(ctx context.Context) error {
@@ -36,11 +37,11 @@ func (s streamingExecutionSession) Destroy(ctx context.Context) error {
 }
 
 func TestExecutionCoordinatorPersistsLiveOutputOnlyOnce(t *testing.T) {
-	store, account, executions, _ := newExecutionCoordinatorFixture(t, 1, 2000)
-	backend := executionBackendFunc(func(context.Context, ExecutionRestoreRequest) (ExecutionSession, error) {
+	store, account, executions, _ := sched.NewExecutionCoordinatorFixture(t, 1, 2000)
+	backend := sched.ExecutionBackendFunc(func(context.Context, sched.ExecutionRestoreRequest) (sched.ExecutionSession, error) {
 		return streamingExecutionSession{}, nil
 	})
-	coordinator := NewExecutionCoordinator(store, backend, executionCoordinatorTestConfig(), nil)
+	coordinator := sched.NewExecutionCoordinator(store, backend, sched.ExecutionCoordinatorTestConfig(), nil)
 	if processed, err := coordinator.ProcessNext(context.Background()); err != nil || !processed {
 		t.Fatalf("ProcessNext = %v, %v", processed, err)
 	}

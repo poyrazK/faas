@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // NodeLedger is schedd's per-node live RAM/vCPU/concurrency accounting.
@@ -347,6 +348,10 @@ type Request struct {
 	// total so every subsequent normal admission remains blocked until the
 	// node falls back below its physical CPU budget.
 	AllowCPUOvercommitRecovery bool
+	// ownerApp is the wake's app, read moments ago or held by the owner
+	// cache under a generation the admission insert rechecks; placement's
+	// ownership check uses it instead of reading the app again (ADR-1741).
+	ownerApp *state.App
 }
 
 func (r Request) admissionMB() int {

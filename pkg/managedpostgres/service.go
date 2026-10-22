@@ -149,6 +149,20 @@ func (s *Service) reservationLimit(ctx context.Context, accountID string) (int, 
 }
 
 func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, error) {
+	return s.create(ctx, request, "")
+}
+
+// CreateWithID is for durable workflows which reserve a resource identity
+// before asking the provider to create it. A name collision must not adopt a
+// different database, even if its configuration happens to match.
+func (s *Service) CreateWithID(ctx context.Context, request CreateRequest, id string) (Database, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return Database{}, ErrInvalid
+	}
+	return s.create(ctx, request, id)
+}
+
+func (s *Service) create(ctx context.Context, request CreateRequest, reservedID string) (Database, error) {
 	if !s.provisioningEnabled() {
 		return Database{}, ErrProvisioningClosed
 	}
@@ -166,6 +180,9 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
+		if reservedID != "" && existing.ID != reservedID {
+			return Database{}, ErrConflict
+		}
 		if _, err := s.Get(ctx, existing.AccountID, existing.ID); err != nil {
 			return Database{}, err
 		}
@@ -200,8 +217,12 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	if err != nil {
 		return Database{}, err
 	}
+	databaseID := reservedID
+	if databaseID == "" {
+		databaseID = s.newID()
+	}
 	database, _, err := s.store.Reserve(ctx, Database{
-		ID:                 s.newID(),
+		ID:                 databaseID,
 		AccountID:          request.AccountID,
 		OrgID:              Organization(ctx),
 		Name:               request.Name,
@@ -653,6 +674,16 @@ func (s *Service) Get(ctx context.Context, accountID, databaseID string) (Databa
 		return Database{}, err
 	}
 	return rows[0], nil
+}
+
+// LiveHub returns the livequeryd hub serving database's live queries
+// (ADR-20261016151947), or "" when its backend runs none.
+func (s *Service) LiveHub(database Database) (string, error) {
+	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
+	if err != nil {
+		return "", err
+	}
+	return backend.LiveHub(database.ID), nil
 }
 
 // FindByName locates an account-owned durable reservation. Clone workers use

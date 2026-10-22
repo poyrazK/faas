@@ -627,6 +627,11 @@ type CreateAppRequest struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy (ADR-1446): "safe" (default) or "immediate".
+	ReleasePolicy string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1449): up to ReleaseProbePathsMax GET paths the
+	// default rollout probe checks instead of "/".
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// StreamingEnabled (issue #471) lets a customer opt out of
 	// streaming at creation time. nil → plan default (Free off,
 	// Hobby+ on). Explicit false on a Hobby/Pro/Scale plan = opt out
@@ -964,9 +969,21 @@ type ScenarioTestChaosMatch struct {
 }
 
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
+// AppDeploySettingsCondition is a precondition for a single-app settings PATCH.
+// ExpectedSettings includes every targeted field, including fields that already
+// match the desired value and are therefore omitted from the partial update.
+type AppDeploySettingsCondition struct {
+	ExpectedAppID        string                     `json:"expected_app_id"`
+	ExpectedDeploymentID string                     `json:"expected_deployment_id"`
+	ExpectedSettings     map[string]json.RawMessage `json:"expected_settings"`
+}
+
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
+	// DeploySettingsCondition makes single-app recovery settings updates
+	// conditional on the app, deployment and observed targeted fields.
+	DeploySettingsCondition *AppDeploySettingsCondition `json:"deploy_settings_condition,omitempty"`
 	// ExpectedServiceBindingFingerprint guards service-only updates atomically.
 	ExpectedServiceBindingFingerprint *string `json:"expected_service_binding_fingerprint,omitempty"`
 	// Visibility changes the app's edge exposure. Nil leaves it unchanged;
@@ -1060,6 +1077,12 @@ type UpdateAppRequest struct {
 	VersionAffinityCookie        *string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie *bool   `json:"version_affinity_managed_cookie,omitempty"`
 	RevisionPinTTLSeconds        *int    `json:"revision_pin_ttl_seconds,omitempty"`
+	// ReleasePolicy (ADR-1446) replaces the app's default rollout for
+	// production releases: "safe" or "immediate".
+	ReleasePolicy *string `json:"release_policy,omitempty"`
+	// ReleaseProbePaths (ADR-1449) replaces the paths the default rollout
+	// probe checks; an empty list restores "/".
+	ReleaseProbePaths *[]string `json:"release_probe_paths,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 / unset => scale to zero; >0 => keep at least this many
 	// RUNNING instances alive. Pro/Scale only — Free/Hobby get
@@ -1379,6 +1402,37 @@ type APIConsumerOverdueHoldListResponse struct {
 	Holds []APIConsumerOverdueHoldResponse `json:"holds"`
 }
 
+// PlatformTenantTrialResponse is a platform tenant's free trial: its usage
+// in [starts_at, ends_at) is priced at zero (ADR-1322).
+type PlatformTenantTrialResponse struct {
+	TenantID string    `json:"tenant_id"`
+	StartsAt time.Time `json:"starts_at"`
+	EndsAt   time.Time `json:"ends_at"`
+	Active   bool      `json:"active"`
+}
+
+// PlatformTenantBillingPolicyResponse is an account's overdue rule for
+// platform tenants (ADR-1324).
+type PlatformTenantBillingPolicyResponse struct {
+	BlockOverdueAfterDays int       `json:"block_overdue_after_days"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+// PlatformTenantOverdueHoldResponse is one platform tenant the gateway
+// refuses because of an overdue invoice.
+type PlatformTenantOverdueHoldResponse struct {
+	TenantID string    `json:"tenant_id"`
+	ExportID string    `json:"export_id"`
+	DueAt    time.Time `json:"due_at"`
+	Since    time.Time `json:"since"`
+}
+
+// PlatformTenantOverdueHoldListResponse lists an account's blocked tenants,
+// oldest due date first.
+type PlatformTenantOverdueHoldListResponse struct {
+	Holds []PlatformTenantOverdueHoldResponse `json:"holds"`
+}
+
 // APIConsumerResponse is the public representation of an API consumer.
 type APIConsumerResponse struct {
 	ID                      string     `json:"id"`
@@ -1482,6 +1536,9 @@ type CreateAPIConsumerRateCardRequest struct {
 	// consumer's month starts sets both for that month.
 	BaseFeeMillicentsPerMonth int64 `json:"base_fee_millicents_per_month,omitempty"`
 	MinimumMillicentsPerMonth int64 `json:"minimum_millicents_per_month,omitempty"`
+	// ProrateMonthlyFees scales both in a consumer's first month to the
+	// share of it left after the consumer was created (ADR-1325).
+	ProrateMonthlyFees bool `json:"prorate_monthly_fees,omitempty"`
 }
 
 // APIConsumerRateCardTier is one step of a graduated ladder. Units whose
@@ -1506,9 +1563,11 @@ type APIConsumerRateCardResponse struct {
 	TierMode               string                    `json:"tier_mode"`
 	RouteWeights           map[string]int64          `json:"route_weights,omitempty"`
 	PlanID                 string                    `json:"plan_id,omitempty"`
-	// Monthly base fee and minimum spend per consumer (ADR-1316).
+	// Monthly base fee and minimum spend per consumer (ADR-1316), prorated
+	// in a consumer's first month when prorate_monthly_fees (ADR-1325).
 	BaseFeeMillicentsPerMonth int64     `json:"base_fee_millicents_per_month,omitempty"`
 	MinimumMillicentsPerMonth int64     `json:"minimum_millicents_per_month,omitempty"`
+	ProrateMonthlyFees        bool      `json:"prorate_monthly_fees,omitempty"`
 	EffectiveFrom             time.Time `json:"effective_from"`
 	CreatedAt                 time.Time `json:"created_at"`
 }
@@ -1913,6 +1972,10 @@ type AppResponse struct {
 	ID                        string `json:"id"`
 	Slug                      string `json:"slug"`
 	Type                      string `json:"type"`
+	// ProjectID is the parent project (ADR-050) as the canonical UUID text
+	// Postgres renders for apps.project_id. Omitted for standalone apps.
+	// Read-only: no app create/update request accepts it.
+	ProjectID string `json:"project_id,omitempty"`
 	// Visibility is public unless the app is explicitly configured for
 	// authenticated service-to-service ingress only.
 	Visibility string `json:"visibility"`
@@ -2057,6 +2120,12 @@ type AppResponse struct {
 	VersionAffinityCookie        string `json:"version_affinity_cookie,omitempty"`
 	VersionAffinityManagedCookie bool   `json:"version_affinity_managed_cookie"`
 	RevisionPinTTLSeconds        int    `json:"revision_pin_ttl_seconds"`
+	// ReleasePolicy is the effective default rollout for production
+	// releases (ADR-1446): "safe" or "immediate".
+	ReleasePolicy string `json:"release_policy"`
+	// ReleaseProbePaths are the paths the default rollout probe checks; empty
+	// means "/" (ADR-1449).
+	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
 	// AppProtocol (ADR-124) is the wire-protocol selector stored on
 	// the apps row. Always "http1" on a Free-or-above app that
 	// didn't set the field — the universal default. Set to "http2"
@@ -2448,6 +2517,17 @@ type CreateDeploymentRequest struct {
 	// the final worker for a queued MCP task handler version. The grant is
 	// one-use and consumed atomically with the stable cutover.
 	MCPTaskMigrationOverride bool `json:"mcp_task_migration_override,omitempty"`
+	// OverrideFreeze releases to production while a freeze is active
+	// (ADR-20261019071733). It is the reason, 1-200 characters; apid audits
+	// it with the freezes it overrode.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
+	// ReleaseAt schedules the production release (ADR-20261021152201): it is
+	// built now, waits live without traffic, and starts its rollout at this
+	// RFC 3339 time. Freezes are checked at that time.
+	ReleaseAt string `json:"release_at,omitempty"`
+	// ReleaseNotify names Slack or email channels told when a scheduled
+	// release starts or cannot start.
+	ReleaseNotify []string `json:"release_notify,omitempty"`
 	// Overrides is the Fargate-shaped deploy-time override object
 	// (issue #460 / ADR-053). Lets a customer redeploy the same
 	// digest-pinned image with a different entrypoint/cmd/env/port
@@ -3255,12 +3335,17 @@ type DeploymentWorkerDrainStatus struct {
 }
 
 type DeploymentResponse struct {
+	Configuration *DeploymentConfigurationStatus `json:"configuration,omitempty"`
 	// StagedReview is the intent snapshot committed with a reviewed candidate.
 	StagedReview           *AppReleaseReview                     `json:"staged_review,omitempty"`
 	WorkerDrain            *DeploymentWorkerDrainStatus          `json:"worker_drain,omitempty"`
 	PromotionHold          *DeploymentPromotionHold              `json:"promotion_hold,omitempty"`
 	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
 	StageState             json.RawMessage                       `json:"stage_state,omitempty"`
+	// ScheduledRelease is the schedule of a release built ahead of time:
+	// pending while it waits, or how its latest schedule ended
+	// (ADR-20261021152201).
+	ScheduledRelease *ScheduledRelease `json:"scheduled_release,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
 	// (`gregale dev`). It reports whether the sync could have been applied as
 	// a live source patch (ADR-740 phase 1, measurement only).
@@ -3535,11 +3620,23 @@ type DeploymentResponse struct {
 	// 'pending' isn't "" — the dashboard fills in from
 	// pkg/state.SerializeDeployment which always stamps the
 	// resolved value).
-	RolloutState          string                         `json:"rollout_state,omitempty"`
-	RolloutStartedAt      *time.Time                     `json:"rollout_started_at,omitempty"`
-	RolloutCompletedAt    *time.Time                     `json:"rollout_completed_at,omitempty"`
-	RolloutAbortedAt      *time.Time                     `json:"rollout_aborted_at,omitempty"`
-	RolloutAbortedReason  string                         `json:"rollout_aborted_reason,omitempty"`
+	RolloutState         string     `json:"rollout_state,omitempty"`
+	RolloutStartedAt     *time.Time `json:"rollout_started_at,omitempty"`
+	RolloutCompletedAt   *time.Time `json:"rollout_completed_at,omitempty"`
+	RolloutAbortedAt     *time.Time `json:"rollout_aborted_at,omitempty"`
+	RolloutAbortedReason string     `json:"rollout_aborted_reason,omitempty"`
+	// RolloutDecision is the evidence recorded with the latest rollout
+	// transition (ADR-1447). It explains an outcome only when its kind matches:
+	// an advance record for completion, an abort record for an abort.
+	RolloutDecision *RolloutDecision `json:"rollout_decision,omitempty"`
+	// RolloutHold is the newest hold recorded since the current canary step
+	// started, while the rollout is in flight (ADR-1447). Only single-deployment
+	// reads and the deployment summary fill it.
+	RolloutHold *RolloutDecision `json:"rollout_hold,omitempty"`
+	// Release is the deployment's release command run, for a deployment that
+	// declares one (ADR-1448). Only single-deployment reads and the
+	// deployment summary fill it.
+	Release               *DeploymentRelease             `json:"release,omitempty"`
 	RollbackOperation     *RollbackOperation             `json:"rollback_operation,omitempty"`
 	ServiceRolloutHandoff *ServiceRolloutHandoffResponse `json:"service_rollout_handoff,omitempty"`
 }
@@ -3706,6 +3803,9 @@ type AdvanceCanaryRequest struct {
 	ProfileGateRollback bool                 `json:"profile_gate_rollback,omitempty"`
 	ProfileGateOverride *ProfileGateOverride `json:"profile_gate_override,omitempty"`
 	ExpectedStep        int                  `json:"expected_step"`
+	// Decision is the circuit-breaker evidence for this advance (ADR-1447).
+	// Reserved for the lease-bound internal worker; public requests reject it.
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // CanaryAdvanceResponse carries the atomically advanced deployment and the
@@ -3960,6 +4060,12 @@ type RollbackRequest struct {
 	// set this; the API does not enforce role because the
 	// underlying endpoint already requires MFA + ScopesDeployWrite.
 	AlertRuleID *string `json:"alert_rule_id,omitempty"`
+
+	// AcknowledgeReleases lets the rollback proceed although release
+	// commands ran after its target last served (ADR-1448). Without it such a
+	// rollback is refused with rollback_crosses_release. Automated rollbacks
+	// never set it.
+	AcknowledgeReleases bool `json:"acknowledge_releases,omitempty"`
 }
 
 // CapabilityStatus is a customer-visible catalog row with the account's
@@ -5665,6 +5771,18 @@ type AccountTraceLookupResponse struct {
 type AccountTraceMatch struct {
 	App     string                    `json:"app"`
 	Request DebugTelemetryRequestItem `json:"request"`
+	// Wake is the wake this request started or joined, when its wake history
+	// is still retained.
+	Wake *AccountTraceWake `json:"wake,omitempty"`
+}
+
+// AccountTraceWake is how a matched request's app was woken: the wake method
+// (for example restore or cold_boot) and how long the instance took from boot
+// start to ready. ReadyInMS is omitted until the wake completed.
+type AccountTraceWake struct {
+	WakeID    string `json:"wake_id"`
+	Method    string `json:"method,omitempty"`
+	ReadyInMS int32  `json:"ready_in_ms,omitempty"`
 }
 
 // AccountTraceInvocation is a safe durable invocation lifecycle projection.
@@ -7032,15 +7150,17 @@ const (
 // schema-parity AST gate can assert field-for-field equivalence with
 // the OpenAPI spec.
 type ProjectScanRequest struct {
-	Source                 string `json:"source"`                // tar.gz binary blob
-	ProjectSlug            string `json:"project_slug"`          // kebab slug
-	RepoFullName           string `json:"repo_full_name"`        // GitHub owner/name binding
-	ProductionBranch       string `json:"production_branch"`     // default "main"
-	InstallID              int64  `json:"install_id"`            // GitHub install id (--repo); 0 for unbound
-	Only                   string `json:"only"`                  // CSV of workload names
-	Environment            string `json:"environment,omitempty"` // registered project environment
-	NoTriggers             bool   `json:"no_triggers"`           // leave declared and existing triggers unchanged
-	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
+	AppSlugs               map[string]string `json:"app_slugs,omitempty"`
+	Migration              bool              `json:"migration,omitempty"`
+	Source                 string            `json:"source"`                // tar.gz binary blob
+	ProjectSlug            string            `json:"project_slug"`          // kebab slug
+	RepoFullName           string            `json:"repo_full_name"`        // GitHub owner/name binding
+	ProductionBranch       string            `json:"production_branch"`     // default "main"
+	InstallID              int64             `json:"install_id"`            // GitHub install id (--repo); 0 for unbound
+	Only                   string            `json:"only"`                  // CSV of workload names
+	Environment            string            `json:"environment,omitempty"` // registered project environment
+	NoTriggers             bool              `json:"no_triggers"`           // leave declared and existing triggers unchanged
+	PlatformTenantRequired *bool             `json:"platform_tenant_required,omitempty"`
 }
 
 // ProjectSourceRefScanRequest asks the control plane to fetch a connected
@@ -7048,32 +7168,53 @@ type ProjectScanRequest struct {
 // credentials stay inside githubd; InstallID may be omitted when exactly one
 // account installation can access Repo.
 type ProjectSourceRefScanRequest struct {
-	Repo             string   `json:"repo"`
-	Ref              string   `json:"ref"`
-	ProjectSlug      string   `json:"project_slug"`
-	RepoFullName     string   `json:"repo_full_name,omitempty"`
-	ProductionBranch string   `json:"production_branch,omitempty"`
-	InstallID        int64    `json:"install_id,omitempty"`
-	Only             []string `json:"only,omitempty"`
-	Exclude          []string `json:"exclude,omitempty"`
-	Environment      string   `json:"environment,omitempty"`
-	NoTriggers       bool     `json:"no_triggers,omitempty"`
+	AppSlugs         map[string]string `json:"app_slugs,omitempty"`
+	Repo             string            `json:"repo"`
+	Ref              string            `json:"ref"`
+	ProjectSlug      string            `json:"project_slug"`
+	RepoFullName     string            `json:"repo_full_name,omitempty"`
+	ProductionBranch string            `json:"production_branch,omitempty"`
+	InstallID        int64             `json:"install_id,omitempty"`
+	Only             []string          `json:"only,omitempty"`
+	Exclude          []string          `json:"exclude,omitempty"`
+	Environment      string            `json:"environment,omitempty"`
+	NoTriggers       bool              `json:"no_triggers,omitempty"`
+	// Migration leaves the project unbound from unattended GitHub push deploys
+	// and suppresses triggers while the customer verifies the first service.
+	Migration bool `json:"migration,omitempty"`
+}
+
+// ProjectInitialSecrets maps exact selected workload names to initial sealed
+// environment values. It is request-only and must never enter scan responses.
+type ProjectInitialSecrets map[string]map[string]string
+
+// ApplyCachedProjectPlanRequest applies the exact account-owned source retained
+// by scan, without asking a browser to upload or refetch the repository.
+type ApplyCachedProjectPlanRequest struct {
+	PlanToken      string                `json:"plan_token"`
+	Only           []string              `json:"only,omitempty"`
+	Exclude        []string              `json:"exclude,omitempty"`
+	ApprovalToken  string                `json:"approval_token,omitempty"`
+	InitialSecrets ProjectInitialSecrets `json:"initial_secrets,omitempty"`
 }
 
 // ProjectApplyRequest is the multipart body for POST /v1/projects.
 // Shape mirrors ProjectScanRequest — the handler re-runs the scan
 // and re-checks the plan token internally.
 type ProjectApplyRequest struct {
-	Source                 string `json:"source"`
-	ProjectSlug            string `json:"project_slug"`
-	RepoFullName           string `json:"repo_full_name"`
-	ProductionBranch       string `json:"production_branch"`
-	InstallID              int64  `json:"install_id"`
-	Only                   string `json:"only"`
-	Environment            string `json:"environment,omitempty"`
-	ApprovalToken          string `json:"approval_token,omitempty"`
-	NoTriggers             bool   `json:"no_triggers"`
-	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
+	AppSlugs               map[string]string     `json:"app_slugs,omitempty"`
+	Migration              bool                  `json:"migration,omitempty"`
+	Source                 string                `json:"source"`
+	ProjectSlug            string                `json:"project_slug"`
+	RepoFullName           string                `json:"repo_full_name"`
+	ProductionBranch       string                `json:"production_branch"`
+	InstallID              int64                 `json:"install_id"`
+	Only                   string                `json:"only"`
+	Environment            string                `json:"environment,omitempty"`
+	ApprovalToken          string                `json:"approval_token,omitempty"`
+	NoTriggers             bool                  `json:"no_triggers"`
+	PlatformTenantRequired *bool                 `json:"platform_tenant_required,omitempty"`
+	InitialSecrets         ProjectInitialSecrets `json:"initial_secrets,omitempty"`
 }
 
 // SourceRefDeployRequest is the JSON body for
@@ -7127,6 +7268,11 @@ type SourceRefDeployRequest struct {
 	RollbackOn5xx            *bool                  `json:"rollback_on_5xx,omitempty"`
 	DisableStartupCPUBoost   *bool                  `json:"disable_startup_cpu_boost,omitempty"`
 	Healthcheck              *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
+	// ReleaseAt and ReleaseNotify are CreateDeploymentRequest's.
+	ReleaseAt     string   `json:"release_at,omitempty"`
+	ReleaseNotify []string `json:"release_notify,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -7158,6 +7304,11 @@ type SourceTarballDeployRequest struct {
 	RollbackOn5xx          *bool                  `json:"rollback_on_5xx,omitempty"`
 	DisableStartupCPUBoost *bool                  `json:"disable_startup_cpu_boost,omitempty"`
 	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
+	// ReleaseAt and ReleaseNotify are CreateDeploymentRequest's.
+	ReleaseAt     string   `json:"release_at,omitempty"`
+	ReleaseNotify []string `json:"release_notify,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).
@@ -7169,14 +7320,21 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
-	Name                string              `json:"name"`
-	RootDir             string              `json:"root_dir"`
-	Dockerfile          string              `json:"dockerfile,omitempty"`
-	Image               string              `json:"image,omitempty"`
-	ImageHealthcheck    *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
-	Command             []string            `json:"command"`
-	DependsOn           []string            `json:"depends_on,omitempty"`
-	DependsOnConditions map[string]string   `json:"depends_on_conditions,omitempty"`
+	AppSlug          string              `json:"app_slug,omitempty"`
+	PublicURL        string              `json:"public_url,omitempty"`
+	Name             string              `json:"name"`
+	RootDir          string              `json:"root_dir"`
+	Dockerfile       string              `json:"dockerfile,omitempty"`
+	Image            string              `json:"image,omitempty"`
+	ImageHealthcheck *ComposeHealthcheck `json:"image_healthcheck,omitempty"`
+	ImageProcess     *ComposeProcess     `json:"image_process,omitempty"`
+	// BuildTarget and BuildArgs show a source-built service's Compose build
+	// options (ADR-20261019142544); argument values stay out of plans.
+	BuildTarget         string            `json:"build_target,omitempty"`
+	BuildArgs           []string          `json:"build_args,omitempty"`
+	Command             []string          `json:"command"`
+	DependsOn           []string          `json:"depends_on,omitempty"`
+	DependsOnConditions map[string]string `json:"depends_on_conditions,omitempty"`
 
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport opts a Compose workload into the HTTPS-first
@@ -7188,14 +7346,15 @@ type PlanWorkload struct {
 	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
 	PlatformTenantRequired    *bool                               `json:"platform_tenant_required,omitempty"`
 
-	Class         string   `json:"class,omitempty"`
-	Schedule      string   `json:"schedule,omitempty"`
-	Ports         []int    `json:"ports"`
-	EnvKeys       []string `json:"env_keys,omitempty"`
-	Source        string   `json:"source,omitempty"`
-	Tier          string   `json:"tier,omitempty"`
-	Action        string   `json:"action,omitempty"`          // ADR-124: "create" | "update"
-	ExistingAppID string   `json:"existing_app_id,omitempty"` // ADR-124: empty iff Action == "create"
+	Class           string   `json:"class,omitempty"`
+	Schedule        string   `json:"schedule,omitempty"`
+	Ports           []int    `json:"ports"`
+	EnvKeys         []string `json:"env_keys,omitempty"`
+	RequiredEnvKeys []string `json:"required_env_keys,omitempty"`
+	Source          string   `json:"source,omitempty"`
+	Tier            string   `json:"tier,omitempty"`
+	Action          string   `json:"action,omitempty"`          // ADR-124: "create" | "update"
+	ExistingAppID   string   `json:"existing_app_id,omitempty"` // ADR-124: empty iff Action == "create"
 	// DetectedBy is the structured detection trace (issue #742).
 	// Pointer + omitempty so the field is purely additive: an
 	// existing `gregale scan --json` consumer that does not know
@@ -7332,6 +7491,7 @@ type QuotaBlock struct {
 // creates (WillDeploy.Action == "create"). Removed is a flat slug
 // list — removal has no per-row editable metadata worth surfacing.
 type PlanResponse struct {
+	SafeRelease           *ProjectSafeRelease    `json:"safe_release,omitempty"`
 	ProjectSlug           string                 `json:"project_slug"`
 	RepoFullName          string                 `json:"repo_full_name,omitempty"`
 	Environment           string                 `json:"environment,omitempty"`
@@ -7401,6 +7561,7 @@ type PlanResponse struct {
 // stable; the field is only populated when the apply path actually
 // enqueued builds (i.e. when at least one app was added or changed).
 type ApplyResponse struct {
+	SubmissionAttemptID string `json:"submission_attempt_id,omitempty"`
 	PlanResponse
 	ProjectID string             `json:"project_id"`
 	Apps      []ApplyResponseApp `json:"apps"`
@@ -7425,10 +7586,11 @@ type ApplyResponseApp struct {
 // On staging or enqueue failure, Error is non-empty and the
 // deployment/build IDs are empty. Partial failure is by design.
 type AppliedBuild struct {
-	Slug         string `json:"slug"`
-	AppID        string `json:"app_id"`
-	DeploymentID string `json:"deployment_id,omitempty"`
-	BuildID      string `json:"build_id,omitempty"`
+	Configuration *DeploymentConfigurationStatus `json:"configuration,omitempty"`
+	Slug          string                         `json:"slug"`
+	AppID         string                         `json:"app_id"`
+	DeploymentID  string                         `json:"deployment_id,omitempty"`
+	BuildID       string                         `json:"build_id,omitempty"`
 	// DeploymentStatus and BuildStatus are populated by clients that wait for
 	// project readiness. They are omitted in the immediate server enqueue
 	// response, preserving the original apply wire shape for --no-wait users.
@@ -10332,10 +10494,13 @@ func ValidateEdgeRuleMode(mode string) *Problem {
 }
 
 // EdgeRuleHitStatsResponse is one rule's match counts over a window (ADR-960).
+// Series (ADR-20261020105001, with ?series=true) is matched plus logged per hour, the
+// first value for the hour starting at the response's Since.
 type EdgeRuleHitStatsResponse struct {
-	RuleID  string `json:"rule_id"`
-	Matched int64  `json:"matched"`
-	Logged  int64  `json:"logged"`
+	RuleID  string  `json:"rule_id"`
+	Matched int64   `json:"matched"`
+	Logged  int64   `json:"logged"`
+	Series  []int64 `json:"series,omitempty"`
 }
 
 // EdgeRuleStatsResponse is GET /v1/apps/{slug}/edge-rules/stats.
@@ -10345,11 +10510,13 @@ type EdgeRuleStatsResponse struct {
 	Rules  []EdgeRuleHitStatsResponse `json:"rules"`
 }
 
-// EdgeRuleEventResponse (ADR-964) is one sampled rule match or kind=waf
-// detection. RuleName and RuleKind are empty once the rule has been deleted.
-// Detections (outcome detected, warned or blocked; ADR-831 amendment 5) also
-// carry the CRS rule IDs that scored, their attack categories and the
-// anomaly score.
+// EdgeRuleEventResponse (ADR-964) is one sampled rule match, kind=waf
+// detection or kind=challenge outcome. RuleName and RuleKind are empty once
+// the rule has been deleted. Detections (outcome detected, warned or
+// blocked; ADR-831 amendment 5) also carry the CRS rule IDs that scored,
+// their attack categories and the anomaly score. Challenge outcomes
+// (challenged, rejected, solved or failed; amendment 7 follow-up) carry the
+// request fields only.
 type EdgeRuleEventResponse struct {
 	ID         string    `json:"id"`
 	RuleID     string    `json:"rule_id"`
@@ -11129,6 +11296,10 @@ type DebugTelemetryRequestItem struct {
 	DeploymentCreatedAt string                       `json:"deployment_created_at,omitempty"`
 	ImageDigest         string                       `json:"image_digest,omitempty"`
 	Guest               *DebugGuestExecutionEvidence `json:"guest,omitempty"`
+	// TraceInferred is true when Gregale linked this service call to its
+	// caller's trace because the caller sent no traceparent and was serving
+	// exactly one request (ADR-1138): the trace id is inferred, not propagated.
+	TraceInferred bool `json:"trace_inferred,omitempty"`
 }
 
 // DebugGuestExecutionEvidence is the bounded execution signal emitted by a
@@ -12269,6 +12440,8 @@ type RecoverDeploymentRolloutRequest struct {
 	Action                          string `json:"action"`
 	Reason                          string `json:"reason,omitempty"`
 	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id"`
+	// Decision is the circuit-breaker evidence for the abort (ADR-1447).
+	Decision *RolloutDecision `json:"decision,omitempty"`
 }
 
 // RolloutTransitionResponse is the body returned by
@@ -13351,6 +13524,67 @@ type EventRecoveryNotificationRetryBacklogTotals struct {
 	PendingCount            int `json:"pending_count"`
 	InconclusiveCount       int `json:"inconclusive_count"`
 	IncompleteEvidenceCount int `json:"incomplete_evidence_count"`
+}
+
+// DeploymentSubmissionReceipt is immutable acceptance evidence for a saved attempt.
+type DeploymentSubmissionReceipt struct {
+	AttemptID    string    `json:"attempt_id"`
+	AppID        string    `json:"app_id"`
+	DeploymentID string    `json:"deployment_id"`
+	AcceptedAt   time.Time `json:"accepted_at"`
+}
+
+// DeploymentStagingSnapshot binds the app policy group to a monotonic revision.
+type DeploymentStagingSnapshot struct {
+	AppID              string                     `json:"app_id"`
+	Revision           int64                      `json:"revision"`
+	LatestDeploymentID string                     `json:"latest_deployment_id"`
+	Settings           map[string]json.RawMessage `json:"settings"`
+}
+
+type DeploymentStagingRequest struct {
+	SessionID            string                     `json:"session_id"`
+	Operation            string                     `json:"operation"`
+	ExpectedAppID        string                     `json:"expected_app_id"`
+	ExpectedDeploymentID string                     `json:"expected_deployment_id"`
+	ExpectedRevision     int64                      `json:"expected_revision"`
+	Before               map[string]json.RawMessage `json:"before"`
+	Desired              map[string]json.RawMessage `json:"desired"`
+}
+
+type DeploymentStagingReceipt struct {
+	SessionID string `json:"session_id"`
+	AppID     string `json:"app_id"`
+	Status    string `json:"status"`
+	Revision  int64  `json:"revision"`
+}
+
+// DeploymentCronConfig is the closed, non-secret scheduling intent for an HTTP cron.
+type DeploymentCronConfig struct {
+	ID            string `json:"id"`
+	Schedule      string `json:"schedule"`
+	Path          string `json:"path"`
+	Enabled       bool   `json:"enabled"`
+	Timezone      string `json:"timezone"`
+	SkipIfRunning bool   `json:"skip_if_running"`
+}
+
+type DeploymentCronStagingSnapshot struct {
+	AppID              string                 `json:"app_id"`
+	Revision           int64                  `json:"revision"`
+	LatestDeploymentID string                 `json:"latest_deployment_id"`
+	Crons              []DeploymentCronConfig `json:"crons"`
+}
+
+type DeploymentCronStagingRequest struct {
+	UploadID             string                 `json:"upload_id,omitempty"`
+	SessionID            string                 `json:"session_id"`
+	Operation            string                 `json:"operation"`
+	ExpectedAppID        string                 `json:"expected_app_id"`
+	ExpectedDeploymentID string                 `json:"expected_deployment_id"`
+	ExpectedRevision     int64                  `json:"expected_revision"`
+	Before               []DeploymentCronConfig `json:"before"`
+	Desired              []DeploymentCronConfig `json:"desired"`
 }
 
 // EventRoutingRecoveryExpectation pins a reviewed automation routing attempt.

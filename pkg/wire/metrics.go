@@ -120,11 +120,16 @@ type OpsMetrics struct {
 	warmPoolResumeTotal *prometheus.CounterVec
 	// Frozen tier (ADR-1151): freeze attempts, thaws and parks by bounded
 	// outcome or reason, and the instances currently frozen.
-	frozenFreezeTotal   *prometheus.CounterVec
-	frozenThawTotal     *prometheus.CounterVec
-	frozenParksTotal    *prometheus.CounterVec
-	frozenCompressTotal *prometheus.CounterVec
-	frozenInstances     prometheus.Gauge
+	frozenFreezeTotal *prometheus.CounterVec
+	frozenThawTotal   *prometheus.CounterVec
+	// ADR-1740: thaws that skipped the frozen fast path, and the thaw
+	// tickets a freeze issued or refused, by bounded reason.
+	frozenFastPathSkipped *prometheus.CounterVec
+	frozenThawTickets     *prometheus.CounterVec
+	ownerCacheTotal       *prometheus.CounterVec
+	frozenParksTotal      *prometheus.CounterVec
+	frozenCompressTotal   *prometheus.CounterVec
+	frozenInstances       prometheus.Gauge
 	// warmupErrors (Tier A8 / ADR-083). Per-(app slug) probe-failure
 	// counter for the standby warm-up scraper. Bounded cardinality
 	// (operator-managed FAAS_STANDBY_WARMUP_SLUGS_PATH); see
@@ -900,6 +905,13 @@ type OpsMetrics struct {
 	// operator can distinguish regressions from unavailable evidence without
 	// putting deployment IDs or customer-controlled strings in Prometheus.
 	canaryProgressionCircuitBreakerTotal *prometheus.CounterVec
+	// rollbackOutcomesTotal and rollbackRecoverySeconds (ADR-1446) record
+	// what each plain rollback actually did: trigger ∈ {manual, auto_5xx,
+	// alert}, outcome ∈ {complete, failed}. The histogram measures request
+	// to serving for completed rollbacks, the API-hosting scorecard's
+	// rollback recovery bar.
+	rollbackOutcomesTotal   *prometheus.CounterVec
+	rollbackRecoverySeconds *prometheus.HistogramVec
 	// canaryProgressionZeroTimestampTotal (SAFE-RELEASES code-review
 	// hardening, migration 00517) counts every row the
 	// canary_progression tick walks whose canary_step_started_at is
@@ -2230,6 +2242,27 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, outcome := range FrozenThawOutcomes {
 		frozenThawTotal.WithLabelValues(outcome)
 	}
+	frozenFastPathSkipped := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_fast_path_skipped_total",
+		Help: "Wakes of an app with a frozen VM that did not take the frozen fast path (ADR-1740), by reason: deployment (the wake named one), scope, selection (the coordinated wake selected another deployment or environment), no_ticket, capacity.",
+	}, []string{"reason"})
+	for _, reason := range FrozenFastPathSkipReasons {
+		frozenFastPathSkipped.WithLabelValues(reason)
+	}
+	frozenThawTickets := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_frozen_thaw_tickets_total",
+		Help: "Thaw tickets recorded when a VM froze (ADR-1740) by outcome: issued, error (a read failed), or why the VM must thaw through the ordinary path.",
+	}, []string{"outcome"})
+	for _, outcome := range FrozenThawTicketOutcomes {
+		frozenThawTickets.WithLabelValues(outcome)
+	}
+	ownerCacheTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_owner_cache_total",
+		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved), guarded_publish (a boot published on its admission's generation), guarded_publish_moved (the generation moved during the boot; it published through the fence), selection (a coordinated wake selected other than the entry's deployment; it decided from its own reads).",
+	}, []string{"outcome"})
+	for _, outcome := range OwnerCacheOutcomes {
+		ownerCacheTotal.WithLabelValues(outcome)
+	}
 	frozenParksTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_frozen_parks_total",
 		Help: "Frozen instances parked (ADR-1151) by reason; the VM is destroyed and the deployment's snapshot stays.",
@@ -3209,7 +3242,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_canary_progression_advanced_total",
 		Help: "Count of canary step boundaries crossed by the meterd canary_progression tick, labelled by canary_preset.",
 	}, []string{"canary_preset"})
-	for _, preset := range []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"} {
+	for _, preset := range []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "adaptive", "custom"} {
 		canaryProgressionAdvancedTotal.WithLabelValues(preset)
 	}
 	canaryProgressionErrorsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -3221,13 +3254,30 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	canaryProgressionCircuitBreakerTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_canary_progression_circuit_breaker_total",
-		Help: "Count of canary circuit-breaker aborts and boundary holds, labelled by closed event reason.",
+		Help: "Count of canary circuit-breaker aborts, boundary holds, and low-traffic advances (bounded or probe-backed), labelled by closed event reason.",
 	}, []string{"event"})
 	for _, event := range []string{
-		"abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom",
+		"abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom", "abort_crash_loop",
+		"abort_release_gate",
 		"hold_insufficient_samples", "hold_signal_unavailable", "hold_observation_unavailable", "hold_recovery_failed",
+		"advance_low_traffic", "advance_probe_evidence",
 	} {
 		canaryProgressionCircuitBreakerTotal.WithLabelValues(event)
+	}
+	rollbackOutcomesTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_rollback_outcomes_total",
+		Help: "Plain rollback outcomes verified by apid (ADR-1446), labelled by trigger ∈ {manual, auto_5xx, alert, post_release} and outcome ∈ {complete, failed}. A failed outcome means the rollback target never served: the previous release was not restored.",
+	}, []string{"trigger", "outcome"})
+	rollbackRecoverySeconds := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prefix + "_rollback_recovery_seconds",
+		Help:    "Seconds from a plain rollback request to its target serving (ADR-1446), labelled by trigger ∈ {manual, auto_5xx, alert, post_release}. The API-hosting scorecard bar is p95 <= 60 s.",
+		Buckets: []float64{1, 2, 5, 10, 15, 30, 45, 60, 90, 120, 300, 600},
+	}, []string{"trigger"})
+	for _, trigger := range rollbackOutcomeTriggers {
+		for _, outcome := range []string{"complete", "failed"} {
+			rollbackOutcomesTotal.WithLabelValues(trigger, outcome)
+		}
+		rollbackRecoverySeconds.WithLabelValues(trigger)
 	}
 	// SAFE-RELEASES code-review hardening (migration 00517):
 	// tripwire counter for the canary_progression tick seeing a
@@ -3888,7 +3938,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
-		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
+		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenFastPathSkipped, frozenThawTickets, ownerCacheTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
@@ -3937,6 +3987,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		canaryProgressionAdvancedTotal,
 		canaryProgressionErrorsTotal,
 		canaryProgressionCircuitBreakerTotal,
+		rollbackOutcomesTotal,
+		rollbackRecoverySeconds,
 		canaryProgressionZeroTimestampTotal,
 		canaryProgressionHealthGateBlockedTotal,
 		safedeployOrchestratorStartedTotal,
@@ -4540,7 +4592,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// source values are the closed trigger-kind vocabulary
 	// (see pkg/events/trigger.go + pkg/gregalemanifest).
 	esmSourceClosedSet := []string{
-		"kafka", "nats", "redis_streams", "sqs_compat", "queue", "cron",
+		"kafka", "nats", "redis_streams", "sqs_compat", "queue", "cron", "realtime",
 	}
 	esmOutcomeClosedSet := []string{"success", "empty", "error"}
 	esmPollsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -5400,6 +5452,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
 		frozenFreezeTotal:                          frozenFreezeTotal,
 		frozenThawTotal:                            frozenThawTotal,
+		frozenFastPathSkipped:                      frozenFastPathSkipped,
+		frozenThawTickets:                          frozenThawTickets,
+		ownerCacheTotal:                            ownerCacheTotal,
 		frozenParksTotal:                           frozenParksTotal,
 		frozenCompressTotal:                        frozenCompressTotal,
 		frozenInstances:                            frozenInstances,
@@ -5407,6 +5462,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		writeRedirectTotal:                         writeRedirectTotal,
 		writeRedirectLatency:                       writeRedirectLatency,
 		livenessRestarts:                           livenessRestarts,
+		rollbackOutcomesTotal:                      rollbackOutcomesTotal,
+		rollbackRecoverySeconds:                    rollbackRecoverySeconds,
 		workloadOOMKills:                           workloadOOMKills,
 		serviceReplicaStatus:                       serviceReplicaStatus,
 		serviceRolloutHandoffPhaseDuration:         serviceRolloutHandoffPhaseDuration,
@@ -6159,8 +6216,16 @@ func (m *OpsMetrics) WarmPoolResumeTotal(outcome string) prometheus.Counter {
 // Bounded label sets of the frozen-tier series (ADR-1151).
 var (
 	FrozenFreezeOutcomes = []string{"frozen", "busy", "error", "ineligible", "no_snapshot", "node_full"}
-	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity"}
-	FrozenParkReasons    = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
+	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity", "fast", "fast_refused"}
+	// FrozenFastPathSkipReasons and FrozenThawTicketOutcomes are the closed
+	// label sets of the ADR-1740 fast path's series.
+	FrozenFastPathSkipReasons = []string{"deployment", "scope", "selection", "no_ticket", "capacity"}
+	FrozenThawTicketOutcomes  = []string{"issued", "error", "mode", "not_selected", "operator_cold_boot",
+		"app_inactive", "managed_standards", "account", "shape", "config"}
+	// OwnerCacheOutcomes are schedd_owner_cache_total's closed label set
+	// (ADR-1741).
+	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection"}
+	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
 		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
 	// unavailable (no memory-only swap) and error park it.
@@ -6181,6 +6246,31 @@ func (m *OpsMetrics) FrozenThawTotal(outcome string) prometheus.Counter {
 		return nil
 	}
 	return m.frozenThawTotal.WithLabelValues(outcome)
+}
+
+// FrozenFastPathSkipped counts wakes that skipped the frozen fast path for
+// one reason (ADR-1740).
+func (m *OpsMetrics) FrozenFastPathSkipped(reason string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenFastPathSkipped.WithLabelValues(reason)
+}
+
+// FrozenThawTickets counts thaw tickets by outcome (ADR-1740).
+func (m *OpsMetrics) FrozenThawTickets(outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.frozenThawTickets.WithLabelValues(outcome)
+}
+
+// OwnerCacheTotal is the owner cache counter for one outcome (ADR-1741).
+func (m *OpsMetrics) OwnerCacheTotal(outcome string) prometheus.Counter {
+	if m == nil {
+		return nil
+	}
+	return m.ownerCacheTotal.WithLabelValues(outcome)
 }
 
 // FrozenParksTotal is the frozen-park counter for one reason.
@@ -8658,7 +8748,7 @@ func (m *OpsMetrics) CanaryProgressionAdvancedTotal(preset string) prometheus.Co
 		return nil
 	}
 	switch preset {
-	case "none", "slow", "balanced", "aggressive", "1-10-50-100", "custom":
+	case "none", "slow", "balanced", "aggressive", "1-10-50-100", "adaptive", "custom":
 		return m.canaryProgressionAdvancedTotal.WithLabelValues(preset)
 	default:
 		return nil
@@ -8712,6 +8802,41 @@ func (m *OpsMetrics) CanaryProgressionErrorsTotal(reason string) prometheus.Coun
 	return m.canaryProgressionErrorsTotal.WithLabelValues(reason)
 }
 
+// rollbackOutcomeTriggers is the closed trigger vocabulary for the ADR-1446
+// rollback outcome metrics; post_release is the ADR-1445 watch.
+var rollbackOutcomeTriggers = []string{"manual", "auto_5xx", "alert", "post_release"}
+
+func knownRollbackTrigger(trigger string) bool {
+	for _, t := range rollbackOutcomeTriggers {
+		if t == trigger {
+			return true
+		}
+	}
+	return false
+}
+
+// RollbackOutcome records one verified plain rollback outcome (ADR-1446).
+// recovery is observed only for a complete outcome. Unknown triggers or
+// outcomes are dropped so labels stay a closed set.
+func (m *OpsMetrics) RollbackOutcome(trigger, outcome string, recovery time.Duration) {
+	if m == nil || !knownRollbackTrigger(trigger) || (outcome != "complete" && outcome != "failed") {
+		return
+	}
+	m.rollbackOutcomesTotal.WithLabelValues(trigger, outcome).Inc()
+	if outcome == "complete" {
+		m.rollbackRecoverySeconds.WithLabelValues(trigger).Observe(recovery.Seconds())
+	}
+}
+
+// RollbackOutcomesCounter returns the outcome counter for one closed label
+// pair, or nil for an unknown pair.
+func (m *OpsMetrics) RollbackOutcomesCounter(trigger, outcome string) prometheus.Counter {
+	if m == nil || !knownRollbackTrigger(trigger) || (outcome != "complete" && outcome != "failed") {
+		return nil
+	}
+	return m.rollbackOutcomesTotal.WithLabelValues(trigger, outcome)
+}
+
 // CanaryProgressionCircuitBreakerTotal returns a closed-label counter for
 // one breaker abort or boundary hold. Unknown events are ignored so metric
 // labels can never be influenced by an error string or deployment metadata.
@@ -8720,8 +8845,10 @@ func (m *OpsMetrics) CanaryProgressionCircuitBreakerTotal(event string) promethe
 		return nil
 	}
 	switch event {
-	case "abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom",
-		"hold_insufficient_samples", "hold_signal_unavailable", "hold_observation_unavailable", "hold_recovery_failed":
+	case "abort_5xx", "abort_p95_latency", "abort_cold_boot_p95", "abort_cpu_per_request", "abort_dependency_errors", "abort_oom", "abort_crash_loop",
+		"abort_release_gate",
+		"hold_insufficient_samples", "hold_signal_unavailable", "hold_observation_unavailable", "hold_recovery_failed",
+		"advance_low_traffic", "advance_probe_evidence":
 		return m.canaryProgressionCircuitBreakerTotal.WithLabelValues(event)
 	default:
 		return nil
@@ -10564,7 +10691,7 @@ const (
 
 func isESMSource(source string) bool {
 	switch source {
-	case "kafka", "nats", "redis_streams", "sqs_compat", "queue", "cron":
+	case "kafka", "nats", "redis_streams", "sqs_compat", "queue", "cron", "realtime":
 		return true
 	default:
 		return false

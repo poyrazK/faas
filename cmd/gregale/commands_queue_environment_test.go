@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -6,30 +6,31 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestQueueCommandsForwardEnvironment(t *testing.T) {
 	for _, command := range []string{"binding", "queue", "inbox"} {
 		t.Run(command, func(t *testing.T) {
-			resetJSONOut(t)
-			f := authedFakeAPI(t, `{"id":"queue-one","environment":"staging"}`, http.StatusCreated)
+			main.ResetJSONOut(t)
+			f := main.AuthedFakeAPI(t, `{"id":"queue-one","environment":"staging"}`, http.StatusCreated)
 			var code int
 			switch command {
 			case "binding":
-				client, err := authedClient()
+				client, err := main.AuthedClient()
 				if err != nil {
 					t.Fatal(err)
 				}
-				code = cmdQueueBindingCreate(client, []string{"worker", "--name", "orders", "--queue-name", "orders", "--environment", "staging"})
+				code = main.CmdQueueBindingCreate(client, []string{"worker", "--name", "orders", "--queue-name", "orders", "--environment", "staging"})
 			case "queue":
-				code = cmdQueueSend([]string{"worker", "--payload", `{}`, "--queue-name", "orders", "--environment", "staging"})
+				code = main.CmdQueueSend([]string{"worker", "--payload", `{}`, "--queue-name", "orders", "--environment", "staging"})
 			case "inbox":
-				code = cmdSend([]string{"worker", "--type", "order.created", "--data", `{}`, "--queue-name", "orders", "--environment", "staging"})
+				code = main.CmdSend([]string{"worker", "--type", "order.created", "--data", `{}`, "--queue-name", "orders", "--environment", "staging"})
 			}
 			var body map[string]any
-			if err := json.Unmarshal(f.sawBody, &body); err != nil || code != 0 || body["environment"] != "staging" || body["queue_name"] != "orders" {
-				t.Fatalf("%s environment transport: %d %s %v", command, code, f.sawBody, err)
+			if err := json.Unmarshal((*f.SawBody()), &body); err != nil || code != 0 || body["environment"] != "staging" || body["queue_name"] != "orders" {
+				t.Fatalf("%s environment transport: %d %s %v", command, code, (*f.SawBody()), err)
 			}
 		})
 	}
@@ -59,7 +60,7 @@ func (f *manifestScopeQueueClient) DeleteQueueBinding(_ context.Context, _, id s
 
 func TestDeployManifestQueueBindingsPreservesNamedEnvironments(t *testing.T) {
 	dir := t.TempDir()
-	writeManifest(t, dir, `queue_bindings:
+	main.WriteManifest(t, dir, `queue_bindings:
   - name: orders
     queue_name: orders
     mode: push
@@ -70,7 +71,7 @@ func TestDeployManifestQueueBindingsPreservesNamedEnvironments(t *testing.T) {
 		{ID: "staging-stale", Name: "stale", Environment: "staging"},
 		{ID: "shared-stale", Name: "legacy"},
 	}}
-	if err := deployManifestQueueBindings(context.Background(), f, "worker", dir); err != nil {
+	if err := main.DeployManifestQueueBindings(context.Background(), f, "worker", dir); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.created) != 1 || f.created[0].Name != "orders" || f.created[0].Environment != "" || len(f.updated) != 0 || len(f.deleted) != 1 || f.deleted[0] != "shared-stale" {
@@ -80,7 +81,7 @@ func TestDeployManifestQueueBindingsPreservesNamedEnvironments(t *testing.T) {
 		{ID: "shared-orders", Name: "orders", QueueName: "old", Mode: "push", WorkloadClass: "worker", Enabled: true, MaxConcurrency: 1},
 		{ID: "production-orders", Name: "orders", QueueName: "old", Environment: "production"},
 	}}
-	if err := deployManifestQueueBindings(context.Background(), f, "worker", dir); err != nil {
+	if err := main.DeployManifestQueueBindings(context.Background(), f, "worker", dir); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.created) != 0 || len(f.deleted) != 0 || len(f.updated) != 1 || f.updated[0] != "shared-orders" {

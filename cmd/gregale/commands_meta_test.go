@@ -13,12 +13,13 @@
 // Flag-level ClosedSet literals are a different audit (a flag can have
 // a closed set without the command being missing), so a dedicated test
 // is clearer than overloading the manifest-drift test.
-package main
+package main_test
 
 import (
 	"reflect"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 )
@@ -32,7 +33,7 @@ import (
 //   - templates.Names has "foo" but ClosedSet does not → FAIL.
 func TestClosedSetTemplatesMatchEmbedFS(t *testing.T) {
 	closedSet := map[string]struct{}{}
-	for _, c := range cliCommands {
+	for _, c := range *main.CliCommands {
 		if c.Name != "deploy" && c.Name != "init" {
 			continue
 		}
@@ -73,11 +74,11 @@ func TestClosedSetTemplatesMatchEmbedFS(t *testing.T) {
 // customer-facing contract.
 func TestTemplateNames13MirrorsEmbedFS(t *testing.T) {
 	listed := templates.ListedNames()
-	if len(templateNames13) != len(listed) {
-		t.Fatalf("templateNames13 len = %d, templates.ListedNames len = %d", len(templateNames13), len(listed))
+	if len((*main.TemplateNames13)) != len(listed) {
+		t.Fatalf("templateNames13 len = %d, templates.ListedNames len = %d", len((*main.TemplateNames13)), len(listed))
 	}
 	for i, want := range listed {
-		if got := templateNames13[i]; got != want {
+		if got := (*main.TemplateNames13)[i]; got != want {
 			t.Errorf("templateNames13[%d] = %q, want %q", i, got, want)
 		}
 	}
@@ -85,7 +86,7 @@ func TestTemplateNames13MirrorsEmbedFS(t *testing.T) {
 
 func TestThrottleSuggestionsRangeManifestMatchesServer(t *testing.T) {
 	var got []string
-	for _, command := range cliCommands {
+	for _, command := range *main.CliCommands {
 		if command.Name != "throttle-suggestions" {
 			continue
 		}

@@ -13,7 +13,7 @@
 - **Consequences:**
   - **Changing what is priced.** Adding a card of a new unit adds a price; it no longer replaces the old unit. To stop charging a unit, add a card for it priced at zero. ADR-1308's month-boundary rule for changing units no longer applies to app cards.
   - **More buckets.** A statement can hold several buckets per minute, one per stream.
-  - **Customer-wide cards stay single.** Platform tenant cards (ADR-1310) remain one price history, and a change of unit there still starts on the 1st.
+  - **Customer-wide cards stay single.** Platform tenant cards (ADR-1310) remain one price history, and a change of unit there still starts on the 1st. *Superseded by ADR-1319: tenant cards are streams too.*
 - **Rejected alternatives:**
   - One card with several priced components would keep a single timeline, but every component would need its own allowance, tiers and fees inside one card, and changing one price would re-version all of them.
   - Summing units of different kinds into one allowance or ladder would count seconds and requests in one position.

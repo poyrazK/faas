@@ -31,17 +31,20 @@ func TestAIGatewayGateDefaultsOffAndHonorsTheOverride(t *testing.T) {
 	}
 }
 
-func TestValidateAIGatewayRefusesOperatorAIIntegrationsWhileOff(t *testing.T) {
+// adr: 1700 — the gate is a live platform flag, so outboundd reports
+// operator AI integrations configured while it is off instead of refusing to
+// start.
+func TestAIIntegrationsWhileGatewayOffAreReported(t *testing.T) {
 	ai := configuredIntegration{Record: outbound.IntegrationRecord{Policy: outbound.Integration{ID: "llm", AIProvider: "openai"}}}
 	plain := configuredIntegration{Record: outbound.IntegrationRecord{Policy: outbound.Integration{ID: "plain"}}}
-	if err := ValidateAIGateway([]configuredIntegration{plain, ai}, false); err == nil {
-		t.Fatal("an AI integration started with the gateway off")
+	if got := AIIntegrationsWhileGatewayOff([]configuredIntegration{plain, ai}, false); len(got) != 1 || got[0] != "llm" {
+		t.Fatalf("reported = %v, want [llm]", got)
 	}
-	if err := ValidateAIGateway([]configuredIntegration{plain, ai}, true); err != nil {
-		t.Fatal(err)
+	if got := AIIntegrationsWhileGatewayOff([]configuredIntegration{plain, ai}, true); got != nil {
+		t.Fatalf("reported %v with the gateway on", got)
 	}
-	if err := ValidateAIGateway([]configuredIntegration{plain}, false); err != nil {
-		t.Fatal(err)
+	if got := AIIntegrationsWhileGatewayOff([]configuredIntegration{plain}, false); got != nil {
+		t.Fatalf("reported %v for a plain integration", got)
 	}
 }
 

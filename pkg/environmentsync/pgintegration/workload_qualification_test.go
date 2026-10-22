@@ -18,6 +18,11 @@ import (
 func preparedQualificationFixture(t *testing.T, basic gitOpsTestStore) (state.EnvironmentGitOpsLease, environmentsync.Plan, []state.EnvironmentWorkloadQualificationRequest) {
 	t.Helper()
 	lease, plan, _ := workloadGraphFixture(t, basic)
+	return prepareQualificationFixture(t, basic, lease, plan)
+}
+
+func prepareQualificationFixture(t *testing.T, basic gitOpsTestStore, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (state.EnvironmentGitOpsLease, environmentsync.Plan, []state.EnvironmentWorkloadQualificationRequest) {
+	t.Helper()
 	candidates, err := basic.(state.EnvironmentGitOpsPreparationStore).PrepareEnvironmentGitOpsImageCandidates(t.Context(), lease, plan)
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +49,10 @@ func preparedQualificationFixture(t *testing.T, basic gitOpsTestStore) (state.En
 // request-mode member. The regular workload graph fixture contains a worker,
 // which is intentionally dispatched only through atomic graph claims.
 func preparedRequestModeQualificationFixture(t *testing.T, basic gitOpsTestStore) (state.EnvironmentGitOpsLease, []state.EnvironmentWorkloadQualificationRequest) {
+	return preparedRequestModeQualificationFixtureWithRetention(t, basic, nil)
+}
+
+func preparedRequestModeQualificationFixtureWithRetention(t *testing.T, basic gitOpsTestStore, retention *api.EnvironmentRecoveryRetention) (state.EnvironmentGitOpsLease, []state.EnvironmentWorkloadQualificationRequest) {
 	t.Helper()
 	store, source, desired, _, _, _ := workloadIntentFixture(t, basic, "enforce")
 	apiWorkload := desired.Definition.Workloads["api"]
@@ -63,6 +72,7 @@ func preparedRequestModeQualificationFixture(t *testing.T, basic gitOpsTestStore
 	desired.Definition.Workloads["catalog"] = api.EnvironmentWorkload{App: catalog.Slug,
 		Source:  &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/catalog@sha256:" + strings.Repeat("d", 64)},
 		Runtime: json.RawMessage(`{"port":8081,"healthz":"/readyz"}`)}
+	desired.Definition.RecoveryRetention = retention
 	desired, err = environmentsync.Compile(desired.Definition)
 	if err != nil {
 		t.Fatal(err)
@@ -452,7 +462,10 @@ func TestPgEnvironmentGitOpsQualificationRecoveryWaitsForPriorInstanceRetirement
 	for _, phase := range []state.State{state.State("pending"), state.StateWaking, state.StateColdBooting, state.StateRunning, state.StateDraining, state.StateWarm, state.StateSnapshotting, state.StateMigrating, state.StateEvictingAccountDeleting} {
 		// Leave enough time for the real fenced admission/phase transactions
 		// under load before deliberately waiting for the short lease to expire.
-		current, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "scheduler", time.Second)
+		// One second was not enough under -race with parallel PostgreSQL jobs:
+		// full CI run 39455888148 lost the lease before admission committed
+		// (state: conflict).
+		current, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), requests[0].ID, "scheduler", 3*time.Second)
 		if err != nil || (prior.ID != "" && (current.Attempt != prior.Attempt+1 || current.ReservedInstanceID == prior.ReservedInstanceID)) {
 			t.Fatalf("fresh attempt after retirement: %+v %v", current, err)
 		}

@@ -15,16 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
-type invocationWorkEnvironmentTestStore interface {
-	invocationEnvironmentTestStore
-	state.ProjectEnvironmentWorkPolicyStore
-	state.DeploymentWorkloadSpecReader
-	state.InvocationWorkEnvironmentAdmissionReader
-	state.EnvironmentWorkCancellationStore
-	state.WorkCancellationStore
-	RollbackProjectEnvironmentClone(context.Context, string, string, string) error
-	RequeueExpiredInvocations(context.Context, time.Time, int) (int, error)
-}
+type invocationWorkEnvironmentTestStore = contractTestStore
 
 type invocationWorkEnvironmentFixture struct {
 	invocationEnvironmentFixture

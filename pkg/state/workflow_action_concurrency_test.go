@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -9,16 +9,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestWorkflowActionConcurrencySharedAcrossRuns(t *testing.T) {
-	workflowGuardStores(t, func(t *testing.T, store Store) {
+	state.WorkflowGuardStores(t, func(t *testing.T, store state.Store) {
 		ctx := context.Background()
 		account, err := store.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanHobby)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "action-cap-" + uuid.NewString(), Type: AppTypeApp, RAMMB: 256})
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "action-cap-" + uuid.NewString(), Type: state.AppTypeApp, RAMMB: 256})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -32,13 +33,13 @@ func TestWorkflowActionConcurrencySharedAcrossRuns(t *testing.T) {
 			t.Fatal(err)
 		}
 		const runCount = 8
-		runs := make([]*WorkflowRun, runCount)
+		runs := make([]*state.WorkflowRun, runCount)
 		for index := range runs {
-			run := &WorkflowRun{AppID: app.ID, WorkflowName: spec.Name, Input: json.RawMessage(`{}`), DefinitionSnapshot: snapshot}
+			run := &state.WorkflowRun{AppID: app.ID, WorkflowName: spec.Name, Input: json.RawMessage(`{}`), DefinitionSnapshot: snapshot}
 			if err := store.CreateWorkflowRun(ctx, run); err != nil {
 				t.Fatal(err)
 			}
-			if err := store.CreateWorkflowSteps(ctx, run.ID, []*WorkflowStep{{StepName: "send", Status: WorkflowStepStatusPending, Input: json.RawMessage(`{}`)}}); err != nil {
+			if err := store.CreateWorkflowSteps(ctx, run.ID, []*state.WorkflowStep{{StepName: "send", Status: state.WorkflowStepStatusPending, Input: json.RawMessage(`{}`)}}); err != nil {
 				t.Fatal(err)
 			}
 			runs[index] = run
@@ -55,7 +56,7 @@ func TestWorkflowActionConcurrencySharedAcrossRuns(t *testing.T) {
 				switch {
 				case err == nil:
 					started <- index
-				case errors.Is(err, ErrWorkflowActionConcurrencyLimit):
+				case errors.Is(err, state.ErrWorkflowActionConcurrencyLimit):
 					blocked <- index
 				default:
 					t.Errorf("StartWorkflowStep(%d): %v", index, err)
@@ -78,14 +79,14 @@ func TestWorkflowActionConcurrencySharedAcrossRuns(t *testing.T) {
 		}
 
 		for _, index := range startedRuns {
-			if err := store.MarkWorkflowStepAttemptStatus(ctx, runs[index].ID, "send", WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`true`), nil); err != nil {
+			if err := store.MarkWorkflowStepAttemptStatus(ctx, runs[index].ID, "send", state.WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`true`), nil); err != nil {
 				t.Fatal(err)
 			}
 		}
 		if _, err := store.StartWorkflowStep(ctx, runs[blockedRuns[0]].ID, "send", 1, json.RawMessage(`{}`)); err != nil {
 			t.Fatalf("released action slot was not reusable: %v", err)
 		}
-		if err := store.MarkWorkflowStepAttemptStatus(ctx, runs[blockedRuns[0]].ID, "send", WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`true`), nil); err != nil {
+		if err := store.MarkWorkflowStepAttemptStatus(ctx, runs[blockedRuns[0]].ID, "send", state.WorkflowStepStatusSucceeded, 1, nil, json.RawMessage(`true`), nil); err != nil {
 			t.Fatal(err)
 		}
 	})

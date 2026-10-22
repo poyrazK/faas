@@ -222,6 +222,7 @@ WRAPPER_MODULES = (
     "async_secret_reload_runtime.py",
     "secret_reload_runtime.py",
     "queue_consumer.py",
+    "trigger_batch.py",
     "operations.py",
     "data_repair.py",
     "data_repair_limits.py",
@@ -457,8 +458,9 @@ def regen(overwrite: bool = True) -> None:
             )
         )
 
-        # Run `ruff check --fix` over the generated tree + the
-        # hand-written test files so import ordering stays canonical.
+        # Run `ruff check --fix` over the generated tree so import ordering
+        # stays canonical. Hand-written tests are inputs to verification;
+        # regeneration must not rewrite them as a formatter side effect.
         # `gen.py` is run by CI as a dirty-diff gate; if a future
         # generator version emits a new import order that ruff flags,
         # this brings the tree back to green without making the
@@ -512,33 +514,6 @@ def regen(overwrite: bool = True) -> None:
                         str(sdk_root),
                         "--exclude",
                         "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
-                    ],
-                    check=False,
-                    capture_output=True,
-                )
-            tests_root = OUT / "tests"
-            if tests_root.exists():
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "ruff",
-                        "check",
-                        "--fix",
-                        "--quiet",
-                        str(tests_root),
-                    ],
-                    check=False,
-                    capture_output=True,
-                )
-                subprocess.run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "ruff",
-                        "format",
-                        "--quiet",
-                        str(tests_root),
                     ],
                     check=False,
                     capture_output=True,

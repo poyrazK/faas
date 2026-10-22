@@ -137,6 +137,10 @@ func resource(r *http.Request, store Store, actor state.Account) (state.Project,
 		return state.Project{}, state.Org{}, false, nil
 	}
 	p, err := store.ProjectBySlug(r.Context(), actor.ID, r.PathValue("slug"))
+	if errors.Is(err, state.ErrNotFound) && preCreationRoutes[r.Pattern] {
+		// The project does not exist yet; the route reads only the actor's namespace.
+		return state.Project{}, state.Org{}, false, nil
+	}
 	if err != nil {
 		return p, state.Org{}, true, err
 	}

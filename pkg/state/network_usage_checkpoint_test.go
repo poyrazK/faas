@@ -1,12 +1,13 @@
-package state
+package state_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreAppendNetworkUsageObservationIsRestartSafe(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	minute := time.Date(2026, 9, 11, 2, 10, 0, 0, time.UTC)
 	const accountID = "account-network-checkpoint"
 	const appID = "app-network-checkpoint"
@@ -50,7 +51,7 @@ func TestMemStoreAppendNetworkUsageObservationIsRestartSafe(t *testing.T) {
 }
 
 func TestMemStoreAppendNetworkUsageObservationDoesNotAdvanceWithoutBaseRow(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	minute := time.Date(2026, 9, 11, 2, 10, 0, 0, time.UTC)
 	if _, _, err := store.AppendNetworkUsageObservation(t.Context(), "account", "app", "instance", minute, 100, true, 40, true); err == nil {
 		t.Fatal("missing usage row: err=nil, want failure")

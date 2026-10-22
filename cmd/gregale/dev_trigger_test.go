@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -55,7 +56,7 @@ func TestSelectDevCronPath(t *testing.T) {
 		{name: "unknown route lists declared", dir: withManifest, project: "demo-api", rest: []string{"/jobs/other"}, wantErr: "/jobs/hourly, /jobs/nightly"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := selectDevCronPath(devTarget{Project: test.project, SourceDir: test.dir}, test.rest)
+			got, err := main.SelectDevCronPath(main.DevTarget{Project: test.project, SourceDir: test.dir}, test.rest)
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 					t.Fatalf("err = %v, want containing %q", err, test.wantErr)
@@ -70,7 +71,7 @@ func TestSelectDevCronPath(t *testing.T) {
 }
 
 func TestRejectDevTriggerAppSelection(t *testing.T) {
-	_, restoreErr := captureStderr(t)
+	_, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 	for _, test := range []struct {
 		verb string
@@ -85,7 +86,7 @@ func TestRejectDevTriggerAppSelection(t *testing.T) {
 		{"cron", []string{"/jobs/nightly"}, true},
 		{"cron", []string{"/a", "/b"}, false},
 	} {
-		if got := rejectDevTriggerAppSelection(test.verb, test.rest) == 0; got != test.ok {
+		if got := main.RejectDevTriggerAppSelection(test.verb, test.rest) == 0; got != test.ok {
 			t.Errorf("%s %v accepted=%t, want %t", test.verb, test.rest, got, test.ok)
 		}
 	}
@@ -140,7 +141,7 @@ func setupDevTriggerCLI(t *testing.T, fake *devTriggerAPI) string {
 	}
 	t.Chdir(dir)
 	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", testAPIKey('d'))
+	t.Setenv("FAAS_TOKEN", main.TestAPIKey('d'))
 	t.Setenv("FAAS_DEVELOPER_ID", strings.Repeat("e", 32))
 	return dir
 }
@@ -158,12 +159,12 @@ func TestCmdDevTriggerTargetsDeveloperApp(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			fake := &devTriggerAPI{}
 			setupDevTriggerCLI(t, fake)
-			_, restoreOut := captureStdout(t)
+			_, restoreOut := main.CaptureStdout(t)
 			defer restoreOut()
-			stderr, restoreErr := captureStderr(t)
+			stderr, restoreErr := main.CaptureStderr(t)
 			defer restoreErr()
 
-			if code := cmdDev(append([]string{"trigger"}, test.args...)); code != 0 {
+			if code := main.CmdDev(append([]string{"trigger"}, test.args...)); code != 0 {
 				t.Fatalf("cmdDev trigger = %d; stderr=%q", code, stderr.String())
 			}
 			if len(fake.invokes) != 1 || fake.invokes[0].Method != test.wantMethod || fake.invokes[0].Path != test.wantPath {
@@ -176,7 +177,7 @@ func TestCmdDevTriggerTargetsDeveloperApp(t *testing.T) {
 func TestCmdDevTriggerRejectsBeforeAnyRequest(t *testing.T) {
 	fake := &devTriggerAPI{}
 	setupDevTriggerCLI(t, fake)
-	_, restoreErr := captureStderr(t)
+	_, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 	for _, args := range [][]string{
 		{"trigger"},
@@ -184,7 +185,7 @@ func TestCmdDevTriggerRejectsBeforeAnyRequest(t *testing.T) {
 		{"trigger", "--name", "demo-api", "invoke", "production-api"},
 		{"trigger", "--name", "demo-api", "cron"}, // two routes declared
 	} {
-		if code := cmdDev(args); code == 0 {
+		if code := main.CmdDev(args); code == 0 {
 			t.Errorf("cmdDev(%v) = 0, want failure", args)
 		}
 	}
@@ -196,12 +197,12 @@ func TestCmdDevTriggerRejectsBeforeAnyRequest(t *testing.T) {
 func TestCmdDevInfo(t *testing.T) {
 	fake := &devTriggerAPI{}
 	setupDevTriggerCLI(t, fake)
-	stdout, restoreOut := captureStdout(t)
+	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
-	stderr, restoreErr := captureStderr(t)
+	stderr, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 
-	if code := cmdDev([]string{"info", "--name", "demo-api"}); code != 0 {
+	if code := main.CmdDev([]string{"info", "--name", "demo-api"}); code != 0 {
 		t.Fatalf("dev info = %d; stderr=%q", code, stderr.String())
 	}
 	for _, want := range []string{"https://dev-demo-api-0123456789ab.gregale.dev", "app:     dev-demo-api-0123456789ab", "project: demo-api"} {
@@ -209,7 +210,7 @@ func TestCmdDevInfo(t *testing.T) {
 			t.Errorf("dev info output missing %q: %q", want, stdout.String())
 		}
 	}
-	if code := cmdDev([]string{"info", "--name", "missing-api"}); code == 0 {
+	if code := main.CmdDev([]string{"info", "--name", "missing-api"}); code == 0 {
 		t.Fatal("dev info for a missing session succeeded")
 	}
 	if !strings.Contains(stderr.String(), "start one with `gregale dev`") {

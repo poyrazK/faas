@@ -87,15 +87,23 @@ func TestPgCloneDeploymentBorrowers(t *testing.T) {
 			if len(counts) != n {
 				t.Fatal("stale borrower inventory", counts, n)
 			}
+			// Deployment-failed mail never borrows a deployment: DeploymentFailureCurrent
+			// requires the deployment, so an intent for a removed one goes stale, and
+			// observations are permanent skip receipts that would block cleanup forever.
+			// deployment_failure_app_id is an app id the name pattern happens to match.
 			softRows, err := pool.Query(t.Context(), `SELECT c.table_name||'.'||c.column_name
  FROM information_schema.columns c JOIN information_schema.tables t USING(table_schema,table_name)
  WHERE c.table_schema='public' AND t.table_type='BASE TABLE'
  AND (c.column_name ~ 'deployment.*_id$' OR c.table_name='environment_workload_retirements' AND c.column_name='deployment_ids')
  AND NOT EXISTS(SELECT 1 FROM pg_inherits i JOIN pg_class child ON child.oid=i.inhrelid JOIN pg_namespace ns ON ns.oid=child.relnamespace WHERE ns.nspname=c.table_schema AND child.relname=c.table_name)
  AND NOT (c.table_name='github_deployments' AND c.column_name='github_deployment_id')
+ AND NOT (c.table_name='platform_mail_producer_outbox' AND c.column_name IN ('deployment_failure_id','deployment_failure_app_id'))
+ AND NOT (c.table_name='platform_mail_deployment_observations' AND c.column_name='deployment_id')
  AND NOT EXISTS(SELECT 1 FROM pg_constraint f JOIN pg_class tab ON tab.oid=f.conrelid
  JOIN pg_namespace ns ON ns.oid=tab.relnamespace JOIN pg_attribute a ON a.attrelid=tab.oid AND a.attnum=ANY(f.conkey)
  WHERE f.contype='f' AND f.confrelid='deployments'::regclass AND ns.nspname=c.table_schema AND tab.relname=c.table_name AND a.attname=c.column_name)
+ UNION ALL SELECT 'scenario_postgres_faults.receipt.deployment_id'
+ WHERE EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='scenario_postgres_faults' AND column_name='receipt' AND data_type='jsonb')
  ORDER BY 1`)
 			if err != nil {
 				t.Fatal(err)

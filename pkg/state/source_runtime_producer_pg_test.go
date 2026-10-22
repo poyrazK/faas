@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435. Real storage clocks and nonwaiting source claim fences.
 
@@ -13,42 +13,46 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestPgSourceRuntimeRenewal(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
+	s, _ := state.RegistryVerificationPGStore(t)
 	sourceRuntimeRenewal(t, s)
 }
 func TestPgSourceRuntimeScanLifecycle(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
+	s, _ := state.RegistryVerificationPGStore(t)
 	sourceRuntimeScanLifecycle(t, s)
 }
 func TestPgSourceRuntimePublisherReplacement(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
+	s, _ := state.RegistryVerificationPGStore(t)
 	sourceRuntimePublisherReplacement(t, s)
 }
 func TestPgSourceRuntimeInvalidation(t *testing.T) {
 	for _, mode := range []string{"base", "build", "metadata", "manifest"} {
-		t.Run(mode, func(t *testing.T) { s, _ := registryVerificationPGStore(t); sourceRuntimeInvalidation(t, s, mode) })
+		t.Run(mode, func(t *testing.T) {
+			s, _ := state.RegistryVerificationPGStore(t)
+			sourceRuntimeInvalidation(t, s, mode)
+		})
 	}
 }
 
 func TestPgSourceRuntimeNativeCaptureRetainsSourceIdentity(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
+	s, pool := state.RegistryVerificationPGStore(t)
 	f, _, inputs := sourceRuntimeFixture(t, s)
 	var raw []byte
 	err := pool.QueryRow(t.Context(), `SELECT application_standard_runtime_producers(a,d) FROM apps a JOIN deployments d ON d.app_id=a.id WHERE d.id=$1`, f.Dep.ID).Scan(&raw)
-	var identity deploymentRuntimeArtifactIdentity
-	if err != nil || json.Unmarshal(raw, &identity) != nil || !reflect.DeepEqual(identity, inputs.deploymentRuntimeArtifactIdentity) {
+	var identity state.DeploymentRuntimeArtifactIdentity
+	if err != nil || json.Unmarshal(raw, &identity) != nil || !reflect.DeepEqual(identity, (*inputs.DeploymentRuntimeArtifactIdentity())) {
 		t.Fatal("source capture lost distinct producer identity", err)
 	}
 }
 
-func insertShortSourceApproval(t *testing.T, s *PgStore, in BuildExportPublicationInput) BuildExportPublication {
+func insertShortSourceApproval(t *testing.T, s *state.PgStore, in state.BuildExportPublicationInput) state.BuildExportPublication {
 	t.Helper()
 	in.ID = uuid.NewString()
-	in, hash, err := prepareBuildExportPublication(in)
+	in, hash, err := state.PrepareBuildExportPublication(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,20 +60,20 @@ func insertShortSourceApproval(t *testing.T, s *PgStore, in BuildExportPublicati
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := s.pool.Begin(t.Context())
+	tx, err := (*s.Pool()).Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	if _, err := lockBuildExportPublication(t.Context(), tx, in, true); err != nil {
+	if _, err := state.LockBuildExportPublication(t.Context(), tx, in, true); err != nil {
 		t.Fatal(err)
 	}
 	q := sqlc.New()
-	if err := q.AuthorizeBuildExportPublicationInsert(t.Context(), tx, mustPgUUID(in.ID)); err != nil {
+	if err := q.AuthorizeBuildExportPublicationInsert(t.Context(), tx, state.MustPgUUID(in.ID)); err != nil {
 		t.Fatal(err)
 	}
 	row, err := q.InsertBuildExportPublication(t.Context(), tx, sqlc.InsertBuildExportPublicationParams{
-		ID: mustPgUUID(in.ID), BuildID: mustPgUUID(in.Claims.BuildID), DeploymentID: mustPgUUID(in.Claims.DeploymentID), AppID: mustPgUUID(in.Claims.AppID), AccountID: mustPgUUID(in.Claims.AccountID),
+		ID: state.MustPgUUID(in.ID), BuildID: state.MustPgUUID(in.Claims.BuildID), DeploymentID: state.MustPgUUID(in.Claims.DeploymentID), AppID: state.MustPgUUID(in.Claims.AppID), AccountID: state.MustPgUUID(in.Claims.AccountID),
 		InputSnapshot: raw, InputHash: hash, Payload: in.Proof.Payload, Signature: in.Proof.Signature, TtlSeconds: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +81,7 @@ func insertShortSourceApproval(t *testing.T, s *PgStore, in BuildExportPublicati
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	value, err := buildExportPublicationRow(row)
+	value, err := state.BuildExportPublicationRow(row)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +89,8 @@ func insertShortSourceApproval(t *testing.T, s *PgStore, in BuildExportPublicati
 }
 
 func TestPgSourceRuntimeExpiredOriginRequiresFreshExactClaim(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	f := sourceBuildRootfsFixture(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	f := state.SourceBuildRootfsFixture(t, s)
 	short := insertShortSourceApproval(t, s, f.Parent.Input)
 	f.Input.PublicationID, f.Input.PublicationHash = short.ID, short.InputHash
 	root, err := s.PublishSourceBuildRootfs(t.Context(), f.Input)
@@ -98,7 +102,7 @@ func TestPgSourceRuntimeExpiredOriginRequiresFreshExactClaim(t *testing.T) {
 		t.Fatal("source approval clock uncapped", err)
 	}
 	time.Sleep(time.Until(short.ExpiresAt) + 30*time.Millisecond)
-	if _, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentRuntimeProducerInputs(t.Context(), f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatal("expired source approval fell back", err)
 	}
 	short.Input.ID = uuid.NewString()
@@ -117,7 +121,7 @@ func TestPgSourceRuntimeExpiredOriginRequiresFreshExactClaim(t *testing.T) {
 }
 
 func TestPgSourceRuntimeInputsAreNonwaiting(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
+	s, pool := state.RegistryVerificationPGStore(t)
 	f, root, _ := sourceRuntimeFixture(t, s)
 	queued := uuid.NewString()
 	if _, err := pool.Exec(t.Context(), `INSERT INTO builds(id,deployment_id,kind,source_bytes,status) VALUES($1,$2,'tarball',1,'queued')`, queued, f.Dep.ID); err != nil {
@@ -156,7 +160,7 @@ func TestPgSourceRuntimeInputsAreNonwaiting(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			if _, err := s.GetFreshDeploymentRuntimeProducerInputs(ctx, f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.GetFreshDeploymentRuntimeProducerInputs(ctx, f.App.AccountID, f.App.ID, f.Dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatal("source bootstrap waited or bypassed fence", target, err)
 			}
 			if err := tx.Rollback(t.Context()); err != nil {

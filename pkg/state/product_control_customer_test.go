@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"encoding/json"
@@ -9,32 +9,35 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/productcontrol"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestProductControlCustomerConsentMemory(t *testing.T) { productCustomerConsent(t, NewMemStore()) }
+func TestProductControlCustomerConsentMemory(t *testing.T) {
+	productCustomerConsent(t, state.NewMemStore())
+}
 func TestProductControlCustomerConsentPostgres(t *testing.T) {
-	productCustomerConsent(t, newPgStore(t))
+	productCustomerConsent(t, state.XNewPgStore(t))
 }
 
-func productCustomerConsent(t *testing.T, s productContractStore) {
+func productCustomerConsent(t *testing.T, s state.ProductContractStore) {
 	t.Helper()
 	ctx := t.Context()
 	account, err := s.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(ctx, App{AccountID: account.ID, Slug: "product-consent", Manifest: AppManifest{RevisionPinTTLSeconds: 3600}})
+	app, err := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "product-consent", Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dep, err := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:consent"})
+	dep, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:consent"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := s.MarkDeploymentLive(ctx, dep.ID); err != nil {
 		t.Fatal(err)
 	}
-	def, err := s.PutOperationDefinition(ctx, OperationDefinition{AccountID: account.ID, OperationDefinitionResponse: api.OperationDefinitionResponse{AppID: app.ID, DeploymentID: dep.ID, Scope: dep.Scope, Spec: api.OperationDefinitionSpec{Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, ProgressStages: []string{"generating"}, InputSchema: json.RawMessage(`{"type":"object"}`), OutputSchema: json.RawMessage(`{"type":"object"}`)}}})
+	def, err := s.PutOperationDefinition(ctx, state.OperationDefinition{AccountID: account.ID, OperationDefinitionResponse: api.OperationDefinitionResponse{AppID: app.ID, DeploymentID: dep.ID, Scope: dep.Scope, Spec: api.OperationDefinitionSpec{Name: "export", Method: "POST", Path: "/exports", Owner: api.OperationOwnerPlatformTenant, ProgressStages: []string{"generating"}, InputSchema: json.RawMessage(`{"type":"object"}`), OutputSchema: json.RawMessage(`{"type":"object"}`)}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,11 +59,11 @@ func productCustomerConsent(t *testing.T, s productContractStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SetProductCustomer(ctx, account.ID, app.ID, api.ProductCustomer{TenantID: other.ID, Plan: "starter", AuthOrganizationID: org}); !errors.Is(err, ErrConflict) {
+	if _, err := s.SetProductCustomer(ctx, account.ID, app.ID, api.ProductCustomer{TenantID: other.ID, Plan: "starter", AuthOrganizationID: org}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate organization binding: %v", err)
 	}
 	for _, id := range []string{uuid.Nil.String(), "ABCDEF00-1234-4567-89ab-0123456789ab", "not-a-uuid"} {
-		if _, err := s.SetProductCustomer(ctx, account.ID, app.ID, api.ProductCustomer{TenantID: other.ID, Plan: "starter", AuthOrganizationID: id}); !errors.Is(err, ErrInvalidArgument) {
+		if _, err := s.SetProductCustomer(ctx, account.ID, app.ID, api.ProductCustomer{TenantID: other.ID, Plan: "starter", AuthOrganizationID: id}); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatalf("invalid organization %q: %v", id, err)
 		}
 	}
@@ -68,16 +71,16 @@ func productCustomerConsent(t *testing.T, s productContractStore) {
 	if err != nil || mapped.TenantID != tenant.ID {
 		t.Fatalf("organization mapping: %+v %v", mapped, err)
 	}
-	if _, err := s.ProductCustomerByAuthOrganization(ctx, uuid.NewString(), app.ID, org); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ProductCustomerByAuthOrganization(ctx, uuid.NewString(), app.ID, org); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("foreign mapping: %v", err)
 	}
-	quote := productcontrol.Quote(account.ID, app.ID, tenant.ID, "export", catalog, customer, productcontrol.Period(time.Now()))
-	req := OperationAdmission{AccountID: account.ID, PlatformTenantID: tenant.ID, DefinitionID: def.ID, ProductFeature: "export", ProductControlEnabled: true, RequireProductQuote: true, ProductAuthOrganizationID: org, ProductAuthApp: spec.AuthApp, Input: json.RawMessage(`{}`), IdempotencyKey: "consented"}
-	if _, _, err := s.AdmitOperation(ctx, req); !errors.Is(err, ErrProductQuoteChanged) {
+	quote := productcontrol.Quote(account.ID, app.ID, tenant.ID, "export", catalog, customer, productcontrol.Period(time.Now()), 0)
+	req := state.OperationAdmission{AccountID: account.ID, PlatformTenantID: tenant.ID, DefinitionID: def.ID, ProductFeature: "export", ProductControlEnabled: true, RequireProductQuote: true, ProductAuthOrganizationID: org, ProductAuthApp: spec.AuthApp, Input: json.RawMessage(`{}`), IdempotencyKey: "consented"}
+	if _, _, err := s.AdmitOperation(ctx, req); !errors.Is(err, state.ErrProductQuoteChanged) {
 		t.Fatalf("unconfirmed admission: %v", err)
 	}
-	req.ExpectedProductQuote = productcontrol.Quote(account.ID, app.ID, other.ID, "export", catalog, customer, productcontrol.Period(time.Now()))
-	if _, _, err := s.AdmitOperation(ctx, req); !errors.Is(err, ErrProductQuoteChanged) {
+	req.ExpectedProductQuote = productcontrol.Quote(account.ID, app.ID, other.ID, "export", catalog, customer, productcontrol.Period(time.Now()), 0)
+	if _, _, err := s.AdmitOperation(ctx, req); !errors.Is(err, state.ErrProductQuoteChanged) {
 		t.Fatalf("foreign quote admission: %v", err)
 	}
 	req.ExpectedProductQuote = quote
@@ -101,7 +104,7 @@ func productCustomerConsent(t *testing.T, s productContractStore) {
 	}
 	stale := req
 	stale.IdempotencyKey = "stale-price"
-	if _, _, err := s.AdmitOperation(ctx, stale); !errors.Is(err, ErrProductQuoteChanged) {
+	if _, _, err := s.AdmitOperation(ctx, stale); !errors.Is(err, state.ErrProductQuoteChanged) {
 		t.Fatalf("changed terms silently accepted: %v", err)
 	}
 	usage, err := s.GetProductUsage(ctx, account.ID, app.ID, tenant.ID, productcontrol.Period(time.Now()))
@@ -112,7 +115,7 @@ func productCustomerConsent(t *testing.T, s productContractStore) {
 	if err != nil || created || retry.ID != first.ID || retry.ProductControl.UnitPriceMillicents != 25000 {
 		t.Fatalf("retry repriced or duplicated: %+v %t %v", retry, created, err)
 	}
-	lookup := ProductFeatureRequest{AccountID: account.ID, AppID: app.ID, TenantID: tenant.ID, Feature: "export", IdempotencyKey: req.IdempotencyKey}
+	lookup := state.ProductFeatureRequest{AccountID: account.ID, AppID: app.ID, TenantID: tenant.ID, Feature: "export", IdempotencyKey: req.IdempotencyKey}
 	observation, err := s.LookupProductSubmission(ctx, lookup)
 	if err != nil || observation.State != "accepted" || observation.Receipt.ID != first.ID {
 		t.Fatalf("lost acknowledgement: %+v %v", observation, err)
@@ -128,14 +131,14 @@ func productCustomerConsent(t *testing.T, s productContractStore) {
 	if _, err := s.SetProductCustomer(ctx, account.ID, app.ID, customer); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.AdmitOperation(ctx, req); !errors.Is(err, ErrProductAccess) {
+	if _, _, err := s.AdmitOperation(ctx, req); !errors.Is(err, state.ErrProductAccess) {
 		t.Fatalf("unlinked organization retained admission: %v", err)
 	}
 	customer.AuthOrganizationID = org
 	if _, err := s.SetProductCustomer(ctx, account.ID, app.ID, customer); err != nil {
 		t.Fatal(err)
 	}
-	stale.ExpectedProductQuote = productcontrol.Quote(account.ID, app.ID, tenant.ID, "export", newer, customer, productcontrol.Period(time.Now()))
+	stale.ExpectedProductQuote = productcontrol.Quote(account.ID, app.ID, tenant.ID, "export", newer, customer, productcontrol.Period(time.Now()), 1)
 	second, created, err := s.AdmitOperation(ctx, stale)
 	if err != nil || !created || second.ProductControl.UnitPriceMillicents != 50000 {
 		t.Fatalf("reconfirmed admission: %+v %t %v", second, created, err)
@@ -144,7 +147,7 @@ func productCustomerConsent(t *testing.T, s productContractStore) {
 	if _, err := s.PutProductCatalog(ctx, account.ID, app.ID, spec); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.AdmitOperation(ctx, req); !errors.Is(err, ErrProductAccess) {
+	if _, _, err := s.AdmitOperation(ctx, req); !errors.Is(err, state.ErrProductAccess) {
 		t.Fatalf("old realm retained admission: %v", err)
 	}
 }

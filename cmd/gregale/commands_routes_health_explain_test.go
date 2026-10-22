@@ -1,4 +1,4 @@
-package main
+package main_test
 
 // adr: 456
 
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 )
@@ -37,8 +38,8 @@ func cliSavedHealth(scenario string) api.RouteHealthHistoryEntry {
 func TestRouteHealthExplainCLIHistoryAndValidation(t *testing.T) {
 	for _, scenario := range []string{"regressed", "unknown", "healthy", "json", "empty", "detail", "cursor", "wrong_decision", "wrong_deployment", "wrong_policy", "false_healthy", "missing_anchor", "late_anchor", "duplicate", "wrong_cursor", "wrong_order", "abort", "abort_latency_only", "abort_manual", "wrong_purpose"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
-			setPreviewTestAuth(t)
+			main.ResetJSONOut(t)
+			main.SetPreviewTestAuth(t)
 			entry := cliSavedHealth("regressed")
 			if scenario == "healthy" || scenario == "missing_anchor" || scenario == "late_anchor" || scenario == "false_healthy" {
 				entry = cliSavedHealth("healthy")
@@ -108,17 +109,17 @@ func TestRouteHealthExplainCLIHistoryAndValidation(t *testing.T) {
 					t.Error("cursor lost")
 				}
 				if scenario == "detail" {
-					writeJSONTest(w, entry)
+					main.WriteJSONTest(w, entry)
 				} else {
-					writeJSONTest(w, page)
+					main.WriteJSONTest(w, page)
 				}
 			}))
 			defer server.Close()
 			t.Setenv("FAAS_API", server.URL)
 			var out bytes.Buffer
-			old := osStdout
-			osStdout = &out
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &out
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			args := []string{"routes", "health", "explain", "demo", "--deployment", healthCandidateID}
 			if scenario == "json" {
 				args = append(args, "--json")
@@ -134,7 +135,7 @@ func TestRouteHealthExplainCLIHistoryAndValidation(t *testing.T) {
 			if valid {
 				want = 0
 			}
-			if code := run(args); code != want {
+			if code := main.Run(args); code != want {
 				t.Fatalf("exit %d want %d: %s", code, want, out.String())
 			}
 			if !valid && out.Len() != 0 {
@@ -165,7 +166,7 @@ func TestRouteHealthExplainCLIHistoryAndValidation(t *testing.T) {
 
 func TestRouteHealthExplainTimelineContext(t *testing.T) {
 	before, after := cliSavedHealth("regressed"), cliSavedHealth("healthy")
-	if got := routeHealthHistoryTransition(before, after); !strings.Contains(got, "healthy evidence restored") {
+	if got := main.RouteHealthHistoryTransition(before, after); !strings.Contains(got, "healthy evidence restored") {
 		t.Fatal(got)
 	}
 	for _, change := range []string{"revision", "stage", "stable", "anchor"} {
@@ -181,7 +182,7 @@ func TestRouteHealthExplainTimelineContext(t *testing.T) {
 			anchor := after.Report.ObservationAnchor.Add(time.Second)
 			changed.Report.ObservationAnchor = &anchor
 		}
-		if got := routeHealthHistoryTransition(before, changed); strings.Contains(got, "restored") || !strings.Contains(got, "context changed") {
+		if got := main.RouteHealthHistoryTransition(before, changed); strings.Contains(got, "restored") || !strings.Contains(got, "context changed") {
 			t.Fatal("claimed recovery across context", got)
 		}
 	}
@@ -189,13 +190,13 @@ func TestRouteHealthExplainTimelineContext(t *testing.T) {
 
 func TestRouteHealthExplainInvalidLookupBeforeAPI(t *testing.T) {
 	for _, flags := range [][]string{{}, {"--deployment", "invalid"}, {"--deployment", healthCandidateID, "--limit", "0"}, {"--deployment", healthCandidateID, "--limit", "11"}, {"--deployment", healthCandidateID, "--before", "invalid"}, {"--deployment", healthCandidateID, "--decision", healthDecisionID, "--limit", "5"}, {"--deployment", healthCandidateID, "--decision", healthDecisionID, "--before", healthDecisionID}} {
-		resetJSONOut(t)
-		setPreviewTestAuth(t)
+		main.ResetJSONOut(t)
+		main.SetPreviewTestAuth(t)
 		calls := 0
 		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
 		t.Cleanup(server.Close)
 		t.Setenv("FAAS_API", server.URL)
-		if code := run(append([]string{"routes", "health", "explain", "demo"}, flags...)); code != 1 || calls != 0 {
+		if code := main.Run(append([]string{"routes", "health", "explain", "demo"}, flags...)); code != 1 || calls != 0 {
 			t.Fatal("invalid lookup reached API")
 		}
 	}

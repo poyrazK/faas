@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from faas_sdk.api.apps import cancel_queue_binding_canary, create_queue_binding_canary
 from faas_sdk.models.create_queue_binding_canary_request import CreateQueueBindingCanaryRequest
 from faas_sdk.models.queue_binding_canary import QueueBindingCanary
@@ -19,11 +21,14 @@ def test_queue_canary_preserves_exact_publication_and_completion_identity():
         "binding": "orders",
         "deployment_id": data["deployment_id"],
         "scope": "production",
+        "release_id": "33333333-3333-4333-8333-333333333333",
         "status": "published",
         "published_at": "2026-10-14T00:00:00+00:00",
         "expires_at": "2026-10-14T00:01:00+00:00",
     }
-    assert QueueBindingCanary.from_dict(report).to_dict() == report
+    receipt = QueueBindingCanary.from_dict(report)
+    assert receipt.release_id == UUID(report["release_id"])
+    assert receipt.to_dict() == report
     cancel = cancel_queue_binding_canary._get_kwargs("api", report["id"])
     assert cancel["method"] == "delete"
     assert cancel["url"].endswith(report["id"])

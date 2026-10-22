@@ -1,6 +1,6 @@
 package main
 
-// adr: 1580
+// adr: 1736
 
 import (
 	"context"
@@ -193,6 +193,29 @@ func TestReloadByHandoffAPID(t *testing.T) {
 	handedOff, reason, err = hostRuntime{binaryDir: t.TempDir()}.reloadByHandoff(context.Background(), "apid")
 	if err != nil || handedOff || !strings.Contains(reason, "hand-off refused") {
 		t.Fatalf("refused apid reload = (%v, %q, %v), want a restart naming the refusal", handedOff, reason, err)
+	}
+}
+
+// A successor the old generation rejected in its pre-traffic check
+// (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md) must not
+// reach customers through a restart: the reload is an error, so the deploy
+// fails and rolls back while the old generation still serves.
+func TestReloadByHandoffRejectedByAPreTrafficCheckFailsTheDeploy(t *testing.T) {
+	for _, service := range []string{"apid", "gatewayd-public"} {
+		t.Run(service, func(t *testing.T) {
+			f := newFakeUnit(t)
+			f.takeOverAfter = -1
+			f.failStatus = wire.HandoffStatusFailed + " 2026-10-20T00:00:00Z: wire: successor 300: " +
+				wire.ErrHandoffRejected.Error() + " api: GET /v1/apps answered 500, want [401]"
+			f.install(t)
+			handedOff, _, err := hostRuntime{binaryDir: t.TempDir()}.reloadByHandoff(context.Background(), service)
+			if err == nil || handedOff || !strings.Contains(err.Error(), "failed its pre-traffic check") {
+				t.Fatalf("rejected %s reload = (%v, %v), want an error and no restart", service, handedOff, err)
+			}
+			if f.reloads != 1 {
+				t.Fatalf("reloads = %d, want 1", f.reloads)
+			}
+		})
 	}
 }
 

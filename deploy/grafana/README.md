@@ -50,6 +50,27 @@ path. UID `faas-dev-loop-adr-740`.
 Enable delivery with `faas_dev_patch_delivery_enabled: true` on both the
 control plane and vmmd hosts.
 
+## `live-queries.json` (ADR-20261016151947)
+
+Live queries, for the hub (`livequeryd`) and realtimed's side of it. Rows:
+- **Hub:** databases served and not served, subscriptions, compiled
+  queries, released databases, and the process's engine memory.
+- **Per database:** hub running and restarts, subscriptions, and applied
+  transactions.
+- **Latency:** commit to delta p50 and p95, round duration p95,
+  maintenance statement time, recomputes and window refills.
+- **Slots and scale to zero:** slot lag, released state, resumes by reason
+  and resnapshots by reason.
+- **Keys and connections:** key reads by result, live keys, slow consumers
+  cut off, and realtimed's hub connections and drops.
+- **realtimed:** live sessions and subscriptions, frames and bytes by
+  direction, and refusals by code.
+
+Hub series carry a `database` label when one livequeryd serves several
+databases (`-databases-file`). The alerts are the `live_queries` family in
+`faas.rules.yml`, and the triage steps are in `docs/runbooks/FaasLiveQueries.md`.
+UID `faas-live-queries-adr-20261016151947`.
+
 ## `frozen-tier.json` (ADR-1151)
 
 The pause tiers. The **Frozen tier** row shows the fleet's frozen
@@ -67,6 +88,23 @@ signal behind quiet pause's soft CPU guarantee. UID
 `deploy/ansible/roles/prometheus/files/faas.rules.yml`, with promtool
 fixtures in `pkg/promqlrules/testdata/frozen_tier.test.yml`. Runbook:
 `docs/runbooks/FaasFrozenTier.md`.
+
+## `customer-operations.json` (ADR-20261016123221)
+
+Customer Operations. The **Pending Operations** row shows accepted, running,
+waiting and reconciliation counts (`schedd_customer_operations`), waits by
+kind, the longest unchanged Operation per state, Operations past their
+deadline, accounts with unknown outcomes and the age of the snapshot. schedd
+reads these from Postgres every retention tick and every replica reports the
+same fleet values, so panels read `max`. The **Outcomes and inputs** row shows
+outcomes and failure codes of the last 15 minutes
+(`schedd_customer_operations_settled_recent`) and provider events on
+operation-bound endpoints (`apid_customer_operation_webhook_events_total`). UID
+`faas-customer-operations-adr-1285`. Companion alerts are
+`family: customer_operations` in
+`deploy/ansible/roles/prometheus/files/faas.rules.yml`, with promtool fixtures
+in `pkg/promqlrules/testdata/customer_operations.test.yml`. Runbook:
+`docs/runbooks/FaasCustomerOperations.md`.
 
 ## `warm-snapshot.json` (issue #470 / PR C / ADR-074)
 

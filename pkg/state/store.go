@@ -372,7 +372,8 @@ type CanaryAdvanceParams struct {
 	// durable meterd lease and rechecks it inside the transaction.
 	RequireSafeReleaseLease bool
 	// RequireCanaryStageElapsed makes the store compare the persisted stage
-	// start against its duration using the store clock before any traffic write.
+	// start against CanaryStageDuration (the stage timer, or its evidence-paced
+	// minimum, ADR-1321) using the store clock before any traffic write.
 	// Customer-requested manual advances leave this disabled.
 	RequireCanaryStageElapsed bool
 	CanaryStageDuration       time.Duration
@@ -380,6 +381,10 @@ type CanaryAdvanceParams struct {
 	RouteCheckFingerprint     RouteCheckFingerprinter
 	RouteGateDecision         *api.RouteGateDecision
 	RouteHealthDecision       *api.RouteHealthDecision
+	// Decision is the validated api.RolloutDecision behind this advance
+	// (ADR-1447). It is written to deployments.rollout_decision in the same
+	// UPDATE as the traffic change; nil clears the column.
+	Decision json.RawMessage
 }
 
 // CanaryAdvancer is intentionally separate from Store so existing narrow test
@@ -1007,6 +1012,14 @@ type DeploymentActivationLocker interface {
 type Store interface {
 	OrgAccessStore
 	OperatorObservabilityReader
+	OperatorAlertHistoryStore
+	OperatorAlertTriageWriter
+	OperatorAlertTriageHistoryReader
+	OperatorAlertWorkloadReader
+	OperatorAlertResponseTimesReader
+	OperatorAlertRecurrenceReader
+	OperatorAlertCollectionHistoryReader
+	OperatorAlertRetentionStore
 	RecordMCPTaskPromotionHold(context.Context, string, string, MCPTaskPromotionRecovery) error
 	ClaimMCPTaskPromotionRecovery(context.Context, string) (*MCPTaskPromotionRecovery, error)
 	FinishMCPTaskPromotionRecovery(context.Context, string, int64, string) (bool, error)
@@ -3775,6 +3788,13 @@ type Store interface {
 	MarkRuntimeConfigOperationBlocked(ctx context.Context, id, phase, reason string) error
 	ListRuntimeConfigRevisions(ctx context.Context, key string, scope RuntimeConfigScope, scopeID string, limit int) ([]RuntimeConfigRevision, error)
 	GetRuntimeConfigRevision(ctx context.Context, key string, scope RuntimeConfigScope, scopeID string, version int64) (RuntimeConfigRevision, error)
+	// RecordRuntimeConfigApplyReceipt (ADR-1700) upserts what one daemon
+	// instance applied for a key. A receipt for an older version than the
+	// stored one is ignored, so a slow instance cannot regress the record.
+	RecordRuntimeConfigApplyReceipt(ctx context.Context, receipt RuntimeConfigApplyReceipt) error
+	// ListRuntimeConfigApplyReceipts returns receipts for the given keys
+	// (every key when keys is empty), ordered by key, daemon and instance.
+	ListRuntimeConfigApplyReceipts(ctx context.Context, keys []string) ([]RuntimeConfigApplyReceipt, error)
 
 	// OperatorIntentOutcomeMissingCounts (Obs-Meta + Trace-IDs Mega-PR / C7)
 	// powers GET /v1/admin/obs/health. Returns a map of kind → count

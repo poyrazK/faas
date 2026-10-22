@@ -685,8 +685,9 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 		// recently served) stay alive — matches ReapIdle's
 		// "freshness floor" direction.
 		sort.Slice(g.candidates, func(a, b int) bool {
-			if !g.candidates[a].LastRequest.Equal(g.candidates[b].LastRequest) {
-				return g.candidates[a].LastRequest.Before(g.candidates[b].LastRequest)
+			aLast, bLast := idleReference(g.candidates[a]), idleReference(g.candidates[b])
+			if !aLast.Equal(bLast) {
+				return aLast.Before(bLast)
 			}
 			return g.candidates[a].Instance < g.candidates[b].Instance
 		})
@@ -819,8 +820,13 @@ func evictionCandidates(now time.Time, instances []InstanceInfo) []InstanceInfo 
 		if as != bs {
 			return !as // non-Scale first
 		}
-		if !cands[a].LastRequest.Equal(cands[b].LastRequest) {
-			return cands[a].LastRequest.Before(cands[b].LastRequest)
+		// LRU by last activity. idleReference falls back to the start time:
+		// a NULL last_request_at (no request flushed yet, or a worker that
+		// serves none) would otherwise sort as the oldest possible activity
+		// and be evicted ahead of instances idle for hours.
+		aLast, bLast := idleReference(cands[a]), idleReference(cands[b])
+		if !aLast.Equal(bLast) {
+			return aLast.Before(bLast)
 		}
 		return cands[a].Instance < cands[b].Instance
 	})

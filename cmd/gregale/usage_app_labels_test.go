@@ -1,10 +1,11 @@
-package main
+package main_test
 
 import (
 	"bytes"
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -19,7 +20,7 @@ func TestAppLabelMarksDeletedApps(t *testing.T) {
 		{slugs, "gone-id", "(deleted) gone-id"},
 		{nil, "gone-id", "gone-id"}, // the app list failed: no claim either way
 	} {
-		if got := appLabel(tc.slugs, tc.id); got != tc.want {
+		if got := main.AppLabel(tc.slugs, tc.id); got != tc.want {
 			t.Errorf("appLabel(%v, %q) = %q, want %q", tc.slugs, tc.id, got, tc.want)
 		}
 	}
@@ -27,7 +28,7 @@ func TestAppLabelMarksDeletedApps(t *testing.T) {
 
 func TestRenderAppMetricsNamesTheSlug(t *testing.T) {
 	var out bytes.Buffer
-	renderAppMetrics(&out, "web", api.AppMetricsResponse{AppID: "app-id", Range: "5m", Source: "prometheus"})
+	main.RenderAppMetrics(&out, "web", api.AppMetricsResponse{AppID: "app-id", Range: "5m", Source: "prometheus"})
 	if !strings.Contains(out.String(), "Slug:       web") {
 		t.Fatalf("metrics header lacks the slug:\n%s", out.String())
 	}

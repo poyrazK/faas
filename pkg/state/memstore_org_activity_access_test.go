@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -8,29 +8,30 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreOrgAccessMutationsAreAtomicWithActivity(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	store := NewMemStore()
-	owner, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{
+	store := state.NewMemStore()
+	owner, err := store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
 		Email: "timeline-owner-" + uuid.NewString() + "@example.com", Plan: api.PlanPro,
 	})
 	if err != nil {
 		t.Fatalf("create owner: %v", err)
 	}
-	member, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{
+	member, err := store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
 		Email: "timeline-member-" + uuid.NewString() + "@example.com", Plan: api.PlanPro,
 	})
 	if err != nil {
 		t.Fatalf("create member: %v", err)
 	}
 	orgID := owner.PersonalOrg.ID
-	activity := func(kind, sourceID string, data []byte) OrgActivity {
+	activity := func(kind, sourceID string, data []byte) state.OrgActivity {
 		actorID := uuid.MustParse(owner.Account.ID)
-		return OrgActivity{
-			OrgID: uuid.MustParse(orgID), Kind: kind, ActorType: OrgActivityActorUser,
+		return state.OrgActivity{
+			OrgID: uuid.MustParse(orgID), Kind: kind, ActorType: state.OrgActivityActorUser,
 			ActorAccountID: &actorID, ActorLabel: owner.Account.Email,
 			ResourceType: "member", ResourceLabel: "member", SourceType: kind,
 			SourceID: sourceID, Data: data,
@@ -48,8 +49,8 @@ func TestMemStoreOrgAccessMutationsAreAtomicWithActivity(t *testing.T) {
 
 	const tokenMaterial = "plaintext-invitation-token-must-never-appear"
 	bad := activity("org.invitation.created", "bad-create", []byte(`[]`))
-	if _, _, err := store.CreateOrgInvitationWithActivity(ctx, OrgInvitation{
-		OrgID: orgID, Email: member.Account.Email, Role: OrgRoleDeveloper,
+	if _, _, err := store.CreateOrgInvitationWithActivity(ctx, state.OrgInvitation{
+		OrgID: orgID, Email: member.Account.Email, Role: state.OrgRoleDeveloper,
 		TokenHash: []byte(tokenMaterial), ExpiresAt: time.Now().Add(time.Hour),
 	}, bad); err == nil {
 		t.Fatal("invitation create with invalid activity succeeded")
@@ -58,8 +59,8 @@ func TestMemStoreOrgAccessMutationsAreAtomicWithActivity(t *testing.T) {
 		t.Fatalf("invitations after rejected create = (%#v, %v), want none", invitations, err)
 	}
 
-	first, createID, err := store.CreateOrgInvitationWithActivity(ctx, OrgInvitation{
-		OrgID: orgID, Email: member.Account.Email, Role: OrgRoleDeveloper,
+	first, createID, err := store.CreateOrgInvitationWithActivity(ctx, state.OrgInvitation{
+		OrgID: orgID, Email: member.Account.Email, Role: state.OrgRoleDeveloper,
 		TokenHash: []byte(tokenMaterial), ExpiresAt: time.Now().Add(time.Hour),
 	}, activity("org.invitation.created", "invite-create-1", []byte(`{"role":"developer"}`)))
 	if err != nil {
@@ -77,13 +78,13 @@ func TestMemStoreOrgAccessMutationsAreAtomicWithActivity(t *testing.T) {
 	deliver(acceptedID)
 	deliver(memberID)
 
-	updated, roleID, err := store.UpdateOrgMemberRoleWithActivity(ctx, orgID, member.Account.ID, OrgRoleAdmin,
+	updated, roleID, err := store.UpdateOrgMemberRoleWithActivity(ctx, orgID, member.Account.ID, state.OrgRoleAdmin,
 		activity("org.member.role_changed", "member-role-1", []byte(`{}`)))
-	if err != nil || updated.Role != OrgRoleAdmin {
+	if err != nil || updated.Role != state.OrgRoleAdmin {
 		t.Fatalf("change member role with activity = (%+v, %v)", updated, err)
 	}
 	deliver(roleID)
-	if _, duplicateID, err := store.UpdateOrgMemberRoleWithActivity(ctx, orgID, member.Account.ID, OrgRoleAdmin,
+	if _, duplicateID, err := store.UpdateOrgMemberRoleWithActivity(ctx, orgID, member.Account.ID, state.OrgRoleAdmin,
 		activity("org.member.role_changed", "member-role-noop", []byte(`{}`))); err != nil || duplicateID != 0 {
 		t.Fatalf("unchanged role mutation = (%d, %v), want no duplicate activity", duplicateID, err)
 	}
@@ -99,8 +100,8 @@ func TestMemStoreOrgAccessMutationsAreAtomicWithActivity(t *testing.T) {
 		t.Fatalf("repeat member removal = (%d, %v), want no duplicate activity", duplicateID, err)
 	}
 
-	second, secondCreateID, err := store.CreateOrgInvitationWithActivity(ctx, OrgInvitation{
-		OrgID: orgID, Email: "pending-" + uuid.NewString() + "@example.com", Role: OrgRoleViewer,
+	second, secondCreateID, err := store.CreateOrgInvitationWithActivity(ctx, state.OrgInvitation{
+		OrgID: orgID, Email: "pending-" + uuid.NewString() + "@example.com", Role: state.OrgRoleViewer,
 		TokenHash: []byte("stored-token-hash-2"), ExpiresAt: time.Now().Add(time.Hour),
 	}, activity("org.invitation.created", "invite-create-2", []byte(`{"role":"viewer"}`)))
 	if err != nil {
@@ -114,7 +115,7 @@ func TestMemStoreOrgAccessMutationsAreAtomicWithActivity(t *testing.T) {
 	}
 	deliver(revokeID)
 
-	rows, err := store.ListOrgActivity(ctx, OrgActivityFilter{OrgID: uuid.MustParse(orgID), Limit: 20})
+	rows, err := store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: uuid.MustParse(orgID), Limit: 20})
 	if err != nil || len(rows) != 7 {
 		t.Fatalf("workspace access activity = (%#v, %v), want seven events", rows, err)
 	}
@@ -142,26 +143,26 @@ func TestMemStoreOrgAccessMutationsAreAtomicWithActivity(t *testing.T) {
 func TestMemStoreOwnershipTransferIsAtomicWithActivity(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	store := NewMemStore()
-	owner, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{
+	store := state.NewMemStore()
+	owner, err := store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
 		Email: "transfer-owner-" + uuid.NewString() + "@example.com", Plan: api.PlanPro,
 	})
 	if err != nil {
 		t.Fatalf("create owner: %v", err)
 	}
-	newOwner, err := store.CreateAccountWithPersonalOrg(ctx, CreateAccountWithPersonalOrgParams{
+	newOwner, err := store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
 		Email: "transfer-target-" + uuid.NewString() + "@example.com", Plan: api.PlanPro,
 	})
 	if err != nil {
 		t.Fatalf("create new owner: %v", err)
 	}
 	orgID := owner.PersonalOrg.ID
-	if err := store.AddOrgMember(ctx, orgID, newOwner.Account.ID, OrgRoleDeveloper, nil); err != nil {
+	if err := store.AddOrgMember(ctx, orgID, newOwner.Account.ID, state.OrgRoleDeveloper, nil); err != nil {
 		t.Fatalf("add target member: %v", err)
 	}
 	actorID := uuid.MustParse(owner.Account.ID)
-	activity := OrgActivity{
-		OrgID: uuid.MustParse(orgID), Kind: "org.ownership_transferred", ActorType: OrgActivityActorUser,
+	activity := state.OrgActivity{
+		OrgID: uuid.MustParse(orgID), Kind: "org.ownership_transferred", ActorType: state.OrgActivityActorUser,
 		ActorAccountID: &actorID, ActorLabel: owner.Account.Email, ResourceType: "member",
 		ResourceLabel: "member", SourceType: "org.ownership_transferred", SourceID: "ownership-transfer-1",
 		Data: []byte(`{}`),
@@ -171,7 +172,7 @@ func TestMemStoreOwnershipTransferIsAtomicWithActivity(t *testing.T) {
 	if _, err := store.TransferOrgOwnershipWithActivity(ctx, orgID, owner.Account.ID, newOwner.Account.ID, invalid); err == nil {
 		t.Fatal("transfer with invalid activity succeeded")
 	}
-	if from, _ := store.OrgMemberByAccount(ctx, orgID, owner.Account.ID); from.Role != OrgRoleOwner {
+	if from, _ := store.OrgMemberByAccount(ctx, orgID, owner.Account.ID); from.Role != state.OrgRoleOwner {
 		t.Fatalf("owner role after rejected transfer = %q, want owner", from.Role)
 	}
 
@@ -180,20 +181,20 @@ func TestMemStoreOwnershipTransferIsAtomicWithActivity(t *testing.T) {
 		t.Fatalf("transfer with activity = (%d, %v)", outboxID, err)
 	}
 	from, err := store.OrgMemberByAccount(ctx, orgID, owner.Account.ID)
-	if err != nil || from.Role != OrgRoleAdmin {
+	if err != nil || from.Role != state.OrgRoleAdmin {
 		t.Fatalf("former owner membership = (%+v, %v), want admin", from, err)
 	}
 	to, err := store.OrgMemberByAccount(ctx, orgID, newOwner.Account.ID)
-	if err != nil || to.Role != OrgRoleOwner {
+	if err != nil || to.Role != state.OrgRoleOwner {
 		t.Fatalf("new owner membership = (%+v, %v), want owner", to, err)
 	}
-	if rows, err := store.ListOrgActivity(ctx, OrgActivityFilter{OrgID: uuid.MustParse(orgID), Limit: 10}); err != nil || len(rows) != 0 {
+	if rows, err := store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: uuid.MustParse(orgID), Limit: 10}); err != nil || len(rows) != 0 {
 		t.Fatalf("activity before outbox delivery = (%#v, %v), want none", rows, err)
 	}
 	if delivered, err := store.DeliverOrgActivityOutbox(ctx, outboxID); err != nil || !delivered {
 		t.Fatalf("deliver ownership transfer outbox = (%v, %v)", delivered, err)
 	}
-	rows, err := store.ListOrgActivity(ctx, OrgActivityFilter{OrgID: uuid.MustParse(orgID), Limit: 10})
+	rows, err := store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: uuid.MustParse(orgID), Limit: 10})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("ownership activity = (%#v, %v), want one row", rows, err)
 	}

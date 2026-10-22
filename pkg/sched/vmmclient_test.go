@@ -509,6 +509,39 @@ func TestDialVMM_EmptyPath(t *testing.T) {
 }
 
 // ADR-361: an app's declared extra ports cross the schedd -> vmmd wire on
+// adr: 508 — vmmd takes a cold boot's deployment from correlation metadata,
+// and a booting guest's secret-reload registration needs it. Deploy prime
+// boots carry no wake correlation, so the spec's deployment must cross.
+func TestVMMClient_CreateColdBootCarriesDeployment(t *testing.T) {
+	for _, tc := range []struct {
+		name, correlated, want string
+	}{
+		{name: "prime without wake correlation", want: "dep-spec"},
+		{name: "wake correlation wins", correlated: "dep-wake", want: "dep-wake"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			fake := &fakeVMM{wakeFn: func(_ context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
+				got = req.DeploymentID
+				return &fcvm.Instance{Net: netns.NewConfig("i-d", "fc-i-d", "vh", "vp", netip.MustParseAddr("10.100.0.2"))}, nil
+			}}
+			c := newClient(t, fake)
+			ctx := context.Background()
+			if tc.correlated != "" {
+				ctx = wire.WithContext(ctx, wire.CorrelationFields{DeploymentID: tc.correlated})
+			}
+			if _, err := c.CreateColdBoot(ctx, "i-d", sched.AppSpec{
+				BaseKey: "/b", LayerKey: "/l", VCPUCount: 2, MemSizeMiB: 256, DeploymentID: "dep-spec",
+			}); err != nil {
+				t.Fatalf("CreateColdBoot: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("vmmd wake deployment = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // both the boot request and the live convergence RPC.
 func TestVMMClient_EgressPortsCrossTheWire(t *testing.T) {
 	var booted []uint16

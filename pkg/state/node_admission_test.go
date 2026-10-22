@@ -13,11 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type nodeAdmissionTestStore interface {
-	state.Store
-	state.NodeLifecycleCompletionStore
-	state.RuntimeConfigMigrationStore
-}
+type nodeAdmissionTestStore = contractTestStore
 
 func selectedNodeContext(ctx context.Context, node state.ComputeNode) context.Context {
 	return state.WithNodeAdmission(ctx, state.NodeAdmission{NodeID: node.ID, Generation: node.LifecycleGeneration})

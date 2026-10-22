@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -83,9 +84,11 @@ func prepareStreamingResponse(ctx context.Context, w http.ResponseWriter, conten
 // observeAIResponse starts usage extraction for an AI integration's
 // generation call. It returns nil when the response is not an AI call. The
 // plan picks the call's wire format and the model to report when the
-// response names none (ADR-991).
+// response names none (ADR-991). A cache hit is observed too, to value
+// what it saved (ADR-1440); its bodies are never captured.
 func observeAIResponse(integration Integration, r *http.Request, resp *http.Response, cacheHit bool, ai *aiRequest, plan *aiCallPlan) *aiUsageObserver {
-	if integration.AIProvider == "" || r.Method != http.MethodPost || cacheHit || resp == nil || resp.Body == nil {
+	if integration.AIProvider == "" || r.Method != http.MethodPost || resp == nil || resp.Body == nil ||
+		(plan != nil && plan.endpoint.batch) {
 		return nil
 	}
 	var observer *aiUsageObserver
@@ -93,11 +96,14 @@ func observeAIResponse(integration Integration, r *http.Request, resp *http.Resp
 		observer = newAIUsageObserverFormat(plan.endpoint.format, resp.Header.Get("Content-Type"), time.Now)
 		observer.fallbackModel = plan.facts.model
 		observer.media = plan.endpoint.media
+		observer.chatSearch = plan.facts.tools.chatSearch
 	} else {
 		observer = newAIUsageObserver(integration.AIProvider, resp.Header.Get("Content-Type"), time.Now)
 	}
 	observer.applyHeaders(resp.Header)
-	if _, replaying := replayPrincipalFromContext(r.Context()); integration.AIRequestLogEnabled && integration.AIRequestLogContent && !replaying {
+	_, replaying := replayPrincipalFromContext(r.Context())
+	_, internal := internalPrincipalFromContext(r.Context())
+	if integration.AIRequestLogEnabled && integration.AIRequestLogContent && !replaying && !internal && !cacheHit {
 		observer.capture = newAIContentCapture(ai, resp.Header.Get("Content-Type"))
 		if plan != nil {
 			observer.capture.content.RequestPath = plan.path
@@ -119,8 +125,10 @@ type aiSettlement struct {
 	attempts int
 	started  time.Time
 	routeID  string
-	// endUser is the call's X-Gregale-AI-User value (ADR-994).
+	// endUser is the call's X-Gregale-AI-User value (ADR-994), and tags its
+	// X-Gregale-AI-Tags (ADR-1436).
 	endUser string
+	tags    []string
 	// reserve and billable let a billable call whose usage cannot be read
 	// settle at its admission estimate instead of zero (ADR-996).
 	reserve  aiReservation
@@ -129,8 +137,23 @@ type aiSettlement struct {
 	// which the binary audio response does not report (ADR-997).
 	media      aiMediaKind
 	characters int64
+	// video is a video call's seconds and resolution (ADR-1432).
+	videoSeconds    int64
+	videoResolution string
+	// codeGB is the memory a code-interpreter session is charged at
+	// (ADR-1433).
+	codeGB int64
 	// leaseID keys the settlement (ADR-1120).
 	leaseID string
+	// route places a route attempt in its route, and moderation is the
+	// call's moderation result (ADR-1340).
+	route      routeAttempt
+	moderation aiModerationOutcome
+	// response is the response check's result, filled as the response is
+	// sent (ADR-1435); nil when the response is not checked.
+	response *aiResponseCheck
+	// cacheHit marks a response the cache served (ADR-1440).
+	cacheHit bool
 }
 
 // speechUsage settles a successful speech call at its input characters when
@@ -145,6 +168,51 @@ func speechUsage(integration Integration, settlement aiSettlement, status int, u
 		return AIUsage{Model: usage.Model, Known: true, Characters: settlement.characters}, AIUsageOutcomeKnown
 	}
 	return usage, outcome
+}
+
+// videoUsage settles a created video at the seconds it asked for: the
+// provider bills them, and the operation it returns reports no usage
+// (ADR-1432).
+func videoUsage(settlement aiSettlement, status int, usage AIUsage, outcome AIUsageOutcome) (AIUsage, AIUsageOutcome) {
+	if settlement.media != aiMediaVideo || status < 200 || status > 299 {
+		return usage, outcome
+	}
+	return AIUsage{Model: usage.Model, Known: true, VideoSeconds: settlement.videoSeconds,
+		VideoResolution: settlement.videoResolution}, AIUsageOutcomeKnown
+}
+
+// aiContainerSessions remembers the code-interpreter containers this
+// process charged, so a container a conversation reuses is charged once per
+// session window (ADR-1433). It is bounded and starts over when full.
+type aiContainerSessions struct {
+	mu   sync.Mutex
+	seen map[string]time.Time
+}
+
+// aiContainerSessionsMax bounds the remembered containers.
+const aiContainerSessionsMax = 10_000
+
+// charge returns how many of a response's containers start a session.
+func (c *aiContainerSessions) charge(integrationID string, ids []string, now time.Time) int64 {
+	if len(ids) == 0 {
+		return 0
+	}
+	window := api.OutboundAIContainerSessionMinutes * time.Minute
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.seen == nil || len(c.seen) >= aiContainerSessionsMax {
+		c.seen = make(map[string]time.Time)
+	}
+	var sessions int64
+	for _, id := range ids {
+		key := integrationID + "/" + id
+		if started, ok := c.seen[key]; ok && now.Sub(started) < window {
+			continue
+		}
+		c.seen[key] = now
+		sessions++
+	}
+	return sessions
 }
 
 // estimatedAIUsage is what a billable call with unreadable usage settles
@@ -163,6 +231,10 @@ func estimatedAIUsage(outcome AIUsageOutcome, usage AIUsage, settlement aiSettle
 // including an aborted one, so partial streams still count what they used.
 func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, appID string, settlement aiSettlement,
 	observer *aiUsageObserver, span oteltrace.Span, metricIntegrationID string) {
+	if settlement.cacheHit {
+		h.settleAICacheHit(ctx, integration, appID, settlement, observer, span, metricIntegrationID)
+		return
+	}
 	usage := observer.Finish()
 	status, upstreamStarted := settlement.status, settlement.started
 	outcome := aiUsageOutcome(status, usage)
@@ -174,16 +246,44 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 		timeToFirstByte = first.Sub(upstreamStarted)
 	}
 	usage, outcome = speechUsage(integration, settlement, status, usage, outcome)
+	usage, outcome = videoUsage(settlement, status, usage, outcome)
+	if outcome != AIUsageOutcomeError {
+		// ADR-1433: a container is charged once per session window.
+		usage.CodeSessionGB = h.aiContainers.charge(integration.ID, observer.containerIDs(), time.Now()) * max(settlement.codeGB, 1)
+	}
 	cost := aiCallCostMillicents(integration, usage)
 	if estimated, estimatedCost, ok := estimatedAIUsage(outcome, usage, settlement); ok {
 		usage, cost = estimated, estimatedCost
 		span.SetAttributes(attribute.Bool("gregale.ai.usage_estimated", true))
 	}
+	h.recordSettledAIUsage(ctx, integration, appID, settlement, settledAIUsage{
+		usage: usage, outcome: outcome, cost: cost, timeToFirstByte: timeToFirstByte, capture: observer.capture,
+	}, span, metricIntegrationID)
+}
+
+// settledAIUsage is one call's usage as it is recorded.
+type settledAIUsage struct {
+	usage           AIUsage
+	outcome         AIUsageOutcome
+	cost            int64
+	timeToFirstByte time.Duration
+	capture         *aiContentCapture
+}
+
+// recordSettledAIUsage counts and writes one call's settled usage: metrics,
+// span attributes, the usage rollup, the request log and the log export.
+// Ordinary calls and realtime responses (ADR 20261019072722) share it.
+func (h *Handler) recordSettledAIUsage(ctx context.Context, integration Integration, appID string, settlement aiSettlement,
+	settled settledAIUsage, span oteltrace.Span, metricIntegrationID string) {
+	usage, outcome, cost, timeToFirstByte := settled.usage, settled.outcome, settled.cost, settled.timeToFirstByte
 	h.Metrics.ObserveAIUsage(metricIntegrationID, outcome, usage, timeToFirstByte)
 	h.Metrics.ObserveAICost(metricIntegrationID, cost)
 	span.SetAttributes(aiSpanAttributes(integration.AIProvider, outcome, usage, timeToFirstByte)...)
 	if cost > 0 {
 		span.SetAttributes(attribute.Int64("gregale.ai.cost_millicents", cost))
+	}
+	if settlement.response != nil && settlement.response.result != "" {
+		span.SetAttributes(attribute.String("gregale.ai.response_check", settlement.response.result))
 	}
 	recorder, ok := h.Backend.(AIUsageBackend)
 	if !ok {
@@ -192,7 +292,13 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	}
 	caller := appID
 	replay, replaying := replayPrincipalFromContext(ctx)
+	internal, isInternal := internalPrincipalFromContext(ctx)
 	switch {
+	case isInternal:
+		caller = internal.caller
+		if internal.outcome != nil {
+			*internal.outcome = replayOutcome{settled: true, outcome: outcome, usage: usage, cost: cost}
+		}
 	case replaying:
 		caller = AIUsageCallerReplay
 		if replay.outcome != nil {
@@ -203,14 +309,19 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	}
 	record := AIUsageRecord{
 		IntegrationID: integration.ID, Caller: caller, Outcome: outcome, Usage: usage, CostMillicents: cost,
-		EndUser: settlement.endUser, LeaseID: settlement.leaseID,
+		EndUser: settlement.endUser, Tags: settlement.tags, LeaseID: settlement.leaseID,
+		PromptCacheSavedMillicents: promptCacheSavedMillicents(integration, usage, cost),
 	}
 	if integration.AIRequestLogEnabled {
 		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())
-		if observer.capture != nil {
-			record.Log.Content = observer.capture.finish()
+		if settled.capture != nil {
+			record.Log.Content = settled.capture.finish()
 		}
 	}
+	if settlement.route.tracked {
+		record.Route = aiRouteAttemptFor(settlement.route, outcome, timeToFirstByte)
+	}
+	record.Export = aiLogExportFor(integration, record, settlement, timeToFirstByte, time.Now())
 	write := func(ctx context.Context) ([]AIBudgetAlert, error) {
 		if alerter, ok := h.Backend.(AIBudgetAlertRecorder); ok {
 			return alerter.RecordAIUsageAlerts(ctx, record)
@@ -225,7 +336,68 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	for _, alert := range alerts {
 		h.Metrics.ObserveAIBudgetAlert(alert.Budget, alert.ThresholdPercent)
 	}
+	if record.Export != nil {
+		h.Metrics.ObserveAILogExport(metricIntegrationID)
+	}
 	h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "recorded")
+}
+
+// settleAICacheHit records a response the cache served (ADR-1440): one
+// cached request of the caller and model, with no tokens and no cost, and
+// what the provider call would have cost, priced from the cached response's
+// usage. Nothing was spent, so caps, end users and tags are not touched.
+func (h *Handler) settleAICacheHit(ctx context.Context, integration Integration, appID string, settlement aiSettlement,
+	observer *aiUsageObserver, span oteltrace.Span, metricIntegrationID string) {
+	usage := observer.Finish()
+	saved := aiCallCostMillicents(integration, usage)
+	span.SetAttributes(attribute.Int64("gregale.ai.cache_saved_millicents", saved))
+	h.Metrics.ObserveAIResponseCacheSaved(metricIntegrationID, saved)
+	recorder, ok := h.Backend.(AIUsageBackend)
+	if !ok {
+		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "unavailable")
+		return
+	}
+	caller := appID
+	if caller == "" {
+		caller = AIUsageCallerRuns
+	}
+	record := AIUsageRecord{IntegrationID: integration.ID, Caller: caller, Outcome: AIUsageOutcomeKnown,
+		Usage: AIUsage{Model: usage.Model, Known: true}, Cached: true, CacheSavedMillicents: saved, LeaseID: settlement.leaseID}
+	write := func(ctx context.Context) ([]AIBudgetAlert, error) { return nil, recorder.RecordAIUsage(ctx, record) }
+	if _, err := h.recordAIUsage(context.WithoutCancel(ctx), record, metricIntegrationID, write); err != nil {
+		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "state_error")
+		return
+	}
+	h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "recorded")
+}
+
+// promptCacheSavedMillicents is what provider prompt caching saved on one
+// call: its cost with cached reads and cache writes priced as plain input,
+// minus its cost. It is negative when writes outweigh reads (ADR-1440).
+func promptCacheSavedMillicents(integration Integration, usage AIUsage, cost int64) int64 {
+	if !usage.Known || usage.CachedInputTokens+usage.CacheWriteTokens == 0 {
+		return 0
+	}
+	plain := usage
+	plain.CachedInputTokens, plain.CacheWriteTokens, plain.CachedInputAudioTokens = 0, 0, 0
+	return aiCallCostMillicents(integration, plain) - cost
+}
+
+// aiRouteAttemptFor is a canary-tracked attempt's contribution to its
+// target's per-minute row: an error for any provider status of 400 or
+// above, and the time to first byte of a successful attempt (ADR-1340). A
+// route without a UUID (a static test route) has no row, so the attempt
+// never makes its settlement invalid.
+func aiRouteAttemptFor(attempt routeAttempt, outcome AIUsageOutcome, timeToFirstByte time.Duration) *AIRouteAttemptRecord {
+	if !validUUID(attempt.routeID) {
+		return nil
+	}
+	record := &AIRouteAttemptRecord{RouteID: attempt.routeID, Position: attempt.position, Error: outcome == AIUsageOutcomeError}
+	if !record.Error && timeToFirstByte > 0 {
+		ttfb := timeToFirstByte.Milliseconds()
+		record.TTFBMS = &ttfb
+	}
+	return record
 }
 
 // recordAIUsage writes one settlement, retrying a failed attempt when the

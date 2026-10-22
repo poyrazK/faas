@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/financial"
 )
@@ -52,14 +53,14 @@ func TestFinancialBudgetCLIOutputFailure(t *testing.T) {
 			defer srv.Close()
 			t.Setenv("FAAS_API", srv.URL)
 			t.Setenv("FAAS_TOKEN", "fp_live_x")
-			resetJSONOutput()
-			t.Cleanup(resetJSONOutput)
-			original := osStdout
-			osStdout = &financialBudgetOutputFailure{writesBeforeFailure: tc.writesBeforeFailure}
-			t.Cleanup(func() { osStdout = original })
-			_, restoreErr := captureStderr(t)
+			main.ResetJSONOutput()
+			t.Cleanup(main.ResetJSONOutput)
+			original := (*main.OsStdout)
+			(*main.OsStdout) = &financialBudgetOutputFailure{writesBeforeFailure: tc.writesBeforeFailure}
+			t.Cleanup(func() { (*main.OsStdout) = original })
+			_, restoreErr := main.CaptureStderr(t)
 			defer restoreErr()
-			if code := cmdBillingBudgets(tc.args); code == 0 {
+			if code := main.CmdBillingBudgets(tc.args); code == 0 {
 				t.Fatal("budget command reported success after output failed")
 			}
 		})
@@ -117,9 +118,9 @@ func TestFinancialBudgetCRUDCLI(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	_, restoreErr := captureStderr(t)
+	_, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 	for _, tc := range []struct {
 		args         []string
@@ -134,7 +135,7 @@ func TestFinancialBudgetCRUDCLI(t *testing.T) {
 	} {
 		method, path = tc.method, tc.path
 		offset := len(stdout.Bytes())
-		if code := cmdBilling(append([]string{"budgets"}, tc.args...)); code != 0 {
+		if code := main.CmdBilling(append([]string{"budgets"}, tc.args...)); code != 0 {
 			t.Fatalf("%v exit %d", tc.args, code)
 		}
 		if !json.Valid(stdout.Bytes()[offset:]) {
@@ -142,7 +143,7 @@ func TestFinancialBudgetCRUDCLI(t *testing.T) {
 		}
 	}
 	for _, bad := range [][]string{{"get", "not-an-id"}, {"update", "--file", file, id}, {"delete", "--expected-revision", "-1", id}, {"history", "--limit", "101", id}, {"create"}, {"list", "extra"}} {
-		if cmdBillingBudgets(bad) == 0 {
+		if main.CmdBillingBudgets(bad) == 0 {
 			t.Fatalf("invalid args accepted: %v", bad)
 		}
 	}

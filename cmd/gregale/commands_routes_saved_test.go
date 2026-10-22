@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -9,13 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routerequirements"
 )
 
 func TestRoutesSavedPlanExportApply(t *testing.T) {
-	resetJSONOut(t)
-	setPreviewTestAuth(t)
+	main.ResetJSONOut(t)
+	main.SetPreviewTestAuth(t)
 	deployment := "00000000-0000-4000-8000-000000000001"
 	config, err := routerequirements.ParsePreview([]byte(`{"version":2,"groups":[{"name":"checkout","path_prefix":"/checkout/","methods":["POST"],"require":{"budget":{"explicit":true,"max_ms":500}}}]}`))
 	if err != nil {
@@ -49,14 +50,14 @@ func TestRoutesSavedPlanExportApply(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			}
-			writeJSONTest(w, reviewed)
+			main.WriteJSONTest(w, reviewed)
 		case "/v1/apps/my-api/route-policy/apply":
 			var request api.RoutePolicyApplyRequest
 			_ = json.Unmarshal(encoded, &request)
 			if !request.Saved || request.ExpectedRevision == nil || *request.ExpectedRevision != reviewed.RequirementsRevision || request.ExpectedPlanSHA256 != reviewed.SHA256 || r.Header.Get("Idempotency-Key") != reviewed.SHA256 || request.DeploymentID != deployment {
 				t.Errorf("saved apply lost binding: %+v", request)
 			}
-			writeJSONTest(w, api.RoutePolicyApplyResponse{Receipt: api.RoutePolicyReceipt{ID: "receipt", Verification: reviewed.After}, GatewayState: "unobserved"})
+			main.WriteJSONTest(w, api.RoutePolicyApplyResponse{Receipt: api.RoutePolicyReceipt{ID: "receipt", Verification: reviewed.After}, GatewayState: "unobserved"})
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -64,9 +65,9 @@ func TestRoutesSavedPlanExportApply(t *testing.T) {
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	var out bytes.Buffer
-	oldOut := osStdout
-	osStdout = &out
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &out
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 	for _, args := range [][]string{
 		{"my-api", "--saved"},
 		{"my-api", "--saved", "--requirements", "missing.yaml", "--deployment", deployment},
@@ -74,20 +75,20 @@ func TestRoutesSavedPlanExportApply(t *testing.T) {
 		{"my-api", "--saved", "--deployment", deployment, "--expected-revision", "-1"},
 		{"my-api", "--requirements", "missing.yaml", "--expected-revision", "4"},
 	} {
-		if code := cmdRoutesPlan(args); code != 1 || calls != 0 {
+		if code := main.CmdRoutesPlan(args); code != 1 || calls != 0 {
 			t.Fatalf("invalid flags reached API: %v exit=%d calls=%d", args, code, calls)
 		}
 	}
-	if code := run([]string{"routes", "plan", "my-api", "--saved", "--deployment", deployment, "--expected-revision", "4", "--out", artifact}); code != 0 {
+	if code := main.Run([]string{"routes", "plan", "my-api", "--saved", "--deployment", deployment, "--expected-revision", "4", "--out", artifact}); code != 0 {
 		t.Fatalf("plan: %d %s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "Saved requirements revision: 4") {
 		t.Fatalf("revision missing from review: %s", out.String())
 	}
-	if plan, err := readRoutePolicyPlan(artifact, "my-api"); err != nil || plan.RequirementsRevision != 4 {
+	if plan, err := main.ReadRoutePolicyPlan(artifact, "my-api"); err != nil || plan.RequirementsRevision != 4 {
 		t.Fatalf("artifact binding: %+v %v", plan, err)
 	}
-	if code := run([]string{"routes", "apply", "my-api", "--plan", artifact, "--confirm"}); code != 0 || calls != 2 {
+	if code := main.Run([]string{"routes", "apply", "my-api", "--plan", artifact, "--confirm"}); code != 0 || calls != 2 {
 		t.Fatalf("apply: %d calls=%d %s", code, calls, out.String())
 	}
 }

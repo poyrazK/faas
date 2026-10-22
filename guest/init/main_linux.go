@@ -27,6 +27,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/overlaymetadata"
 	"golang.org/x/sys/unix"
 )
@@ -70,6 +71,9 @@ const (
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
 // reboots it), which schedd observes as a failed wake.
 func main() {
+	if os.Getenv(dependencyInputsHelperEnv) == publicBuildURLsHelperValue && os.Getpid() != 1 {
+		os.Exit(runPublicBuildURLs(os.Args[1:]))
+	}
 	// A re-executed copy-out child (ADR-1037) never boots.
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
 		os.Exit(runCopyOutHelper(os.Args[1:]))
@@ -319,6 +323,13 @@ func boot() error {
 	}
 	if manifest.BeforeCheckpoint != nil {
 		beforeCheckpoint.Store(&beforeCheckpointRuntime{hook: *manifest.BeforeCheckpoint, port: manifest.EffectivePort()})
+	}
+	if functionlifetime.NativeQualificationBuild {
+		proxy, err := startFunctionExecutionProxy(lookupUID(manifest.EffectiveUser()))
+		if err != nil {
+			return fmt.Errorf("function lifetime proxy: %w", err)
+		}
+		functionExecutions.Store(proxy)
 	}
 	// Bind before starting the workload and grant only its configured group
 	// access to the local signal socket. The runner does not inherit root UID.
@@ -644,6 +655,14 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
+	if proxy := functionExecutions.Load(); proxy != nil {
+		if err := proxy.bind(cmd.Process.Pid); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return err
+		}
+		defer proxy.retire(cmd.Process.Pid)
+	}
 	outputPipe.closeWriter()
 	retireImageReadiness := installImageReadinessRuntime(cmd, m, func() []string {
 		if processSecrets == nil {
@@ -941,6 +960,12 @@ func runBuild(m api.BuildManifest) error {
 // runBuildOnce executes one build attempt. It leaves the VM alive only when
 // the attempt succeeded and the manifest opted into the warm handoff.
 func runBuildOnce(m api.BuildManifest) error {
+	if !api.ValidBuildDependencyDigest(m.BuildDependencyDigest) {
+		return writeAndPoweroff(m, errors.New("invalid build dependency digest"), "")
+	}
+	if problem := api.ValidatePublicBuildURLs(m.PublicBuildURLs); problem != nil {
+		return writeAndPoweroff(m, fmt.Errorf("invalid public build URLs"), "")
+	}
 	if m.BuildContext == "" {
 		m.BuildContext = "/build/src"
 	}
@@ -963,6 +988,9 @@ func runBuildOnce(m api.BuildManifest) error {
 	}
 	if err := os.MkdirAll(m.OutDir, 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir outdir: %w", err), "")
+	}
+	if err := prepareBuildIssueSourceMaps(m); err != nil {
+		return writeAndPoweroff(m, err, "")
 	}
 	// BuildKit is launched rootless inside a user namespace. The build
 	// workspace is disposable VM-local state, and OCI-to-ext4 materialisation
@@ -1306,6 +1334,9 @@ func runBuildOnce(m api.BuildManifest) error {
 				err = errors.Join(err, fmt.Errorf("restore Railpack config: %w", restoreErr))
 			}
 		}
+	}
+	if err == nil {
+		err = exportBuildIssueSourceMaps(m)
 	}
 	if err == nil && m.KeepWarm {
 		// The direct ext4 mount is needed while BuildKit runs, but it must
@@ -1743,8 +1774,24 @@ func buildArgv(m api.BuildManifest) []string {
 			"--local", "context=" + contextDir,
 			"--local", "dockerfile=" + m.Workdir,
 		}
+		if m.BuildDependencyDigest != "" {
+			argv = append(argv, "--no-cache")
+		}
 		if m.DockerfilePath != "" {
 			argv = append(argv, "--opt", "filename="+m.DockerfilePath)
+		}
+		if m.DockerfileBuild != nil && m.DockerfileBuild.Target != "" {
+			argv = append(argv, "--opt", "target="+m.DockerfileBuild.Target)
+		}
+		// Compose build arguments (ADR-20261019142544); a reviewed public
+		// build URL of the same name replaces the argument.
+		for _, key := range m.DockerfileBuild.ArgNames() {
+			if _, reviewed := m.PublicBuildURLs[key]; !reviewed {
+				argv = append(argv, "--opt", "build-arg:"+key+"="+m.DockerfileBuild.Args[key])
+			}
+		}
+		for _, key := range publicBuildURLKeys(m.PublicBuildURLs) {
+			argv = append(argv, "--opt", "build-arg:"+key+"="+m.PublicBuildURLs[key])
 		}
 		if m.DependencyCacheImport {
 			argv = append(argv, "--import-cache", "type=local,src=/build/cache")
@@ -1767,6 +1814,9 @@ func buildArgv(m api.BuildManifest) []string {
 		"--plan-out", shellQuote(planPath),
 		"--info-out", shellQuote(infoPath),
 	}, " ")
+	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
+		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
+	}
 	build := strings.Join([]string{
 		"/usr/local/bin/buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build",
 		"--frontend", "gateway.v0",
@@ -1779,6 +1829,11 @@ func buildArgv(m api.BuildManifest) []string {
 		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
 	}
 	output := " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
+	if m.IssueSourceMaps != nil {
+		// Both exporters consume the same final LLB result; source directories
+		// and intermediate stages cannot describe the deployed bundle bytes.
+		output += " --output " + shellQuote("type=local,dest="+buildIssueSourceMapRootfs)
+	}
 	if !m.DependencyCache {
 		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + output}
 	}
@@ -2032,6 +2087,17 @@ func tailOf(data []byte, n int) string {
 	return string(data[len(data)-n:])
 }
 
+// dockerfileBuildAcknowledgement is the digest of the Compose build arguments
+// and target this guest applied (ADR-20261019142544). Only buildArgv's
+// Dockerfile branch applies them, so other builds acknowledge none and
+// builderd refuses an artifact built without options it sent.
+func dockerfileBuildAcknowledgement(m api.BuildManifest) string {
+	if m.Framework != api.FrameworkDockerfile {
+		return ""
+	}
+	return m.DockerfileBuild.SHA256()
+}
+
 // writeBuildDone writes /etc/faas/build-done.json (vmmd's Destroy loopback-
 // mounts the chroot drive1 to copy it out). Warm builders call this while the
 // guest remains alive; ordinary builders call it immediately before poweroff.
@@ -2052,6 +2118,9 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		RailpackVersion: railpackVersion,
 	}
 	if runErr == nil {
+		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)
+		done.DockerfileBuildSHA256 = dockerfileBuildAcknowledgement(m)
+		done.BuildDependencyDigest = m.BuildDependencyDigest
 		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
 		done.DevPatch = sourceMap
@@ -2603,9 +2672,10 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	args := RunArgs{
-		Manifest:   manifest,
-		AppPID:     func() int { return sup.LastAppPID() },
-		ExitStatus: func() (int, bool) { return sup.LastExitStatus() },
+		Manifest:     manifest,
+		ProvenWorker: bootProvenWorker(),
+		AppPID:       func() int { return sup.LastAppPID() },
+		ExitStatus:   func() (int, bool) { return sup.LastExitStatus() },
 		RingBufferTail: func() string {
 			// Populated from the supervisor's ring buffer (Slice A
 			// PR-B). The buffer is allocated lazily on the first

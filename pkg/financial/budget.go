@@ -9,6 +9,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// MeterObjectStorage is the account-level object-storage meter
+// (ADR-20261020160000), priced from apid's live estimate.
+const MeterObjectStorage = "object_storage"
+
 type BudgetScope struct {
 	Kind string `json:"kind"`
 	ID   string `json:"id,omitempty"`
@@ -53,8 +57,13 @@ func ValidateBudget(p BudgetSpec) error {
 		return fmt.Errorf("%w: meters must be sorted and unique", ErrInvalid)
 	}
 	for i, meter := range p.Meters {
-		if (meter != "compute" && meter != "egress") || (i > 0 && p.Meters[i-1] == meter) {
+		if (meter != "compute" && meter != "egress" && meter != MeterObjectStorage) || (i > 0 && p.Meters[i-1] == meter) {
 			return fmt.Errorf("%w: unsupported or duplicate meter", ErrInvalid)
+		}
+		// Buckets carry no app, job, project or environment attribution
+		// (ADR-20261020160000), and no strict reservation covers them.
+		if meter == MeterObjectStorage && (p.Scope.Kind != "account" || p.Mode != "monitored") {
+			return fmt.Errorf("%w: object_storage needs a monitored account budget", ErrInvalid)
 		}
 	}
 	if p.Basis != "net_usage" && p.Basis != "gross_usage" {
@@ -83,7 +92,7 @@ func ValidateBudget(p BudgetSpec) error {
 		}
 	}
 	if p.Mode == "strict" {
-		if len(p.Meters) != 1 || p.Meters[0] != "compute" || p.Action == "notify" || p.Action == "reject_traffic" {
+		if !StrictAccountEgress(p) && (len(p.Meters) != 1 || p.Meters[0] != "compute" || p.Action == "notify" || p.Action == "reject_traffic") {
 			return fmt.Errorf("%w: strict compute requires a stopping action", ErrInvalid)
 		}
 		// An unrelated workload can consume the shared account allowance and

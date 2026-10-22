@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -31,11 +32,11 @@ func TestCmdMetrics_CustomRendersHistory(t *testing.T) {
 		Points: []api.CustomMetricSeriesPoint{{At: at, Value: 10}, {At: at.Add(15 * time.Minute), Value: 40}, {At: at.Add(30 * time.Minute), Value: 25}},
 	})
 	var stdout strings.Builder
-	old := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = old })
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = old })
 
-	if code := cmdMetrics([]string{"shop", "--custom", "orders_pending"}); code != 0 {
+	if code := main.CmdMetrics([]string{"shop", "--custom", "orders_pending"}); code != 0 {
 		t.Fatalf("metrics --custom = %d, want 0", code)
 	}
 	if *gotPath != "/v1/apps/shop/custom-metrics/orders_pending/series" || *gotQuery != "" {
@@ -52,11 +53,11 @@ func TestCmdMetrics_CustomRendersHistory(t *testing.T) {
 func TestCmdMetrics_CustomPassesExplicitRangeAndRejectsAccount(t *testing.T) {
 	_, gotQuery := customSeriesServer(t, api.CustomMetricSeriesResponse{Source: "prometheus"})
 	var stdout strings.Builder
-	old := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = old })
+	old := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = old })
 
-	if code := cmdMetrics([]string{"shop", "--custom", "orders_pending", "--range", "7d"}); code != 0 {
+	if code := main.CmdMetrics([]string{"shop", "--custom", "orders_pending", "--range", "7d"}); code != 0 {
 		t.Fatalf("explicit range = %d", code)
 	}
 	if *gotQuery != "range=7d" {
@@ -65,9 +66,9 @@ func TestCmdMetrics_CustomPassesExplicitRangeAndRejectsAccount(t *testing.T) {
 	if !strings.Contains(stdout.String(), "(no values pushed in this window)") {
 		t.Fatalf("empty history should say so:\n%s", stdout.String())
 	}
-	_, _, restore := swapIO(t)
+	_, _, restore := main.SwapIO(t)
 	defer restore()
-	if code := cmdMetrics([]string{"--account", "--custom", "orders_pending"}); code != 1 {
+	if code := main.CmdMetrics([]string{"--account", "--custom", "orders_pending"}); code != 1 {
 		t.Fatalf("--custom with --account = %d, want 1", code)
 	}
 }

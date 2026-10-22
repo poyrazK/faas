@@ -227,10 +227,16 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 	if s.Host.Ops() != nil {
 		s.Host.Ops().Registry().MustRegister(counter)
 	}
-	var finalizedPeriod time.Time
+	var finalizedPeriod, estimatedAt time.Time
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
+		if now := time.Now().UTC(); now.Sub(estimatedAt) >= api.FinancialObjectStorageEstimateInterval {
+			if err := s.RecordObjectStorageEstimates(ctx, now); err != nil && ctx.Err() == nil {
+				s.Host.Logger().Warn("object storage budget estimates failed", "err", err)
+			}
+			estimatedAt = now
+		}
 		if s.Host.ObjectStorage() != nil {
 			st, ok := s.Host.Store().(state.ObjectStorageAccountingStore)
 			if ok {

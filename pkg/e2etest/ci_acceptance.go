@@ -28,5 +28,5 @@ func harnessTempDir(t *testing.T) string {
 
 func nativeGuestDNS(which Which) bool {
 	return which&VMMD != 0 && os.Getenv("FAAS_TEST_KERNEL") != "" &&
-		(which&Builderd != 0 || os.Getenv("GREGALE_CI_NATIVE_ACCEPTANCE") == "1")
+		(which&Builderd != 0 || os.Getenv("FAAS_E2E_SERVICE_HTTPS_CA") != "" || os.Getenv("GREGALE_CI_NATIVE_ACCEPTANCE") == "1")
 }

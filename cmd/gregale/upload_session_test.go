@@ -129,24 +129,6 @@ func TestDeployResumableTarball_ResumesPersistedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fingerprint options: %v", err)
 	}
-	statePath, err := uploadStatePath("demo", digestHex, optionsHash)
-	if err != nil {
-		t.Fatalf("state path: %v", err)
-	}
-	// The state was written by an earlier run that packed the same bytes into
-	// another temp file: `deploy --path` repacks on every run, and keying the
-	// state by archive path meant directory deploys never resumed
-	// (production-us hunt #9).
-	if err := saveResumableUploadState(statePath, resumableUploadState{
-		Version: resumableUploadStateVersion, UploadID: "upload-resume", AppSlug: "demo",
-		APIBase:     apiBase(),
-		ArchivePath: filepath.Join(dir, "gregale-cwd-previous-run.tar.gz"), ArchiveSize: info.Size(), ArchiveSHA256: digestHex,
-		ArchiveModTimeUnixNano: info.ModTime().UnixNano(), DeployOptionsSHA256: optionsHash,
-		TotalSize: info.Size(), ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
-	}); err != nil {
-		t.Fatalf("save state: %v", err)
-	}
-
 	var offsets []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -179,9 +161,25 @@ func TestDeployResumableTarball_ResumesPersistedSession(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	client := api.NewClient(srv.URL, "fp_test").SetCompletionCache(nil)
+	identity := uploadRecoveryIdentity(client, context.Background(), "demo", digestHex, optionsHash)
+	statePath, err := uploadStatePath(identity)
+	if err != nil {
+		t.Fatalf("state path: %v", err)
+	}
+	if err := saveResumableUploadState(statePath, resumableUploadState{
+		Version: resumableUploadStateVersion, UploadID: "upload-resume", AppSlug: "demo",
+		APIBase: srv.URL, RecoveryIdentitySHA256: identity,
+		ArchivePath: path, ArchiveSize: info.Size(), ArchiveSHA256: digestHex,
+		DeployOptionsSHA256: optionsHash,
+		TotalSize:           info.Size(), ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
 	var progress []int64
 	dep, gotDigest, supported, err := DeployResumableTarball(
-		api.NewClient(srv.URL, "fp_test").SetCompletionCache(nil),
+		client,
 		context.Background(), "demo", path,
 		func(uploaded, _ int64) { progress = append(progress, uploaded) },
 	)
@@ -248,22 +246,6 @@ func TestDeployResumableTarball_ReclaimsUnresumableSessionsAtCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stale := map[string]string{"demo": "old-1", "demo ": "old-2", "other": "old-other"}
-	for label, uploadID := range stale {
-		app := strings.TrimSpace(label)
-		archive := fmt.Sprintf("%064x", len(uploadID)+len(label))
-		statePath, err := uploadStatePath(app, archive, optionsHash)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := saveResumableUploadState(statePath, resumableUploadState{
-			Version: resumableUploadStateVersion, UploadID: uploadID, AppSlug: app, APIBase: apiBase(),
-			ArchivePath: filepath.Join(dir, uploadID+".tar.gz"), ArchiveSize: 9, ArchiveSHA256: archive,
-			DeployOptionsSHA256: optionsHash, TotalSize: 9, ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
 
 	var cancelled []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -292,6 +274,23 @@ func TestDeployResumableTarball_ReclaimsUnresumableSessionsAtCap(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	stale := map[string]string{"demo": "old-1", "demo ": "old-2", "other": "old-other"}
+	for label, uploadID := range stale {
+		app := strings.TrimSpace(label)
+		archive := fmt.Sprintf("%064x", len(uploadID)+len(label))
+		statePath, err := uploadStatePath(app + archive + optionsHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := saveResumableUploadState(statePath, resumableUploadState{
+			Version: resumableUploadStateVersion, UploadID: uploadID, AppSlug: app, APIBase: srv.URL,
+			ArchivePath: filepath.Join(dir, uploadID+".tar.gz"), ArchiveSize: 9, ArchiveSHA256: archive,
+			DeployOptionsSHA256: optionsHash, TotalSize: 9, ChunkSize: 3, CreatedAt: "2030-01-01T00:00:00Z",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	dep, _, supported, err := DeployResumableTarball(api.NewClient(srv.URL, "fp_test").SetCompletionCache(nil), context.Background(), "demo", path, nil)
 	if err != nil || !supported || dep.ID != "dep-1" {
 		t.Fatalf("deploy = %+v supported=%v err=%v", dep, supported, err)
@@ -300,7 +299,7 @@ func TestDeployResumableTarball_ReclaimsUnresumableSessionsAtCap(t *testing.T) {
 	if got := strings.Join(cancelled, ","); got != "old-1,old-2" {
 		t.Fatalf("cancelled %q, want only this app's unresumable sessions old-1,old-2", got)
 	}
-	otherPath, err := uploadStatePath("other", fmt.Sprintf("%064x", len("old-other")+len("other")), optionsHash)
+	otherPath, err := uploadStatePath("other" + fmt.Sprintf("%064x", len("old-other")+len("other")) + optionsHash)
 	if err != nil {
 		t.Fatal(err)
 	}

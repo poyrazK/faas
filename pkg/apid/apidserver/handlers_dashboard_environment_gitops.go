@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
+	gitopsdiagnostics "github.com/onebox-faas/faas/pkg/environmentgitops/diagnostics"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -49,6 +50,15 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 	if err != nil {
 		return data, err
 	}
+	if commit := r.URL.Query().Get("target_commit_sha"); commit != "" {
+		data.RecoveryCommit = commit
+		recovery, problem := s.recoveryService().Observe(r, acct)
+		if problem != nil {
+			data.RecoveryError = "Recovery eligibility could not be checked. Verify the target commit and Git provider access, then refresh."
+		} else {
+			data.Recovery = &recovery
+		}
+	}
 	data.Status = &api.EnvironmentGitOpsStatusResponse{Source: source, Runs: runs}
 	data.Status.Approval, err = s.environmentGitApprovalForSource(r.Context(), source)
 	if err != nil {
@@ -63,6 +73,8 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 		return data, err
 	}
 	setEnvironmentGitOpsDashboardFreshness(&data, time.Now().UTC())
+	explanation := gitopsdiagnostics.Assess(*data.Status, time.Now().UTC())
+	data.Status.Explanation = &explanation
 	for _, run := range runs {
 		view := dashboard.EnvironmentGitOpsRunView{Run: run}
 		var plan api.EnvironmentGitOpsPlan

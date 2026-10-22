@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 435. Private store evidence, not native scanner/VM acceptance.
 
@@ -11,18 +11,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/imagepublisher"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type artifactEvidenceTestStore interface {
-	artifactScanTestStore
-	DeploymentArtifactScanEvidenceStore
-}
+type artifactEvidenceTestStore = state.ContractTestStore
 
 func artifactEvidenceLifecycle(t *testing.T, s artifactEvidenceTestStore) {
 	for _, sidecar := range []bool{false, true} {
 		t.Run(map[bool]string{false: "main", true: "sidecar"}[sidecar], func(t *testing.T) {
-			in, root, app, dep := artifactScanFixture(t, s, sidecar)
-			if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+			in, root, app, dep := state.ArtifactScanFixture(t, s, sidecar)
+			if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 				t.Fatalf("producer without complete scans gained fresh evidence: %v", err)
 			}
 			origin, err := s.GetDeploymentRegistryVerificationByID(t.Context(), app.AccountID, app.ID, dep.ID, root.Input.RegistryVerificationID)
@@ -45,7 +43,7 @@ func artifactEvidenceLifecycle(t *testing.T, s artifactEvidenceTestStore) {
 			}
 			bundle, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID)
 			if sidecar {
-				if !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+				if !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 					t.Fatalf("sidecar alone authorized complete component set: %v", err)
 				}
 			} else if err != nil || len(bundle.Components) != 1 || len(bundle.Bases) != 0 || !bundle.ExpiresAt.Equal(fresh.ExpiresAt) || bundle.CheckedAt.Before(fresh.ScannedAt) {
@@ -56,7 +54,7 @@ func artifactEvidenceLifecycle(t *testing.T, s artifactEvidenceTestStore) {
 			if err != nil || again.Result.Vulnerabilities[0].Paths[0] == "returned mutation" {
 				t.Fatalf("fresh result aliased private bytes: %v", err)
 			}
-			if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), uuid.NewString(), app.ID, dep.ID); !errors.Is(err, ErrNotFound) {
+			if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), uuid.NewString(), app.ID, dep.ID); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("fresh evidence crossed owner: %v", err)
 			}
 			cancelled, cancel := context.WithCancel(t.Context())
@@ -79,56 +77,55 @@ func artifactEvidenceLifecycle(t *testing.T, s artifactEvidenceTestStore) {
 }
 
 func artifactEvidenceCannotBecomeLegacy(t *testing.T, s artifactEvidenceTestStore) {
-	_, app, dep := registryVerificationFixture(t, s, false)
-	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrDeploymentArtifactScanEvidenceAbsent) {
+	_, app, dep := state.RegistryVerificationFixture(t, s, false)
+	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrDeploymentArtifactScanEvidenceAbsent) {
 		t.Fatalf("owned unproved deployment has wrong absence: %v", err)
 	}
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	in, _, app, dep := state.ArtifactScanFixture(t, s, false)
 	if _, err := s.PublishDeploymentArtifactScan(t.Context(), in); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetDeploymentRootfs(t.Context(), dep.ID, "/changed.ext4", "apps/changed.ext4", 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("stale private lineage fell back to legacy: %v", err)
 	}
 }
 
-func TestMemArtifactEvidenceLifecycle(t *testing.T) { artifactEvidenceLifecycle(t, NewMemStore()) }
+func TestMemArtifactEvidenceLifecycle(t *testing.T) {
+	artifactEvidenceLifecycle(t, state.NewMemStore())
+}
 func TestMemArtifactEvidenceCannotBecomeLegacy(t *testing.T) {
-	artifactEvidenceCannotBecomeLegacy(t, NewMemStore())
+	artifactEvidenceCannotBecomeLegacy(t, state.NewMemStore())
 }
 
 func TestMemArtifactEvidenceExpiredLease(t *testing.T) {
-	s := NewMemStore()
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	s := state.NewMemStore()
+	in, _, app, dep := state.ArtifactScanFixture(t, s, false)
 	value, err := s.PublishDeploymentArtifactScan(t.Context(), in)
 	if err != nil {
 		t.Fatal(err)
 	}
+	(*
 	// A model-clock fixture only; the PostgreSQL counterpart waits for an
 	// actual storage-clock lease to expire without updating immutable rows.
-	s.mu.Lock()
+	s.Mu()).Lock()
 	value.ExpiresAt = time.Now().UTC().Add(-time.Nanosecond)
-	s.deploymentArtifactScans[value.ID] = value
-	s.mu.Unlock()
-	if _, err := s.GetFreshDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	(*s.DeploymentArtifactScans())[value.ID] = value
+	(*s.Mu()).Unlock()
+	if _, err := s.GetFreshDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("expired private lease was fresh: %v", err)
 	}
-	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("expired component set was fresh: %v", err)
 	}
 }
 
-type artifactBaseEvidenceTestStore interface {
-	artifactEvidenceTestStore
-	BaseImageProducerStore
-	BaseImageScanStore
-}
+type artifactBaseEvidenceTestStore = state.ContractTestStore
 
 func artifactEvidenceRequiresBase(t *testing.T, s artifactBaseEvidenceTestStore) {
-	in, base, app, dep := artifactScanBaseFixture(t, s)
+	in, base, app, dep := state.ArtifactScanBaseFixture(t, s)
 	main, err := s.PublishDeploymentArtifactScan(t.Context(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -136,10 +133,10 @@ func artifactEvidenceRequiresBase(t *testing.T, s artifactBaseEvidenceTestStore)
 	if _, err := s.GetFreshDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, dep.ID, ""); err != nil {
 		t.Fatalf("component read unexpectedly required a whole-runtime scan: %v", err)
 	}
-	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("missing shared base authorized complete evidence: %v", err)
 	}
-	baseInput := BaseImageScanInput{ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash, Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference, Status: "complete", ScannerName: "grype", Report: &api.ScanResult{ImageDigest: base.Input.SourceReference, ArtifactDigest: base.Input.Artifact.Digest, ScannerVersion: in.Report.ScannerVersion, ScannerDBStatus: in.Report.ScannerDBStatus, ScannerDBVersion: in.Report.ScannerDBVersion, ScannerDBBuiltAt: in.Report.ScannerDBBuiltAt, Vulnerabilities: []api.Vulnerability{}}}
+	baseInput := state.BaseImageScanInput{ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash, Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference, Status: "complete", ScannerName: "grype", Report: &api.ScanResult{ImageDigest: base.Input.SourceReference, ArtifactDigest: base.Input.Artifact.Digest, ScannerVersion: in.Report.ScannerVersion, ScannerDBStatus: in.Report.ScannerDBStatus, ScannerDBVersion: in.Report.ScannerDBVersion, ScannerDBBuiltAt: in.Report.ScannerDBBuiltAt, Vulnerabilities: []api.Vulnerability{}}}
 	if _, err := s.PublishBaseImageScan(t.Context(), baseInput); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +148,7 @@ func artifactEvidenceRequiresBase(t *testing.T, s artifactBaseEvidenceTestStore)
 	if _, err := s.PublishBaseImageScan(t.Context(), baseInput); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("failed shared base retained fresh complete evidence: %v", err)
 	}
 	replacement := base.Input
@@ -159,7 +156,7 @@ func artifactEvidenceRequiresBase(t *testing.T, s artifactBaseEvidenceTestStore)
 	if _, err := s.PublishBaseImageProducer(t.Context(), replacement); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("replaced shared base retained fresh complete evidence: %v", err)
 	}
 	current, err := s.DeploymentByID(t.Context(), dep.ID)
@@ -169,11 +166,11 @@ func artifactEvidenceRequiresBase(t *testing.T, s artifactBaseEvidenceTestStore)
 }
 
 func TestMemArtifactEvidenceRequiresBase(t *testing.T) {
-	artifactEvidenceRequiresBase(t, NewMemStore())
+	artifactEvidenceRequiresBase(t, state.NewMemStore())
 }
 
 func artifactEvidenceDatabaseAgesOut(t *testing.T, s artifactEvidenceTestStore) {
-	in, _, app, dep := artifactScanFixture(t, s, false)
+	in, _, app, dep := state.ArtifactScanFixture(t, s, false)
 	expires := time.Now().UTC().Add(2 * time.Second)
 	in.Report.ScannerDBBuiltAt = expires.Add(-api.ApplicationStandardScannerDBMaxAge).Format(time.RFC3339Nano)
 	value, err := s.PublishDeploymentArtifactScan(t.Context(), in)
@@ -184,10 +181,10 @@ func artifactEvidenceDatabaseAgesOut(t *testing.T, s artifactEvidenceTestStore) 
 		t.Fatal(err)
 	}
 	time.Sleep(time.Until(expires) + 20*time.Millisecond)
-	if _, err := s.GetFreshDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, dep.ID, ""); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("database age was frozen at scan publication: %v", err)
 	}
-	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+	if _, err := s.GetFreshDeploymentArtifactScanEvidence(t.Context(), app.AccountID, app.ID, dep.ID); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("complete set ignored advancing database age: %v", err)
 	}
 	history, err := s.GetCurrentDeploymentArtifactScan(t.Context(), app.AccountID, app.ID, dep.ID, "")
@@ -197,5 +194,5 @@ func artifactEvidenceDatabaseAgesOut(t *testing.T, s artifactEvidenceTestStore) 
 }
 
 func TestMemArtifactEvidenceDatabaseAgesOut(t *testing.T) {
-	artifactEvidenceDatabaseAgesOut(t, NewMemStore())
+	artifactEvidenceDatabaseAgesOut(t, state.NewMemStore())
 }

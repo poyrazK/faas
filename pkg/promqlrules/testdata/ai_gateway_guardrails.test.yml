@@ -1,0 +1,142 @@
+# Synthetic coverage for the AI gateway's phase 8-17 warnings (ADR-1340,
+# ADR-1431, ADR-1435): each must fire on a platform-wide fault and stay quiet
+# on the ordinary per-customer noise its runbook section describes.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 1m
+    name: "a wave of canary rollbacks warns"
+    input_series:
+      - series: 'outbound_ai_route_canary_rollbacks_total{job="outboundd",instance="cp-a:9112",reason="error_rate"}'
+        values: '0x10 1 2 3 4 5'
+      - series: 'outbound_ai_route_canary_rollbacks_total{job="outboundd",instance="cp-a:9112",reason="latency"}'
+        values: '0x15'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasAIGatewayCanaryRollbackWave
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: outboundd
+              family: ai_gateway
+            exp_annotations:
+              summary: "AI gateway model canaries are rolling back across the platform"
+              description: "Three or more model canaries rolled back within 30m. Check the providers of the rolled-back models and whether the latest outboundd release changed routing or error accounting."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+  - interval: 1m
+    name: "one canary rollback stays quiet"
+    input_series:
+      - series: 'outbound_ai_route_canary_rollbacks_total{job="outboundd",instance="cp-a:9112",reason="latency"}'
+        values: '0x10 1x10'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasAIGatewayCanaryRollbackWave
+
+  - interval: 30s
+    name: "most moderation checks failing warns"
+    input_series:
+      - series: 'outbound_ai_moderation_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed",result="error"}'
+        values: '0+6x80'
+      - series: 'outbound_ai_moderation_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed",result="passed"}'
+        values: '0+2x80'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasAIGatewayModerationFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: outboundd
+              family: ai_gateway
+            exp_annotations:
+              summary: "Most AI gateway moderation checks are failing"
+              description: "More than half of request moderation checks failed for 15m. Calls under on_error block get 503 outbound_ai_moderation_unavailable. Check whether one account's check integration carries the traffic before suspecting outboundd."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+  - interval: 30s
+    name: "occasional moderation errors stay quiet"
+    input_series:
+      - series: 'outbound_ai_moderation_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed",result="error"}'
+        values: '0+1x80'
+      - series: 'outbound_ai_moderation_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed",result="passed"}'
+        values: '0+10x80'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasAIGatewayModerationFailing
+
+  - interval: 30s
+    name: "a trickle of failing moderation checks stays below the traffic floor"
+    input_series:
+      - series: 'outbound_ai_moderation_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed",result="error"}'
+        values: '0+0.1x80'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasAIGatewayModerationFailing
+
+  - interval: 30s
+    name: "responses that cannot be checked warn"
+    input_series:
+      - series: 'outbound_ai_response_checks_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed",result="unchecked"}'
+        values: '0+3x80'
+      - series: 'outbound_ai_response_checks_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed",result="passed"}'
+        values: '0+6x80'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasAIGatewayResponseChecksFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: outboundd
+              family: ai_gateway
+            exp_annotations:
+              summary: "AI gateway response checks are failing"
+              description: "More than 10% of checked AI responses ended unchecked or with a failed moderation check for 15m. Callers got 502 outbound_ai_response_unchecked or 503 outbound_ai_moderation_unavailable instead of the provider's answer."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+  - interval: 30s
+    name: "redacted and blocked responses stay quiet"
+    input_series:
+      - series: 'outbound_ai_response_checks_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed",result="blocked"}'
+        values: '0+5x80'
+      - series: 'outbound_ai_response_checks_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed",result="redacted"}'
+        values: '0+5x80'
+      - series: 'outbound_ai_response_checks_total{job="outboundd",instance="cp-a:9112",integration_id="customer_managed",result="unchecked"}'
+        values: '0+0.5x80'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasAIGatewayResponseChecksFailing
+
+  - interval: 1m
+    name: "a batch settled as unknown warns"
+    input_series:
+      - series: 'outbound_ai_batches_settled_total{job="outboundd",instance="cp-a:9112",outcome="unknown"}'
+        values: '0x20 1x20'
+      - series: 'outbound_ai_batches_settled_total{job="outboundd",instance="cp-a:9112",outcome="known"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasAIGatewayBatchesSettledUnknown
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: outboundd
+              family: ai_gateway
+            exp_annotations:
+              summary: "AI gateway batches were settled without their usage"
+              description: "At least one provider batch settled as unknown in the last 6h: it never ended within 72h or outboundd could not read its status, so it was charged at its reservation. Check the batch worker's logs and the provider's batch status."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAIGateway.md"
+
+  - interval: 1m
+    name: "batches settled with their usage stay quiet"
+    input_series:
+      - series: 'outbound_ai_batches_settled_total{job="outboundd",instance="cp-a:9112",outcome="unknown"}'
+        values: '0x40'
+      - series: 'outbound_ai_batches_settled_total{job="outboundd",instance="cp-a:9112",outcome="known"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasAIGatewayBatchesSettledUnknown

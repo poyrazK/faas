@@ -58,7 +58,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		// local dependency.
 		// faas-gatewayd-internal.socket is opt-in: the gatewayd_internal_service
 		// role adds Wants=/After= on it in a drop-in when
-		// faas_compute_durable_listeners is on (ADR-1580).
+		// faas_compute_durable_listeners is on (ADR-1736).
 		After:                 []string{"faas-cp.slice", "network-online.target", "faas-vmmd.service", "faas-realtimed.service"},
 		Wants:                 []string{"faas-cp.slice", "faas-vmmd.service", "faas-realtimed.service"},
 		StartLimitIntervalSec: "60s",
@@ -66,7 +66,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 
 		Type: "notify",
 		// `systemctl reload` hands off to a second generation that serves
-		// new connections while this one finishes its own (ADR-1580).
+		// new connections while this one finishes its own (ADR-1736).
 		NotifyAccess: "main",
 		ExecReload:   handoffReload,
 		OOMPolicy:    "continue",
@@ -105,6 +105,7 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "fleet.age", Path: "/etc/faas/secrets/fleet.age"},
+			{Name: "fleet.age.previous", Path: "/etc/faas/secrets/fleet.age.previous", Optional: true},
 			{Name: "host.age", Path: "/etc/faas/secrets/host.age"},
 			{Name: "host.age.previous", Path: "/etc/faas/secrets/host.age.previous", Optional: true},
 			{Name: "faas_session_key", Path: "/etc/faas/secrets/session.key"},

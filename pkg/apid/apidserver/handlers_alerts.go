@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -168,7 +169,11 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.anomalyAlertsGate(req.Comparison); prob != nil {
+	if prob := api.ValidateRouteInsightAlert(req.Metric, req.WindowSpec, app.ID); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.anomalyAlertsGate(acct, req.Comparison); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -445,7 +450,7 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.anomalyAlertsGate(string(merged.Comparison)); prob != nil {
+	if prob := s.anomalyAlertsGate(acct, string(merged.Comparison)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -840,9 +845,10 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // update path via state.AlertRule.Name (the DB schema enforces
 // non-empty via CHECK).
 // anomalyAlertsGate keeps baseline comparisons (ADR-744) dark until the
-// operator enables FAAS_ANOMALY_ALERTS_ENABLED.
-func (s *server) anomalyAlertsGate(comparison string) *api.Problem {
-	if api.IsAnomalyAlertComparison(comparison) && !s.anomalyAlertsEnabled {
+// operator enables FAAS_ANOMALY_ALERTS_ENABLED, or releases the
+// anomaly_alerts platform flag (ADR-1700) to the account.
+func (s *server) anomalyAlertsGate(acct state.Account, comparison string) *api.Problem {
+	if api.IsAnomalyAlertComparison(comparison) && !s.platformFlagOr(platformflags.AnomalyAlerts, acct, s.anomalyAlertsEnabled) {
 		return api.NewProblem(http.StatusServiceUnavailable, "anomaly_alerts_unavailable",
 			"Anomaly alerts unavailable", "baseline comparisons are not enabled for this deployment")
 	}
@@ -939,6 +945,9 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 		return p
 	}
 	if p := api.ValidateMCPProtocolAlert(string(merged.Metric), string(merged.Comparison), string(merged.WindowSpec), merged.Threshold, merged.MCPMinCalls, merged.MCPForMinutes); p != nil {
+		return p
+	}
+	if p := api.ValidateRouteInsightAlert(string(merged.Metric), string(merged.WindowSpec), merged.AppID); p != nil {
 		return p
 	}
 	if api.IsMCPProtocolMetric(string(merged.Metric)) && merged.AppID == "" {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -718,6 +719,16 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 	}
+	sched, p := s.releaseFreezeOrSchedule(r, acct, app, &req)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, &req)
+	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, &req); ap != nil {
+		api.WriteProblem(w, ap)
+		return
+	}
 	if p := validateDeploymentTrafficOptions(&req, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -781,6 +792,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, p)
 		return
 	}
+	sched.park(&req)
 	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, acct.Plan)
 	if sErr != nil {
 		api.WriteProblem(w, sErr)
@@ -858,6 +870,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	}
 	if activityOutboxID > 0 {
 		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
+	}
+	if p := s.recordReleaseSchedule(r, acct, app, d, sched); p != nil {
+		api.WriteProblem(w, p)
+		return
 	}
 	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
@@ -955,6 +971,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 	return api.AppResponse{
 		ServiceBindingFingerprint: state.ServiceBindingFingerprint(a),
 		ID:                        a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
+		ProjectID:  a.ProjectID,
 		Visibility: string(api.NormalizeAppVisibility(a.Visibility)),
 		RAMMB:      a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
 		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
@@ -1017,6 +1034,8 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			VersionAffinityCookie:        a.Manifest.VersionAffinityCookie,
 			VersionAffinityManagedCookie: a.Manifest.VersionAffinityManagedCookie,
 			RevisionPinTTLSeconds:        a.Manifest.RevisionPinTTLSeconds,
+			ReleasePolicy:                a.Manifest.ReleasePolicy,
+			ReleaseProbePaths:            a.Manifest.ReleaseProbePaths,
 		},
 		ServiceBindings:           append([]api.AppServiceBinding(nil), a.Manifest.ServiceBindings...),
 		ServiceReliability:        a.Manifest.ServiceReliability,
@@ -1045,6 +1064,8 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		VersionAffinityCookie:        a.Manifest.VersionAffinityCookie,
 		VersionAffinityManagedCookie: a.Manifest.VersionAffinityManagedCookie,
 		RevisionPinTTLSeconds:        a.Manifest.RevisionPinTTLSeconds,
+		ReleasePolicy:                api.EffectiveReleasePolicy(a.Manifest.ReleasePolicy),
+		ReleaseProbePaths:            a.Manifest.ReleaseProbePaths,
 		// ADR-093: per-route observability opt-in (DB round-trip).
 		// Surfaced so dashboards can show "per-route metrics on /
 		// off" alongside the streaming + websocket pills and so a

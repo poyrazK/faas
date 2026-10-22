@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -87,6 +89,13 @@ type BackendConfig struct {
 	// AuthEnabled advertises the ADR-1190 auth credential mode under the same
 	// rule: a fresh qualification report must carry its evidence.
 	AuthEnabled bool `json:"auth_enabled,omitempty"`
+	// LiveHubURL enables ADR-20261016151947 live queries on this backend's databases:
+	// the ws:// or wss:// URL of the livequeryd hub serving a database, where
+	// {database_id} stands for the database's ID. Empty leaves live queries
+	// off. On a Neon backend the hub must release idle databases
+	// (livequeryd -release-after with -awake neon) or its replication
+	// connection keeps their computes awake.
+	LiveHubURL string `json:"live_hub_url,omitempty"`
 }
 
 type Backend struct {
@@ -96,6 +105,17 @@ type Backend struct {
 	Fingerprint  string
 	Capabilities Capabilities
 	Provider     Provider
+	// LiveHubURL is BackendConfig.LiveHubURL; see LiveHub.
+	LiveHubURL string
+}
+
+// LiveHub returns the hub serving databaseID's live queries, or "" when the
+// backend has none.
+func (b Backend) LiveHub(databaseID string) string {
+	if b.LiveHubURL == "" {
+		return ""
+	}
+	return strings.ReplaceAll(b.LiveHubURL, "{database_id}", url.PathEscape(databaseID))
 }
 
 type Factory func(BackendConfig, func(string) string) (Provider, error)
@@ -148,6 +168,9 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 				return nil, errors.New("managed postgres: invalid secret environment mapping")
 			}
 		}
+		if err := validateLiveHubURL(backendConfig); err != nil {
+			return nil, err
+		}
 		factory, ok := factories[backendConfig.Driver]
 		if !ok {
 			return nil, fmt.Errorf("managed postgres: unknown driver %s", backendConfig.Driver)
@@ -167,6 +190,7 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 			Fingerprint:  fingerprint(backendConfig),
 			Capabilities: capabilities,
 			Provider:     provider,
+			LiveHubURL:   backendConfig.LiveHubURL,
 		}
 	}
 	for region, backendID := range config.Defaults {
@@ -247,6 +271,17 @@ func (r *Registry) Regions() []string {
 	}
 	sort.Strings(regions)
 	return regions
+}
+
+func validateLiveHubURL(config BackendConfig) error {
+	if config.LiveHubURL == "" {
+		return nil
+	}
+	u, err := url.Parse(strings.ReplaceAll(config.LiveHubURL, "{database_id}", "x"))
+	if err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("managed postgres: backend %s: live_hub_url must be a ws:// or wss:// URL without credentials, query or fragment", config.ID)
+	}
+	return nil
 }
 
 func fingerprint(config BackendConfig) string {

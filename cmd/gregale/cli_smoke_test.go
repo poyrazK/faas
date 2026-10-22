@@ -8,7 +8,7 @@
 // t.Setenv on HOME + XDG_CONFIG_HOME + FAAS_TOKEN, no daemon, no PG,
 // no KVM. Suitable for `make test` and `make e2e`.
 
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -49,7 +50,7 @@ func TestGregaleCLI_Deploy_NoAuthExitsTwo(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	code := cmdDeployTarball([]string{"--image", "registry.example/foo@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--name", "no-auth-app"})
+	code := main.CmdDeployTarball([]string{"--image", "registry.example/foo@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--name", "no-auth-app"})
 	if code != 2 {
 		t.Errorf("cmdDeployTarball exit code = %d, want 2 (errAuth contract)", code)
 	}
@@ -86,15 +87,15 @@ func TestGregaleCLI_Deploy_HappyPath_ReachesAPID(t *testing.T) {
 			hits[1] = r.URL.Path
 			// Return a plain DeploymentResponse — the SSE tail is opened
 			// separately on /v1/deployments/{id}/logs by streamDeployLogs.
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d-smoke", Status: "pending", AppID: "smoke-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d-smoke", Status: "pending", AppID: "a-smoke"})
 		case r.Method == "GET" && r.URL.Path == "/v1/deployments/d-smoke":
 			// The CLI reads the terminal row after the live frame so a
 			// durable hosting receipt can be rendered when present.
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d-smoke", Status: "live", AppID: "smoke-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d-smoke", Status: "live", AppID: "a-smoke"})
 		case r.Method == "GET" && r.URL.Path == "/v1/apps/smoke-app/deployments/d-smoke/summary":
 			hits[3] = r.URL.Path
 			_ = json.NewEncoder(w).Encode(api.DeploymentSummaryResponse{
-				Deployment: api.DeploymentResponse{ID: "d-smoke", Status: "live", AppID: "smoke-app"},
+				Deployment: api.DeploymentResponse{ID: "d-smoke", Status: "live", AppID: "a-smoke"},
 				Changes:    []api.DeploymentChange{},
 			})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/") && strings.HasSuffix(r.URL.Path, "/logs"):
@@ -120,7 +121,7 @@ func TestGregaleCLI_Deploy_HappyPath_ReachesAPID(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 
-	if code := cmdDeployTarball([]string{"--image", "registry.example/foo@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--name", "smoke-app"}); code != 0 {
+	if code := main.CmdDeployTarball([]string{"--image", "registry.example/foo@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--name", "smoke-app"}); code != 0 {
 		t.Errorf("cmdDeployTarball exit code = %d, want 0", code)
 	}
 	if hits[0] != "/v1/apps" {

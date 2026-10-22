@@ -1,13 +1,14 @@
-package state
+package state_test
 
 import (
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreCoverageWebhookDedupe(t *testing.T) {
-	m, ctx, _, _, _ := memCoverageFixture(t)
+	m, ctx, _, _, _ := state.MemCoverageFixture(t)
 	now := time.Now().UTC()
 
 	// Fresh store → no replay, no deliveries, empty sweep.
@@ -60,7 +61,7 @@ func TestMemStoreCoverageWebhookDedupe(t *testing.T) {
 }
 
 func TestMemStoreCoverageAppSecretsAccountScoped(t *testing.T) {
-	m, ctx, account, app, _ := memCoverageFixture(t)
+	m, ctx, account, app, _ := state.MemCoverageFixture(t)
 	if err := m.UpsertAppSecret(ctx, account.ID, app.ID, "DB_URL", []byte("cipher-a")); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +86,7 @@ func TestMemStoreCoverageAppSecretsAccountScoped(t *testing.T) {
 }
 
 func TestMemStoreCoverageRegistryCredentialQuotaCheck(t *testing.T) {
-	m, ctx, account, app, _ := memCoverageFixture(t)
+	m, ctx, account, app, _ := state.MemCoverageFixture(t)
 	if err := m.UpsertAppRegistryCredential(ctx, account.ID, app.ID, "registry.example.com", "robot", []byte("sealed-pass")); err != nil {
 		t.Fatal(err)
 	}
@@ -103,8 +104,8 @@ func TestMemStoreCoverageRegistryCredentialQuotaCheck(t *testing.T) {
 }
 
 func TestMemStoreCoverageAlertRuleLastEvaluated(t *testing.T) {
-	m, ctx, account, _, _ := memCoverageFixture(t)
-	rule, err := m.CreateAlertRule(ctx, AlertRule{AccountID: account.ID, Name: "cpu-high", Enabled: true})
+	m, ctx, account, _, _ := state.MemCoverageFixture(t)
+	rule, err := m.CreateAlertRule(ctx, state.AlertRule{AccountID: account.ID, Name: "cpu-high", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,45 +117,45 @@ func TestMemStoreCoverageAlertRuleLastEvaluated(t *testing.T) {
 	if err != nil || !got.LastEvaluatedAt.Equal(at) {
 		t.Fatalf("last evaluated = %+v, %v", got, err)
 	}
-	if err := m.SetAlertRuleLastEvaluated(ctx, "missing", at); !errors.Is(err, ErrNotFound) {
+	if err := m.SetAlertRuleLastEvaluated(ctx, "missing", at); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("last evaluated missing = %v", err)
 	}
 }
 
 func TestMemStoreCoverageOrgs(t *testing.T) {
-	m, ctx, account, _, _ := memCoverageFixture(t)
+	m, ctx, account, _, _ := state.MemCoverageFixture(t)
 	owner := account.ID
 	inviter := account.ID
 	member := "member-account"
-	org, err := m.CreateOrg(ctx, Org{Slug: "acme-org", Name: "Acme"})
+	org, err := m.CreateOrg(ctx, state.Org{Slug: "acme-org", Name: "Acme"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// CreateOrg duplicate slug → ErrConflict.
-	if _, err := m.CreateOrg(ctx, Org{Slug: "ACME-ORG", Name: "dup"}); !errors.Is(err, ErrConflict) {
+	if _, err := m.CreateOrg(ctx, state.Org{Slug: "ACME-ORG", Name: "dup"}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate org slug = %v", err)
 	}
 	// Personal org missing owner pointer → ErrConflict.
-	if _, err := m.CreateOrg(ctx, Org{Slug: "pers", Personal: true}); !errors.Is(err, ErrConflict) {
+	if _, err := m.CreateOrg(ctx, state.Org{Slug: "pers", Personal: true}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("personal without owner = %v", err)
 	}
 	// AddOrgMember — owner + member.
-	if err := m.AddOrgMember(ctx, org.ID, owner, OrgRoleOwner, nil); err != nil {
+	if err := m.AddOrgMember(ctx, org.ID, owner, state.OrgRoleOwner, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.AddOrgMember(ctx, org.ID, member, OrgRoleDeveloper, &inviter); err != nil {
+	if err := m.AddOrgMember(ctx, org.ID, member, state.OrgRoleDeveloper, &inviter); err != nil {
 		t.Fatal(err)
 	}
 	// Duplicate membership → ErrConflict.
-	if err := m.AddOrgMember(ctx, org.ID, member, OrgRoleDeveloper, nil); !errors.Is(err, ErrConflict) {
+	if err := m.AddOrgMember(ctx, org.ID, member, state.OrgRoleDeveloper, nil); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate member = %v", err)
 	}
 	// Second owner → ErrOrgLastOwner.
-	if err := m.AddOrgMember(ctx, org.ID, "third-account", OrgRoleOwner, nil); !errors.Is(err, ErrOrgLastOwner) {
+	if err := m.AddOrgMember(ctx, org.ID, "third-account", state.OrgRoleOwner, nil); !errors.Is(err, state.ErrOrgLastOwner) {
 		t.Fatalf("second owner = %v", err)
 	}
 	// Missing org → ErrNotFound.
-	if err := m.AddOrgMember(ctx, "missing", member, OrgRoleDeveloper, nil); !errors.Is(err, ErrNotFound) {
+	if err := m.AddOrgMember(ctx, "missing", member, state.OrgRoleDeveloper, nil); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("member missing org = %v", err)
 	}
 	// ListOrgMembers — both rows, ordered by JoinedAt.
@@ -165,7 +166,7 @@ func TestMemStoreCoverageOrgs(t *testing.T) {
 	if got, err := m.OrgMemberByAccount(ctx, org.ID, member); err != nil || got.AccountID != member {
 		t.Fatalf("org member by account = %+v, %v", got, err)
 	}
-	if _, err := m.OrgMemberByAccount(ctx, org.ID, "nobody"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.OrgMemberByAccount(ctx, org.ID, "nobody"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("org member missing = %v", err)
 	}
 	// ListOrgsForAccount — the owner sees the org via membership.
@@ -173,15 +174,15 @@ func TestMemStoreCoverageOrgs(t *testing.T) {
 		t.Fatalf("list orgs for account = %+v, %v", got, err)
 	}
 	// OrgByPersonalAccount — no personal org → ErrNotFound.
-	if _, err := m.OrgByPersonalAccount(ctx, owner); !errors.Is(err, ErrNotFound) {
+	if _, err := m.OrgByPersonalAccount(ctx, owner); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("personal org missing = %v", err)
 	}
 	// CreateOrgInvitation + ListOrgInvitationsForOrg.
-	inv, err := m.CreateOrgInvitation(ctx, OrgInvitation{OrgID: org.ID, Email: "invitee@example.com", Role: OrgRoleDeveloper, TokenHash: []byte("tok-hash"), ExpiresAt: time.Now().Add(time.Hour)})
+	inv, err := m.CreateOrgInvitation(ctx, state.OrgInvitation{OrgID: org.ID, Email: "invitee@example.com", Role: state.OrgRoleDeveloper, TokenHash: []byte("tok-hash"), ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.CreateOrgInvitation(ctx, OrgInvitation{OrgID: org.ID, Email: "x@example.com", TokenHash: []byte("tok-hash")}); !errors.Is(err, ErrConflict) {
+	if _, err := m.CreateOrgInvitation(ctx, state.OrgInvitation{OrgID: org.ID, Email: "x@example.com", TokenHash: []byte("tok-hash")}); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate invitation = %v", err)
 	}
 	if got, err := m.ListOrgInvitationsForOrg(ctx, org.ID); err != nil || len(got) != 1 || got[0].ID != inv.ID {

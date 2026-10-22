@@ -12,10 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-type standardRosterTestStore interface {
-	standardLogClosureTestStore
-	ComputeNodeRuntimeIdentityStore
-}
+type standardRosterTestStore = contractTestStore
 
 func standardRosterRead(t *testing.T, s ApplicationStandardConsumerRosterStore, f standardLocalIntentFixture) ApplicationStandardConsumerRoster {
 	t.Helper()

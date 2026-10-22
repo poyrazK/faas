@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,17 +7,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreOrgAPIKeyMutationsAreAtomicWithActivity(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	orgID, actorID := uuid.New(), uuid.New()
 	accountID := uuid.NewString()
-	newActivity := func(kind, sourceID string, data []byte) OrgActivity {
-		return OrgActivity{
-			OrgID: orgID, Kind: kind, ActorType: OrgActivityActorUser,
+	newActivity := func(kind, sourceID string, data []byte) state.OrgActivity {
+		return state.OrgActivity{
+			OrgID: orgID, Kind: kind, ActorType: state.OrgActivityActorUser,
 			ActorAccountID: &actorID, ActorLabel: "owner@example.com",
 			ResourceType: "api_key", ResourceLabel: "API key", SourceType: kind,
 			SourceID: sourceID, Data: data,
@@ -47,7 +48,7 @@ func TestMemStoreOrgAPIKeyMutationsAreAtomicWithActivity(t *testing.T) {
 	const rotatedHash = "rotated-stored-hash-not-for-timeline"
 	rotated, old, rotateID, err := store.RotateOrgAPIKeyWithActivity(ctx, orgID.String(), created.ID, []byte(rotatedHash), "deploy-ci-v2", 24*time.Hour, "", "", nil,
 		newActivity("api_key.rotated", "rotate-1", []byte(`{"old_key_id":"`+created.ID+`","grace_window_days":1}`)))
-	if err != nil || rotateID == 0 || old.Status != string(APIKeyStatusGrace) {
+	if err != nil || rotateID == 0 || old.Status != string(state.APIKeyStatusGrace) {
 		t.Fatalf("rotate key with activity = (%+v, %+v, %d, %v)", rotated, old, rotateID, err)
 	}
 	rotatedActivity, err := store.ClaimOrgActivityOutbox(ctx, "api-key-activity-test", time.Minute)
@@ -57,7 +58,7 @@ func TestMemStoreOrgAPIKeyMutationsAreAtomicWithActivity(t *testing.T) {
 
 	revoked, revokeID, err := store.RevokeOrgAPIKeyWithActivity(ctx, orgID.String(), rotated.ID,
 		newActivity("api_key.revoked", "revoke-1", []byte(`{"reason":"manual"}`)))
-	if err != nil || revokeID == 0 || revoked.Status != string(APIKeyStatusRevoked) {
+	if err != nil || revokeID == 0 || revoked.Status != string(state.APIKeyStatusRevoked) {
 		t.Fatalf("revoke key with activity = (%+v, %d, %v)", revoked, revokeID, err)
 	}
 	if _, duplicateID, err := store.RevokeOrgAPIKeyWithActivity(ctx, orgID.String(), rotated.ID,
@@ -70,7 +71,7 @@ func TestMemStoreOrgAPIKeyMutationsAreAtomicWithActivity(t *testing.T) {
 			t.Fatalf("deliver event %d = (%v, %v), want true", id, delivered, err)
 		}
 	}
-	rows, err := store.ListOrgActivity(ctx, OrgActivityFilter{OrgID: orgID, Limit: 10})
+	rows, err := store.ListOrgActivity(ctx, state.OrgActivityFilter{OrgID: orgID, Limit: 10})
 	if err != nil || len(rows) != 3 {
 		t.Fatalf("org API key activity = (%#v, %v), want create/rotate/revoke", rows, err)
 	}

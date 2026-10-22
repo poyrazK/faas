@@ -644,6 +644,12 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if _, err := tx.Exec(f.ctx, accountPurge[0]); err != nil {
 		t.Fatal(err)
 	}
+	// 20261019190114312 (#4882, applied online) later points the guard's owner at the durable
+	// resource namespace; reapply it so the comparison covers this round trip.
+	if _, err := tx.Exec(f.ctx, `ALTER TABLE project_environment_clone_configuration_guards DROP CONSTRAINT project_environment_clone_configuration_guards_account_id_fkey;
+ALTER TABLE project_environment_clone_configuration_guards ADD CONSTRAINT project_environment_clone_configuration_guards_account_id_fkey FOREIGN KEY (account_id) REFERENCES resource_namespaces(id) ON DELETE CASCADE`); err != nil {
+		t.Fatal(err)
+	}
 	if err := tx.QueryRow(f.ctx, shape).Scan(&after); err != nil || before != after {
 		t.Fatalf("configuration guard migration changed schema on round trip: %v", err)
 	}

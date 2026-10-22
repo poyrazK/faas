@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/billing"
@@ -61,6 +63,19 @@ type Service struct {
 	Lago   *lagoinvoice.Client
 	// Now is the payment sync clock; nil uses time.Now.
 	Now func() time.Time
+	// Enabled pauses the background worker while it reports false: API
+	// monetization is released by a runtime setting (ADR-20261018090210).
+	// Nil runs it.
+	Enabled func() bool
+}
+
+// tick runs one background tick unless Enabled pauses the worker; paused,
+// no provider reads and no overdue digests.
+func (s *Service) tick(ctx context.Context) error {
+	if s.Enabled != nil && !s.Enabled() {
+		return nil
+	}
+	return s.SyncOnce(ctx)
 }
 
 func (s *Service) stripeInvoiceClient() *stripeinvoice.Client {
@@ -294,10 +309,17 @@ func exportConflict(detail string) *api.Problem {
 	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Statement invoice conflict", detail)
 }
 
+func exportInProgress() *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeStatementInvoiceExportInProgress, "Statement invoice export in progress",
+		"another attempt is exporting this statement; retry once it finishes")
+}
+
 // exportStatementInvoice creates the statement's invoice in the provider,
 // or resumes an earlier attempt: the export row exists before any provider
-// call, and each provider adopts what an earlier attempt created, so a
-// retry never duplicates charges.
+// call, one attempt at a time claims it, and each provider adopts what an
+// earlier attempt created, so a retry never duplicates charges
+// (ADR-20261019180000). An export the provider refused before creating
+// anything can be retried with another customer or provider.
 func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account, store state.StatementInvoiceExportStore,
 	src statementInvoiceSource, providerName string) (state.StatementInvoiceExport, *api.Problem) {
 	p := s.provider(providerName)
@@ -305,7 +327,7 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 		return state.StatementInvoiceExport{}, providerProblem(http.StatusUnprocessableEntity, "Unknown billing provider", "provider must be stripe, paddle or lago")
 	}
 	prior, err := store.GetStatementInvoiceExport(ctx, acct.ID, src.kind, src.statementID)
-	if err == nil && prior.Provider != providerName {
+	if err == nil && prior.Provider != providerName && !prior.Retargetable() {
 		return state.StatementInvoiceExport{}, exportConflict("the statement was already exported to " + prior.Provider)
 	}
 	if err == nil && prior.Status == state.StatementInvoiceExportCompleted {
@@ -341,6 +363,23 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 	if err != nil {
 		return state.StatementInvoiceExport{}, api.ErrInternal("could not record the statement invoice export")
 	}
+	token := uuid.NewString()
+	claimed, err := store.ClaimStatementInvoiceExport(ctx, acct.ID, export.ID, token, time.Now().Add(api.StatementInvoiceExportClaimTTL))
+	if errors.Is(err, state.ErrStatementInvoiceExportInProgress) {
+		return state.StatementInvoiceExport{}, exportInProgress()
+	}
+	if err != nil {
+		return state.StatementInvoiceExport{}, api.ErrInternal("could not claim the statement invoice export")
+	}
+	defer func() { _ = store.ReleaseStatementInvoiceExport(context.WithoutCancel(ctx), acct.ID, export.ID, token) }()
+	// The claim reads the export as the attempt before it left it.
+	export = claimed
+	if export.Status == state.StatementInvoiceExportCompleted {
+		return export, nil
+	}
+	if export.Provider != providerName || export.Customer != src.customer {
+		return state.StatementInvoiceExport{}, exportConflict("an export for this statement already targets another customer or provider")
+	}
 	if export.Livemode != conn.livemode {
 		return state.StatementInvoiceExport{}, exportConflict("the export started with a " + p.title() + " key in the other mode; reconnect that key to finish it")
 	}
@@ -351,7 +390,12 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 		export.ProviderInvoiceID = invoiceID
 		return nil
 	}
-	if problem := p.push(ctx, conn, &export, src, resumed, record); problem != nil {
+	rejected := false
+	reject := func() { rejected = true }
+	if problem := p.push(ctx, conn, &export, src, resumed, record, reject); problem != nil {
+		if rejected && export.ProviderInvoiceID == "" {
+			_ = store.RejectStatementInvoiceExport(context.WithoutCancel(ctx), acct.ID, export.ID, token)
+		}
 		return state.StatementInvoiceExport{}, problem
 	}
 	if err := src.handoff(ctx, export.ProviderInvoiceID); err != nil {
@@ -415,15 +459,21 @@ type statementInvoiceItem struct {
 }
 
 // statementInvoiceItems renders invoice lines, then the rounding item that
-// makes the invoice equal the statement total rounded to the cent.
+// makes the invoice equal the statement total rounded to the minor unit.
 func statementInvoiceItems(inv billing.StatementInvoice) []statementInvoiceItem {
 	items := make([]statementInvoiceItem, 0, len(inv.Lines)+1)
 	for _, line := range inv.Lines {
 		noun := unitNoun(line.Unit)
+		if line.Label != "" {
+			noun = line.Label
+		}
 		description := fmt.Sprintf("%d %s at %s %s each", line.Units, noun, formatMillicentsDecimal(line.PriceMillicentsPerUnit), inv.Currency)
 		switch {
 		case line.Credit:
 			description = "Prepaid credit applied"
+		case line.Fee == state.StatementFeeBase && line.Label != "":
+			// A Product Control plan fee names its plan (ADR-20261021154511).
+			description = line.Label
 		case line.Fee == state.StatementFeeBase:
 			description = "Monthly base fee"
 		case line.Fee == state.StatementFeeMinimum && line.AmountMillicents < 0:
@@ -436,7 +486,7 @@ func statementInvoiceItems(inv billing.StatementInvoice) []statementInvoiceItem 
 		items = append(items, statementInvoiceItem{amount: line.AmountMinor, description: description})
 	}
 	if inv.RoundingMinor != 0 {
-		items = append(items, statementInvoiceItem{amount: inv.RoundingMinor, description: "Rounding to the nearest cent"})
+		items = append(items, statementInvoiceItem{amount: inv.RoundingMinor, description: "Rounding to the currency's smallest unit"})
 	}
 	return items
 }
@@ -469,7 +519,7 @@ func statementInvoiceProblem(err error) *api.Problem {
 	switch {
 	case errors.Is(err, billing.ErrInvoiceCurrencyUnsupported):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Currency not supported",
-			"statement invoices support two-decimal currencies only")
+			"statement invoices support currencies with at most three decimal places")
 	case errors.Is(err, billing.ErrStatementNotInvoiceable):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Statement cannot be invoiced", err.Error())
 	default:

@@ -35,14 +35,12 @@ func ProjectReleaseMembers(apps []state.App, deployments map[string]string, ttl 
 	return members, nil
 }
 
-func ProjectServiceTargets(app state.App, deployments map[string]string) map[string]string {
-	targets := map[string]string{}
-	for _, binding := range app.Manifest.ServiceBindings {
-		if id := deployments[binding.Service]; id != "" {
-			targets[binding.Service] = id
-		}
+func ProjectServiceTargets(app state.App, deployments map[string]string, projectApps ...[]state.App) map[string]string {
+	var apps []state.App
+	if len(projectApps) > 0 {
+		apps = projectApps[0]
 	}
-	return targets
+	return state.ProjectServiceDeploymentTargets(app, apps, deployments)
 }
 
 func ValidateCheckedProjectRelease(manifest api.CheckedProjectReleaseManifest, project, environment string, apps []state.App) ([]state.ProjectReleaseMember, *api.Problem) {
@@ -67,7 +65,8 @@ func ValidateCheckedProjectRelease(manifest api.CheckedProjectReleaseManifest, p
 	}
 	for _, app := range apps {
 		revision, ok := manifest.ExpectedPolicyRevisions[app.Slug]
-		if !ok || revision < 1 || manifest.ServiceTargets[app.Slug] == nil || !maps.Equal(manifest.ServiceTargets[app.Slug], ProjectServiceTargets(app, manifest.Deployments)) {
+		targets := ProjectServiceTargets(app, manifest.Deployments, apps)
+		if !ok || revision < 1 || targets == nil || manifest.ServiceTargets[app.Slug] == nil || !maps.Equal(manifest.ServiceTargets[app.Slug], targets) {
 			return nil, api.ErrValidation("prepared policy or service graph changed; prepare and qualify again")
 		}
 	}
@@ -103,7 +102,7 @@ func PrepareProjectRelease(ctx context.Context, catalog ProjectReleaseCatalog, a
 			return result, api.ErrValidation("checked graph activation requires an enforced binding release policy on every member scope")
 		}
 		result.ExpectedPolicyRevisions[app.Slug] = policy.Revision
-		result.ServiceTargets[app.Slug] = ProjectServiceTargets(app, result.Deployments)
+		result.ServiceTargets[app.Slug] = ProjectServiceTargets(app, result.Deployments, apps)
 		if expected != "" {
 			continue
 		}
@@ -251,7 +250,7 @@ func PrepareProjectDeactivation(ctx context.Context, catalog ProjectReleaseCatal
 	}
 	result.ExpectedFallbackDeployments = maps.Clone(result.Deployments)
 	for _, app := range apps {
-		result.ServiceTargets[app.Slug] = ProjectServiceTargets(app, result.Deployments)
+		result.ServiceTargets[app.Slug] = ProjectServiceTargets(app, result.Deployments, apps)
 	}
 	return result, nil
 }

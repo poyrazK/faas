@@ -25,7 +25,7 @@ func TestFrozenImageHealthcheckIgnoresLaterAppConfiguration(t *testing.T) {
 	} {
 		for _, sourceTransition := range []bool{false, true} {
 			t.Run(tc.name+map[bool]string{false: "/edited image", true: "/source transition"}[sourceTransition], func(t *testing.T) {
-				profile, err := frameworkprofile.CaptureImageRuntime(nil, tc.check)
+				profile, err := frameworkprofile.CaptureImageRuntime(nil, tc.check, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

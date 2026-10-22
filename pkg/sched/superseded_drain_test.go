@@ -2,7 +2,7 @@
 // their serving slots instead of waiting for the idle timeout.
 // spec: §6 — schedd owns the instance state machine, one owner per app.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // supersedeHotRevision wakes the app's first deployment on e, then marks a new
 // deployment live, which supersedes the first one.
-func supersedeHotRevision(t *testing.T, store *state.MemStore, e *Engine, app state.App) (oldDeploymentID, instanceID string) {
+func supersedeHotRevision(t *testing.T, store *state.MemStore, e *sched.Engine, app state.App) (oldDeploymentID, instanceID string) {
 	t.Helper()
 	ctx := context.Background()
 	res, err := e.Wake(ctx, app.ID, "", "", "")
@@ -60,30 +61,30 @@ func instanceState(t *testing.T, store *state.MemStore, id string) string {
 // "illegal edge stopped→parked"). A foreign schedd must leave it alone.
 func TestDrainDeploymentInstances_OnlyAppOwnerDrains(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanFree, 128, 1)
+	_, app, _ := sched.SeedApp(t, store, api.PlanFree, 128, 1)
 	if err := store.SetAppNodeID(context.Background(), app.ID, "box-a"); err != nil {
 		t.Fatalf("SetAppNodeID: %v", err)
 	}
-	ownerVMM := &fakeVMM{}
-	owner := newEngine(t, store, ownerVMM, &fakeNotifier{}, "1.10.0").WithOwnerNodeID("box-a")
+	ownerVMM := &sched.FakeVMM{}
+	owner := sched.XNewEngine(t, store, ownerVMM, &sched.FakeNotifier{}, "1.10.0").WithOwnerNodeID("box-a")
 	oldDeploymentID, instanceID := supersedeHotRevision(t, store, owner, app)
 
-	foreignVMM := &fakeVMM{}
-	foreign := newEngine(t, store, foreignVMM, &fakeNotifier{}, "1.10.0").WithOwnerNodeID("box-b")
-	foreign.drainDeploymentInstances(context.Background(), oldDeploymentID, true)
+	foreignVMM := &sched.FakeVMM{}
+	foreign := sched.XNewEngine(t, store, foreignVMM, &sched.FakeNotifier{}, "1.10.0").WithOwnerNodeID("box-b")
+	foreign.DrainDeploymentInstances(context.Background(), oldDeploymentID, true)
 	if got := instanceState(t, store, instanceID); got != string(state.StateRunning) {
 		t.Fatalf("foreign schedd drain: instance state = %q, want running", got)
 	}
-	if foreignVMM.snapshots != 0 || foreignVMM.destroys != 0 {
-		t.Fatalf("foreign schedd touched the VM: snapshots=%d destroys=%d", foreignVMM.snapshots, foreignVMM.destroys)
+	if (*foreignVMM.Snapshots()) != 0 || (*foreignVMM.Destroys()) != 0 {
+		t.Fatalf("foreign schedd touched the VM: snapshots=%d destroys=%d", (*foreignVMM.Snapshots()), (*foreignVMM.Destroys()))
 	}
 
-	owner.drainDeploymentInstances(context.Background(), oldDeploymentID, true)
+	owner.DrainDeploymentInstances(context.Background(), oldDeploymentID, true)
 	if got := instanceState(t, store, instanceID); got != string(state.StateParked) {
 		t.Fatalf("owner drain: instance state = %q, want parked", got)
 	}
-	if ownerVMM.snapshots != 1 {
-		t.Fatalf("owner snapshots = %d, want 1", ownerVMM.snapshots)
+	if (*ownerVMM.Snapshots()) != 1 {
+		t.Fatalf("owner snapshots = %d, want 1", (*ownerVMM.Snapshots()))
 	}
 }
 
@@ -93,22 +94,22 @@ func TestDrainDeploymentInstances_OnlyAppOwnerDrains(t *testing.T) {
 // revision's hot instance even though it is not idle.
 func TestRunReaperDrainsSupersededRevisionAfterMissedNotification(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanFree, 128, 1)
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	_, app, _ := sched.SeedApp(t, store, api.PlanFree, 128, 1)
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	_, instanceID := supersedeHotRevision(t, store, e, app)
 
 	// The clock sits inside the Free idle timeout: idleness alone would
 	// keep the instance resident.
 	now := time.Now().Add(time.Second)
-	loop := NewLoop(nil, e, testLog()).WithClock(func() time.Time { return now })
-	loop.runReaper(context.Background())
+	loop := sched.NewLoop(nil, e, sched.TestLog()).WithClock(func() time.Time { return now })
+	loop.RunReaper(context.Background())
 
 	if got := instanceState(t, store, instanceID); got != string(state.StateParked) {
 		t.Fatalf("instance state after reaper = %q, want parked", got)
 	}
-	if vmm.snapshots != 1 {
-		t.Fatalf("snapshots = %d, want 1 (park preserves the rollback snapshot)", vmm.snapshots)
+	if (*vmm.Snapshots()) != 1 {
+		t.Fatalf("snapshots = %d, want 1 (park preserves the rollback snapshot)", (*vmm.Snapshots()))
 	}
 	if _, err := e.Wake(context.Background(), app.ID, "", "", ""); err != nil {
 		t.Fatalf("Wake live revision after repair: %v", err)
@@ -119,21 +120,21 @@ func TestRunReaperDrainsSupersededRevisionAfterMissedNotification(t *testing.T) 
 // acts only on superseded deployments, never on a live revision's instance.
 func TestRunReaperKeepsLiveRevisionResident(t *testing.T) {
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanFree, 128, 1)
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	_, app, _ := sched.SeedApp(t, store, api.PlanFree, 128, 1)
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	res, err := e.Wake(context.Background(), app.ID, "", "", "")
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
 	now := time.Now().Add(time.Second)
-	loop := NewLoop(nil, e, testLog()).WithClock(func() time.Time { return now })
-	loop.runReaper(context.Background())
+	loop := sched.NewLoop(nil, e, sched.TestLog()).WithClock(func() time.Time { return now })
+	loop.RunReaper(context.Background())
 	if got := instanceState(t, store, res.InstanceID); got != string(state.StateRunning) {
 		t.Fatalf("live revision state after reaper = %q, want running", got)
 	}
-	if vmm.snapshots != 0 {
-		t.Fatalf("snapshots = %d, want 0", vmm.snapshots)
+	if (*vmm.Snapshots()) != 0 {
+		t.Fatalf("snapshots = %d, want 0", (*vmm.Snapshots()))
 	}
 }
 
@@ -146,9 +147,9 @@ func TestRunReaperKeepsLiveRevisionResident(t *testing.T) {
 func TestRunReaperEvictsCancelledRollbackTarget(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, _ := seedApp(t, store, api.PlanFree, 128, 1)
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	_, app, _ := sched.SeedApp(t, store, api.PlanFree, 128, 1)
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	oldDeploymentID, instanceID := supersedeHotRevision(t, store, e, app)
 	if _, err := store.PrepareDeploymentRollback(ctx, app.ID, oldDeploymentID); err != nil {
 		t.Fatalf("PrepareDeploymentRollback: %v", err)
@@ -162,14 +163,14 @@ func TestRunReaperEvictsCancelledRollbackTarget(t *testing.T) {
 
 	// Inside the Free idle timeout: idleness alone keeps the instance.
 	now := time.Now().Add(time.Second)
-	loop := NewLoop(nil, e, testLog()).WithClock(func() time.Time { return now })
-	loop.runReaper(ctx)
+	loop := sched.NewLoop(nil, e, sched.TestLog()).WithClock(func() time.Time { return now })
+	loop.RunReaper(ctx)
 
 	if got := instanceState(t, store, instanceID); got == string(state.StateRunning) {
 		t.Fatalf("cancelled revision instance still running after reaper")
 	}
-	if vmm.snapshots != 0 {
-		t.Fatalf("snapshots = %d, want 0: nothing wakes a cancelled deployment", vmm.snapshots)
+	if (*vmm.Snapshots()) != 0 {
+		t.Fatalf("snapshots = %d, want 0: nothing wakes a cancelled deployment", (*vmm.Snapshots()))
 	}
 	if _, err := e.Wake(ctx, app.ID, "", "", ""); err != nil {
 		t.Fatalf("Wake live revision after repair: %v", err)
@@ -183,7 +184,7 @@ func TestRunReaperEvictsCancelledRollbackTarget(t *testing.T) {
 func TestRunReaperDrainsAbortedCanaryCandidate(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	_, app, stable := seedApp(t, store, api.PlanFree, 128, 1)
+	_, app, stable := sched.SeedApp(t, store, api.PlanFree, 128, 1)
 	canary, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:canary",
 		Status: state.DeployPending, TrafficPercent: 1, CanaryTotalSteps: 4, Scope: stable.Scope,
@@ -194,8 +195,8 @@ func TestRunReaperDrainsAbortedCanaryCandidate(t *testing.T) {
 	if err := store.MarkDeploymentLive(ctx, canary.ID); err != nil {
 		t.Fatal(err)
 	}
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 	res, err := e.Wake(ctx, app.ID, canary.ID, "", "")
 	if err != nil {
 		t.Fatalf("Wake canary: %v", err)
@@ -207,19 +208,19 @@ func TestRunReaperDrainsAbortedCanaryCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reaperAbortedCanary(aborted) {
+	if !sched.ReaperAbortedCanary(aborted) {
 		t.Fatalf("aborted canary = status %q traffic %d rollout %q; fixture does not match prod", aborted.Status, aborted.TrafficPercent, aborted.RolloutState)
 	}
 
 	now := time.Now().Add(time.Second)
-	loop := NewLoop(nil, e, testLog()).WithClock(func() time.Time { return now })
-	loop.runReaper(ctx)
+	loop := sched.NewLoop(nil, e, sched.TestLog()).WithClock(func() time.Time { return now })
+	loop.RunReaper(ctx)
 
 	if got := instanceState(t, store, res.InstanceID); got != string(state.StateParked) {
 		t.Fatalf("aborted canary instance state = %q, want parked", got)
 	}
-	if vmm.snapshots != 1 {
-		t.Fatalf("snapshots = %d, want 1 (an operator may still recover the candidate)", vmm.snapshots)
+	if (*vmm.Snapshots()) != 1 {
+		t.Fatalf("snapshots = %d, want 1 (an operator may still recover the candidate)", (*vmm.Snapshots()))
 	}
 	if _, err := e.Wake(ctx, app.ID, "", "", ""); err != nil {
 		t.Fatalf("Wake stable after drain: %v", err)
@@ -240,7 +241,7 @@ func TestReaperAbortedCanary(t *testing.T) {
 		{"aborted canary still carrying traffic", state.Deployment{Status: state.DeployLive, TrafficPercent: 5, CanaryTotalSteps: 4, RolloutState: "aborted"}, false},
 	}
 	for _, tc := range cases {
-		if got := reaperAbortedCanary(tc.d); got != tc.want {
+		if got := sched.ReaperAbortedCanary(tc.d); got != tc.want {
 			t.Errorf("%s: reaperAbortedCanary = %v, want %v", tc.name, got, tc.want)
 		}
 	}

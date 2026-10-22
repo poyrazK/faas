@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 
+	"github.com/onebox-faas/faas/pkg/resumetimingproto"
 	"golang.org/x/sys/unix"
 )
 
@@ -93,32 +95,54 @@ func GetResumeTraceparent() string { return resumeTraceparent }
 // UUIDMarkerPath so the §14 V6 metal test (and any operator tool) can observe
 // the freshly-rekeyed UUID.
 //
-// hostEntropy may be nil/empty (e.g. on cold boot the hook isn't invoked, but
-// if a future caller does invoke with no entropy, AddEntropy is a no-op).
+// hostEntropy must be non-empty: it is the only input guaranteed to differ
+// between two restores of one snapshot (ADR-022). Cold boot never runs the
+// hook.
 func RunResumeHook(hostTimeUnixNano int64, hostEntropy []byte) error {
+	return runResumeHookTimed(hostTimeUnixNano, hostEntropy, nil)
+}
+
+// runResumeHookTimed is RunResumeHook recording each step's duration into t
+// (nil discards them). Durations come from the monotonic clock, so stepping
+// the wall clock part-way through does not distort the later steps.
+func runResumeHookTimed(hostTimeUnixNano int64, hostEntropy []byte, t *resumetimingproto.Timings) error {
+	if t == nil {
+		t = &resumetimingproto.Timings{}
+	}
+	step := time.Now()
+	lap := func(dst *int64) {
+		now := time.Now()
+		*dst = now.Sub(step).Microseconds()
+		step = now
+	}
 	if err := addHostEntropy(hostEntropy); err != nil {
 		resumeDiag(fmt.Sprintf("resume: addHostEntropy err=%v", err))
 		return fmt.Errorf("resume: add entropy: %w", err)
 	}
+	lap(&t.EntropyUs)
 	if err := reseedFromHWRNG(); err != nil {
 		resumeDiag(fmt.Sprintf("resume: reseedFromHWRNG err=%v", err))
 		return fmt.Errorf("resume: reseed entropy: %w", err)
 	}
+	lap(&t.HWRNGUs)
 	if err := stepClockTo(hostTimeUnixNano); err != nil {
 		resumeDiag(fmt.Sprintf("resume: stepClockTo err=%v", err))
 		return fmt.Errorf("resume: step clock: %w", err)
 	}
+	lap(&t.ClockUs)
 	if err := writeUUIDMarker(hostTimeUnixNano); err != nil {
 		resumeDiag(fmt.Sprintf("resume: writeUUIDMarker err=%v", err))
 		return fmt.Errorf("resume: write uuid marker: %w", err)
 	}
+	lap(&t.UUIDMarkerUs)
 	restoreGeneration.bump()
 	return nil
 }
 
 // addHostEntropy injects the host-supplied bytes into /dev/urandom via
-// ioctl(RNDADDENTROPY). Empty input is a no-op (still returns nil) — the
-// cold-boot path never calls us, but a future caller might pass nil.
+// ioctl(RNDADDENTROPY). Empty input is an error: without it the pool and the
+// CRNG keep the snapshot's state, and the optional virtio-rng mix below may
+// contribute nothing (device absent, or no bytes ready).
 //
 // A plain write mixes bytes without crediting the pool; RNDADDENTROPY also
 // credits initialization entropy. Neither immediately rekeys an initialized
@@ -126,7 +150,7 @@ func RunResumeHook(hostTimeUnixNano int64, hostEntropy []byte) error {
 // can observe readiness or draw the UUID marker (ADR-022).
 func addHostEntropy(entropy []byte) error {
 	if len(entropy) == 0 {
-		return nil
+		return fmt.Errorf("resume: host entropy missing")
 	}
 	if len(entropy) > 4096 {
 		return fmt.Errorf("resume: host entropy %d bytes exceeds ioctl buffer cap", len(entropy))

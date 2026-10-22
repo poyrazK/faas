@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/financial"
 )
@@ -30,16 +31,16 @@ func TestFinancialBudgetPreviewCLI(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	stdout, restore := captureStdout(t)
+	stdout, restore := main.CaptureStdout(t)
 	defer restore()
-	_, restoreErr := captureStderr(t)
+	_, restoreErr := main.CaptureStderr(t)
 	defer restoreErr()
 	path := filepath.Join(t.TempDir(), "budget.json")
 	data, _ := json.Marshal(spec)
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdBilling([]string{"budget-preview", "--file", path, "--json"}); code != 0 {
+	if code := main.CmdBilling([]string{"budget-preview", "--file", path, "--json"}); code != 0 {
 		t.Fatalf("preview exit=%d", code)
 	}
 	var response api.FinancialBudgetPreviewResponse
@@ -50,21 +51,21 @@ func TestFinancialBudgetPreviewCLI(t *testing.T) {
 	if err := os.Symlink(path, link); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdBillingBudgetPreview([]string{"--file", link}); code == 0 {
+	if code := main.CmdBillingBudgetPreview([]string{"--file", link}); code == 0 {
 		t.Fatal("symlinked budget spec accepted")
 	}
 	for _, bad := range [][]byte{[]byte(`{"name":"missing"}`), append(append([]byte{}, data...), []byte(` {}`)...), make([]byte, api.FinancialBudgetSpecBytes+1)} {
 		if err := os.WriteFile(path, bad, 0600); err != nil {
 			t.Fatal(err)
 		}
-		if code := cmdBillingBudgetPreview([]string{"--file", path}); code == 0 {
+		if code := main.CmdBillingBudgetPreview([]string{"--file", path}); code == 0 {
 			t.Fatal("invalid spec accepted")
 		}
 	}
 	if calls != 1 {
 		t.Fatalf("invalid input reached API: %d", calls)
 	}
-	if code := cmdBillingBudgetPreview([]string{"--help"}); code != 0 {
+	if code := main.CmdBillingBudgetPreview([]string{"--help"}); code != 0 {
 		t.Fatalf("help exit=%d", code)
 	}
 }

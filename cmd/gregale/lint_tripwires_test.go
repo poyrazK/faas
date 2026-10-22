@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"go/ast"
@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -272,6 +273,65 @@ func TestLintTripwire_NoGlyphLiteralOutsideOutput(t *testing.T) {
 		t.Fatalf("found leading ✓/✗/→ string literal outside output.go — gate every customer-facing line through PrintOK/PrintFail/PrintProgress/PrintWarn so it strips in pipes and under NO_COLOR:\n  %s\n\n(mid-string `→` is allowed; this rule matches leading prefix only. Add `// lint:allow-glyph` above the line and document the reason if you genuinely need an exception.)",
 			strings.Join(violations, "\n  "))
 	}
+}
+
+// TestLintTripwire_NoEmojiInCLIOutput pins UX §3.2's "No emoji" rule.
+// The CLI's only symbols are ✓ ✗ → and !, written through output.go so
+// they strip in pipes. The hint row used to print 💡, which the glyph
+// tripwire above could not see because it only checks those four
+// glyphs. This scans every non-test string literal, output.go included.
+func TestLintTripwire_NoEmojiInCLIOutput(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
+		return strings.HasSuffix(fi.Name(), ".go") && !strings.HasSuffix(fi.Name(), "_test.go")
+	}, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse cmd/gregale: %v", err)
+	}
+	var violations []string
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			ast.Inspect(file, func(n ast.Node) bool {
+				lit, ok := n.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				value, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					value = lit.Value
+				}
+				if strings.IndexFunc(value, isCLIEmoji) >= 0 {
+					violations = append(violations, fset.Position(lit.Pos()).String()+": "+lit.Value)
+				}
+				return true
+			})
+		}
+	}
+	if len(violations) > 0 {
+		t.Fatalf("UX §3.2 allows only ✓ ✗ → ! and no emoji; found:\n  %s", strings.Join(violations, "\n  "))
+	}
+	for _, r := range "💡⚠️✨❌" {
+		if !isCLIEmoji(r) {
+			t.Fatalf("isCLIEmoji(%U) = false, want true", r)
+		}
+	}
+	for _, r := range "✓✗→!" {
+		if isCLIEmoji(r) {
+			t.Fatalf("isCLIEmoji(%U) = true for a UX §3.2 symbol", r)
+		}
+	}
+}
+
+// isCLIEmoji reports pictographs, the misc-symbol and dingbat blocks
+// (except the ✓ and ✗ the spec uses), and the emoji variation selector.
+func isCLIEmoji(r rune) bool {
+	switch {
+	case r == '✓' || r == '✗':
+		return false
+	case r >= 0x1F000 && r <= 0x1FAFF, r >= 0x2600 && r <= 0x27BF, r == 0xFE0F:
+		return true
+	}
+	return false
 }
 
 // TestLintTripwire_NoLiteralWakeHeaderOutsidePkgWire closes bug 2

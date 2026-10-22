@@ -104,12 +104,17 @@ def sync_detailed(
     body: UpdateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> Response[FinancialBudgetResponse | Problem]:
-    """Replace a budget draft at its expected revision.
+    """Replace a budget policy at its expected revision.
 
      Requires admin scope, session MFA and Idempotency-Key. expected_revision
-    must match the current policy; stale edits return 409. Set enabled=false:
-    activation remains unavailable. Scope ownership and action eligibility are
-    revalidated. Payment, security and user holds are independent of this intent.
+    must match the current policy; stale edits return 409. Monitored notify and compute-only
+    stop_previews
+    policies can activate, along with strict app/job gross compute or account net compute (optionally
+    combined with egress) suspend_workloads with zero drain and no alert thresholds. A limit below
+    committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain
+    disabled drafts.
+    Scope ownership and action eligibility are revalidated. Payment, security and user holds are
+    independent of this intent.
 
     Args:
         id (UUID):
@@ -145,12 +150,17 @@ def sync(
     body: UpdateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> FinancialBudgetResponse | Problem | None:
-    """Replace a budget draft at its expected revision.
+    """Replace a budget policy at its expected revision.
 
      Requires admin scope, session MFA and Idempotency-Key. expected_revision
-    must match the current policy; stale edits return 409. Set enabled=false:
-    activation remains unavailable. Scope ownership and action eligibility are
-    revalidated. Payment, security and user holds are independent of this intent.
+    must match the current policy; stale edits return 409. Monitored notify and compute-only
+    stop_previews
+    policies can activate, along with strict app/job gross compute or account net compute (optionally
+    combined with egress) suspend_workloads with zero drain and no alert thresholds. A limit below
+    committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain
+    disabled drafts.
+    Scope ownership and action eligibility are revalidated. Payment, security and user holds are
+    independent of this intent.
 
     Args:
         id (UUID):
@@ -181,12 +191,17 @@ async def asyncio_detailed(
     body: UpdateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> Response[FinancialBudgetResponse | Problem]:
-    """Replace a budget draft at its expected revision.
+    """Replace a budget policy at its expected revision.
 
      Requires admin scope, session MFA and Idempotency-Key. expected_revision
-    must match the current policy; stale edits return 409. Set enabled=false:
-    activation remains unavailable. Scope ownership and action eligibility are
-    revalidated. Payment, security and user holds are independent of this intent.
+    must match the current policy; stale edits return 409. Monitored notify and compute-only
+    stop_previews
+    policies can activate, along with strict app/job gross compute or account net compute (optionally
+    combined with egress) suspend_workloads with zero drain and no alert thresholds. A limit below
+    committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain
+    disabled drafts.
+    Scope ownership and action eligibility are revalidated. Payment, security and user holds are
+    independent of this intent.
 
     Args:
         id (UUID):
@@ -220,12 +235,17 @@ async def asyncio(
     body: UpdateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> FinancialBudgetResponse | Problem | None:
-    """Replace a budget draft at its expected revision.
+    """Replace a budget policy at its expected revision.
 
      Requires admin scope, session MFA and Idempotency-Key. expected_revision
-    must match the current policy; stale edits return 409. Set enabled=false:
-    activation remains unavailable. Scope ownership and action eligibility are
-    revalidated. Payment, security and user holds are independent of this intent.
+    must match the current policy; stale edits return 409. Monitored notify and compute-only
+    stop_previews
+    policies can activate, along with strict app/job gross compute or account net compute (optionally
+    combined with egress) suspend_workloads with zero drain and no alert thresholds. A limit below
+    committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain
+    disabled drafts.
+    Scope ownership and action eligibility are revalidated. Payment, security and user holds are
+    independent of this intent.
 
     Args:
         id (UUID):

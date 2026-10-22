@@ -23,6 +23,7 @@ var proposalKinds = map[string]bool{
 	"jwt": true, "ip": true, "validate": true, "limit": true, "geo": true,
 	"maintenance": true, "throttle": true, "budget": true, "cache": true,
 	"respond": true, "retry": true, "circuit_breaker": true, "async": true,
+	"challenge": true,
 }
 
 // ProposedRuleIDPrefix marks rules that exist only in a proposal.

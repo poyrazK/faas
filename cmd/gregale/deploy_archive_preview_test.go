@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -37,7 +38,7 @@ func TestValidatePreviewArchivePlanLimitUsesAccountPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = validatePreviewArchivePlanLimit(context.Background(), NewClient(server.URL, "token"), path)
+	err = main.ValidatePreviewArchivePlanLimit(context.Background(), main.NewClient(server.URL, "token"), path)
 	var apiErr *api.APIError
 	if !errors.As(err, &apiErr) || apiErr.Problem.Code != api.CodeSourceTooLarge {
 		t.Fatalf("error = %v, want source_too_large API error", err)

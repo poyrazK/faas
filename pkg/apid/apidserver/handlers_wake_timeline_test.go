@@ -34,7 +34,10 @@ import (
 
 func TestListWakeTimeline_FreePlanReturns402BeforeLookup(t *testing.T) {
 	e := setup(t, api.PlanFree)
-	rec := e.do(t, http.MethodGet, "/v1/apps/unknown/wakes/unknown/timeline", nil, nil)
+	// App access resolves the addressed app first (#4882); the gate still
+	// answers before the wake is looked up.
+	mustSeedApp(t, e, "free-timeline")
+	rec := e.do(t, http.MethodGet, "/v1/apps/free-timeline/wakes/unknown/timeline", nil, nil)
 	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPerAppMetricsNotAllowed)
 }
 

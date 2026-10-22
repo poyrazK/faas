@@ -1,27 +1,28 @@
-package main
+package main_test
 
 import (
 	"bytes"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"strings"
 	"testing"
 )
 
 func TestHostingDiscoveryRequiresLocalOptIn(t *testing.T) {
 	// adr: 202610171453 — execution flags must also hide discovery surfaces.
-	oldOut := osStdout
-	t.Cleanup(func() { osStdout = oldOut })
+	oldOut := (*main.OsStdout)
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
 	for _, value := range []string{"", "false", "0", "yes", "1", "true"} {
 		t.Run(value, func(t *testing.T) {
 			t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", value)
 			enabled := value == "1" || value == "true"
-			if strings.Contains(topLevelUsage(true), "  sites ") != enabled {
+			if strings.Contains(main.TopLevelUsage(true, true), "  sites ") != enabled {
 				t.Fatal("advanced help does not follow local opt-in")
 			}
 			for _, args := range [][]string{{"help", "sites"}, {"sites", "--help"}, {"sites", "deploy", "--help"}, {"man", "sites"}} {
 				var out bytes.Buffer
-				osStdout = &out
-				stderr, restore := captureStderr(t)
-				code := run(args)
+				(*main.OsStdout) = &out
+				stderr, restore := main.CaptureStderr(t)
+				code := main.Run(args)
 				message := stderr.String()
 				restore()
 				if (code == 0) != enabled {
@@ -31,12 +32,12 @@ func TestHostingDiscoveryRequiresLocalOptIn(t *testing.T) {
 					t.Fatalf("disabled help leaked: %v %s %s", args, out.String(), message)
 				}
 			}
-			if suggestion, ok := suggestCommand("sits"); !enabled && ok && suggestion == "sites" {
+			if suggestion, ok := main.SuggestCommand("sits"); !enabled && ok && suggestion == "sites" {
 				t.Fatal("disabled command suggested")
 			}
 			if !enabled {
-				stderr, restore := captureStderr(t)
-				code := run([]string{"sites", "list"})
+				stderr, restore := main.CaptureStderr(t)
+				code := main.Run([]string{"sites", "list"})
 				restore()
 				if code == 0 || !strings.Contains(stderr.String(), "unknown command") || strings.Contains(strings.ToLower(stderr.String()), "hosting") {
 					t.Fatal("disabled invocation revealed internal feature", stderr.String())

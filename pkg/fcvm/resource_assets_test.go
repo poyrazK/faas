@@ -106,6 +106,7 @@ func TestResourceAssetsRetainedStorageLink(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(cache.WaitDeferred)
 			backend := &observedMaterializationBackend{StorageBackend: cache}
 			v.WithStorage(backend)
 			injected := errors.New("retained asset fsync failure")

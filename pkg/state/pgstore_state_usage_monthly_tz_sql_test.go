@@ -26,7 +26,7 @@
 // session-TZ-dependent bucketing will fail here at unit-test time,
 // well before a misconfigured session silently mis-buckets rows.
 
-package state
+package state_test
 
 import (
 	_ "embed"

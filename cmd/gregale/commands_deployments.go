@@ -344,7 +344,7 @@ func cmdDeploymentsExcludeClear(args []string) int {
 // cmdDeployment dispatches deployment inspection and lifecycle commands.
 func cmdDeployment(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment runtime <id> [--target RELEASE_ID] | gregale deployment summary <id> --app SLUG | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment runtime <id> [--target RELEASE_ID] | gregale deployment summary <id> --app SLUG | gregale deployment diff <id> [--against <id>] | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
 		return 1
 	}
 	switch args[0] {
@@ -358,6 +358,8 @@ func cmdDeployment(args []string) int {
 		return cmdDeploymentSetMinInstances(args[1:])
 	case "summary":
 		return cmdDeploymentSummary(args[1:])
+	case "diff":
+		return cmdDeploymentDiff(args[1:])
 	case "wait":
 		return cmdDeploymentWait(args[1:])
 	case "get":
@@ -438,6 +440,9 @@ func cmdDeploymentWait(args []string) int {
 				reason := d.RolloutAbortedReason
 				if reason == "" {
 					reason = "the rollout was aborted"
+				}
+				if why := rolloutDecisionOfKind(d, api.RolloutDecisionAbort); why != "" {
+					reason += " (" + why + ")"
 				}
 				return printErr("Safe rollout did not complete", fmt.Errorf("deployment %s stopped before 100%% traffic: %s", d.ID, reason))
 			}
@@ -575,6 +580,7 @@ func cmdDeploymentGet(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "image_digest:", d.ImageDigest)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "kind:", d.Kind)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "status:", d.Status)
+	renderDeploymentConfiguration(d)
 	_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "created_at:", d.CreatedAt)
 	// Issue #977 / ADR-116: annotation block. Each field is
 	// conditional on non-empty so pre-feature rows render the

@@ -1,9 +1,10 @@
-package main
+package main_test
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,17 +16,17 @@ import (
 func TestFaultDurationSweepVariants(t *testing.T) {
 	for _, originalDuration := range []string{"1s", "10s"} {
 		t.Run(originalDuration, func(t *testing.T) {
-			s := sweepTestScenario("duration")
+			s := main.SweepTestScenario("duration")
 			d, _ := time.ParseDuration(originalDuration)
 			s.Steps[1].Load.ChaosSchedule[1].Duration = originalDuration
 			s.Steps[1].Load.Duration = (d + 2*time.Second).String()
 			before, _ := json.Marshal(s)
-			expanded, err := expandTestFaultSweep(s)
+			expanded, err := main.ExpandTestFaultSweep(s)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, c := range expanded.Resilience.FaultMatrix {
-				variant, err := applyTestFaultMatrixCase(expanded, c)
+				variant, err := main.ApplyTestFaultMatrixCase(expanded, c)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -37,7 +38,7 @@ func TestFaultDurationSweepVariants(t *testing.T) {
 				if !reflect.DeepEqual(load.ChaosSchedule[1].Rules, s.Steps[1].Load.ChaosSchedule[1].Rules) || !reflect.DeepEqual(load.ChaosSchedule[0], s.Steps[1].Load.ChaosSchedule[0]) || !reflect.DeepEqual(load.ChaosSchedule[2], s.Steps[1].Load.ChaosSchedule[2]) {
 					t.Fatal("fixed rules or recovery changed")
 				}
-				if err := validateTestScenarioSteps(variant, nil); err != nil {
+				if err := main.ValidateTestScenarioSteps(variant, nil); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -52,7 +53,7 @@ func TestFaultDurationSweepVariants(t *testing.T) {
 func TestFaultDurationSweepRejectsInvalidRuns(t *testing.T) {
 	for _, name := range []string{"index", "duplicate", "short", "long", "fraction", "load-limit", "timeout", "original", "clear", "stages", "requests"} {
 		t.Run(name, func(t *testing.T) {
-			s := sweepTestScenario("duration")
+			s := main.SweepTestScenario("duration")
 			spec := s.Resilience.FaultSweep
 			switch name {
 			case "requests":
@@ -82,9 +83,9 @@ func TestFaultDurationSweepRejectsInvalidRuns(t *testing.T) {
 			case "clear":
 				spec.Phase = "recovery"
 			case "stages":
-				s.Steps[1].Load.Stages = append(s.Steps[1].Load.Stages, testLoadStageSpec{})
+				s.Steps[1].Load.Stages = append(s.Steps[1].Load.Stages, main.TestLoadStageSpec{})
 			}
-			if _, err := expandTestFaultSweep(s); err == nil {
+			if _, err := main.ExpandTestFaultSweep(s); err == nil {
 				t.Fatal("invalid duration sweep accepted")
 			}
 		})
@@ -92,14 +93,14 @@ func TestFaultDurationSweepRejectsInvalidRuns(t *testing.T) {
 }
 
 func TestFaultDurationSweepExecutionReplayReports(t *testing.T) {
-	s := sweepTestScenario("duration")
+	s := main.SweepTestScenario("duration")
 	calls := 0
-	result := runSweepTest(context.Background(), s, func(ctx context.Context, plan testRunPlan) testRunReceipt {
+	result := main.RunSweepTest(context.Background(), s, func(ctx context.Context, plan main.TestRunPlan) main.TestRunReceipt {
 		calls++
-		row := deadlineTestReceipt(plan.Prepared.Scenario, fmt.Sprintf("duration-%d", calls), testMinimizationTarget{Step: "load", Phase: "recovery"}, plan.ReplaySweep.Value == "5s")
-		row.Replay = newTestReplayManifest("checkout", "cold", plan.ReplayCase, plan.Prepared.Scenario)
+		row := main.DeadlineTestReceipt(plan.Prepared.Scenario, fmt.Sprintf("duration-%d", calls), main.TestMinimizationTarget{Step: "load", Phase: "recovery"}, plan.ReplaySweep.Value == "5s")
+		row.Replay = main.NewTestReplayManifest("checkout", "cold", plan.ReplayCase, plan.Prepared.Scenario)
 		row.Replay.Sweep = plan.ReplaySweep
-		row.Replay.Version = testFaultReplayVersion(row.Replay)
+		row.Replay.Version = main.TestFaultReplayVersion(row.Replay)
 		return row
 	})
 	if calls != 6 || result.FaultMatrix.Passed != 2 || result.FaultMatrix.Failed != 1 {
@@ -107,11 +108,11 @@ func TestFaultDurationSweepExecutionReplayReports(t *testing.T) {
 	}
 	for _, group := range result.FaultMatrix.Cases {
 		for _, leaf := range group.Resilience.History {
-			selected, err := selectTestReplay([]testRunReceipt{result}, leaf.RunID)
+			selected, err := main.SelectTestReplay([]main.TestRunReceipt{result}, leaf.RunID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			replay, err := prepareTestReplay(selected, map[string]testScenario{"checkout": s}, ".")
+			replay, err := main.PrepareTestReplay(selected, map[string]main.TestScenario{"checkout": s}, ".")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,17 +121,17 @@ func TestFaultDurationSweepExecutionReplayReports(t *testing.T) {
 			if load.Duration != (duration+2*time.Second).String() || load.ChaosSchedule[1].Duration != group.Sweep.Value || selected.Replay.Version != 8 {
 				t.Fatal("replay lost duration")
 			}
-			changed := sweepTestScenario("duration")
+			changed := main.SweepTestScenario("duration")
 			changed.Resilience.FaultSweep.Values[1] = "6s"
 			if group.Sweep.Value == "5s" {
-				if _, err := prepareTestReplay(selected, map[string]testScenario{"checkout": changed}, "."); err == nil {
+				if _, err := main.PrepareTestReplay(selected, map[string]main.TestScenario{"checkout": changed}, "."); err == nil {
 					t.Fatal("changed duration replay accepted")
 				}
 			}
 		}
 	}
 	path := filepath.Join(t.TempDir(), "duration.html")
-	if err := writeTestHTMLReport(path, "", []testRunReceipt{result}); err != nil {
+	if err := main.WriteTestHTMLReport(path, "", []main.TestRunReceipt{result}); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := os.ReadFile(path)
@@ -147,22 +148,22 @@ func TestFaultDurationSweepRegression(t *testing.T) {
 	baseline := sweepRegReceipt(plan, []int{4, 4, 4}, 100, "before-duration")
 	plan = sweepRegAttach(t, plan, baseline)
 	current := sweepRegReceipt(plan, []int{4, 4, 4}, 100, "now-duration")
-	applyTestSweepBaseline(plan, &current)
+	main.ApplyTestSweepBaseline(plan, &current)
 	if current.SweepRegression.Status != "passed" {
 		t.Fatal(current.SweepRegression)
 	}
 	lost := sweepRegReceipt(plan, []int{4, 2, 4}, 100, "lost-duration")
-	applyTestSweepBaseline(plan, &lost)
+	main.ApplyTestSweepBaseline(plan, &lost)
 	if lost.SweepRegression.Status != "failed" {
 		t.Fatal("lost passing outage accepted")
 	}
 	altered := sweepRegClone(t, baseline)
 	altered.FaultMatrix.Cases[1].RecoveryWorkloadSHA256 = strings.Repeat("0", 64)
 	path := filepath.Join(t.TempDir(), "altered.json")
-	if err := writeTestReport(path, []testRunReceipt{altered}); err != nil {
+	if err := main.WriteTestReport(path, []main.TestRunReceipt{altered}); err != nil {
 		t.Fatal(err)
 	}
-	if err := prepareTestSweepBaselines(path, []testRunPlan{plan}); err == nil {
+	if err := main.PrepareTestSweepBaselines(path, []main.TestRunPlan{plan}); err == nil {
 		t.Fatal("different duration workload accepted")
 	}
 }

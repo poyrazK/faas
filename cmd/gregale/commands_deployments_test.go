@@ -3,7 +3,7 @@
 // cli_test.go: httptest.NewServer fake + t.Setenv + osStdout swap + (for
 // JSON) writeJSONTestStatus from commands_test.go for path-routed
 // handlers. The dispatch placements live in main_test.go.
-package main
+package main_test
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -29,11 +30,11 @@ func TestCmdDeployments_Empty(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdDeployments(nil); code != 0 {
+	if code := main.CmdDeployments(nil); code != 0 {
 		t.Errorf("cmdDeployments empty = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "No deployments yet.") {
@@ -42,8 +43,8 @@ func TestCmdDeployments_Empty(t *testing.T) {
 }
 
 func TestCmdDeploymentsAllEmptyJSONEmitsNoSyntheticRecord(t *testing.T) {
-	resetJSONOut(t)
-	jsonOutput = true
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.DeploymentListResponse{})
 	}))
@@ -51,10 +52,10 @@ func TestCmdDeploymentsAllEmptyJSONEmitsNoSyntheticRecord(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	t.Cleanup(func() { osStdout = oldOut })
-	if code := cmdDeployments([]string{"--app", "demo", "--all"}); code != 0 {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	if code := main.CmdDeployments([]string{"--app", "demo", "--all"}); code != 0 {
 		t.Fatalf("deployments --all = %d", code)
 	}
 	if stdout.Len() != 0 {
@@ -75,7 +76,7 @@ func TestCmdDeployments_NonEmpty(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdDeployments(nil); code != 0 {
+	if code := main.CmdDeployments(nil); code != 0 {
 		t.Errorf("cmdDeployments non-empty = %d, want 0", code)
 	}
 }
@@ -92,7 +93,7 @@ func TestCmdDeployments_AppScoped(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdDeployments([]string{"--app", "history-app", "--limit", "2"}); code != 0 {
+	if code := main.CmdDeployments([]string{"--app", "history-app", "--limit", "2"}); code != 0 {
 		t.Fatalf("cmdDeployments --app = %d, want 0", code)
 	}
 	if seenPath != "/v1/apps/history-app/deployments" {
@@ -118,11 +119,11 @@ func TestCmdDeployments_NextBeforeHint(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdDeployments(nil); code != 0 {
+	if code := main.CmdDeployments(nil); code != 0 {
 		t.Errorf("cmdDeployments next-before = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "--cursor") {
@@ -135,22 +136,22 @@ func TestCmdDeployments_Unauthenticated(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	if code := cmdDeployments(nil); code == 0 {
+	if code := main.CmdDeployments(nil); code == 0 {
 		t.Error("cmdDeployments without token must fail")
 	}
 }
 
 func TestCmdDeployments_InvalidLimit(t *testing.T) {
-	if code := cmdDeployments([]string{"--limit", "999"}); code != 1 {
+	if code := main.CmdDeployments([]string{"--limit", "999"}); code != 1 {
 		t.Errorf("cmdDeployments limit=999 = %d, want 1", code)
 	}
-	if code := cmdDeployments([]string{"--limit", "-1"}); code != 1 {
+	if code := main.CmdDeployments([]string{"--limit", "-1"}); code != 1 {
 		t.Errorf("cmdDeployments limit=-1 = %d, want 1", code)
 	}
 }
 
 func TestCmdDeployments_ExtraPositional(t *testing.T) {
-	if code := cmdDeployments([]string{"foo"}); code != 1 {
+	if code := main.CmdDeployments([]string{"foo"}); code != 1 {
 		t.Errorf("cmdDeployments extra positional = %d, want 1", code)
 	}
 }
@@ -170,15 +171,15 @@ func TestCmdDeployments_JSON_EnvelopeShape(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	if code := cmdDeployments(nil); code != 0 {
+	if code := main.CmdDeployments(nil); code != 0 {
 		t.Errorf("cmdDeployments json = %d, want 0", code)
 	}
 	var env api.DeploymentListResponse
@@ -213,7 +214,7 @@ func TestCmdDeployments_All(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdDeployments([]string{"--all"}); code != 0 {
+	if code := main.CmdDeployments([]string{"--all"}); code != 0 {
 		t.Errorf("cmdDeployments --all = %d, want 0", code)
 	}
 	if calls < 2 {
@@ -224,22 +225,22 @@ func TestCmdDeployments_All(t *testing.T) {
 // --- cmdDeployment ----------------------------------------------------------
 
 func TestCmdDeployment_MissingID(t *testing.T) {
-	if code := cmdDeployment(nil); code != 1 {
+	if code := main.CmdDeployment(nil); code != 1 {
 		t.Errorf("cmdDeployment no args = %d, want 1", code)
 	}
 }
 
 func TestCmdDeployment_ExtraPositional(t *testing.T) {
-	if code := cmdDeployment([]string{"0123456789abcdef0123456789abcdef", "extra"}); code != 1 {
+	if code := main.CmdDeployment([]string{"0123456789abcdef0123456789abcdef", "extra"}); code != 1 {
 		t.Errorf("cmdDeployment extra args = %d, want 1", code)
 	}
 }
 
 func TestCmdDeployment_InvalidID(t *testing.T) {
-	if code := cmdDeployment([]string{"not-hex"}); code != 1 {
+	if code := main.CmdDeployment([]string{"not-hex"}); code != 1 {
 		t.Errorf("cmdDeployment invalid id = %d, want 1", code)
 	}
-	if code := cmdDeployment([]string{"0123456789abcdef"}); code != 1 { // 30 chars
+	if code := main.CmdDeployment([]string{"0123456789abcdef"}); code != 1 { // 30 chars
 		t.Errorf("cmdDeployment short id = %d, want 1", code)
 	}
 }
@@ -264,11 +265,11 @@ func TestCmdDeployment_HappyPath(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
+	if code := main.CmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Errorf("cmdDeployment happy = %d, want 0", code)
 	}
 	// H10-6: inspect's recovery hints print `deployment get <id>`.
-	if code := cmdDeployment([]string{"get", "0123456789abcdef0123456789abcdef"}); code != 0 {
+	if code := main.CmdDeployment([]string{"get", "0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Errorf("cmdDeployment get = %d, want 0", code)
 	}
 }
@@ -278,7 +279,7 @@ func TestCmdDeployment_Unauthenticated(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	if code := cmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code == 0 {
+	if code := main.CmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code == 0 {
 		t.Error("cmdDeployment without token must fail")
 	}
 }
@@ -291,7 +292,7 @@ func TestCmdDeployment_NotFound(t *testing.T) {
 
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := cmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code == 0 {
+	if code := main.CmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code == 0 {
 		t.Error("cmdDeployment 404 must fail")
 	}
 }
@@ -313,15 +314,15 @@ func TestCmdDeployment_JSON_SingleRecord(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	resetJSONOutput()
-	t.Cleanup(resetJSONOutput)
-	jsonOutput = true
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	(*main.JsonOutput) = true
 
-	if code := cmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
+	if code := main.CmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Errorf("cmdDeployment json = %d, want 0", code)
 	}
 	var d api.DeploymentResponse
@@ -369,11 +370,11 @@ func TestRun_DispatchDeployments(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
 	// list path
-	if code := run([]string{"deployments"}); code != 0 {
+	if code := main.Run([]string{"deployments"}); code != 0 {
 		t.Errorf("run deployments = %d, want 0", code)
 	}
 	// singular get
-	if code := run([]string{"deployment", "0123456789abcdef0123456789abcdef"}); code != 0 {
+	if code := main.Run([]string{"deployment", "0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Errorf("run deployment <id> = %d, want 0", code)
 	}
 }
@@ -386,7 +387,7 @@ func TestRun_DispatchDeployments(t *testing.T) {
 // has to shift and this test surfaces that. From PR #202 review.
 func TestRenderDeploymentRow_PinsColumnLayout(t *testing.T) {
 	var buf bytes.Buffer
-	renderDeploymentRow(&buf, api.DeploymentResponse{
+	main.RenderDeploymentRow(&buf, api.DeploymentResponse{
 		ID:          "0123456789abcdef0123456789abcdef",
 		AppID:       "fedcba9876543210fedcba9876543210",
 		ImageDigest: "sha256:abc123",
@@ -415,11 +416,11 @@ func TestRenderDeploymentRow_PinsColumnLayout(t *testing.T) {
 // columns into the data column. Format-string count is the canonical
 // tripwire.
 func TestRenderDeploymentRowWide_PinsColumnLayout(t *testing.T) {
-	if got, want := countFormatVerbs(deploymentRowFmtWide), 10; got != want {
+	if got, want := countFormatVerbs(main.DeploymentRowFmtWide), 10; got != want {
 		t.Fatalf("deploymentRowFmtWide has %d %% verbs, want %d", got, want)
 	}
 	var buf bytes.Buffer
-	renderDeploymentRowWide(&buf, api.DeploymentResponse{
+	main.RenderDeploymentRowWide(&buf, api.DeploymentResponse{
 		ID:          "0123456789abcdef0123456789abcdef",
 		Revision:    7,
 		AppID:       "fedcba9876543210fedcba9876543210",
@@ -449,7 +450,7 @@ func TestRenderDeploymentRowWide_PinsColumnLayout(t *testing.T) {
 // DeployedBy="", PRNumber=0, Tag="", Reason="".
 func TestRenderDeploymentRowWide_EmptyAnnotationsRendersDash(t *testing.T) {
 	var buf bytes.Buffer
-	renderDeploymentRowWide(&buf, api.DeploymentResponse{
+	main.RenderDeploymentRowWide(&buf, api.DeploymentResponse{
 		ID:        "0123456789abcdef0123456789abcdef",
 		AppID:     "fedcba9876543210fedcba9876543210",
 		Kind:      "app",
@@ -522,7 +523,7 @@ func TestTruncateReason(t *testing.T) {
 		{"éééééééééééééééééééééééééééééééééééééééééééé", 5, "ééééé…"},
 	}
 	for _, tc := range tests {
-		if got := truncateReason(tc.in, tc.max); got != tc.want {
+		if got := main.TruncateReason(tc.in, tc.max); got != tc.want {
 			t.Errorf("truncateReason(%q, %d) = %q, want %q", tc.in, tc.max, got, tc.want)
 		}
 	}
@@ -546,11 +547,11 @@ func TestCmdDeployments_NonEmpty_RowsRendered(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdDeployments(nil); code != 0 {
+	if code := main.CmdDeployments(nil); code != 0 {
 		t.Errorf("cmdDeployments = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -585,11 +586,11 @@ func TestCmdDeployment_HappyPath_DetailRendered(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
+	if code := main.CmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Errorf("cmdDeployment = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -638,11 +639,11 @@ func TestCmdDeployment_HostingReceiptRendered(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
 
-	if code := cmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
+	if code := main.CmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Fatalf("cmdDeployment = %d, want 0", code)
 	}
 	out := stdout.String()
@@ -681,10 +682,10 @@ func TestCmdDeployment_RouteReceiptRendered(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 	var stdout bytes.Buffer
-	oldOut := osStdout
-	osStdout = &stdout
-	defer func() { osStdout = oldOut }()
-	if code := cmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
+	oldOut := (*main.OsStdout)
+	(*main.OsStdout) = &stdout
+	defer func() { (*main.OsStdout) = oldOut }()
+	if code := main.CmdDeployment([]string{"0123456789abcdef0123456789abcdef"}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
 	out := stdout.String()
@@ -715,7 +716,7 @@ func TestCmdDeployments_BeforeCursorForwarding(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
 	cursor := "2026-07-23T11:25:00.000000000Z"
-	if code := cmdDeployments([]string{"--before", cursor}); code != 0 {
+	if code := main.CmdDeployments([]string{"--before", cursor}); code != 0 {
 		t.Errorf("cmdDeployments --before = %d, want 0", code)
 	}
 	want := "before=" + url.QueryEscape(cursor) + "&limit=50"
@@ -771,10 +772,10 @@ func TestCmdDeployment_JSON_ShowSecretScanEnvelope(t *testing.T) {
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
 
-	stdout, restoreStdout := swapStdout(t)
-	jsonOutput = true
-	defer func() { jsonOutput = false }()
-	if code := cmdDeploymentGet([]string{
+	stdout, restoreStdout := main.SwapStdout(t)
+	(*main.JsonOutput) = true
+	defer func() { (*main.JsonOutput) = false }()
+	if code := main.CmdDeploymentGet([]string{
 		"--show-secret-scan",
 		"00000000000000000000000000000001",
 	}); code != 0 {

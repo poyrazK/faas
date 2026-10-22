@@ -14,10 +14,9 @@ import (
 )
 
 // composeCandidate is the loose, decoded shape of one
-// docker-compose services entry. We read only the fields §3
-// commits to and ignore the rest — network_mode,
-// volumes, secrets, etc. are out of scope at this phase (they
-// become env/ServiceTime/Limits in Phase 3's app row).
+// docker-compose services entry. The decoder stays non-strict; keys the scan
+// does not apply are reported per service by composeServiceKeyWarnings
+// (ADR-1337) instead of being dropped silently.
 //
 // Build is `any` because compose supports three shapes:
 //
@@ -41,6 +40,13 @@ type composeCandidate struct {
 	Healthcheck any      `yaml:"healthcheck"`
 	Image       string   `yaml:"image"`
 	Profiles    []string `yaml:"profiles"`
+
+	// Process overrides for prebuilt images (ADR-1337).
+	Entrypoint      any    `yaml:"entrypoint"` // string OR []string; empty clears
+	User            any    `yaml:"user"`       // name, uid, or user:group
+	WorkingDir      string `yaml:"working_dir"`
+	StopSignal      string `yaml:"stop_signal"`
+	StopGracePeriod any    `yaml:"stop_grace_period"`
 
 	ServiceBindingPolicy      string                                  `yaml:"x-gregale-service-policy"`
 	ServiceBindingTransport   string                                  `yaml:"x-gregale-service-transport"`
@@ -72,7 +78,14 @@ func buildFromAny(v any) (string, string, bool, error) {
 			return "", "", false, fmt.Errorf("dockerfile path must name a file")
 		}
 		if ctx == "" && df == "" {
-			return "", "", false, nil
+			// Compose defaults the context to the project directory; a
+			// declaration with only build options still builds it.
+			_, hasArgs := x["args"]
+			_, hasTarget := x["target"]
+			if !hasArgs && !hasTarget {
+				return "", "", false, nil
+			}
+			ctx = "."
 		}
 		return ctx, df, true, nil
 	}
@@ -90,6 +103,19 @@ func normalizeComposeRelativePath(value string) string {
 		return "."
 	}
 	return clean
+}
+
+// rawComposeDoc decodes the resolved document loosely so per-service keys can
+// be classified. An empty document decodes to an empty map.
+func rawComposeDoc(body []byte) (map[string]any, error) {
+	var doc map[string]any
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return nil, err
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+	return doc, nil
 }
 
 type composeDoc struct {
@@ -129,9 +155,17 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	resolved, sources, linkWarnings, err := resolveComposeLinks(fsys, resolved, sources)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	src = strings.Join(sources, " + ")
 	var c composeDoc
 	if err := yaml.Unmarshal(resolved, &c); err != nil {
+		return nil, nil, nil, fmt.Errorf("reposcan: parse %s: %w", src, err)
+	}
+	rawDoc, err := rawComposeDoc(resolved)
+	if err != nil {
 		return nil, nil, nil, fmt.Errorf("reposcan: parse %s: %w", src, err)
 	}
 	if len(c.Services) == 0 {
@@ -143,7 +177,9 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			return nil, nil, nil, nil //nolint:nilerr
 		}
 		c = r.Compose
+		rawDoc, _ = rawDoc["compose"].(map[string]any)
 	}
+	rawServices, _ := rawDoc["services"].(map[string]any)
 
 	// Deterministic service ordering.
 	svcNames := make([]string, 0, len(c.Services))
@@ -159,6 +195,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		managed  []Managed
 		warnings []string
 	)
+	warnings = append(warnings, linkWarnings...)
 	composeEnv, envErr := readComposeEnv(fsys)
 	if envErr != nil {
 		return nil, nil, nil, envErr
@@ -269,15 +306,48 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			}
 			continue
 		}
+		rawService, _ := rawServices[name].(map[string]any)
+		for _, warning := range composeServiceKeyWarnings(rawService) {
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
+		}
 		var healthcheck *api.ComposeHealthcheck
+		var process *api.ComposeProcess
+		var dockerfileBuild *api.DockerfileBuildOptions
 		if image != "" {
 			var err error
 			healthcheck, err = composeHealthcheck(s.Healthcheck)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
 			}
-		} else if s.Healthcheck != nil {
-			warnings = append(warnings, "reposcan: "+src+": "+name+": Compose healthcheck overrides currently apply only to prebuilt images")
+			process, err = composeProcess(s, len(command) > 0)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+			}
+		} else {
+			if s.Healthcheck != nil {
+				warnings = append(warnings, "reposcan: "+src+": "+name+": Compose healthcheck overrides currently apply only to prebuilt images")
+			}
+			if keys := composeProcessKeys(s); len(keys) > 0 {
+				warnings = append(warnings, "reposcan: "+src+": "+name+": "+strings.Join(keys, ", ")+
+					" ignored: Compose process overrides apply only to prebuilt images; set ENTRYPOINT, USER, WORKDIR or STOPSIGNAL in the Dockerfile")
+			}
+			rawBuild, _ := rawService["build"].(map[string]any)
+			var buildWarnings []string
+			var err error
+			dockerfileBuild, buildWarnings, err = composeDockerfileBuild(fsys, s.Build, rawBuild, composeEnv, ctx, df)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+			}
+			for _, warning := range buildWarnings {
+				warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
+			}
+		}
+		fileEnvKeys, envFileWarnings, envFileErr := composeEnvFileKeys(fsys, s.EnvFile)
+		if envFileErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, envFileErr)
+		}
+		for _, warning := range envFileWarnings {
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
 		}
 		internalPorts, exposeWarnings := parseExpose(s.Expose)
 		for _, warning := range exposeWarnings {
@@ -295,9 +365,11 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			name:                name,
 			rootDir:             ctx,
 			dockerfile:          df,
+			dockerfileBuild:     dockerfileBuild,
 			image:               image,
 			imageSet:            true,
 			healthcheck:         healthcheck,
+			imageProcess:        process,
 			command:             command,
 			commandShell:        commandShell,
 			dependsOn:           dependencyNames(s.DependsOn),
@@ -313,7 +385,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 
 			ports:         ports,
 			internalPorts: internalPorts,
-			envKeys:       envKeys(s.Environment),
+			envKeys:       mergeEnvKeys(envKeys(s.Environment), fileEnvKeys),
 			source:        src + ": " + name,
 		})
 	}

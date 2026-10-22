@@ -46,4 +46,20 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/builds/{id}/provenance":                  authz.OrgActionReadApp,
 	"GET /v1/builds/{id}/sbom":                        authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/logs":                        authz.OrgActionReadAppLogs,
+
+	// Release approvals (ADR-20261020085706): only owners and admins may
+	// change the policy, so a developer cannot switch approvals off.
+	"GET /v1/apps/{slug}/release-approval-policy":    authz.OrgActionReadApp,
+	"PUT /v1/apps/{slug}/release-approval-policy":    authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/release-approval-policy": authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/release-approvals":          authz.OrgActionReadApp,
+	"GET /v1/deployments/{id}/approvals":             authz.OrgActionReadApp,
+	"POST /v1/deployments/{id}/approvals":            authz.OrgActionApproveAppRelease,
+	// Release diff (ADR-20261021101117).
+	"GET /v1/deployments/{id}/diff": authz.OrgActionReadApp,
+	// Scheduled releases (ADR-20261021152201): scheduling a release is
+	// deploying it.
+	"GET /v1/deployments/{id}/schedule":    authz.OrgActionReadApp,
+	"PUT /v1/deployments/{id}/schedule":    authz.OrgActionDeployApp,
+	"DELETE /v1/deployments/{id}/schedule": authz.OrgActionDeployApp,
 }

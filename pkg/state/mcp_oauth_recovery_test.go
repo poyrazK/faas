@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"errors"
@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestOAuthRenewalRetryPreservesJournalAndFences(t *testing.T) {
@@ -17,11 +18,11 @@ func TestOAuthRenewalRetryPreservesJournalAndFences(t *testing.T) {
 		return api.MCPCatalogMonitorSnapshot{Config: api.MCPCatalogMonitorConfig{Revision: "revision", Enabled: true, Observer: &api.MCPCatalogObserverConfig{Enabled: true, OAuth: &api.MCPCatalogObserverOAuthConfig{RefreshTokenSecretRef: "secret:REFRESH"}}}, ObserverStatus: &api.MCPCatalogObserverStatus{State: "degraded", FailureReason: "credential_unavailable", Renewal: &api.MCPCatalogOAuthRenewal{ID: "operation", State: "failed"}}}
 	}
 	root := makeRoot()
-	out, err := retryCatalogOAuthRenewal(&root, "default", "revision", at)
+	out, err := state.RetryCatalogOAuthRenewal(&root, "default", "revision", at)
 	if err != nil || out.State != "renewal_scheduled" || out.Revision == "revision" || root.ObserverStatus.NextCheckAt == nil || !root.ObserverStatus.NextCheckAt.Equal(at) || root.ObserverStatus.Renewal.ID != "operation" {
 		t.Fatal("retry did not preserve and schedule", out, err)
 	}
-	if _, err = retryCatalogOAuthRenewal(&root, "default", "revision", at); !errors.Is(err, ErrMCPCatalogMonitorChanged) {
+	if _, err = state.RetryCatalogOAuthRenewal(&root, "default", "revision", at); !errors.Is(err, state.ErrMCPCatalogMonitorChanged) {
 		t.Fatal("stale revision replayed", err)
 	}
 	for _, scenario := range []string{"pending", "unknown", "lease", "paused", "saved-uncertain", "reauthorization", "browser-flow"} {
@@ -45,7 +46,7 @@ func TestOAuthRenewalRetryPreservesJournalAndFences(t *testing.T) {
 			case "browser-flow":
 				root.ObserverStatus.OAuthFlow = &api.MCPCatalogOAuthFlow{ExpiresAt: until}
 			}
-			if _, err := retryCatalogOAuthRenewal(&root, "default", "revision", at); !errors.Is(err, ErrConflict) {
+			if _, err := state.RetryCatalogOAuthRenewal(&root, "default", "revision", at); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("unsafe retry allowed", err)
 			}
 			if root.Config.Revision != "revision" {
@@ -57,38 +58,38 @@ func TestOAuthRenewalRetryPreservesJournalAndFences(t *testing.T) {
 	saved := &api.MCPCatalogObserverOAuthStatus{State: "connected", Ciphertext: []byte("sealed")}
 	root.ObserverStatus.Renewal = &api.MCPCatalogOAuthRenewal{ID: "saved-operation", State: "saved", Outcome: "response_recorded", Result: saved}
 	root.ObserverStatus.OAuth = &api.MCPCatalogObserverOAuthStatus{State: "reauthorization_required"}
-	if _, err := retryCatalogOAuthRenewal(&root, "default", "revision", at); err != nil || root.ObserverStatus.Renewal.Result != saved {
+	if _, err := state.RetryCatalogOAuthRenewal(&root, "default", "revision", at); err != nil || root.ObserverStatus.Renewal.Result != saved {
 		t.Fatal("saved response was not preserved for installation", err)
 	}
 }
 
-func TestMCPOAuthRecoveryStoreMemory(t *testing.T) { testMCPOAuthRecoveryStore(t, NewMemStore()) }
+func TestMCPOAuthRecoveryStoreMemory(t *testing.T) { testMCPOAuthRecoveryStore(t, state.NewMemStore()) }
 func TestMCPOAuthRecoveryStorePostgres(t *testing.T) {
-	testMCPOAuthRecoveryStore(t, NewPgStore(pgtest.OpenMigrated(t)))
+	testMCPOAuthRecoveryStore(t, state.NewPgStore(pgtest.OpenMigrated(t)))
 }
-func testMCPOAuthRecoveryStore(t *testing.T, store Store) {
+func testMCPOAuthRecoveryStore(t *testing.T, store state.Store) {
 	t.Helper()
 	ctx := t.Context()
 	account, err := store.CreateAccount(ctx, "renewal-recovery@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "renewal-recovery", Type: AppTypeApp, Status: AppActive})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "renewal-recovery", Type: state.AppTypeApp, Status: state.AppActive})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg := api.MCPCatalogMonitorConfig{Role: "reader", Revision: uuid.NewString(), Enabled: true, FreshnessSeconds: 90, Observer: &api.MCPCatalogObserverConfig{Enabled: true, Endpoint: "/mcp", IntervalSeconds: 30, TimeoutSeconds: 1, OAuth: &api.MCPCatalogObserverOAuthConfig{TokenEndpoint: "https://provider.example/token", ClientID: "reader", RefreshTokenSecretRef: "secret:REFRESH"}}}
-	monitors := store.(MCPCatalogMonitorStore)
+	monitors := store.(state.MCPCatalogMonitorStore)
 	view, err := monitors.ConfigureMCPCatalogMonitor(ctx, account.ID, app.ID, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	observers := store.(MCPCatalogObserverStore)
-	job, err := observers.ClaimMCPCatalogObserver(ctx, MCPCatalogObserverJob{AccountID: account.ID, AppID: app.ID, Role: "reader", Snapshot: view})
+	observers := store.(state.MCPCatalogObserverStore)
+	job, err := observers.ClaimMCPCatalogObserver(ctx, state.MCPCatalogObserverJob{AccountID: account.ID, AppID: app.ID, Role: "reader", Snapshot: view})
 	if err != nil {
 		t.Fatal(err)
 	}
-	renewals := store.(MCPCatalogOAuthRenewalStore)
+	renewals := store.(state.MCPCatalogOAuthRenewalStore)
 	journal, fresh, err := renewals.BeginMCPCatalogOAuthRenewal(ctx, job, strings.Repeat("a", 64))
 	if err != nil || !fresh {
 		t.Fatal("renewal intent", err, fresh)
@@ -100,19 +101,19 @@ func testMCPOAuthRecoveryStore(t *testing.T, store Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := store.(MCPCatalogOAuthRecoveryStore)
+	source := store.(state.MCPCatalogOAuthRecoveryStore)
 	other, err := store.CreateAccount(ctx, "renewal-other@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = source.RetryMCPCatalogOAuthRenewal(ctx, other.ID, app.ID, "reader", view.Config.Revision); !errors.Is(err, ErrNotFound) {
+	if _, err = source.RetryMCPCatalogOAuthRenewal(ctx, other.ID, app.ID, "reader", view.Config.Revision); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("foreign account queued renewal", err)
 	}
 	out, err := source.RetryMCPCatalogOAuthRenewal(ctx, account.ID, app.ID, "reader", view.Config.Revision)
 	if err != nil || out.State != "renewal_scheduled" {
 		t.Fatal("store did not queue recovery", out, err)
 	}
-	if _, err = source.RetryMCPCatalogOAuthRenewal(ctx, account.ID, app.ID, "reader", view.Config.Revision); !errors.Is(err, ErrMCPCatalogMonitorChanged) {
+	if _, err = source.RetryMCPCatalogOAuthRenewal(ctx, account.ID, app.ID, "reader", view.Config.Revision); !errors.Is(err, state.ErrMCPCatalogMonitorChanged) {
 		t.Fatal("stale store retry allowed", err)
 	}
 	root, err := monitors.GetMCPCatalogMonitor(ctx, account.ID, app.ID)

@@ -17,8 +17,11 @@ from faas_sdk.auth import (  # noqa: E402
     AuthClient,
     AuthError,
     AuthUnavailableError,
+    ClientCredentials,
     InvalidTokenError,
     NoTokenError,
+    Organization,
+    ServiceAccount,
     TokenExpiredError,
     bearer_token,
     resource,
@@ -128,6 +131,24 @@ def test_verify_accepts_an_auth_app_token():
     assert claims.issued_at == datetime.fromtimestamp(NOW, tz=UTC)
     assert claims.app_metadata == {"provider": "email"}
     assert claims.raw["aal"] == "aal1"
+    assert claims.organization is None
+
+
+def test_verify_reads_the_impersonating_actor():
+    key, clock = Key("0A1B2C3D"), Clock()
+    auth = AuthApp(key).client(clock)
+    assert auth.verify(key.sign({**user_claims(clock), "act": {"sub": "admin:0A1B2C3D"}})).actor == "admin:0A1B2C3D"
+    assert auth.verify(key.sign(user_claims(clock))).actor is None
+    assert auth.verify(key.sign({**user_claims(clock), "act": "admin"})).actor is None
+
+
+def test_verify_reads_the_active_organization():
+    key, clock = Key("0A1B2C3D"), Clock()
+    auth = AuthApp(key).client(clock)
+    org = {"org_id": "o1", "org_slug": "acme", "org_role": "admin", "org_permissions": ["org:read", 7]}
+    claims = auth.verify(key.sign({**user_claims(clock), **org}))
+    assert claims.organization == Organization(id="o1", slug="acme", role="admin", permissions=("org:read",))
+    assert auth.verify(key.sign({**user_claims(clock), "org_id": "o1"})).organization is None
     assert claims.is_anonymous is False
 
 
@@ -360,3 +381,62 @@ def test_audience_accepts_an_oauth_clients_token():
         mcp.verify(key.sign(user_claims(clock)))
     with pytest.raises(ValueError):
         AuthClient(ORIGIN, audience="")
+
+
+ACCOUNT = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+
+
+def test_verify_reads_the_service_account():
+    key, clock = Key("0A1B2C3D"), Clock()
+    auth = AuthApp(key).client(clock)
+    machine = user_claims(clock, sub=ACCOUNT, session_id=None, email=None, service_account=True, secret_id="k1", scope="docs:read",
+                          org_id="o1", org_slug="acme", org_role="deployer", org_permissions=["docs:read"])
+    claims = auth.verify(key.sign(machine))
+    assert claims.service_account == ServiceAccount(id=ACCOUNT, secret_id="k1")
+    assert claims.scopes == ("docs:read",)
+    assert claims.organization == Organization(id="o1", slug="acme", role="deployer", permissions=("docs:read",))
+    assert auth.verify(key.sign(user_claims(clock))).service_account is None
+    # The marker without the secret it came from is not an account.
+    assert auth.verify(key.sign({**machine, "secret_id": None})).service_account is None
+
+
+def test_client_credentials_caches_tokens_until_shortly_before_expiry():
+    secret = "gasa_" + "a" * 43
+    clock = Clock()
+    seen: list[httpx.Request] = []
+    answer = {"status": 200, "json": {"access_token": "token-1", "token_type": "Bearer", "expires_in": 600}}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(answer["status"], json=answer["json"])
+
+    machine = ClientCredentials(ORIGIN, ACCOUNT, secret, scope=["docs:read", "docs:write"], clock=clock,
+                                http_client=httpx.Client(transport=httpx.MockTransport(handle)))
+    assert machine.token() == "token-1"
+    assert machine.token() == "token-1"
+    assert len(seen) == 1
+    request = seen[0]
+    assert str(request.url) == ISSUER + "/oauth/token"
+    assert request.headers["authorization"] == "Basic " + base64.b64encode(f"{ACCOUNT}:{secret}".encode()).decode()
+    assert request.content == b"grant_type=client_credentials&scope=docs%3Aread+docs%3Awrite"
+    clock.now += 539
+    assert machine.token() == "token-1"
+    answer["json"] = {"access_token": "token-2", "token_type": "Bearer", "expires_in": 600}
+    clock.now += 1
+    assert machine.token() == "token-2"
+    machine.clear()
+    answer.update(status=401, json={"error": "invalid_client"})
+    with pytest.raises(InvalidTokenError) as refused:
+        machine.token()
+    assert refused.value.code == "invalid_client"
+    answer.update(status=400, json={"error": "invalid_scope"})
+    with pytest.raises(AuthError) as scoped:
+        machine.token()
+    assert scoped.value.code == "invalid_scope" and scoped.value.status == 400
+    answer.update(status=429, json={"error": "slow_down"})
+    with pytest.raises(AuthUnavailableError):
+        machine.token()
+    with pytest.raises(ValueError):
+        ClientCredentials(ORIGIN, "nope", secret)
+    with pytest.raises(ValueError):
+        ClientCredentials(ORIGIN, ACCOUNT, "secret")

@@ -35,12 +35,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/rootfs"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 
 	"filippo.io/age"
@@ -118,6 +119,9 @@ type Handler struct {
 	// serving VM is booted. It is an exact opt-in while app-task dispatch is
 	// still dark-launched in schedd.
 	releasePhaseEnabled bool
+	// rehearsalCommandsEnabled mirrors apid's FAAS_REHEARSAL_COMMAND_EXECUTION
+	// gate for the release commands imaged pins in contained rehearsals.
+	rehearsalCommandsEnabled bool
 	// deferLegacyParentBases lets the rolling pre-stage skip child bases the
 	// serving vmmd cannot materialize; the post-switch imaged stages them.
 	deferLegacyParentBases bool
@@ -187,7 +191,10 @@ type Handler struct {
 	// OCI pull sites inside aboveBaseLayers + the legacy
 	// PullLayers path, plus imaged_oci_pull_duration_seconds
 	// per-pull op{manifest,config,blob,above_base}.
-	ops *wire.OpsMetrics
+	ops                *wire.OpsMetrics
+	handoffMetrics     *buildImageHandoffMetrics
+	preparationMetrics *imagePreparationProgressMetrics
+	postCaptureMetrics *postCaptureMetrics
 	// audit (issue #470 / PR C / ADR-074) is the imaged-side
 	// audit-log seam used to emit app.warm_snapshot_stale from the
 	// MarkFCSnapshotsStale path. Wired via WithAudit; nil opts
@@ -515,6 +522,14 @@ func (h *Handler) WithHostingSmokeRequired(required bool) *Handler {
 	return h
 }
 
+// WithRehearsalCommandsEnabled lets a contained rehearsal's release command run
+// as a pinned contained command (ADR-20261020150000). Disabled, such a
+// deployment fails closed with an actionable reason instead of stalling.
+func (h *Handler) WithRehearsalCommandsEnabled(enabled bool) *Handler {
+	h.rehearsalCommandsEnabled = enabled
+	return h
+}
+
 // WithReleasePhaseEnabled enables the ADR-230 pre-boot release gate. Operators
 // must enable FAAS_APP_TASK_DISPATCH on schedd at the same time; keeping this
 // opt-in prevents a partially rolled-out fleet from queueing tasks forever.
@@ -647,8 +662,29 @@ func (h *Handler) replicateLayer(ctx context.Context, layerKey string) error {
 // PullLayers. Nil-safe (Observe* is no-op on a nil receiver).
 // Mirrors pkg/builderd/builderd.go's WithOpsMetrics (PR #124,
 // ADR-030) and cmd/apid/server.go's WithOpsMetrics (this PR).
+// Wire before Loop.Run; one handler owns handoff diagnostics per registry.
 func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
+	if h.ops == ops {
+		return h
+	}
+	if h.handoffMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.handoffMetrics)
+	}
+	if h.preparationMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.preparationMetrics)
+	}
+	if h.postCaptureMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.postCaptureMetrics)
+	}
 	h.ops = ops
+	h.handoffMetrics = nil
+	h.preparationMetrics = nil
+	h.postCaptureMetrics = nil
+	if ops != nil && ops.Registry() != nil {
+		h.handoffMetrics = newBuildImageHandoffMetrics(ops.Registry())
+		h.preparationMetrics = newImagePreparationProgressMetrics(ops.Registry())
+		h.postCaptureMetrics = newPostCaptureMetrics(ops.Registry())
+	}
 	return h
 }
 
@@ -867,7 +903,7 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	// the ext4 bytes to a local tempdir so grype dir:<path> can
 	// scan a filesystem path regardless of where the canonical
 	// bytes live.
-	appsKey := sched.AppLayerKey(app.Slug, layerID)
+	appsKey := storagekey.AppLayer(app.Slug, layerID)
 	rc, err := be.Get(ctx, appsKey)
 	if err != nil {
 		return "", func() {}, fmt.Errorf("imaged: scan stage backend.Get(%q): %w", appsKey, err)
@@ -1544,7 +1580,7 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	if err := h.deleteJobArtifactKey(ctx, be, sched.JobLayerKey(jobID)); err != nil {
+	if err := h.deleteJobArtifactKey(ctx, be, storagekey.JobLayer(jobID)); err != nil {
 		return err
 	}
 	if lister, ok := be.(storage.LocalArtifactLister); ok {
@@ -1671,7 +1707,7 @@ func jobArtifactJobID(key string) (string, bool) {
 	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(key, prefix), suffix), "/")
 	if len(parts) == 1 {
 		stem := parts[0]
-		if _, err := uuid.Parse(stem); err == nil && sched.JobLayerKey(stem) == key {
+		if _, err := uuid.Parse(stem); err == nil && storagekey.JobLayer(stem) == key {
 			return stem, true
 		}
 		attempt := strings.Split(stem, "__")
@@ -1684,7 +1720,7 @@ func jobArtifactJobID(key string) (string, bool) {
 		if _, err := uuid.Parse(attempt[1]); err != nil {
 			return "", false
 		}
-		return attempt[0], sched.JobLayerAttemptKey(attempt[0], attempt[1]) == key
+		return attempt[0], storagekey.JobLayerAttempt(attempt[0], attempt[1]) == key
 	}
 	return "", false
 }
@@ -1916,6 +1952,9 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 			return h.failReleasePhaseUnavailable(ctx, dep)
 		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
+		if errors.Is(err, errReleaseDeploymentClosed) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -1946,11 +1985,19 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 	if !errors.Is(err, state.ErrNotFound) {
 		return state.AppTask{}, fmt.Errorf("imaged: load deployment release task: %w", err)
 	}
-	task, err = h.store.CreateAppTask(ctx, state.CreateAppTaskParams{
+	params := state.CreateAppTaskParams{
 		AccountID: app.AccountID, AppID: app.ID, DeploymentID: dep.ID,
 		Kind: state.AppTaskKindRelease, Command: append([]string(nil), dep.ReleaseCommand...),
 		CommandShell: dep.ReleaseCommandShell,
-	})
+	}
+	contained, err := h.prepareContainedRelease(ctx, app, dep, &params)
+	if err != nil {
+		return state.AppTask{}, err
+	}
+	task, err = h.store.CreateAppTask(ctx, params)
+	if contained && err != nil && !errors.Is(err, state.ErrConflict) && state.IsScenarioCommandAdmissionRefused(err) {
+		return state.AppTask{}, h.failContainedRelease(ctx, dep, "the rehearsal run refused the release command: "+err.Error())
+	}
 	if errors.Is(err, state.ErrConflict) {
 		// A duplicate snapshot/build notification can race another imaged
 		// process. The partial unique index is the admission fence; re-read the
@@ -1962,6 +2009,49 @@ func (h *Handler) ensureReleaseTask(ctx context.Context, app state.App, dep stat
 	}
 	h.log.Info("imaged: release task admitted", "deployment_id", dep.ID, "task_id", task.ID)
 	return task, nil
+}
+
+// errReleaseDeploymentClosed reports that release admission already failed the
+// deployment durably; there is nothing left to wait for or prime.
+var errReleaseDeploymentClosed = errors.New("imaged: release admission closed the deployment")
+
+// prepareContainedRelease pins the release of an app enrolled in a contained
+// rehearsal as that run's contained command (ADR-20261020150000): it executes
+// in a fenced command VM against the run's isolated fixtures, with a durable
+// receipt, instead of being refused by containment admission.
+func (h *Handler) prepareContainedRelease(ctx context.Context, app state.App, dep state.Deployment, params *state.CreateAppTaskParams) (bool, error) {
+	policies, ok := h.store.(interface {
+		ScenarioRehearsalNetworkRun(context.Context, string) (string, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	runID, err := policies.ScenarioRehearsalNetworkRun(ctx, app.ID)
+	if err != nil {
+		return false, fmt.Errorf("imaged: read rehearsal containment for release: %w", err)
+	}
+	if runID == "" {
+		return false, nil
+	}
+	if !h.rehearsalCommandsEnabled {
+		return true, h.failContainedRelease(ctx, dep, "release commands in contained rehearsals require FAAS_REHEARSAL_COMMAND_EXECUTION=1 on imaged and apid")
+	}
+	envelope, err := rehearsalcommand.ContainedRelease(runID, dep.ID, dep.ReleaseCommand, dep.ReleaseCommandShell)
+	if err != nil {
+		return true, h.failContainedRelease(ctx, dep, "the release command cannot be pinned as a contained rehearsal command: "+err.Error())
+	}
+	params.Command, params.CommandShell, params.MaxOutputBytes = envelope, false, rehearsalcommand.MaxReceiptBytes
+	return true, nil
+}
+
+func (h *Handler) failContainedRelease(ctx context.Context, dep state.Deployment, detail string) error {
+	failed, err := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeReleasePhaseUnavailable, detail)
+	if err != nil {
+		return fmt.Errorf("imaged: fail contained rehearsal release: %w", err)
+	}
+	h.log.Warn("imaged: contained rehearsal release cannot run; failing candidate", "deployment_id", dep.ID, "reason", detail)
+	h.notifyDeploymentState(ctx, failed.AppID, failed.ID, state.DeployFailed)
+	return errReleaseDeploymentClosed
 }
 
 // applyReleaseTaskOutcome returns wait=true when deployment priming must not
@@ -2324,7 +2414,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	// economics (CLAUDE.md "load-bearing — DO NOT fix"). The M5 fallback
 	// below streams all layers via oci.PullLayers for fakes that don't
 	// implement ManifestPuller.
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	be, err := h.storageFor()
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "imaged: storageFor")
@@ -2603,7 +2693,7 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.transitionFailure(ctx, dep.ID, msg)
 			return findings, fmt.Errorf("imaged: %s", msg)
 		}
-		layerKey := sched.AppSidecarLayerKey(app.Slug, dep.ID, sc.Name)
+		layerKey := storagekey.AppSidecarLayer(app.Slug, dep.ID, sc.Name)
 		// Per-sidecar pull path. We use the same h.oci
 		// ManifestPuller as the main image; per-sidecar
 		// auth may differ (a sidecar image can sit on a
@@ -2971,7 +3061,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		defer cleanupBuiltLayers()
 	}
 
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	be, err := h.storageFor()
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "storageFor")
@@ -3269,7 +3359,12 @@ func (h *Handler) rejectEphemeralSnapshot(ctx context.Context, candidate snapsho
 // handleDeploymentActivation is the common post-readiness deployment gate.
 // snapshot is populated for request/service flows; ready is populated for the
 // non-snapshot worker/job flows. Exactly one input must be present.
-func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snapshotWrittenPayload, ready *deploymentReadyPayload) error {
+func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snapshotWrittenPayload, ready *deploymentReadyPayload) (err error) {
+	input, phase := "snapshot", "evidence"
+	if ready != nil {
+		input = "ready"
+	}
+	defer func() { h.postCaptureMetrics.observeAttempt(ctx, input, phase, err) }()
 	deploymentID := snapshot.DeploymentID
 	if ready != nil {
 		deploymentID = ready.DeploymentID
@@ -3569,9 +3664,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 	}
 
+	phase = "dependency"
 	if stop, gateErr := h.gateProjectDependencyActivation(ctx, dep); stop || gateErr != nil {
 		return gateErr
 	}
+	phase = "verification"
 	// Snapshot candidates are verified through the gateway's authenticated,
 	// deployment-pinned smoke path before the live pointer moves. Keeping the
 	// predecessor live during this phase is the zero-downtime boundary: a slow
@@ -3640,6 +3737,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// actually-superseded predecessor may be drained. Manual traffic splits and
 	// canaries can keep the predecessor live, so confirm its durable state
 	// instead of inferring it from the attempted promotion.
+	phase = "promotion"
 	checkedRollback := false
 	if rollbacks, ok := h.store.(state.CheckedRollbackStore); ok {
 		operation, err := rollbacks.CheckedRollbackForTarget(ctx, dep.ID)
@@ -3648,6 +3746,20 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		checkedRollback = err == nil && operation.Status == "preparing"
 	}
+	// ADR-1446: a plain rollback (manual or first-wake 5xx auto-rollback)
+	// deliberately activates an older revision. Like a checked rollback it
+	// must skip the latest-revision fence and the source-branch freshness
+	// check, which would otherwise supersede every rollback target.
+	if !checkedRollback {
+		if prepared, ok := h.store.(state.RollbackPreparedStore); ok {
+			isPrepared, err := prepared.DeploymentRollbackPrepared(ctx, dep.ID)
+			if err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("imaged: read rollback marker: %w", err)
+			}
+			checkedRollback = isPrepared
+		}
+	}
+
 	if h.validatorArtifactCheck != nil {
 		if err := h.validatorArtifactCheck(ctx, dep.AppID, dep.ID); err != nil {
 			return fmt.Errorf("imaged: validator artifact preflight: %w", err)
@@ -3733,6 +3845,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		return fmt.Errorf("imaged: mark live: %w", promoteErr)
 	}
+	phase = "finalize"
 	h.notifyDeploymentRoute(ctx, dep.AppID, dep.ID)
 	if previousLiveID != "" {
 		previous, previousErr := h.store.DeploymentByID(ctx, previousLiveID)
@@ -5014,7 +5127,7 @@ func (h *Handler) buildFullRootfsLayer(
 	if err != nil {
 		return fmt.Errorf("imaged: full-rootfs storage backend: %w", err)
 	}
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := storagekey.AppLayer(app.Slug, dep.ID)
 	sbomKey := h.sbomStorageKeyForDeployment(ctx, dep.ID)
 	sbomRun := h.syftRun
 	// Direct OCI deployments have no source build row and therefore no

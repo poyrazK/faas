@@ -586,7 +586,9 @@ second provider. Tracking: epic #4700.
 - **GCP, warm standby outside the cell:**
   - a Postgres async streaming replica of the OVH primary over an
     encrypted link, plus the second pgBackRest repository;
-  - the control-plane daemons installed but stopped;
+  - the control plane's slowest software pre-installed and the primary's
+    release recorded, so a takeover only installs packages, configuration
+    and that release (see "Takeover speed" below);
   - it is not in the manifest's `control_plane` group, so the singleton
     leases stay off (§4) and it never serves traffic while the OVH node is
     up.
@@ -603,6 +605,12 @@ second provider. Tracking: epic #4700.
   - Replication is plain physical streaming. The primary holds a
     `faas_standby` slot capped by `max_slot_wal_keep_size`, and admits the
     `replicator` role from the standby's overlay address only.
+  - Replication is TLS-only (2026-10-18). The primary serves a
+    self-signed certificate that the standby pins over the Ansible
+    connection and verifies (`sslmode=verify-full`); `pg_hba` admits the
+    replicator with `hostssl` only. The overlay alone did not guarantee
+    encryption: a `static` overlay (a provider network, as on the GCP beta)
+    has none, and a link between providers would be built outside Gregale.
   - The standby's `pg_basebackup` seed refuses to wipe a cluster that may
     be a promoted primary.
   - The second backup repository is a separate decision; the replica does
@@ -623,6 +631,23 @@ second provider. Tracking: epic #4700.
   A rebuild after losing both hosts restores the bundle
   (`gregalectl backup restore-cp-state`, `cp_state_restore.yml`) before
   bootstrap. Runbook: `docs/runbooks/ControlPlaneStateBackup.md`.
+- **Takeover speed** (2026-10-18). The standby does not hold the release
+  installed and stopped:
+  - the CD bundle is built per host (its Prometheus configuration names
+    the host), so the primary's bundle cannot be copied;
+  - deployctl has no stage-only step: activation runs migrations, which
+    need a writable primary;
+  - the control-plane roles installed through apt start their services on
+    install.
+
+  Instead, `postgres_standby.yml` runs ahead of time the slow steps of a
+  fresh control-plane bootstrap that have no side effects (the Firecracker
+  guest kernel build and the pinned Firecracker and scanner downloads), and
+  every standby sync records the primary's release (commit, manifest hash,
+  per-unit versions). At takeover, bootstrap skips that work and CD deploys
+  the recorded release. Staging the release itself on the standby (a CD
+  target and a deployctl stage step) is left until the drill shows the
+  recovery target needs it.
 - **Why not two control nodes (OVH + GCP)?**
   - etcd and Patroni need three members to survive losing one. With two,
     losing either stops automatic failover, and a cut between the

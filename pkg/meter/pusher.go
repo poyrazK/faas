@@ -425,6 +425,13 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 			p.log.Warn("meter: calculate meter overage", "account", acct.ID, "provider", ops.opLabel, "meter", meter, "hour", window.Hour, "quantity", window.Quantity, "err", err)
 			continue
 		}
+		if err := p.checkFundedEgressDelivery(ctx, acct, window, policy, totalBillable); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			p.log.Warn("meter: funded egress delivery held", "account", acct.ID, "hour", window.Hour, "err", err)
+			continue
+		}
 		if policy.Mode == billing.MeterDeliveryShadow {
 			if err := p.store.RecordBillingMeterUsageDelivery(ctx, ops.opLabel, acct.ID, meter, window.Hour, billable); err != nil {
 				if firstErr == nil {

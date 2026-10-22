@@ -319,12 +319,12 @@ func TestCmdApps_Empty(t *testing.T) {
 		t.Errorf("cmdApps empty = %d, want 0", code)
 	}
 	out := stdout.String()
-	// Template-friendly nudge (issue #65 D5).
+	// One line pointing at the guided start (issue #65 D5).
 	if !strings.Contains(out, "No apps yet.") {
 		t.Errorf("missing 'No apps yet.' line\nfull: %s", out)
 	}
-	if !strings.Contains(out, "--template hello-node") {
-		t.Errorf("missing template hint\nfull: %s", out)
+	if !strings.Contains(out, "gregale start") {
+		t.Errorf("missing start hint\nfull: %s", out)
 	}
 	// The old --image hint must be gone.
 	if strings.Contains(out, "--image <ref>") {
@@ -423,7 +423,7 @@ func TestCmdDeploy_HappyPath(t *testing.T) {
 		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case r.URL.Path == "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			// Fake-apid "live" terminal frame so the CLI exits 0.
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -461,7 +461,7 @@ func TestCmdDeploy_HappyPath_PrintsColdWakeSentence(t *testing.T) {
 		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case r.URL.Path == "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, _ := w.(http.Flusher)
@@ -491,8 +491,8 @@ func TestCmdDeploy_HappyPath_PrintsColdWakeSentence(t *testing.T) {
 	for _, want := range []string{
 		"Deployed. https://my-app.gregale.dev",
 		"scales to zero when idle",
-		"~0.3–0.8s to wake",
-		"normal and free",
+		"restores it from a snapshot",
+		"requests after that are instant",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout missing %q\nfull: %s", want, out)
@@ -509,7 +509,7 @@ func TestCmdDeploy_HappyPath_PrintsHostingReceipt(t *testing.T) {
 		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case r.URL.Path == "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = fmt.Fprint(w, "event: status\ndata: {\"status\":\"live\"}\n\n")
@@ -610,7 +610,7 @@ func TestCmdDeploy_AppAlreadyExists(t *testing.T) {
 		case r.URL.Path == "/v1/apps/existing":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a-existing", Slug: "existing"})
 		case r.URL.Path == "/v1/apps/existing/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "existing"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a-existing"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, _ := w.(http.Flusher)
@@ -701,7 +701,7 @@ func TestCmdDeploy_StreamBrokenRecoversViaGetDeployment(t *testing.T) {
 			case r.URL.Path == "/v1/apps":
 				_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 			case r.URL.Path == "/v1/apps/my-app/deployments":
-				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 			case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 				w.Header().Set("Content-Type", "text/event-stream")
 				flusher, _ := w.(http.Flusher)
@@ -713,7 +713,7 @@ func TestCmdDeploy_StreamBrokenRecoversViaGetDeployment(t *testing.T) {
 				}
 				<-r.Context().Done()
 			case r.URL.Path == "/v1/deployments/d1":
-				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "my-app"})
+				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "a1"})
 			default:
 				http.Error(w, "no", 404)
 			}
@@ -733,7 +733,7 @@ func TestCmdDeploy_StreamBrokenRecoversViaGetDeployment(t *testing.T) {
 			case r.URL.Path == "/v1/apps":
 				_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 			case r.URL.Path == "/v1/apps/my-app/deployments":
-				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 			case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 				w.Header().Set("Content-Type", "text/event-stream")
 				flusher, _ := w.(http.Flusher)
@@ -744,7 +744,7 @@ func TestCmdDeploy_StreamBrokenRecoversViaGetDeployment(t *testing.T) {
 				<-r.Context().Done()
 			case r.URL.Path == "/v1/deployments/d1":
 				_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-					ID: "d1", Status: "failed", AppID: "my-app", Error: "oom",
+					ID: "d1", Status: "failed", AppID: "a1", Error: "oom",
 				})
 			default:
 				http.Error(w, "no", 404)
@@ -766,7 +766,7 @@ func TestCmdDeploy_FailedStatusFrameRefreshesFailureReason(t *testing.T) {
 		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case r.URL.Path == "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = fmt.Fprint(w, "event: status\ndata: {\"status\":\"failed\"}\n\n")
@@ -776,7 +776,7 @@ func TestCmdDeploy_FailedStatusFrameRefreshesFailureReason(t *testing.T) {
 			<-r.Context().Done()
 		case r.URL.Path == "/v1/deployments/d1":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID: "d1", Status: "failed", AppID: "my-app", Error: "build exited 1",
+				ID: "d1", Status: "failed", AppID: "a1", Error: "build exited 1",
 			})
 		default:
 			http.Error(w, "no", http.StatusNotFound)
@@ -832,7 +832,7 @@ func TestCmdDeploy_StreamOpenFailsRecoversViaGetDeployment(t *testing.T) {
 		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case r.URL.Path == "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			// Hijack the connection and close it without writing a
 			// single byte — the CLI sees a network-level EOF on Do().
@@ -848,7 +848,7 @@ func TestCmdDeploy_StreamOpenFailsRecoversViaGetDeployment(t *testing.T) {
 			}
 			_ = conn.Close()
 		case r.URL.Path == "/v1/deployments/d1":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "a1"})
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -975,7 +975,7 @@ func TestCmdDeploy_JSON_NoWaitReturnsQueuedReceipt(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case "/v1/apps/my-app/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID: "d1", Status: "pending", AppID: "my-app",
+				ID: "d1", Status: "pending", AppID: "a1",
 			})
 		default:
 			http.Error(w, "no", 404)
@@ -1229,7 +1229,7 @@ func TestRenderAPIError_FiveLineShape(t *testing.T) {
 	// 7 expected lines:
 	//   0: title (✗ No process…)
 	//   1: detail  (  your app…)
-	//   2: hint    (  💡 hint: …)
+	//   2: hint    (  hint: …)
 	//   3: why     (  why: …)
 	//   4: fix     (  → fix: … — multi-line → at least 1 line here)
 	//   5: relevant logs (  ┌─ relevant logs ─)
@@ -1453,8 +1453,8 @@ func TestCmdApp_Min1_Hobby_NoEcho(t *testing.T) {
 // --- cmdLogin first-run quickstart (issue #65 D4) ---------------------------
 
 // TestCmdLogin_FirstRun_PrintsQuickstart pins that a fresh account
-// (ListApps returns []) sees the 3-line UX §8 quickstart after the
-// success line. Failure to list apps must NOT block login (silent).
+// (ListApps returns []) sees the UX §8 quickstart after the success
+// line: one next step, gregale start. Failure to list apps must NOT block login (silent).
 func TestCmdLogin_FirstRun_PrintsQuickstart(t *testing.T) {
 	setupHermeticTokensEnv(t)
 	setFakeKeyring(t)
@@ -1486,11 +1486,15 @@ func TestCmdLogin_FirstRun_PrintsQuickstart(t *testing.T) {
 	for _, want := range []string{
 		"✓ Logged in as jane@x.com (pro plan)",
 		"You're in. Next step",
-		"gregale deploy --template hello-node",
-		"gregale deploy --tarball",
+		"  gregale start\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout missing %q\nfull: %s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"--template", "--tarball", "cd my-project"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("quickstart offers more than one next step (%q)\nfull: %s", unwanted, out)
 		}
 	}
 }
@@ -1587,7 +1591,7 @@ func TestCmdDeploy_Recovery_PrintsColdWakeSentence(t *testing.T) {
 		case r.URL.Path == "/v1/apps":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "my-app"})
 		case r.URL.Path == "/v1/apps/my-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, _ := w.(http.Flusher)
@@ -1599,7 +1603,7 @@ func TestCmdDeploy_Recovery_PrintsColdWakeSentence(t *testing.T) {
 			}
 			<-r.Context().Done()
 		case r.URL.Path == "/v1/deployments/d1":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "my-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "live", AppID: "a1"})
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -1621,8 +1625,8 @@ func TestCmdDeploy_Recovery_PrintsColdWakeSentence(t *testing.T) {
 	for _, want := range []string{
 		"Deployed. https://my-app.gregale.dev",
 		"scales to zero when idle",
-		"~0.3–0.8s to wake",
-		"normal and free",
+		"restores it from a snapshot",
+		"requests after that are instant",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("recovery stdout missing %q\nfull: %s", want, out)
@@ -1656,7 +1660,7 @@ func TestCmdDeploy_RequireAuthn_CarryThrough(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "authn-app", RequireAuthn: true})
 		case r.URL.Path == "/v1/apps/authn-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "authn-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a1"})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/d1/logs"):
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, _ := w.(http.Flusher)
@@ -1810,7 +1814,7 @@ func TestCmdDeploy_RequireAuthn_ExistingAppPATCH(t *testing.T) {
 			}
 			<-r.Context().Done()
 		case r.URL.Path == "/v1/apps/existing-app/deployments":
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "existing-app"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "d1", Status: "pending", AppID: "a-existing"})
 		default:
 			http.Error(w, "no", 404)
 		}

@@ -110,6 +110,15 @@ func OverrideDeployBase(t *testing.T, stubRef string) {
 	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", stubRef)
 }
 
+// ClearDeployBaseOverride removes any inherited runtime-base override, for
+// tests that must resolve the host-approved base through the production
+// producer path. It lives here so cmd/e2e tests never set the variable
+// directly (TestMetalTestsDoNotSetTheBuilderBaseOverrideDirectly).
+func ClearDeployBaseOverride(t *testing.T) {
+	t.Helper()
+	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", "")
+}
+
 // PointDeployBaseAtUnreachable points imaged's runtime base at a ref that
 // cannot be pulled, for tests that stage a validated local base first and
 // exercise imaged's fallback to it. Unlike OverrideDeployBase it always
@@ -119,4 +128,15 @@ func OverrideDeployBase(t *testing.T, stubRef string) {
 func PointDeployBaseAtUnreachable(t *testing.T, ref string) {
 	t.Helper()
 	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", ref)
+}
+
+// ConfigureNativeBaseImages stages pinned real base images in private test
+// storage through imaged's verified producer path. It never imports an ext4 as
+// image provenance or writes the operator's shared builder file.
+func ConfigureNativeBaseImages(t *testing.T, builderRef, runtimeRef, builderPath string) {
+	t.Helper()
+	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", builderRef)
+	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", runtimeRef)
+	t.Setenv("FAAS_BUILDER_BASE_PATH", builderPath)
+	t.Setenv("FAAS_TEST_BUILDER_BASE_PATH", builderPath)
 }

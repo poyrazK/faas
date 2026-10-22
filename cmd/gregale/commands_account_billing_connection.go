@@ -114,5 +114,5 @@ func printStatementInvoiceExport(tw *tabwriter.Writer, v api.StatementInvoiceExp
 		link = v.HostedInvoiceURL
 	}
 	_, _ = fmt.Fprintf(tw, "Statement\t%s\nInvoice\t%s %s (%s)\nCustomer\t%s\nAmount\t%s\nOpen\t%s\n",
-		v.StatementID, v.Provider, v.InvoiceID, v.Status, v.Customer, formatMillicents(v.Currency, v.AmountMinor*1000), dashIfEmpty(link))
+		v.StatementID, v.Provider, v.InvoiceID, v.Status, v.Customer, formatMillicents(v.Currency, api.MinorToMillicents(v.Currency, v.AmountMinor)), dashIfEmpty(link))
 }

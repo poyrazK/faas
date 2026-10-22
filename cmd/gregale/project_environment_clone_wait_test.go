@@ -1,5 +1,5 @@
 // adr: 590
-package main
+package main_test
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -22,12 +23,12 @@ func cloneWaitFixture() api.ProjectEnvironmentCloneOperationResponse {
 }
 
 func TestEnvCreateFullWaitReturnsOneReceipt(t *testing.T) {
-	resetJSONOut(t)
-	oldOut, oldErr, oldInterval := osStdout, osStderr, projectEnvironmentClonePollInterval
+	main.ResetJSONOut(t)
+	oldOut, oldErr, oldInterval := (*main.OsStdout), (*main.OsStderr), (*main.ProjectEnvironmentClonePollInterval)
 	var out, errOut bytes.Buffer
-	osStdout, osStderr, jsonOutput, projectEnvironmentClonePollInterval = &out, &errOut, true, time.Millisecond
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput), (*main.ProjectEnvironmentClonePollInterval) = &out, &errOut, true, time.Millisecond
 	t.Cleanup(func() {
-		osStdout, osStderr, jsonOutput, projectEnvironmentClonePollInterval = oldOut, oldErr, false, oldInterval
+		(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput), (*main.ProjectEnvironmentClonePollInterval) = oldOut, oldErr, false, oldInterval
 	})
 	op, calls := cloneWaitFixture(), 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +41,7 @@ func TestEnvCreateFullWaitReturnsOneReceipt(t *testing.T) {
 				t.Errorf("request = %+v, %v", req, err)
 			}
 			w.WriteHeader(http.StatusAccepted)
-			writeJSONTest(w, api.ProjectEnvironmentResponse{Slug: "stage", CloneOperation: &op})
+			main.WriteJSONTest(w, api.ProjectEnvironmentResponse{Slug: "stage", CloneOperation: &op})
 			return
 		}
 		calls++
@@ -50,7 +51,7 @@ func TestEnvCreateFullWaitReturnsOneReceipt(t *testing.T) {
 		if calls == 2 {
 			current.Status = "ready"
 		}
-		writeJSONTest(w, current)
+		main.WriteJSONTest(w, current)
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
@@ -58,10 +59,10 @@ func TestEnvCreateFullWaitReturnsOneReceipt(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
 	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
-	if code := envCreate([]string{"--full", "--wait", "stage", "--from", "production", "--project", "shop", "--timeout", "1"}); code != 0 {
+	if code := main.EnvCreate([]string{"--full", "--wait", "stage", "--from", "production", "--project", "shop", "--timeout", "1"}); code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, errOut.String())
 	}
-	var receipt projectEnvironmentCloneWaitReceipt
+	var receipt main.ProjectEnvironmentCloneWaitReceipt
 	d := json.NewDecoder(&out)
 	if err := d.Decode(&receipt); err != nil || !receipt.Succeeded || receipt.Clone.Status != "ready" || calls != 2 {
 		t.Fatalf("receipt = %+v, calls = %d, error = %v", receipt, calls, err)
@@ -73,9 +74,9 @@ func TestEnvCreateFullWaitReturnsOneReceipt(t *testing.T) {
 }
 
 func TestProjectEnvironmentCloneWaitTimeoutFailureAndIdentity(t *testing.T) {
-	oldInterval := projectEnvironmentClonePollInterval
-	projectEnvironmentClonePollInterval = time.Millisecond
-	t.Cleanup(func() { projectEnvironmentClonePollInterval = oldInterval })
+	oldInterval := (*main.ProjectEnvironmentClonePollInterval)
+	(*main.ProjectEnvironmentClonePollInterval) = time.Millisecond
+	t.Cleanup(func() { (*main.ProjectEnvironmentClonePollInterval) = oldInterval })
 	for _, vector := range []string{"timeout", "failed", "compensated", "identity", "revision", "unknown", "cancelled"} {
 		t.Run(vector, func(t *testing.T) {
 			initial := cloneWaitFixture()
@@ -91,7 +92,7 @@ func TestProjectEnvironmentCloneWaitTimeoutFailureAndIdentity(t *testing.T) {
 				case "unknown":
 					current.Status = "unexpected"
 				}
-				writeJSONTest(w, current)
+				main.WriteJSONTest(w, current)
 			}))
 			defer srv.Close()
 			ctx, cancel := context.WithCancel(context.Background())
@@ -104,7 +105,7 @@ func TestProjectEnvironmentCloneWaitTimeoutFailureAndIdentity(t *testing.T) {
 			if vector == "timeout" {
 				timeout = 20 * time.Millisecond
 			}
-			op, timedOut, err := waitForProjectEnvironmentClone(ctx, NewClient(srv.URL, "test"), initial, timeout)
+			op, timedOut, err := main.WaitForProjectEnvironmentClone(ctx, main.NewClient(srv.URL, "test"), initial, timeout)
 			wantError := vector == "identity" || vector == "revision" || vector == "unknown" || vector == "cancelled"
 			if (err != nil) != wantError || timedOut != (vector == "timeout") || (vector == "failed" || vector == "compensated") && op.Status != vector {
 				t.Fatalf("status = %s, timeout = %t, error = %v", op.Status, timedOut, err)

@@ -107,8 +107,8 @@ if sys.argv[2]:
 print(Template(sys.argv[1]).render(**kw), end="")
 `
 		for _, tc := range []struct{ address, want string }{
-			{"10.42.0.9", "host    replication     replicator      10.42.0.9/32"},
-			{"fd00::9", "host    replication     replicator      fd00::9/128"},
+			{"10.42.0.9", "hostssl replication     replicator      10.42.0.9/32"},
+			{"fd00::9", "hostssl replication     replicator      fd00::9/128"},
 			{"", ""},
 		} {
 			out, err := exec.Command("python3", "-c", script, content, tc.address).CombinedOutput()
@@ -194,7 +194,7 @@ func TestPostgresStandbySettingsFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"primary_conninfo", "passfile=/var/lib/postgresql/.pgpass", "primary_slot_name", "hot_standby = on", "faas_postgres_standby_mirrored_settings"} {
+	for _, want := range []string{"primary_conninfo", "passfile=/var/lib/postgresql/.pgpass", "sslmode=verify-full sslrootcert={{ faas_postgres_standby_primary_cert }}", "primary_slot_name", "hot_standby = on", "faas_postgres_standby_mirrored_settings"} {
 		if !strings.Contains(string(template), want) {
 			t.Errorf("standby settings template missing %q", want)
 		}
@@ -222,19 +222,38 @@ func TestPostgresStandbySettingsFile(t *testing.T) {
 func TestPostgresStandbyPlaybook(t *testing.T) {
 	root := repoRoot(t)
 	plays := loadYAMLList(t, filepath.Join(root, "deploy", "ansible", "postgres_standby.yml"))
-	var standbyRoles []string
+	var standbyPlays [][]string
+	var preinstallVars map[string]any
 	for _, item := range plays {
 		play := item.(map[string]any)
 		if play["hosts"] != "postgres_standby" {
 			continue
 		}
+		var roles []string
 		for _, r := range play["roles"].([]any) {
-			standbyRoles = append(standbyRoles, r.(map[string]any)["role"].(string))
+			roles = append(roles, r.(map[string]any)["role"].(string))
+		}
+		standbyPlays = append(standbyPlays, roles)
+		if vars, ok := play["vars"].(map[string]any); ok {
+			preinstallVars = vars
 		}
 	}
-	want := []string{"host_hardening", "node_exporter", "postgres", "postgres_standby", "control_plane_standby"}
-	if strings.Join(standbyRoles, ",") != strings.Join(want, ",") {
-		t.Errorf("standby play roles = %v, want %v (node_exporter before postgres for the textfile directory)", standbyRoles, want)
+	want := [][]string{
+		{"host_hardening", "node_exporter", "postgres", "postgres_standby", "control_plane_standby"},
+		// Pre-install: only roles that start no service, read no /etc/faas
+		// file and write nothing to the database belong here.
+		{"firecracker", "supply_chain_scanners"},
+	}
+	if len(standbyPlays) != len(want) {
+		t.Fatalf("standby plays = %v, want %v", standbyPlays, want)
+	}
+	for i := range want {
+		if strings.Join(standbyPlays[i], ",") != strings.Join(want[i], ",") {
+			t.Errorf("standby play %d roles = %v, want %v (node_exporter before postgres for the textfile directory)", i, standbyPlays[i], want[i])
+		}
+	}
+	if preinstallVars["faas_box_role"] != "control-plane" {
+		t.Errorf("the pre-install play must build the control plane's kernel path, faas_box_role = %v", preinstallVars["faas_box_role"])
 	}
 	bootstrap, err := os.ReadFile(filepath.Join(root, "deploy", "ansible", "bootstrap.yml"))
 	if err != nil {

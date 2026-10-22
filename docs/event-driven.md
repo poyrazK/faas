@@ -454,6 +454,11 @@ pick up the job's current configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 
+Trigger delivery records (`gregale triggers records`) are kept at least 7 days
+after their last dispatch, and trigger dead letters (`gregale triggers dlq`) at
+least 30 days, unless a record carries its own retention; after that they may
+be deleted. Retry or export dead letters you still need before then.
+
 Keep synchronous endpoints small and return an acknowledgement only after the event is durably accepted. Verify webhook signatures and record the source, schema version, and correlation id in application logs.
 
 Async invocations may name existing app webhook subscriptions as terminal
@@ -519,6 +524,23 @@ omitted route declarations clear that workload's manifest-owned routes, while
 `--only` and `--exclude` workloads remain untouched. `--no-triggers` leaves
 existing project routes unchanged. Routes default to `POST`; `PUT`, `PATCH`,
 and `DELETE` are also accepted. This declaration is YAML-only.
+
+## Invocation history retention
+
+Every finished invocation is kept for your plan's result retention, counted
+from when it finished: Free 1 day, Hobby 7 days, Pro 30 days, Scale 90 days.
+This covers async invokes, queue and inbox messages, delayed tasks, cron runs,
+event deliveries, async edge routes and inbound webhooks. Async invokes and
+delayed tasks can ask for a shorter window with `retention_seconds`
+(`--retention` in the CLI).
+
+Failed and dead-lettered invocations are kept for at least 30 days, so you can
+inspect and replay them from the dead-letter queue (`gregale dlq <app>`) on
+every plan. After the window, the invocation, its attempt history and its
+replay links are deleted: `gregale crons runs`, queue history and invocation
+lookups only show work inside the window. Duplicate detection that relies on
+a stored invocation, such as inbound webhook receipts and async route
+idempotency keys, lasts as long as that invocation is kept.
 
 ## Application inbox
 
@@ -623,7 +645,11 @@ and final traffic percentage. A build that fails before going live emits
 `deployment.failed` instead of `rollout.aborted`.
 
 Both payloads include `app_id`, `deployment_id`, and `rollout_state`, plus
-`completed_at` or `aborted_at` respectively. An outcome is enqueued once per
+`completed_at` or `aborted_at` respectively. When the safe-release circuit
+breaker, a person, or the worker lease expiry decided the outcome, the payload
+also carries `decision`: the rule and the request, 5xx, probe, latency, OOM and
+restart counts for both revisions behind it
+([ADR-1447](adr/1447-explained-rollout-decisions.md)). An outcome is enqueued once per
 state transition, in the same transaction as the state change; updating an
 already-terminal rollout does not enqueue another event. Webhook delivery is
 at least once, so receivers must deduplicate by the stable delivery id.

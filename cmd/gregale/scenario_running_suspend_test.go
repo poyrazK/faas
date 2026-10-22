@@ -1,5 +1,5 @@
 // adr: 20261017201015
-package main
+package main_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/rehearsalresume"
 	"github.com/onebox-faas/faas/pkg/rehearsalwork"
@@ -24,7 +25,7 @@ func (c runningSuspendCollectorClient) GetScenarioSuspendResume(context.Context,
 	return c.observed, nil
 }
 
-func runningSuspendCollectedRun(t *testing.T, mode string) testRunReceipt {
+func runningSuspendCollectedRun(t *testing.T, mode string) main.TestRunReceipt {
 	t.Helper()
 	r := suspendCollectedRun(t, 100)
 	names := []string{"primary", "worker"}
@@ -74,7 +75,7 @@ func runningSuspendCollectedRun(t *testing.T, mode string) testRunReceipt {
 		snapshot.ManagedWork.Jobs[0].ID = uuid.NewString()
 	}
 	collector := runningSuspendCollectorClient{snapshot: snapshot, observed: observed}
-	newTestActionCollector(t.Context(), collector, &r, names)()
+	main.NewTestActionCollector(t.Context(), collector, &r, names)()
 	return r
 }
 
@@ -90,11 +91,11 @@ func TestRunningSuspendObservationAndJournalSurviveReports(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var decoded testRunReceipt
+			var decoded main.TestRunReceipt
 			if err = json.Unmarshal(raw, &decoded); err != nil {
 				t.Fatal(err)
 			}
-			if c := compareTestActions(before, decoded); c.Status != tc.want {
+			if c := main.CompareTestActions(before, decoded); c.Status != tc.want {
 				t.Fatalf("want %s: %+v evidence=%+v", tc.want, c, decoded.Actions.Evidence)
 			}
 		})
@@ -107,7 +108,7 @@ func TestRunningSuspendPreparationObservesEnrollmentWithoutStartingPause(t *test
 	proof.Status = "pending"
 	proof.Receipts = nil
 	client := &suspendPollingClient{proof: proof}
-	if err := prepareTestSuspendResume(t.Context(), client, []string{"primary", "worker"}, &r, &proof.Spec); err != nil {
+	if err := main.PrepareTestSuspendResume(t.Context(), client, []string{"primary", "worker"}, &r, &proof.Spec); err != nil {
 		t.Fatal(err)
 	}
 	if client.begins != 0 || client.polls != 1 || r.SuspendResume.Status != "pending" {

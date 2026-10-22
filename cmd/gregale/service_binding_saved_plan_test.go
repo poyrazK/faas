@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,13 +10,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestServiceBindingSavedPlanCLI(t *testing.T) {
 	for _, scenario := range []string{"apply", "stale", "race after read", "wrong account", "wrong app id", "modified", "old server"} {
 		t.Run(scenario, func(t *testing.T) {
-			resetJSONOut(t)
+			main.ResetJSONOut(t)
 			current := api.AppResponse{ID: "app1", Slug: "hello", ServiceBindingFingerprint: strings.Repeat("a", 64)}
 			account := "account1"
 			patches := 0
@@ -25,9 +26,9 @@ func TestServiceBindingSavedPlanCLI(t *testing.T) {
 				calls++
 				switch {
 				case r.URL.Path == "/v1/account":
-					writeJSONTest(w, api.AccountResponse{ID: account})
+					main.WriteJSONTest(w, api.AccountResponse{ID: account})
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/hello":
-					writeJSONTest(w, current)
+					main.WriteJSONTest(w, current)
 				case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/hello":
 					patches++
 					var req api.UpdateAppRequest
@@ -39,7 +40,7 @@ func TestServiceBindingSavedPlanCLI(t *testing.T) {
 					}
 					if scenario == "race after read" {
 						w.WriteHeader(http.StatusConflict)
-						writeJSONTest(w, api.Problem{Title: "Service binding plan is stale", Status: http.StatusConflict})
+						main.WriteJSONTest(w, api.Problem{Title: "Service binding plan is stale", Status: http.StatusConflict})
 						return
 					}
 					if req.ServiceBindingTransport == nil || *req.ServiceBindingTransport != api.ServiceBindingTransportHTTPS {
@@ -47,7 +48,7 @@ func TestServiceBindingSavedPlanCLI(t *testing.T) {
 					}
 					current.ServiceBindingTransport = api.ServiceBindingTransportHTTPS
 					current.ServiceBindingFingerprint = strings.Repeat("b", 64)
-					writeJSONTest(w, current)
+					main.WriteJSONTest(w, current)
 				default:
 					http.Error(w, "unexpected", 500)
 				}
@@ -56,15 +57,15 @@ func TestServiceBindingSavedPlanCLI(t *testing.T) {
 			t.Setenv("FAAS_API", server.URL)
 			t.Setenv("FAAS_TOKEN", "fp_test_x")
 			var output bytes.Buffer
-			old := osStdout
-			osStdout = &output
-			t.Cleanup(func() { osStdout = old })
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &output
+			t.Cleanup(func() { (*main.OsStdout) = old })
 			planPath := filepath.Join(t.TempDir(), "plan.json")
 			args := []string{"bindings", "service", "configure", "hello", "--file", servicePolicyFile(t, `{"service_binding_transport":"https"}`), "--plan-out", planPath, "--json"}
 			if scenario == "old server" {
 				current.ServiceBindingFingerprint = ""
 			}
-			code := run(args)
+			code := main.Run(args)
 			if scenario == "old server" {
 				if code == 0 || patches != 0 {
 					t.Fatal("old server accepted plan")
@@ -81,7 +82,7 @@ func TestServiceBindingSavedPlanCLI(t *testing.T) {
 			if info.Mode().Perm() != 0600 {
 				t.Fatalf("plan mode=%v", info.Mode())
 			}
-			if run(args) == 0 {
+			if main.Run(args) == 0 {
 				t.Fatal("overwrote an existing plan")
 			}
 			switch scenario {
@@ -103,7 +104,7 @@ func TestServiceBindingSavedPlanCLI(t *testing.T) {
 			}
 			beforeApplyCalls := calls
 			output.Reset()
-			code = run([]string{"bindings", "service", "apply", "hello", "--plan", planPath, "--json"})
+			code = main.Run([]string{"bindings", "service", "apply", "hello", "--plan", planPath, "--json"})
 			if scenario == "apply" {
 				if code != 0 || patches != 1 {
 					t.Fatalf("apply code=%d patches=%d", code, patches)

@@ -27,6 +27,71 @@ test('rejects unsafe Auth URLs', () => {
   assert.doesNotThrow(() => createAuthClient({ url: 'http://localhost:8080', fetch: async () => {} }))
 })
 
+test('a sign-up the Auth app refuses carries its code', async () => {
+  // GoTrue v2.197.0's body for a hook refusal.
+  const api = server({ 'POST /auth/v1/signup': () => [403, { code: 403, error_code: 'unknown', msg: 'waitlisted' }] })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await assert.rejects(auth.signUp({ email: 'a@example.test', password: 'pw' }), err => err.status === 403 && err.code === 'waitlisted')
+})
+
+test('a session support staff opened says who acts', async () => {
+  const jwt = claims => `eyJhbGciOiJFUzI1NiJ9.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.sig`
+  let next = { ...tokens(1), access_token: jwt({ sub: 'u1' }) }
+  const api = server({ 'POST /auth/v1/token': () => [200, next] })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal(await auth.actor(), null)
+  next = { ...tokens(2), access_token: jwt({ sub: 'u1', act: { sub: 'admin:0A1B2C3D' } }) }
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal(await auth.actor(), 'admin:0A1B2C3D')
+})
+
+test('reads an organization audit log a page at a time', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'GET /authz/v1/orgs/o1/audit-log': call => [200, { entries: [{ id: 'e1', action: 'member.added' }], next: call.url.search.includes('cursor') ? null : 'WyIyMDI2Il0' }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  const first = await auth.organizations.auditLog('o1', { limit: 20 })
+  assert.equal(api.calls.at(-1).url.search, '?limit=20')
+  assert.equal((await auth.organizations.auditLog('o1', { cursor: first.next })).next, null)
+  assert.equal(api.calls.at(-1).url.search, '?cursor=WyIyMDI2Il0')
+})
+
+test('signs in with an Ethereum or Solana wallet, in the message grammar GoTrue parses', async () => {
+  const api = server({ 'POST /auth/v1/token': () => [200, tokens(1)] })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  const asked = []
+  const ethereum = { request: async ({ method, params }) => {
+    asked.push(method)
+    if (method === 'eth_requestAccounts') return ['0x52908400098527886E0F7030069857D2E4169EE7']
+    if (method === 'eth_chainId') return '0x1'
+    if (method === 'personal_sign') { asked.push(Buffer.from(params[0].slice(2), 'hex').toString('utf8')); return '0x' + 'ab'.repeat(65) }
+  } }
+  await auth.signInWithWeb3({ chain: 'ethereum', wallet: ethereum, uri: 'https://shop.example.com' })
+  const call = api.calls.at(-1)
+  assert.equal(call.url.search, '?grant_type=web3')
+  assert.equal(call.body.chain, 'ethereum')
+  assert.equal(call.body.signature, '0x' + 'ab'.repeat(65))
+  assert.equal(call.body.message, asked.at(-1), 'the signed text is what is sent')
+  const lines = call.body.message.split('\n')
+  assert.deepEqual(lines.slice(0, 6), ['shop.example.com wants you to sign in with your Ethereum account:', '0x52908400098527886E0F7030069857D2E4169EE7', '', 'Sign in to shop.example.com', '', 'URI: https://shop.example.com'])
+  assert.deepEqual(lines.slice(6, 8), ['Version: 1', 'Chain ID: 1'])
+  assert.match(lines[8], /^Nonce: [0-9a-f]{32}$/)
+  assert.match(lines[9], /^Issued At: \d{4}-\d{2}-\d{2}T/)
+  const solana = { publicKey: null, connect: async () => { solana.publicKey = { toBase58: () => '7S3P4HxJpyyigGzodYwHtCxZyUQe9JiBMHyRWXArAaKv' } },
+    signMessage: async bytes => ({ signature: new Uint8Array(64).fill(7), signed: bytes }) }
+  await auth.signInWithWeb3({ chain: 'solana', wallet: solana, uri: 'https://shop.example.com/app', statement: 'Welcome\nback' })
+  const sol = api.calls.at(-1).body
+  assert.equal(sol.chain, 'solana')
+  assert.equal(Buffer.from(sol.signature, 'base64').length, 64)
+  assert.deepEqual(sol.message.split('\n').slice(0, 7), ['shop.example.com wants you to sign in with your Solana account:', '7S3P4HxJpyyigGzodYwHtCxZyUQe9JiBMHyRWXArAaKv', '', 'Welcome back', '', 'URI: https://shop.example.com/app', 'Version: 1'])
+  assert.ok(!sol.message.includes('Chain ID'))
+  await assert.rejects(auth.signInWithWeb3({ chain: 'ethereum', uri: 'https://shop.example.com' }), err => err.code === 'web3_wallet_not_found')
+  await assert.rejects(auth.signInWithWeb3({ chain: 'bitcoin', wallet: ethereum, uri: 'https://shop.example.com' }), err => err.code === 'web3_unsupported_chain')
+})
+
 test('signs in, stores the session and authenticates authz calls', async () => {
   const api = server({
     'POST /auth/v1/token': () => [200, tokens(1)],
@@ -144,6 +209,42 @@ test('organization, member and invitation calls use encoded paths', async () => 
   assert.deepEqual(await auth.invitations.accept('tok'), { org_id: 'o1', role: 'member' })
 })
 
+test('a new password carries the current one', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'PUT /auth/v1/user': call => [200, { id: 'u1', email: 'a@example.test', seen: call.body }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  await auth.updateUser({ password: 'new secret', currentPassword: 'pw' })
+  assert.deepEqual(api.calls.at(-1).body, { password: 'new secret', current_password: 'pw' })
+  await auth.updateUser({ data: { plan: 'pro' } })
+  assert.deepEqual(api.calls.at(-1).body, { data: { plan: 'pro' } })
+})
+
+test('service account calls manage an organization\'s machine principals', async () => {
+  const secret = { client_id: 'sa1', client_secret: 'gasa_x', secret: { id: 'k1', hint: 'abcd', expires_at: null } }
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'GET /authz/v1/orgs/o1/service-accounts': () => [200, { service_accounts: [{ id: 'sa1', name: 'CI', role: 'deployer', disabled: false, created_at: 'now', secrets: [] }] }],
+    'POST /authz/v1/orgs/o1/service-accounts': () => [201, { id: 'sa1', org_id: 'o1', name: 'CI', role: 'deployer', created_at: 'now', ...secret }],
+    'PATCH /authz/v1/orgs/o1/service-accounts/sa1': call => [200, { id: 'sa1', name: 'CI', role: 'deployer', ...call.body }],
+    'POST /authz/v1/orgs/o1/service-accounts/sa1/secrets': () => [201, secret],
+    'DELETE /authz/v1/orgs/o1/service-accounts/sa1/secrets/k1': () => [204],
+    'DELETE /authz/v1/orgs/o1/service-accounts/sa1': () => [204],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal((await auth.serviceAccounts.list('o1'))[0].role, 'deployer')
+  assert.equal((await auth.serviceAccounts.create('o1', { name: 'CI', role: 'deployer', expiresInDays: 90 })).client_secret, 'gasa_x')
+  assert.deepEqual(api.calls.at(-1).body, { name: 'CI', role: 'deployer', expires_in_days: 90 })
+  assert.equal((await auth.serviceAccounts.update('o1', 'sa1', { disabled: true })).disabled, true)
+  assert.equal((await auth.serviceAccounts.addSecret('o1', 'sa1')).secret.id, 'k1')
+  assert.deepEqual(api.calls.at(-1).body, {})
+  assert.equal(await auth.serviceAccounts.revokeSecret('o1', 'sa1', 'k1'), null)
+  assert.equal(await auth.serviceAccounts.remove('o1', 'sa1'), null)
+})
+
 test('passkeys: sign in, register, list, rename and remove through WebAuthn', async () => {
   const buf = values => Uint8Array.from(values).buffer
   const api = server({
@@ -238,7 +339,7 @@ test('second factors enrol, challenge and verify to aal2', async () => {
   const api = server({
     'POST /auth/v1/token': () => [200, session('aal1')],
     'GET /auth/v1/user': () => [200, { id: 'u1', factors: [{ id: 'f1', factor_type: 'totp', status: 'verified' }, { id: 'rc', factor_type: 'recovery_code', status: 'verified' }] }],
-    'POST /auth/v1/factors': call => [200, call.body.factor_type === 'totp' ? { id: 'f2', type: 'totp', totp: { qr_code: 'data:', secret: 'S', uri: 'otpauth://' } } : { id: 'f3', factor_type: 'phone', status: 'unverified' }],
+    'POST /auth/v1/factors': call => [200, call.body.factor_type === 'totp' ? { id: 'f2', type: 'totp', totp: { qr_code: '<svg xmlns="http://www.w3.org/2000/svg"/>', secret: 'S', uri: 'otpauth://' } } : { id: 'f3', factor_type: 'phone', status: 'unverified' }],
     'POST /auth/v1/factors/f1/challenge': () => [200, { id: 'c1', type: 'totp', expires_at: 1 }],
     'POST /auth/v1/factors/f1/verify': call => call.body.code === '123456' ? [200, session('aal2')] : [422, { error_code: 'mfa_verification_failed' }],
     'POST /auth/v1/factors/recovery-codes/verify': () => [200, session('aal2')],
@@ -249,7 +350,9 @@ test('second factors enrol, challenge and verify to aal2', async () => {
   auth.onAuthStateChange(event => events.push(event))
   await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
   assert.deepEqual(await auth.mfa.assuranceLevel(), { current: 'aal1', next: 'aal2' })
-  assert.deepEqual((await auth.mfa.enrollTOTP({ friendlyName: 'Phone app' })).totp.uri, 'otpauth://')
+  const enrollment = await auth.mfa.enrollTOTP({ friendlyName: 'Phone app' })
+  assert.deepEqual(enrollment.totp.uri, 'otpauth://')
+  assert.equal(enrollment.totp.qr_code, 'data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E', 'GoTrue SVG becomes an image URL')
   assert.deepEqual(api.calls.at(-1).body, { factor_type: 'totp', friendly_name: 'Phone app' })
   await auth.mfa.enrollPhone({ phone: '+447700900123' })
   assert.deepEqual(api.calls.at(-1).body, { factor_type: 'phone', phone: '+447700900123' })
@@ -317,4 +420,87 @@ test('anonymous users sign in, link a provider and unlink a sign-in method', asy
   assert.equal(link.headers.Authorization, 'Bearer access-1')
   await auth.unlinkIdentity('i1')
   assert.equal(api.calls.at(-1).key, 'DELETE /auth/v1/user/identities/i1')
+})
+
+test('lists the user own sessions, ends one and signs out the others', async () => {
+  const listed = [{ id: 's2', created_at: '2026-10-18T09:00:00Z', last_active_at: '2026-10-18T10:00:00Z', user_agent: 'Mozilla/5.0', ip: '203.0.113.7', aal: 'aal1', current: false }]
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'GET /authz/v1/sessions': () => [200, { sessions: listed }],
+    'DELETE /authz/v1/sessions/s2': () => [204, undefined],
+    'POST /auth/v1/logout': () => [204, undefined],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.deepEqual(await auth.sessions.list(), listed)
+  await auth.sessions.revoke('s2')
+  assert.equal(api.calls.at(-1).headers.Authorization, 'Bearer access-1')
+  await auth.signOut({ scope: 'others' })
+  assert.equal(api.calls.at(-1).url.searchParams.get('scope'), 'others')
+  assert.notEqual(await auth.getSession(), null, 'signing the others out keeps this session')
+  assert.equal(auth.hostedAccountUrl({ redirectTo: 'https://shop.example.com/app' }), `${origin}/ui/account?redirect_to=https%3A%2F%2Fshop.example.com%2Fapp`)
+})
+
+test('deletes the user own account and forgets the session', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'DELETE /authz/v1/account': () => [200, { deleted: true, organizations_deleted: 1 }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  const events = []
+  auth.onAuthStateChange(event => events.push(event))
+  assert.deepEqual(await auth.deleteAccount(), { organizations_deleted: 1 })
+  assert.equal(api.calls.at(-1).headers.Authorization, 'Bearer access-1')
+  assert.equal(await auth.getSession(), null)
+  assert.deepEqual(events, ['SIGNED_OUT'])
+})
+
+test('organizations verify domains, people at them join, and SSO shares the same domains', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'PATCH /authz/v1/orgs/o1/domains/acme.com': call => [200, { domain: 'acme.com', join: { mode: call.body.join, role: call.body.role ?? 'member' }, joined: 2 }],
+    'GET /authz/v1/suggested-organizations': () => [200, { organizations: [{ id: 'o1', slug: 'acme', name: 'Acme', domain: 'acme.com', role: 'member' }] }],
+    'POST /authz/v1/orgs/o1/join': () => [200, { org_id: 'o1', role: 'member' }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal((await auth.organizations.domains.setJoin('o1', 'acme.com', { join: 'automatic' })).joined, 2)
+  assert.deepEqual(api.calls.at(-1).body, { join: 'automatic' })
+  assert.equal((await auth.organizations.suggested())[0].domain, 'acme.com')
+  assert.deepEqual(await auth.organizations.join('o1'), { org_id: 'o1', role: 'member' })
+  assert.equal(auth.orgSSO.domains, auth.organizations.domains)
+})
+
+test('chooses the active organization and reads it from the refreshed token', async () => {
+  const jwt = claims => `eyJhbGciOiJFUzI1NiJ9.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.sig`
+  const org = { org_id: 'o1', org_slug: 'acme', org_role: 'admin', org_permissions: ['org:read', 7] }
+  let next = { ...tokens(1), access_token: jwt({ sub: 'u1' }) }
+  const api = server({
+    'POST /auth/v1/token': () => [200, next],
+    'POST /authz/v1/active-organization': call => [200, { organization: call.body.org ? { id: call.body.org, slug: 'acme', role: 'admin' } : null }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal(await auth.organizations.active(), null)
+  next = { ...tokens(2), access_token: jwt({ sub: 'u1', ...org }) }
+  assert.deepEqual(await auth.organizations.setActive('o1'), { id: 'o1', slug: 'acme', role: 'admin', permissions: ['org:read'] })
+  assert.deepEqual(api.calls.map(c => c.key).slice(-2), ['POST /authz/v1/active-organization', 'POST /auth/v1/token'], 'set, then refresh')
+  assert.equal((await auth.organizations.active()).slug, 'acme')
+  next = { ...tokens(3), access_token: jwt({ sub: 'u1' }) }
+  assert.equal(await auth.organizations.setActive(null), null)
+  assert.deepEqual(api.calls.at(-2).body, { org: null })
+})
+
+test('an organization requires a second factor, and members without one are told so', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'PATCH /authz/v1/orgs/o1': call => [200, { id: 'o1', slug: 'acme', name: 'Acme', mfa_required: call.body.mfa_required }],
+    'GET /authz/v1/orgs/o2/members': () => [403, { status: 403, code: 'mfa_required' }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal((await auth.organizations.setMfaRequired('o1', true)).mfa_required, true)
+  assert.deepEqual(api.calls.at(-1).body, { mfa_required: true })
+  await assert.rejects(auth.members.list('o2'), err => err.status === 403 && err.code === 'mfa_required')
 })

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"sort"
@@ -306,6 +307,11 @@ func (c *outboundResponseCache) storeResponse(key string, resp *http.Response, t
 	if resp.ContentLength > maxBodyBytes {
 		return
 	}
+	if streamingMediaType(resp.Header.Get("Content-Type")) {
+		// ADR-1440: a stream is copied into the entry as it is forwarded.
+		c.teeStream(key, resp, remaining, originAge, now, maxBodyBytes)
+		return
+	}
 	select {
 	case c.fillSlots <- struct{}{}:
 		defer func() { <-c.fillSlots }()
@@ -345,6 +351,71 @@ func (c *outboundResponseCache) storeResponse(key string, resp *http.Response, t
 	}
 	entry.bytes = int64(len(key)+len(body)+128) + responseHeaderSize(entry.header) + responseHeaderSize(entry.trailer)
 	c.put(entry)
+}
+
+// teeStream copies a streamed response into a cache entry as the caller
+// reads it, and stores the entry only when the stream ends cleanly within
+// the entry bound. Concurrent fills share the fill slots; a stream that
+// finds none is forwarded without caching.
+func (c *outboundResponseCache) teeStream(key string, resp *http.Response, remaining, originAge time.Duration, now time.Time, maxBodyBytes int64) {
+	select {
+	case c.fillSlots <- struct{}{}:
+	default:
+		return
+	}
+	header := cacheSafeResponseHeaders(resp.Header)
+	status := resp.StatusCode
+	resp.Body = &cacheTee{src: resp.Body, limit: maxBodyBytes, release: func() { <-c.fillSlots },
+		store: func(body []byte) {
+			entry := &outboundCacheEntry{key: key, status: status, header: header, body: body, content: -1,
+				storedAt: now, expiresAt: now.Add(remaining), originAge: originAge}
+			if !entry.expiresAt.After(time.Now()) {
+				return
+			}
+			entry.bytes = int64(len(key)+len(body)+128) + responseHeaderSize(entry.header)
+			c.put(entry)
+		}}
+}
+
+// cacheTee forwards a stream and keeps a copy of it for the cache.
+type cacheTee struct {
+	src      io.ReadCloser
+	limit    int64
+	buf      []byte
+	overflow bool
+	done     bool
+	store    func([]byte)
+	release  func()
+}
+
+func (t *cacheTee) Read(p []byte) (int, error) {
+	n, err := t.src.Read(p)
+	if n > 0 && !t.overflow {
+		if int64(len(t.buf)+n) > t.limit {
+			t.buf, t.overflow = nil, true
+		} else {
+			t.buf = append(t.buf, p[:n]...)
+		}
+	}
+	if err != nil && !t.done {
+		t.done = true
+		if errors.Is(err, io.EOF) && !t.overflow {
+			t.store(t.buf)
+		}
+		t.buf = nil
+		t.release()
+	}
+	return n, err
+}
+
+// Close drops an unfinished copy.
+func (t *cacheTee) Close() error {
+	if !t.done {
+		t.done = true
+		t.buf = nil
+		t.release()
+	}
+	return t.src.Close()
 }
 
 type replayReadCloser struct {

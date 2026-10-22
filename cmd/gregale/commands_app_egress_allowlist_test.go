@@ -1,6 +1,9 @@
-package main
+package main_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/cmd/gregale"
+	"testing"
+)
 
 // The CLI names the restart exactly when vmmd cannot patch running
 // instances in place (H10-36).
@@ -17,7 +20,7 @@ func TestEgressAllowlistChangeNeedsRestart(t *testing.T) {
 		{"v6 gains its first entry", []string{"1.1.1.1/32"}, []string{"1.1.1.1/32", "2001:db8::/32"}, true},
 		{"empty stays empty", nil, nil, false},
 	} {
-		if got := egressAllowlistChangeNeedsRestart(tc.before, tc.after); got != tc.want {
+		if got := main.EgressAllowlistChangeNeedsRestart(tc.before, tc.after); got != tc.want {
 			t.Errorf("%s: needs restart = %t, want %t", tc.name, got, tc.want)
 		}
 	}

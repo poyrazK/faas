@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync, sign } from 'node:crypto'
-import { AuthError, bearerToken, createVerifier, resource } from '../dist/server.js'
+import { AuthError, bearerToken, createClientCredentials, createVerifier, resource } from '../dist/server.js'
 
 const origin = 'https://shop-auth.gregale.app'
 const issuer = `${origin}/auth/v1`
@@ -55,6 +55,16 @@ test('verifies an Auth app token', async () => {
   assert.deepEqual(claims.appMetadata, { provider: 'email' })
   assert.equal(claims.isAnonymous, false)
   assert.equal(auth.issuer, issuer)
+})
+
+test('reads the active organization from organization claims', async () => {
+  const key = newKey('gregale-0a1b2c3d')
+  const { auth } = verifier(authApp(key))
+  const claims = await auth.verify(signToken(key, claimsAt(t0, { org_id: 'o1', org_slug: 'acme', org_role: 'admin', org_permissions: ['org:read', 'members:manage'] })))
+  assert.deepEqual(claims.organization, { id: 'o1', slug: 'acme', role: 'admin', permissions: ['org:read', 'members:manage'] })
+  assert.equal((await auth.verify(signToken(key, claimsAt(t0)))).organization, undefined)
+  assert.equal((await auth.verify(signToken(key, claimsAt(t0, { act: { sub: 'admin:0A1B2C3D' } })))).actor, 'admin:0A1B2C3D')
+  assert.equal((await auth.verify(signToken(key, claimsAt(t0)))).actor, undefined)
 })
 
 test('refuses tokens it should not accept', async () => {
@@ -162,4 +172,49 @@ test('bearer tokens and Auth app origins', () => {
     assert.throws(() => createVerifier({ url }), undefined, url)
   }
   assert.equal(createVerifier({ url: 'http://localhost:9999' }).issuer, 'http://localhost:9999/auth/v1')
+})
+
+test('tells a service account\'s token from a person\'s', async () => {
+  const key = newKey('gregale-0a1b2c3d')
+  const { auth } = verifier(authApp(key))
+  const account = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+  const claims = await auth.verify(signToken(key, claimsAt(t0, { sub: account, session_id: undefined, email: undefined, service_account: true, secret_id: 's-1',
+    org_id: 'o1', org_slug: 'acme', org_role: 'deployer', org_permissions: ['docs:read'], scope: 'docs:read' })))
+  assert.deepEqual(claims.serviceAccount, { id: account, secretId: 's-1', scope: ['docs:read'] })
+  assert.deepEqual(claims.organization, { id: 'o1', slug: 'acme', role: 'deployer', permissions: ['docs:read'] })
+  assert.equal(claims.sessionId, undefined)
+  assert.equal((await auth.verify(signToken(key, claimsAt(t0)))).serviceAccount, undefined)
+  // The marker alone, without the secret it came from, is not an account.
+  assert.equal((await auth.verify(signToken(key, claimsAt(t0, { service_account: true })))).serviceAccount, undefined)
+})
+
+test('client credentials are exchanged once and cached until shortly before expiry', async () => {
+  const clientId = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+  const clientSecret = 'gasa_' + 'a'.repeat(43)
+  const clock = { now: t0 }
+  const requests = []
+  let answer = [200, { access_token: 'token-1', token_type: 'Bearer', expires_in: 600 }]
+  const fetch = async (url, init) => {
+    requests.push({ url: String(url), init })
+    await new Promise(resolve => setTimeout(resolve, 5))
+    return new Response(JSON.stringify(answer[1]), { status: answer[0] })
+  }
+  const machine = createClientCredentials({ url: origin, clientId, clientSecret, scope: ['docs:read', 'docs:write'], fetch, now: () => clock.now })
+  assert.deepEqual(await Promise.all([machine.token(), machine.token()]), ['token-1', 'token-1'])
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].url, `${origin}/auth/v1/oauth/token`)
+  assert.equal(requests[0].init.headers.Authorization, `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`)
+  assert.equal(requests[0].init.body, 'grant_type=client_credentials&scope=docs%3Aread+docs%3Awrite')
+  clock.now += 539_000
+  assert.equal(await machine.token(), 'token-1')
+  answer = [200, { access_token: 'token-2', token_type: 'Bearer', expires_in: 600 }]
+  clock.now += 1_000
+  assert.equal(await machine.token(), 'token-2')
+  machine.clear()
+  answer = [401, { error: 'invalid_client' }]
+  await assert.rejects(machine.token(), err => err instanceof AuthError && err.status === 401 && err.code === 'invalid_client')
+  answer = [429, { error: 'slow_down' }]
+  await assert.rejects(machine.token(), err => err.status === 429 && err.code === 'slow_down')
+  assert.throws(() => createClientCredentials({ url: origin, clientId: 'nope', clientSecret }), /clientId/)
+  assert.throws(() => createClientCredentials({ url: origin, clientId, clientSecret: 'secret' }), /clientSecret/)
 })

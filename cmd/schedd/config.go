@@ -203,6 +203,24 @@ type Config struct {
 	// Off by default and ignored unless frozen_tier is on.
 	// FAAS_FROZEN_TIER_APPS overrides it.
 	FrozenTierApps bool `toml:"frozen_tier_apps"`
+	// FrozenTierWorkers (ADR-20261019103000) lets a worker pool freeze a
+	// surplus worker that holds no queue lease instead of stopping it, and
+	// thaw it before booting a new one. Off by default and ignored unless
+	// frozen_tier is on. FAAS_FROZEN_TIER_WORKERS overrides it.
+	FrozenTierWorkers bool `toml:"frozen_tier_workers"`
+
+	// FrozenFastPath (ADR-1740) thaws a frozen VM from a ticket recorded
+	// when it froze: one runtime-values read beside the vmmd thaw and one
+	// guarded update instead of the ordinary wake path's reads. Off by
+	// default; tickets live in memory, so turning it off takes effect at
+	// once. FAAS_FROZEN_FAST_PATH overrides it.
+	FrozenFastPath bool `toml:"frozen_fast_path"`
+
+	// OwnerCache (ADR-1741) serves a production wake's reads from an in-memory
+	// entry per app, dropped when the app's runtime generation moves
+	// (app_runtime_changed); the admission insert commits only while that
+	// generation holds. Off by default. FAAS_OWNER_CACHE overrides it.
+	OwnerCache bool `toml:"owner_cache"`
 
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
@@ -484,7 +502,7 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		// The control-plane role renders this and faas-schedd.socket's
 		// ListenStream from one variable, so the durable socket always
-		// carries the address schedd serves (ADR-1580).
+		// carries the address schedd serves (ADR-1736).
 		if v := os.Getenv("FAAS_SCHEDD_LISTEN_ADDR"); v != "" {
 			c.ListenAddr = v
 		}
@@ -531,12 +549,35 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.FrozenTier = enabled
 	}
+	// ADR-1740: FAAS_FROZEN_FAST_PATH overrides frozen_fast_path.
+	if v := os.Getenv("FAAS_FROZEN_FAST_PATH"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_FROZEN_FAST_PATH must be a boolean (got %q)", v)
+		}
+		c.FrozenFastPath = enabled
+	}
+	// ADR-1741: FAAS_OWNER_CACHE overrides owner_cache.
+	if v := os.Getenv("FAAS_OWNER_CACHE"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_OWNER_CACHE must be a boolean (got %q)", v)
+		}
+		c.OwnerCache = enabled
+	}
 	if v := os.Getenv("FAAS_FROZEN_TIER_APPS"); v != "" {
 		enabled, err := strconv.ParseBool(v)
 		if err != nil {
 			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER_APPS must be a boolean (got %q)", v)
 		}
 		c.FrozenTierApps = enabled
+	}
+	if v := os.Getenv("FAAS_FROZEN_TIER_WORKERS"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER_WORKERS must be a boolean (got %q)", v)
+		}
+		c.FrozenTierWorkers = enabled
 	}
 	applyRoutingEnv()
 	return c, nil

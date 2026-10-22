@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AfterRestoreHook } from './AfterRestoreHook.js';
+import type { AppDeploySettingsCondition } from './AppDeploySettingsCondition.js';
 import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 import type { DeclaredRoute } from './DeclaredRoute.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
@@ -20,6 +21,7 @@ import type { WorkerScaling } from './WorkerScaling.js';
  * Partial update — every field is optional; omitted fields are unchanged.
  */
 export type UpdateAppRequest = {
+  deploy_settings_condition?: AppDeploySettingsCondition;
   profiling?: ProfilingConfig;
   tracing?: TracingConfig;
   /**
@@ -173,6 +175,14 @@ export type UpdateAppRequest = {
    * Set the revision pin window in seconds; zero disables future retention. Omit for no change.
    */
   revision_pin_ttl_seconds?: number | null;
+  /**
+   * Set the default rollout for production releases (ADR-1446, ADR-1450). Omit for no change.
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Replace the paths the default rollout probe checks (ADR-1449). An empty list restores /. Omit for no change.
+   */
+  release_probe_paths?: any[] | null;
   min_instances?: number | null;
   /**
    * v4 or v6 CIDR allowlist; empty array clears to chain-default-accept.

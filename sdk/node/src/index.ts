@@ -115,6 +115,7 @@ export {
   RealtimeResyncRequiredError,
   type ConsumeRealtimeChannelOptions,
   type ConsumeRealtimeChannelsOptions,
+  type RealtimeChannelController,
   type RealtimeChannelConsumerOptions,
   type RealtimeChannelActions,
   type RealtimeConnectionOptions,
@@ -125,6 +126,7 @@ export {
   type RealtimePresenceEvent,
   type RealtimePresenceMember,
   type RealtimeSignal,
+  type RealtimeOccupancy,
   type RealtimeReadProgress,
   type RealtimeReadActions,
   type RealtimePushRegistration,
@@ -395,6 +397,8 @@ export { decodeDurableEntityRestoreValidationRequest, encodeDurableEntityRestore
 export { validateDurableEntityRestore, type DurableEntityRestoreValidationOptions } from './durable-entities.js';
 
 export { subscribeRealtimeSSE, RealtimeSSEError } from './realtime-sse.js';
+export { createRealtimeClient } from './realtime-client.js';
+export type { RealtimeClient, RealtimeClientOptions, RealtimeChannelHandle, RealtimeChannelView, RealtimeChannelStatus, RealtimeChannelWatchOptions } from './realtime-client.js';
 export type { RealtimeSSEOptions, RealtimeSSEMessage } from './realtime-sse.js';
 
 export type { RealtimeChannelWebhookFilter } from './generated/models/RealtimeChannelWebhookFilter.js';

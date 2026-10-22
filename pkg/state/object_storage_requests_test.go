@@ -1,14 +1,15 @@
-package state
+package state_test
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemObjectStorageProviderRequestMetricsAreCumulative(t *testing.T) {
-	store := NewMemStore()
-	store.objectBuckets = map[string]ObjectBucket{
+	store := state.NewMemStore()
+	(*store.ObjectBuckets()) = map[string]state.ObjectBucket{
 		"bucket": {ID: "bucket", AccountID: "account", BackendID: "ovh", BackendFingerprint: "fingerprint", PhysicalName: "physical", State: "ready"},
 	}
 	period := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -38,8 +39,8 @@ func TestMemObjectStorageProviderRequestMetricsAreCumulative(t *testing.T) {
 }
 
 func TestMemObjectStorageProviderRequestMetricsIncludeZeroBuckets(t *testing.T) {
-	store := NewMemStore()
-	store.objectBuckets = map[string]ObjectBucket{
+	store := state.NewMemStore()
+	(*store.ObjectBuckets()) = map[string]state.ObjectBucket{
 		"bucket": {ID: "bucket", AccountID: "account", BackendID: "ovh", BackendFingerprint: "fingerprint", PhysicalName: "physical", State: "ready"},
 	}
 	metrics, err := store.ListObjectStorageProviderRequestMetrics(context.Background(), "ovh", "fingerprint", time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))

@@ -12,25 +12,29 @@ import (
 )
 
 type environmentGitOpsMemory struct {
-	retirements    map[string]EnvironmentWorkloadRetirement
-	source         EnvironmentGitSource
-	revisions      map[string]EnvironmentDesiredRevision
-	runs           map[string]EnvironmentGitOpsRun
-	runTokens      map[string]string
-	next           time.Time
-	lease          *EnvironmentGitOpsLease
-	attempts       int
-	resources      map[string]string
-	queues         map[string]string
-	owners         map[string]environmentsync.Ownership
-	overrides      map[string]environmentsync.Override
-	effects        map[string]EnvironmentGitOpsEffect
-	runtime        map[string]EnvironmentGitOpsRuntimeEffect
-	graphs         map[string]EnvironmentWorkloadGraph
-	qualifications map[string]EnvironmentWorkloadQualificationRequest
-	poll           environmentGitSourcePoll
-	approvals      map[string]EnvironmentGitRevisionApproval
-	notifications  environmentGitNotificationState
+	retirements        map[string]EnvironmentWorkloadRetirement
+	source             EnvironmentGitSource
+	revisions          map[string]EnvironmentDesiredRevision
+	runs               map[string]EnvironmentGitOpsRun
+	runTokens          map[string]string
+	next               time.Time
+	lease              *EnvironmentGitOpsLease
+	attempts           int
+	resources          map[string]string
+	queues             map[string]string
+	owners             map[string]environmentsync.Ownership
+	overrides          map[string]environmentsync.Override
+	effects            map[string]EnvironmentGitOpsEffect
+	runtime            map[string]EnvironmentGitOpsRuntimeEffect
+	graphs             map[string]EnvironmentWorkloadGraph
+	qualifications     map[string]EnvironmentWorkloadQualificationRequest
+	bindingServices    map[string]EnvironmentQualificationServiceReceipt
+	bindingReleases    map[string]string
+	retirementPolicies map[string]environmentBindingRetirementPolicy
+	bindingRetirements map[string]environmentBindingRetirementPublication
+	poll               environmentGitSourcePoll
+	approvals          map[string]EnvironmentGitRevisionApproval
+	notifications      environmentGitNotificationState
 }
 
 var _ EnvironmentGitOpsStore = (*MemStore)(nil)
@@ -142,6 +146,12 @@ func (m *MemStore) ApproveEnvironmentDesiredRevision(_ context.Context, input Ap
 	if desired.Definition.Project != project.Slug || desired.Definition.Environment != source.EnvironmentSlug {
 		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, ErrInvalidArgument
 	}
+	if err := m.validateRecoveryRetentionApprovalLocked(source, desired.Definition); err != nil {
+		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
+	}
+	if err := m.validateBuildArtifactApprovalLocked(source, desired.Definition); err != nil {
+		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
+	}
 	var revision EnvironmentDesiredRevision
 	for _, existing := range memory.revisions {
 		if existing.CommitSHA == input.CommitSHA && existing.Digest == desired.Digest {
@@ -160,6 +170,9 @@ func (m *MemStore) ApproveEnvironmentDesiredRevision(_ context.Context, input Ap
 		source.UpdatedAt = time.Now().UTC()
 		memory.source = source
 		memory.next = source.UpdatedAt
+	}
+	if err := m.environmentGitRolloutNotificationLocked(memory, nil, "", time.Now().UTC()); err != nil {
+		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
 	}
 	return source, cloneEnvironmentRevision(revision), nil
 }
@@ -298,6 +311,17 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 	completed := now.UTC()
 	var notificationPlan api.EnvironmentGitOpsPlan
 	_ = json.Unmarshal(plan, &notificationPlan)
+	if memory.source.Spec.Mode == "enforce" && environmentGitRolloutReportCurrent(memory.source, memory.revisions[memory.source.ApprovedRevisionID], notificationPlan) {
+		evidence, err := m.currentEnvironmentGitOpsWorkloadEvidenceLocked(memory.source.AccountID, memory.source.ID)
+		if err != nil {
+			return err
+		}
+		if evidence == nil || evidence.PlanHash == notificationPlan.Hash {
+			if err := m.environmentGitRolloutNotificationLocked(memory, evidence, run.ID, now); err != nil {
+				return err
+			}
+		}
+	}
 	if err := m.environmentGitNotificationLocked(memory, "drift", environmentGitReportNotificationStatus(status, notificationPlan), run.ID, errorCode, notificationPlan, now); err != nil {
 		return err
 	}

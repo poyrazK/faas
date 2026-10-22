@@ -1,6 +1,6 @@
 // spec: §6.2
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -11,14 +11,15 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 )
 
-func proReq(instance, app string) Request {
-	return Request{Instance: instance, AppID: app, Plan: api.PlanPro, RAMMB: 512, VCPU: 2, MaxConcurrency: 5}
+func proReq(instance, app string) sched.Request {
+	return sched.Request{Instance: instance, AppID: app, Plan: api.PlanPro, RAMMB: 512, VCPU: 2, MaxConcurrency: 5}
 }
 
 func TestAdmitBasic(t *testing.T) {
-	l := NewLedger()
+	l := sched.NewLedger()
 	if err := l.Admit(proReq("i1", "app1")); err != nil {
 		t.Fatalf("admit: %v", err)
 	}
@@ -35,14 +36,14 @@ func TestAdmitBasic(t *testing.T) {
 }
 
 func TestHeadroomMB_EmptyLedger(t *testing.T) {
-	l := NewLedger()
+	l := sched.NewLedger()
 	if got := l.HeadroomMB(); got != api.RAMAdmissionCeilingMB {
 		t.Errorf("HeadroomMB on empty = %d, want %d", got, api.RAMAdmissionCeilingMB)
 	}
 }
 
 func TestAdmitEnforcesConcurrency(t *testing.T) {
-	l := NewLedger()
+	l := sched.NewLedger()
 	// Pro allows 5 concurrent; the app is configured to 2.
 	for i := 0; i < 2; i++ {
 		r := proReq(fmt.Sprintf("i%d", i), "app1")
@@ -68,11 +69,11 @@ func TestAdmitEnforcesConcurrency(t *testing.T) {
 }
 
 func TestAdmitRefusesAtRAMCeiling(t *testing.T) {
-	l := NewLedger()
+	l := sched.NewLedger()
 	// Fill to just under the ceiling with 1024 MB Scale instances (1032 each).
 	admitted := 0
 	for i := 0; ; i++ {
-		r := Request{Instance: fmt.Sprintf("i%d", i), AppID: fmt.Sprintf("a%d", i), Plan: api.PlanScale, RAMMB: 1024, VCPU: 1, MaxConcurrency: 20}
+		r := sched.Request{Instance: fmt.Sprintf("i%d", i), AppID: fmt.Sprintf("a%d", i), Plan: api.PlanScale, RAMMB: 1024, VCPU: 1, MaxConcurrency: 20}
 		if err := l.Admit(r); err != nil {
 			var prob *api.Problem
 			if !errors.As(err, &prob) || prob.Code != api.CodeCapacity {
@@ -92,11 +93,11 @@ func TestAdmitRefusesAtRAMCeiling(t *testing.T) {
 }
 
 func TestAdmitRefusesAtVCPUExhaustion(t *testing.T) {
-	l := NewLedger()
+	l := sched.NewLedger()
 	// Tiny RAM so RAM never binds; 160 vCPU slots is the limit.
 	admitted := 0
 	for i := 0; ; i++ {
-		r := Request{Instance: fmt.Sprintf("i%d", i), AppID: fmt.Sprintf("a%d", i), Plan: api.PlanFree, RAMMB: 128, VCPU: 2, MaxConcurrency: 1}
+		r := sched.Request{Instance: fmt.Sprintf("i%d", i), AppID: fmt.Sprintf("a%d", i), Plan: api.PlanFree, RAMMB: 128, VCPU: 2, MaxConcurrency: 1}
 		if err := l.Admit(r); err != nil {
 			break
 		}
@@ -108,7 +109,7 @@ func TestAdmitRefusesAtVCPUExhaustion(t *testing.T) {
 }
 
 func TestReleaseFreesResources(t *testing.T) {
-	l := NewLedger()
+	l := sched.NewLedger()
 	if err := l.Admit(proReq("i1", "app1")); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +124,7 @@ func TestReleaseFreesResources(t *testing.T) {
 }
 
 func TestBeginSnapshotReleasesConcurrencyNotRAM(t *testing.T) {
-	l := NewLedger()
+	l := sched.NewLedger()
 	r := proReq("i1", "app1")
 	r.MaxConcurrency = 1
 	if err := l.Admit(r); err != nil {
@@ -150,7 +151,7 @@ func TestBeginSnapshotReleasesConcurrencyNotRAM(t *testing.T) {
 }
 
 func TestAdmitRejectsDuplicate(t *testing.T) {
-	l := NewLedger()
+	l := sched.NewLedger()
 	if err := l.Admit(proReq("i1", "app1")); err != nil {
 		t.Fatal(err)
 	}
@@ -160,8 +161,8 @@ func TestAdmitRejectsDuplicate(t *testing.T) {
 }
 
 func TestLedgerRolloutScopeTracksServingLifecycle(t *testing.T) {
-	ledger := NewLedger()
-	if err := ledger.Admit(Request{Instance: "old", AppID: "app", DeploymentID: "old-revision",
+	ledger := sched.NewLedger()
+	if err := ledger.Admit(sched.Request{Instance: "old", AppID: "app", DeploymentID: "old-revision",
 		DeploymentScope: "staging", Plan: api.PlanPro, RAMMB: 128, VCPU: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -173,8 +174,8 @@ func TestLedgerRolloutScopeTracksServingLifecycle(t *testing.T) {
 		t.Fatal("snapshotting capacity authorized a rollout")
 	}
 	ledger.Release("old")
-	if err := ledger.Admit(Request{Instance: "warm", AppID: "app", DeploymentID: "old-revision",
-		DeploymentScope: "staging", Plan: api.PlanPro, RAMMB: 128, VCPU: 1, Kind: KindWarmPool}); err != nil {
+	if err := ledger.Admit(sched.Request{Instance: "warm", AppID: "app", DeploymentID: "old-revision",
+		DeploymentScope: "staging", Plan: api.PlanPro, RAMMB: 128, VCPU: 1, Kind: sched.KindWarmPool}); err != nil {
 		t.Fatal(err)
 	}
 	if ledger.HasOtherRevisionInScope("app", "new-revision", "staging") {
@@ -192,14 +193,14 @@ func TestLedgerRolloutScopeTracksServingLifecycle(t *testing.T) {
 // TestConcurrentAdmitReleaseNoCorruption stresses the ledger under concurrency;
 // with -race this guards the accounting against data races and drift.
 func TestConcurrentAdmitReleaseNoCorruption(t *testing.T) {
-	l := NewLedger()
+	l := sched.NewLedger()
 	var wg sync.WaitGroup
 	for i := 0; i < 200; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			inst := fmt.Sprintf("i%d", i)
-			r := Request{Instance: inst, AppID: fmt.Sprintf("a%d", i%10), Plan: api.PlanHobby, RAMMB: 256, VCPU: 1, MaxConcurrency: 100}
+			r := sched.Request{Instance: inst, AppID: fmt.Sprintf("a%d", i%10), Plan: api.PlanHobby, RAMMB: 256, VCPU: 1, MaxConcurrency: 100}
 			if err := l.Admit(r); err == nil {
 				l.Release(inst)
 			}
@@ -226,13 +227,13 @@ func TestConcurrentAdmitReleaseNoCorruption(t *testing.T) {
 // the per-node RAM and the per-app counter (which is zero, but
 // Release must still walk the bookkeeping without crashing).
 func TestAdmitMigrationKindSkipsPerAppConcurrency(t *testing.T) {
-	l := NewLedger()
+	l := sched.NewLedger()
 	destNode := "node-b"
-	if err := l.Admit(Request{
+	if err := l.Admit(sched.Request{
 		Instance: "mig-1",
 		RAMMB:    512,
 		VCPU:     2,
-		Kind:     KindMigration,
+		Kind:     sched.KindMigration,
 		NodeID:   destNode,
 		// AppID + Plan deliberately left zero to exercise the
 		// KindMigration short-circuit in admission.go.
@@ -274,20 +275,20 @@ func TestAdmitMigrationKindSkipsPerAppConcurrency(t *testing.T) {
 // be rejected; this pins that invariant §6.2-2 still fires for the
 // migration path (KindMigration skips per-app concurrency, NOT RAM).
 func TestAdmitMigrationKindHonoursRAMCeiling(t *testing.T) {
-	l := NewLedger()
+	l := sched.NewLedger()
 	destNode := "node-b"
 	// Use a tight per-node ceiling so the test is hermetic.
 	ceiling := 512 + api.PerVMOverheadMB
 	// First migration fits.
-	if err := l.Admit(Request{
-		Instance: "mig-1", RAMMB: 512, VCPU: 1, Kind: KindMigration,
+	if err := l.Admit(sched.Request{
+		Instance: "mig-1", RAMMB: 512, VCPU: 1, Kind: sched.KindMigration,
 		NodeID: destNode, NodeCeilingMB: ceiling,
 	}); err != nil {
 		t.Fatalf("first migration admit: %v", err)
 	}
 	// Second one would overflow.
-	err := l.Admit(Request{
-		Instance: "mig-2", RAMMB: 512, VCPU: 1, Kind: KindMigration,
+	err := l.Admit(sched.Request{
+		Instance: "mig-2", RAMMB: 512, VCPU: 1, Kind: sched.KindMigration,
 		NodeID: destNode, NodeCeilingMB: ceiling,
 	})
 	if err == nil {
@@ -304,8 +305,8 @@ func TestAdmitMigrationKindHonoursRAMCeiling(t *testing.T) {
 // consume node RAM/vCPU, but it must not consume the app's serving
 // max_concurrency slot.
 func TestAdmitSnapshotPrimeKindSkipsServingConcurrency(t *testing.T) {
-	l := NewLedger()
-	request := Request{
+	l := sched.NewLedger()
+	request := sched.Request{
 		AppID: "app-1", Plan: api.PlanScale, RAMMB: 1024, VCPU: 4,
 		MaxConcurrency: 1, NodeID: "node-a", NodeCeilingMB: 100000,
 		VCPUBudget: 160,
@@ -315,7 +316,7 @@ func TestAdmitSnapshotPrimeKindSkipsServingConcurrency(t *testing.T) {
 		t.Fatalf("admit old live instance: %v", err)
 	}
 	request.Instance = "replacement-prime"
-	request.Kind = KindSnapshotPrime
+	request.Kind = sched.KindSnapshotPrime
 	if err := l.Admit(request); err != nil {
 		t.Fatalf("admit snapshot prime alongside maxed app: %v", err)
 	}
@@ -332,8 +333,8 @@ func TestAdmitSnapshotPrimeKindSkipsServingConcurrency(t *testing.T) {
 }
 
 func TestAdmitDeploymentSmokeAllowsOneCountedRolloutOverlap(t *testing.T) {
-	l := NewLedger()
-	request := Request{
+	l := sched.NewLedger()
+	request := sched.Request{
 		AppID: "app-1", Plan: api.PlanFree, RAMMB: 128, VCPU: 1,
 		MaxConcurrency: 1, NodeID: "node-a", NodeCeilingMB: 100000,
 		VCPUBudget: 160,
@@ -365,18 +366,18 @@ func TestAdmitDeploymentSmokeAllowsOneCountedRolloutOverlap(t *testing.T) {
 }
 
 func TestDeploymentSmokeAdmissionRequiresExplicitDeployment(t *testing.T) {
-	engine := &Engine{}
-	if _, err := engine.AdmitInstance(context.Background(), "app-1", "", "", TriggerDeploymentSmoke); err == nil {
+	engine := &sched.Engine{}
+	if _, err := engine.AdmitInstance(context.Background(), "app-1", "", "", sched.TriggerDeploymentSmoke); err == nil {
 		t.Fatal("deployment smoke without deployment_id was accepted")
 	}
 }
 
 func TestAdmitWarmPoolKindReservesRAMWithoutConcurrencyUntilPromoted(t *testing.T) {
-	l := NewLedger()
-	req := Request{
+	l := sched.NewLedger()
+	req := sched.Request{
 		Instance: "warm-1", AppID: "app-warm", DeploymentID: "dep-warm",
 		Plan: api.PlanPro, RAMMB: 512, VCPU: 2, MaxConcurrency: 1,
-		Kind: KindWarmPool, NodeID: "node-a", NodeCeilingMB: 100000,
+		Kind: sched.KindWarmPool, NodeID: "node-a", NodeCeilingMB: 100000,
 		VCPUBudget: 160,
 	}
 	if err := l.Admit(req); err != nil {
@@ -405,12 +406,12 @@ func TestAdmitWarmPoolKindReservesRAMWithoutConcurrencyUntilPromoted(t *testing.
 // guards the KindMigration branch from being copy-pasted and
 // accidentally swallowing the Plan validation for the wake path.
 func TestAdmitWakeKindRequiresKnownPlan(t *testing.T) {
-	l := NewLedger()
-	err := l.Admit(Request{
+	l := sched.NewLedger()
+	err := l.Admit(sched.Request{
 		Instance: "i1", AppID: "app1",
 		RAMMB: 256, VCPU: 1, MaxConcurrency: 5,
 		// Plan deliberately empty.
-		Kind: KindWake,
+		Kind: sched.KindWake,
 	})
 	if err == nil {
 		t.Fatalf("admit wake with empty Plan: want error, got nil")

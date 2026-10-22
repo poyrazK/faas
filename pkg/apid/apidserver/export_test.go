@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
+	"github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
@@ -44,12 +45,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/realtime"
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/session"
@@ -57,6 +60,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
+
+var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
 // Package-level types
 type AffectedPartition = affectedPartition
@@ -113,6 +118,13 @@ type RuntimeConfigManager = runtimeConfigManager
 type RuntimeConfigRestartNotifier = runtimeConfigRestartNotifier
 type ScanPlanResponse = scanPlanResponse
 type Server = server
+
+func (s *server) DataPipelines() **datapipelines.Handler { return &s.dataPipelines }
+
+func (s *server) ConfigurePipelineAPIApp(ctx context.Context, a state.Account, app state.App) error {
+	return s.configurePipelineAPIApp(ctx, a, app)
+}
+
 type SourceRefManagedPostgresProvider = sourceRefManagedPostgresProvider
 type SourceRefTestEnv = sourceRefTestEnv
 type SpyNotifier = spyNotifier
@@ -262,6 +274,7 @@ var PlanCacheRoot = &planCacheRoot
 var PlanCacheRootErr = &planCacheRootErr
 var PlanCacheRootOnce = &planCacheRootOnce
 var PlanSourceCache = &planSourceCache
+var RouteProbeChallengeDelay = &routeProbeChallengeDelay
 var SetSecretRecipient = &setSecretRecipient
 var SseChannels = &sseChannels
 var TimeNow = &timeNow
@@ -301,7 +314,6 @@ var BuildDebugDependencyComparisonBetween = buildDebugDependencyComparisonBetwee
 var BuildDebugDependencyDeploymentComparison = buildDebugDependencyDeploymentComparison
 var BuildDebugDependencyLatencyHistory = buildDebugDependencyLatencyHistory
 var BuildEnvDiffResponse = buildEnvDiffResponse
-var BuildObsCapacityProfiles = buildObsCapacityProfiles
 var BuildObsTenantUsageProfiles = buildObsTenantUsageProfiles
 var BuildSourceRefTarGz = buildSourceRefTarGz
 var BuildTestAlertEvent = buildTestAlertEvent
@@ -597,6 +609,7 @@ var SeedSharedOrgWithOwner = seedSharedOrgWithOwner
 var SeedTenantSurface = seedTenantSurface
 var SelectDebugReplayMirrorRule = selectDebugReplayMirrorRule
 var SetS3Flag = setS3Flag
+var SeedCanaryFixture = seedCanaryFixture
 var Setup = setup
 var SetupAlerts = setupAlerts
 var SetupChangePlan = setupChangePlan
@@ -617,7 +630,6 @@ var StoreAsAuthenticator = storeAsAuthenticator
 var StoreAsSessionLookup = storeAsSessionLookup
 var StorePlanCache = storePlanCache
 var StripeWebhookHarness = stripeWebhookHarness
-var SummariseBetaFunnel = summariseBetaFunnel
 var SummarizeDevSyncHistory = summarizeDevSyncHistory
 var SummarizeRuntimePolicySchedulerStatus = summarizeRuntimePolicySchedulerStatus
 var SummarizeRuntimePolicyStatus = summarizeRuntimePolicyStatus
@@ -860,7 +872,6 @@ func (r *safeReleaseLeaseMetrics) SecondsLeft() *prometheus.Gauge  { return &r.s
 
 // Members of server
 func (r *server) AdminAllowlist() **adminAllowlist                   { return &r.adminAllowlist }
-func (r *server) AiGatewayEnabled() *bool                            { return &r.aiGatewayEnabled }
 func (r *server) AppEvents() *appevents.Service                      { return &r.appEvents }
 func (r *server) Audit() **auditor                                   { return &r.audit }
 func (r *server) DevBridgeEnabled() *bool                            { return &r.devBridgeEnabled }
@@ -868,7 +879,6 @@ func (r *server) DevBridgeURL() *string                              { return &r
 func (r *server) Domain() *string                                    { return &r.domain }
 func (r *server) Durable() *durable.Service                          { return &r.durable }
 func (r *server) EdgeRules() *edgerules.Service                      { return &r.edgeRules }
-func (r *server) FeatureFlagsEnabled() *bool                         { return &r.featureFlagsEnabled }
 func (r *server) FlagsWorkloadVerifier() **workloadidentity.Verifier { return &r.flagsWorkloadVerifier }
 func (r *server) WorkloadVerifier() **workloadidentity.Verifier      { return &r.workloadVerifier }
 func (r *server) Log() **slog.Logger                                 { return &r.log }
@@ -880,6 +890,9 @@ func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 }
 func (r *server) ManagedPostgresCutovers() **managedpostgres.CutoverService {
 	return &r.managedPostgresCutovers
+}
+func (r *server) DrainRouteProbes(ctx context.Context) error {
+	return r.drainRouteProbes(ctx)
 }
 func (r *server) Notif() *Notifier                              { return &r.notif }
 func (r *server) Object() *object.Service                       { return &r.object }
@@ -1210,6 +1223,9 @@ func (r *server) RenderDeveloperEnvironments(p0 http.ResponseWriter, p1 *http.Re
 func (r *server) RenderPreviewsList(p0 http.ResponseWriter, p1 *http.Request, p2 *slog.Logger, p3 state.Account) {
 	r.renderPreviewsList(p0, p1, p2, p3)
 }
+func (r *server) RenderReleaseApprovalPage(p0 http.ResponseWriter, p1 *http.Request) {
+	r.renderReleaseApprovalPage(p0, p1)
+}
 func (r *server) ReplaceProjectEnvironmentQueueBindings(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.replaceProjectEnvironmentQueueBindings(p0, p1, p2)
 }
@@ -1226,6 +1242,34 @@ func (r *server) RevokeDevBridgeDashboard(p0 http.ResponseWriter, p1 *http.Reque
 }
 func (r *server) RollbackOn5xxSweep(p0 context.Context, p1 time.Time) error {
 	return r.rollbackOn5xxSweep(p0, p1)
+}
+func (r *server) ConfigGuardSweep(p0 context.Context, p1 time.Time) error {
+	return r.configGuardSweep(p0, p1)
+}
+func (r *server) SetConfigGuardTelemetry(t state.ConfigGuardTelemetryStore) {
+	r.configGuardTelemetry = t
+}
+func (r *server) PostReleaseWatchSweep(p0 context.Context, p1 time.Time) error {
+	return r.postReleaseWatchSweep(p0, p1)
+}
+
+// PostReleaseTelemetry is the request summary the post-release watch reads.
+type PostReleaseTelemetry = rollbackOn5xxTelemetry
+
+func (r *server) SetPostReleaseTelemetry(t PostReleaseTelemetry) {
+	r.postReleaseTelemetry = t
+}
+
+// SetReleaseGateEvidence stands in for Postgres release gate evidence
+// (ADR-20261019071734).
+func (r *server) SetReleaseGateEvidence(e state.ReleaseGateEvidenceStore) {
+	r.releaseGateEvidence = e
+}
+
+// StartDueScheduledReleases runs one pass of the scheduled release worker
+// (ADR-20261021152201) at now.
+func (r *server) StartDueScheduledReleases(ctx context.Context, now time.Time) {
+	r.startDueScheduledReleases(ctx, now)
 }
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
@@ -1342,6 +1386,18 @@ func (r *statusMetrics) ObserveMutation(p0 string, p1 string, p2 string) {
 	r.observeMutation(p0, p1, p2)
 }
 
+func (r *server) DrainMigrationVerificationsForTest(ctx context.Context) error {
+	worker, ok := r.migrationVerificationWorker()
+	if !ok {
+		return nil
+	}
+	return worker.Drain(ctx)
+}
+
+func (r *server) RestoreMigrationServiceForTest(ctx context.Context, account, app string, run api.MigrationVerification) (string, error) {
+	return r.restoreMigrationService(ctx, account, app, run)
+}
+
 // Members of testEnv
 func (r *testEnv) Acct() *state.Account                           { return &r.acct }
 func (r *testEnv) H() *http.Handler                               { return &r.h }
@@ -1446,6 +1502,19 @@ func WorkloadTrust(cfg Config, getenv func(string) string, pathEnv, path, issuer
 	return workloadTrust(cfg, getenv, pathEnv, path, issuerEnv, issuer)
 }
 
+func (s *server) GitLabClientForTest(client gitlabsource.Client) { s.gitlab = client }
+
+var SealGitLabTokensForTest = sealGitLabTokens
+var GitOpsBuildArchiveForTest = environmentGitOpsBuildArchive
+
+func (s *server) PrepareGitOpsSourceForTest(ctx context.Context, lease state.EnvironmentGitOpsLease, request state.EnvironmentWorkloadSourceRequest) (state.EnvironmentWorkloadSourceArtifact, error) {
+	return s.prepareEnvironmentGitArchive(ctx, lease, request)
+}
+
+func (s *server) ReadGitOpsSourceForTest(ctx context.Context, source state.EnvironmentGitSource) (state.EnvironmentGitSourcePollResult, error) {
+	return (&environmentGitSourceReader{server: s}).ReadEnvironmentGitSource(ctx, source)
+}
+
 func (r *server) MountInternalMailSuspension(mux *http.ServeMux, addr string, getenv func(string) string) error {
 	return r.mountInternalMailSuspension(mux, addr, getenv)
 }
@@ -1485,4 +1554,17 @@ func (s *server) RehearsalWorkerFaultsEnabled() *bool   { return &s.rehearsalWor
 
 func (s *server) StartInternalCIWorker(ctx context.Context, log *slog.Logger) func() {
 	return s.startInternalCIWorker(ctx, log)
+}
+
+// ConfigureLiveQueriesForTest wires live queries without managed Postgres:
+// the rollout gate applies, and admitted accounts meet
+// live_queries_unavailable.
+func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
+	return s.configureLiveQueries(nil, getenv)
+}
+
+// LiveRoutesForTest lists an app's live routes; accounts outside the rollout
+// get none before the store is read.
+func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
+	return s.liveRoutes(ctx, nil, accountID, appID)
 }

@@ -423,7 +423,7 @@ func completePushServingTestDelivery(t *testing.T, store *state.PgStore, account
 	return invocation.ID
 }
 
-func registerServingGateway(t *testing.T, store *state.PgStore, name string) {
+func registerServingGateway(t *testing.T, store state.Store, name string) {
 	t.Helper()
 	role, target := "compute-only", "tcp://127.0.0.1:8080"
 	if _, err := store.CreateComputeNode(t.Context(), state.ComputeNode{Name: name, Active: true,
@@ -433,13 +433,38 @@ func registerServingGateway(t *testing.T, store *state.PgStore, name string) {
 	}
 }
 
-func completeRequestQualificationReceipts(t *testing.T, store *state.PgStore, request state.EnvironmentWorkloadQualificationRequest) {
+// The qualification receipt writers only; a Store-sized test interface would
+// regrow this package's compile (ADR-982). Both stores implement it.
+type requestQualificationReceiptStore interface {
+	state.EnvironmentGitOpsQualificationStore
+	state.EnvironmentGitOpsQualificationInstanceStore
+	state.EnvironmentQualificationExecutionStore
+	state.EnvironmentGitOpsQualificationRuntimeStore
+	state.EnvironmentQualificationConfigReceiptStore
+	state.EnvironmentQualificationSnapshotStore
+	state.EnvironmentQualificationRestoreStore
+	state.EnvironmentQualificationRestoreRuntimeStore
+	state.EnvironmentQualificationFrameworkReadyReceiptStore
+	state.EnvironmentQualificationRestoreReceiptStore
+	state.EnvironmentQualificationSmokeReceiptStore
+}
+
+func completeRequestQualificationReceipts(t *testing.T, store state.Store, request state.EnvironmentWorkloadQualificationRequest) {
 	t.Helper()
-	claimed, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), request.ID, "scheduler", time.Minute)
+	receipts, ok := store.(requestQualificationReceiptStore)
+	if !ok {
+		t.Fatalf("%T lacks qualification receipt writers", store)
+	}
+	claimed, err := receipts.ClaimEnvironmentWorkloadQualification(t.Context(), request.ID, "scheduler", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	placement := qualificationPlacement(t, store, 4096)
+	completeClaimedQualificationReceipts(t, receipts, claimed, placement)
+}
+
+func completeClaimedQualificationReceipts(t *testing.T, store requestQualificationReceiptStore, claimed state.EnvironmentWorkloadQualificationRequest, placement state.EnvironmentWorkloadQualificationPlacement) {
+	t.Helper()
 	admitted, err := store.CreateEnvironmentWorkloadQualificationInstance(t.Context(), claimed, placement)
 	if err != nil {
 		t.Fatal(err)
@@ -449,6 +474,9 @@ func completeRequestQualificationReceipts(t *testing.T, store *state.PgStore, re
 	}
 	inputs := state.RuntimeConfigInputs{Scope: "production", Boundary: time.Now().UTC(), Variables: map[string]string{},
 		SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}
+	for key, value := range claimed.FrozenInputs.Variables {
+		inputs.Variables[key] = value
+	}
 	runtime := state.EnvironmentWorkloadQualificationRuntime{NodeID: placement.NodeID, WakeID: placement.WakeID,
 		Netns: "qualification-source", HostIP: "10.0.0.1", GuestUID: 20001, Inputs: inputs}
 	if _, err := store.PublishEnvironmentWorkloadQualificationRuntime(t.Context(), claimed, runtime); err != nil {

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -28,10 +29,10 @@ func TestMutationLeavesRejectTrailingArgumentsBeforeNetwork(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = io.Discard, io.Discard, false
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = io.Discard, io.Discard, false
 	t.Cleanup(func() {
-		osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON
+		(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON
 	})
 
 	tests := []struct {
@@ -39,103 +40,115 @@ func TestMutationLeavesRejectTrailingArgumentsBeforeNetwork(t *testing.T) {
 		call func() int
 	}{
 		{"traffic set", func() int {
-			return cmdTrafficSet([]string{"--deployment", "00000000-0000-0000-0000-000000000000", "--percent", "50", "unexpected"})
+			return main.CmdTrafficSet([]string{"--deployment", "00000000-0000-0000-0000-000000000000", "--percent", "50", "unexpected"})
 		}},
 		{"traffic promote", func() int {
-			return cmdTrafficPromote([]string{"--deployment", "00000000-0000-0000-0000-000000000000", "unexpected"})
+			return main.CmdTrafficPromote([]string{"--deployment", "00000000-0000-0000-0000-000000000000", "unexpected"})
 		}},
 		{"cron add", func() int {
-			return cmdCrons([]string{"add", "--app", "demo", "--schedule", "*/5 * * * *", "unexpected"})
+			return main.CmdCrons([]string{"add", "--app", "demo", "--schedule", "*/5 * * * *", "unexpected"})
+		}},
+		{"ai token create", func() int {
+			return main.CmdAITokens([]string{"create", "--app", "demo", "--name", "test-token", "unexpected"})
+		}},
+		{"ai token revoke", func() int {
+			return main.CmdAITokens([]string{"revoke", "--app", "demo", "token-id", "unexpected"})
 		}},
 		{"domain add", func() int {
-			return cmdDomains([]string{"add", "--domain", "demo.example.com", "--app", "demo", "unexpected"})
+			return main.CmdDomains([]string{"add", "--domain", "demo.example.com", "--app", "demo", "unexpected"})
 		}},
 		{"deployment exclusion clear", func() int {
-			return cmdDeploymentsExcludeClear([]string{"--slug", "demo", "--project-slug", "project", "unexpected"})
+			return main.CmdDeploymentsExcludeClear([]string{"--slug", "demo", "--project-slug", "project", "unexpected"})
 		}},
 		{"registry set", func() int {
-			return cmdRegistrySet([]string{"--app", "demo", "--registry", "ghcr.io", "--user", "user", "--password", "secret", "unexpected"})
+			return main.CmdRegistrySet([]string{"--app", "demo", "--registry", "ghcr.io", "--user", "user", "--password", "secret", "unexpected"})
 		}},
-		{"registry remove", func() int { return cmdRegistryRm([]string{"--app", "demo", "--registry", "ghcr.io", "unexpected"}) }},
-		{"env push", func() int { return envPush([]string{"--app", "demo", "--from-stdin", "unexpected"}) }},
-		{"app scale", func() int { return cmdAppScale("demo", []string{"--ram", "256", "unexpected"}) }},
-		{"app update", func() int { return cmdApp([]string{"demo", "--min", "1", "unexpected"}) }},
-		{"app security", func() int { return cmdAppSecurity("demo", []string{"--require-signed=true", "unexpected"}) }},
-		{"static egress clear", func() int { return cmdAppStaticEgressIPClear("demo", []string{"unexpected"}) }},
+		{"registry remove", func() int {
+			return main.CmdRegistryRm([]string{"--app", "demo", "--registry", "ghcr.io", "unexpected"})
+		}},
+		{"env push", func() int { return main.EnvPush([]string{"--app", "demo", "--from-stdin", "unexpected"}) }},
+		{"app scale", func() int { return main.CmdAppScale("demo", []string{"--ram", "256", "unexpected"}) }},
+		{"app update", func() int { return main.CmdApp([]string{"demo", "--min", "1", "unexpected"}) }},
+		{"app security", func() int { return main.CmdAppSecurity("demo", []string{"--require-signed=true", "unexpected"}) }},
+		{"static egress clear", func() int { return main.CmdAppStaticEgressIPClear("demo", []string{"unexpected"}) }},
 		{"alert add", func() int {
-			return cmdAlertAdd([]string{"--app", "demo", "--name", "latency", "--metric", "latency_p95_ms", "--comparison", "gt", "--threshold", "350", "--window-spec", "5m", "--webhook-url", "https://example.com/hook", "--webhook-secret", "secret", "unexpected"})
+			return main.CmdAlertAdd([]string{"--app", "demo", "--name", "latency", "--metric", "latency_p95_ms", "--comparison", "gt", "--threshold", "350", "--window-spec", "5m", "--webhook-url", "https://example.com/hook", "--webhook-secret", "secret", "unexpected"})
 		}},
 		{"edge rule create", func() int {
-			return cmdEdgeRulesCreate([]string{"--app", "demo", "--kind", "maintenance", "--match-host", "demo.example.com", "unexpected"})
+			return main.CmdEdgeRulesCreate([]string{"--app", "demo", "--kind", "maintenance", "--match-host", "demo.example.com", "unexpected"})
 		}},
-		{"workflow run", func() int { return cmdWorkflowsRun([]string{"nightly", "--app", "demo", "unexpected"}) }},
+		{"workflow run", func() int { return main.CmdWorkflowsRun([]string{"nightly", "--app", "demo", "unexpected"}) }},
 		{"job add", func() int {
-			return cmdJobsAdd([]string{"demo-job", "--image", "example.com/demo:latest", "unexpected"})
+			return main.CmdJobsAdd([]string{"demo-job", "--image", "example.com/demo:latest", "unexpected"})
 		}},
-		{"job update", func() int { return cmdJobsUpdate([]string{"demo-job", "--pause", "unexpected"}) }},
-		{"job run", func() int { return cmdJobsRun([]string{"demo-job", "--tasks", "1", "unexpected"}) }},
+		{"job update", func() int { return main.CmdJobsUpdate([]string{"demo-job", "--pause", "unexpected"}) }},
+		{"job run", func() int { return main.CmdJobsRun([]string{"demo-job", "--tasks", "1", "unexpected"}) }},
 		{"mirror create", func() int {
-			return cmdMirrorCreate([]string{"--app", "demo", "--source", "source-id", "--mirror", "mirror-id", "unexpected"})
+			return main.CmdMirrorCreate([]string{"--app", "demo", "--source", "source-id", "--mirror", "mirror-id", "unexpected"})
 		}},
 		{"mirror update", func() int {
-			return cmdMirrorUpdate([]string{"--app", "demo", "--id", "mirror-id", "--disable", "unexpected"})
+			return main.CmdMirrorUpdate([]string{"--app", "demo", "--id", "mirror-id", "--disable", "unexpected"})
 		}},
-		{"mirror remove", func() int { return cmdMirrorRm([]string{"--app", "demo", "--id", "mirror-id", "unexpected"}) }},
+		{"mirror remove", func() int { return main.CmdMirrorRm([]string{"--app", "demo", "--id", "mirror-id", "unexpected"}) }},
 		{"webhook add", func() int {
-			return cmdWebhooksAdd([]string{"--app", "demo", "--target-url", "https://example.com/hook", "unexpected"})
+			return main.CmdWebhooksAdd([]string{"--app", "demo", "--target-url", "https://example.com/hook", "unexpected"})
 		}},
 		{"issue automatic sync", func() int {
-			return cmdIssueAutoSync([]string{"--app", "demo", "--issue", "33333333-3333-4333-8333-333333333333", "--link", "55555555-5555-4555-8555-555555555555", "--enable", "unexpected"})
+			return main.CmdIssueAutoSync([]string{"--app", "demo", "--issue", "33333333-3333-4333-8333-333333333333", "--link", "55555555-5555-4555-8555-555555555555", "--enable", "unexpected"})
 		}},
 		{"issue ticket create", func() int {
-			return cmdIssueTickets([]string{"create", "--app", "demo", "--issue", "33333333-3333-4333-8333-333333333333", "--provider", "github", "--native", "unexpected"})
+			return main.CmdIssueTickets([]string{"create", "--app", "demo", "--issue", "33333333-3333-4333-8333-333333333333", "--provider", "github", "--native", "unexpected"})
 		}},
 		{"issue ticket sync", func() int {
-			return cmdIssueTickets([]string{"sync", "--app", "demo", "--issue", "33333333-3333-4333-8333-333333333333", "--link", "55555555-5555-4555-8555-555555555555", "--direction", "push", "--native", "--apply", "unexpected"})
+			return main.CmdIssueTickets([]string{"sync", "--app", "demo", "--issue", "33333333-3333-4333-8333-333333333333", "--link", "55555555-5555-4555-8555-555555555555", "--direction", "push", "--native", "--apply", "unexpected"})
 		}},
 		{"issue Linear connection", func() int {
-			return cmdIssueLinearConnection([]string{"--app", "demo", "--disconnect", "unexpected"})
+			return main.CmdIssueLinearConnection([]string{"--app", "demo", "--disconnect", "unexpected"})
 		}},
-		{"org create", func() int { return cmdOrgsCreate([]string{"--slug", "demo-org", "--name", "Demo", "unexpected"}) }},
+		{"org create", func() int { return main.CmdOrgsCreate([]string{"--slug", "demo-org", "--name", "Demo", "unexpected"}) }},
 		{"org member invite", func() int {
-			return cmdOrgsMembersInvite([]string{"--org", "demo-org", "--email", "user@example.com", "unexpected"})
+			return main.CmdOrgsMembersInvite([]string{"--org", "demo-org", "--email", "user@example.com", "unexpected"})
 		}},
 		{"org member role", func() int {
-			return cmdOrgsMembersChangeRole([]string{"--org", "demo-org", "--user", "user-id", "--role", "viewer", "unexpected"})
+			return main.CmdOrgsMembersChangeRole([]string{"--org", "demo-org", "--user", "user-id", "--role", "viewer", "unexpected"})
 		}},
-		{"org member remove", func() int { return cmdOrgsMembersRm([]string{"--org", "demo-org", "--user", "user-id", "unexpected"}) }},
+		{"org member remove", func() int {
+			return main.CmdOrgsMembersRm([]string{"--org", "demo-org", "--user", "user-id", "unexpected"})
+		}},
 		{"org invitation revoke", func() int {
-			return cmdOrgsInvitationsRevoke([]string{"--org", "demo-org", "--invitation", "invitation-id", "unexpected"})
+			return main.CmdOrgsInvitationsRevoke([]string{"--org", "demo-org", "--invitation", "invitation-id", "unexpected"})
 		}},
 		{"org ownership transfer", func() int {
-			return cmdOrgsTransferOwnership([]string{"--org", "demo-org", "--to", "user-id", "unexpected"})
+			return main.CmdOrgsTransferOwnership([]string{"--org", "demo-org", "--to", "user-id", "unexpected"})
 		}},
 		{"org key add", func() int {
-			return cmdOrgsKeysAdd([]string{"--org", "demo-org", "--label", "automation", "unexpected"})
+			return main.CmdOrgsKeysAdd([]string{"--org", "demo-org", "--label", "automation", "unexpected"})
 		}},
-		{"org update", func() int { return cmdOrgsUpdate([]string{"--org", "demo-org", "--name", "Updated", "unexpected"}) }},
+		{"org update", func() int {
+			return main.CmdOrgsUpdate([]string{"--org", "demo-org", "--name", "Updated", "unexpected"})
+		}},
 		{"tenant surface add", func() int {
-			return cmdTenantSurfacesAdd([]string{"--app", "demo", "--name", "customers", "unexpected"})
+			return main.CmdTenantSurfacesAdd([]string{"--app", "demo", "--name", "customers", "unexpected"})
 		}},
 		{"tenant hostname add", func() int {
-			return cmdTenantSurfacesHostnameAdd([]string{"--app", "demo", "--surface", "surface-id", "--hostname", "tenant.example.com", "unexpected"})
+			return main.CmdTenantSurfacesHostnameAdd([]string{"--app", "demo", "--surface", "surface-id", "--hostname", "tenant.example.com", "unexpected"})
 		}},
 		{"github webhook secret set", func() int {
-			return githubWebhookSecretSet([]string{"--installation-id", "1", "--secret", strings.Repeat("a", 32), "unexpected"})
+			return main.GithubWebhookSecretSet([]string{"--installation-id", "1", "--secret", strings.Repeat("a", 32), "unexpected"})
 		}},
 		{"rollout recover", func() int {
-			return cmdRolloutsRecover([]string{"demo", "--action", "advance", "unexpected"})
+			return main.CmdRolloutsRecover([]string{"demo", "--action", "advance", "unexpected"})
 		}},
-		{"mfa confirm", func() int { return cmdMfaConfirm([]string{"--code", "123456", "unexpected"}) }},
-		{"mfa verify", func() int { return cmdMfaVerify([]string{"--code", "123456", "unexpected"}) }},
-		{"mfa recover", func() int { return cmdMfaRecover([]string{"--code", "AAAAAAAAAA", "unexpected"}) }},
-		{"mfa disable", func() int { return cmdMfaDisable([]string{"--password", "password", "unexpected"}) }},
-		{"obsolete deployments clear", func() int { return cmdDeploysClearObsolete([]string{"--app", "demo", "--force", "unexpected"}) }},
+		{"mfa confirm", func() int { return main.CmdMfaConfirm([]string{"--code", "123456", "unexpected"}) }},
+		{"mfa verify", func() int { return main.CmdMfaVerify([]string{"--code", "123456", "unexpected"}) }},
+		{"mfa recover", func() int { return main.CmdMfaRecover([]string{"--code", "AAAAAAAAAA", "unexpected"}) }},
+		{"mfa disable", func() int { return main.CmdMfaDisable([]string{"--password", "password", "unexpected"}) }},
+		{"obsolete deployments clear", func() int { return main.CmdDeploysClearObsolete([]string{"--app", "demo", "--force", "unexpected"}) }},
 		{"delayed task add", func() int {
-			return cmdDelayedTaskAdd([]string{"--app", "demo", "--scheduled-at", "2035-01-01T00:00:00Z", "unexpected"})
+			return main.CmdDelayedTaskAdd([]string{"--app", "demo", "--scheduled-at", "2035-01-01T00:00:00Z", "unexpected"})
 		}},
-		{"openapi remove", func() int { return cmdOpenapiRemove([]string{"demo", "unexpected"}) }},
-		{"account delete", func() int { return cmdAccountDelete([]string{"-q", "unexpected"}) }},
+		{"openapi remove", func() int { return main.CmdOpenapiRemove([]string{"demo", "unexpected"}) }},
+		{"account delete", func() int { return main.CmdAccountDelete([]string{"-q", "unexpected"}) }},
 	}
 
 	for _, test := range tests {
@@ -161,28 +174,28 @@ func TestUnexpectedMutationArgsReturnStableJSONValidation(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 
-	oldErr, oldJSON := osStderr, jsonOutput
-	jsonOutput = true
-	t.Cleanup(func() { osStderr, jsonOutput = oldErr, oldJSON })
+	oldErr, oldJSON := (*main.OsStderr), (*main.JsonOutput)
+	(*main.JsonOutput) = true
+	t.Cleanup(func() { (*main.OsStderr), (*main.JsonOutput) = oldErr, oldJSON })
 
 	tests := []struct {
 		name string
 		call func() int
 	}{
 		{"traffic", func() int {
-			return cmdTrafficSet([]string{"--deployment", "00000000-0000-0000-0000-000000000000", "--percent", "50", "unexpected"})
+			return main.CmdTrafficSet([]string{"--deployment", "00000000-0000-0000-0000-000000000000", "--percent", "50", "unexpected"})
 		}},
 		{"cron", func() int {
-			return cmdCrons([]string{"add", "--app", "demo", "--schedule", "*/5 * * * *", "unexpected"})
+			return main.CmdCrons([]string{"add", "--app", "demo", "--schedule", "*/5 * * * *", "unexpected"})
 		}},
 		{"deployment exclusion", func() int {
-			return cmdDeploymentsExcludeClear([]string{"--slug", "demo", "--project-slug", "project", "unexpected"})
+			return main.CmdDeploymentsExcludeClear([]string{"--slug", "demo", "--project-slug", "project", "unexpected"})
 		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			osStderr = &stderr
+			(*main.OsStderr) = &stderr
 			before := requests.Load()
 			if code := test.call(); code == 0 {
 				t.Fatal("command accepted an unexpected positional argument")

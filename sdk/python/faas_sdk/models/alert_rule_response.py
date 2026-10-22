@@ -71,8 +71,8 @@ class AlertRuleResponse:
     """Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to
     24h are required."""
     edge_rule_id: UUID | Unset = UNSET
-    """ADR-1192. Immutable edge rule selector for edge_rule_hits and edge_rule_log_hits; absent means every rule of
-    the app."""
+    """ADR-1192. Immutable edge rule selector for edge_rule_hits, edge_rule_log_hits and edge_rule_activity; absent
+    means every rule of the app."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires
     deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""

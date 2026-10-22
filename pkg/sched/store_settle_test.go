@@ -5,7 +5,7 @@
 // interruption for a full staleness window, so a store outage cannot mark
 // the whole fleet dead. A schedd that saw no outage gives verdicts at once.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -13,49 +13,50 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // adr: 1344
 func TestStoreSettle(t *testing.T) {
-	var s storeSettle
+	var s sched.StoreSettle
 	t0 := time.Now()
 	window := time.Minute
-	s.observe(nil, t0)
-	if ok, first := s.settled(t0, window); !ok || first {
+	s.Observe(nil, t0)
+	if ok, first := s.Settled(t0, window); !ok || first {
 		t.Fatalf("no outage seen: settled=%v first=%v, want true/false", ok, first)
 	}
-	s.observe(errors.New("outage"), t0.Add(window))
-	if ok, first := s.settled(t0.Add(window), window); ok || !first {
+	s.Observe(errors.New("outage"), t0.Add(window))
+	if ok, first := s.Settled(t0.Add(window), window); ok || !first {
 		t.Fatalf("after error settled=%v first=%v, want false/true", ok, first)
 	}
-	s.observe(nil, t0.Add(2*window))
-	if ok, first := s.settled(t0.Add(2*window+30*time.Second), window); ok || first {
+	s.Observe(nil, t0.Add(2*window))
+	if ok, first := s.Settled(t0.Add(2*window+30*time.Second), window); ok || first {
 		t.Fatalf("mid-window settled=%v first=%v, want false/false", ok, first)
 	}
 	// A later success does not move the start of the settle period.
-	s.observe(nil, t0.Add(2*window+30*time.Second))
-	if ok, _ := s.settled(t0.Add(3*window), window); !ok {
+	s.Observe(nil, t0.Add(2*window+30*time.Second))
+	if ok, _ := s.Settled(t0.Add(3*window), window); !ok {
 		t.Fatal("not settled one window after recovery")
 	}
 	// An outage seen before the tracker existed holds it the same way.
-	s.hold()
-	if ok, first := s.settled(t0.Add(4*window), window); ok || !first {
+	s.Hold()
+	if ok, first := s.Settled(t0.Add(4*window), window); ok || !first {
 		t.Fatalf("after hold settled=%v first=%v, want false/true", ok, first)
 	}
-	s.observe(nil, t0.Add(4*window))
-	if ok, _ := s.settled(t0.Add(5*window), window); !ok {
+	s.Observe(nil, t0.Add(4*window))
+	if ok, _ := s.Settled(t0.Add(5*window), window); !ok {
 		t.Fatal("not settled one window after a held start")
 	}
 }
 
 // backdateSettle moves the start of the current settle period to t, as if
 // store reads had succeeded since then.
-func backdateSettle(s *storeSettle, t time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.since = t
+func backdateSettle(s *sched.StoreSettle, t time.Time) {
+	(*s.Mu()).Lock()
+	defer (*s.Mu()).Unlock()
+	(*s.Since()) = t
 }
 
 // deadNodeListFailStore fails ListRunningInstancesOnDeadNodes while fail is
@@ -80,7 +81,7 @@ func (s *deadNodeListFailStore) ListRunningInstancesOnDeadNodes(ctx context.Cont
 func TestReconcileDeadNodeInstances_WaitsForStoreToSettle(t *testing.T) {
 	mem := state.NewMemStore()
 	store := &deadNodeListFailStore{MemStore: mem}
-	e := newEngine(t, statetest.NewMem(store), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := sched.XNewEngine(t, statetest.NewMem(store), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
 	nodeID := seedStaleComputeNodeForReconcile(t, mem)
 	_, insID := seedRunningInstance(t, mem, nodeID)
 
@@ -104,7 +105,7 @@ func TestReconcileDeadNodeInstances_WaitsForStoreToSettle(t *testing.T) {
 		t.Fatalf("instance state right after outage = %q, want running", ins.State)
 	}
 
-	backdateSettle(&e.deadNodeSettle, time.Now().Add(-3*time.Minute))
+	backdateSettle(&(*e.DeadNodeSettle()), time.Now().Add(-3*time.Minute))
 	reconciled, err = e.ReconcileDeadNodeInstances(context.Background())
 	if err != nil {
 		t.Fatalf("settled tick: %v", err)
@@ -130,7 +131,7 @@ func TestReconcileDeadNodeInstances_StartupHoldNeedsAnOutage(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mem := state.NewMemStore()
-			e := newEngine(t, mem, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithStoreOutageAtStartup(tc.outage)
+			e := sched.XNewEngine(t, mem, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithStoreOutageAtStartup(tc.outage)
 			nodeID := seedStaleComputeNodeForReconcile(t, mem)
 			seedRunningInstance(t, mem, nodeID)
 			reconciled, err := e.ReconcileDeadNodeInstances(context.Background())
@@ -182,12 +183,12 @@ func TestHeartbeat_StalePeerObserverWaitsForStoreToSettle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateComputeNode peer: %v", err)
 	}
-	h := NewHeartbeat(statetest.NewMem(store), &heartbeatFakeDialer{}, nil, nil).
+	h := sched.NewHeartbeat(statetest.NewMem(store), &sched.HeartbeatFakeDialer{}, nil, nil).
 		WithOwnerNodeID(owner.ID).
 		WithStalePeerObserver(true)
 	h.Staleness = time.Minute
 	clock := now
-	h.now = func() time.Time { return clock }
+	(*h.Now()) = func() time.Time { return clock }
 	lifecycle := func() state.NodeLifecycle {
 		t.Helper()
 		n, err := mem.ComputeNodeByID(ctx, peer.ID)

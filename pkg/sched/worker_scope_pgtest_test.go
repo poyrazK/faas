@@ -1,5 +1,5 @@
 // adr: 568 — environment intent and runtime ownership contracts.
-package sched
+package sched_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,5 +18,5 @@ func TestWorkerScopedDemandPostgres(t *testing.T) {
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatal(err)
 	}
-	testWorkerScopedDemandLifecycle(t, state.NewPgStore(pool))
+	sched.XTestWorkerScopedDemandLifecycle(t, state.NewPgStore(pool))
 }

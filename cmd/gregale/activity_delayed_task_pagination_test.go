@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -17,7 +18,7 @@ func TestActivityAndDelayedTaskPaginationContract(t *testing.T) {
 		for _, machine := range []bool{false, true} {
 			for _, mode := range []string{"page", "all", "empty-page", "empty-all", "failure", "repeat"} {
 				t.Run(fmt.Sprintf("%s/json=%t/%s", command, machine, mode), func(t *testing.T) {
-					setupCLIRegression(t)
+					main.SetupCLIRegression(t)
 					var cursors []string
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						q := r.URL.Query()
@@ -50,7 +51,7 @@ func TestActivityAndDelayedTaskPaginationContract(t *testing.T) {
 					}))
 					defer server.Close()
 					t.Setenv("FAAS_API", server.URL)
-					t.Setenv("FAAS_TOKEN", testAPIKey('a'))
+					t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
 					args := []string{command, "list", "--app", "demo", "--limit", "2", "--before", "ignored", "--cursor", "start + opaque|cursor"}
 					if command == "orgs" {
 						args = []string{"orgs", "activity", "--org", "acme", "--limit", "2", "--before", "ignored", "--cursor", "start + opaque|cursor", "--kind-prefix", "deploy.", "--actor-type", "github", "--app-id", "11111111-1111-4111-8111-111111111111"}
@@ -62,7 +63,7 @@ func TestActivityAndDelayedTaskPaginationContract(t *testing.T) {
 					if machine {
 						args = append(args, "--json")
 					}
-					code, out, errOut := capturePreviewRun(t, args)
+					code, out, errOut := main.CapturePreviewRun(t, args)
 					wantCursors := []string{"start + opaque|cursor"}
 					if mode == "all" || mode == "empty-all" || mode == "failure" {
 						wantCursors = append(wantCursors, "next + opaque|cursor'quoted")
@@ -79,7 +80,7 @@ func TestActivityAndDelayedTaskPaginationContract(t *testing.T) {
 							t.Fatalf("exit=%d stdout=%s stderr=%s", code, out, errOut)
 						}
 						if machine {
-							assertOneProblem(t, errOut)
+							main.AssertOneProblem(t, errOut)
 						}
 						return
 					}
@@ -151,12 +152,12 @@ func TestActivityAndDelayedTaskPaginationContract(t *testing.T) {
 func TestActivityAndDelayedTaskPaginationHelpAndValidation(t *testing.T) {
 	for _, command := range []string{"orgs", "delayed-task"} {
 		t.Run(command, func(t *testing.T) {
-			setupCLIRegression(t)
+			main.SetupCLIRegression(t)
 			subcommand := "list"
 			if command == "orgs" {
 				subcommand = "activity"
 			}
-			code, out, errOut := capturePreviewRun(t, []string{command, subcommand, "--help"})
+			code, out, errOut := main.CapturePreviewRun(t, []string{command, subcommand, "--help"})
 			if code != 0 || errOut != "" {
 				t.Fatalf("exit=%d stderr=%s", code, errOut)
 			}
@@ -173,11 +174,11 @@ func TestActivityAndDelayedTaskPaginationHelpAndValidation(t *testing.T) {
 						args[6] = "101"
 					}
 				}
-				code, out, errOut = capturePreviewRun(t, args)
+				code, out, errOut = main.CapturePreviewRun(t, args)
 				if code != 1 || out != "" {
 					t.Fatalf("limit=%s exit=%d stdout=%s", limit, code, out)
 				}
-				assertOneProblem(t, errOut)
+				main.AssertOneProblem(t, errOut)
 			}
 		})
 	}

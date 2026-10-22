@@ -95,7 +95,7 @@ Review an app configuration change before applying it:
 gregale app my-api scale --plan --ram 512 --min 1
 gregale app my-api scale --plan --ram 512 --out scale-change.json
 gregale app my-api scale --apply scale-change.json --confirm
-gregale app my-api scale --plan --environment staging --profile medium
+gregale app my-api scale --plan --environment staging --size medium
 ```
 
 The preview reads current app settings and the account plan, then shows the
@@ -225,6 +225,32 @@ Concurrent target settings edits stop publication or rollback.
 The full clone workflow is still being implemented: these settings operations
 do not yet copy and publish active deployments with a coordinated database and
 object-storage capture, or isolate every related resource and runtime control.
+
+## Retained deleted apps
+
+`GET /v1/deleted-apps?limit=25` lists only the caller's retained deleted apps.
+The page is bounded to 1–50 records; pass its opaque `next_cursor` unchanged
+for the next page. Cursors belong to the account and deletion order. An
+invalid cursor requires restarting the inventory, not guessing a new cutoff.
+
+`GET /v1/deleted-apps/{id}` refreshes one owned retained identity. The returned
+`deleted_at`, `delete_grace_until`, and `evaluated_at` are authoritative
+lifecycle metadata. Missing legacy timestamps remain null. `restore_eligible`
+does not reserve quota/capacity; `grace_expired`, `purge_started`, or
+`metadata_unavailable` explains why the lifecycle review is blocked.
+
+After review, `POST /v1/deleted-apps/{id}/restore` accepts an empty body
+(or `{}`) and rechecks that exact app, its deadline, purge claim, quota, and
+capacity. It requires deploy-write/MFA and trusted browser origin for cookie
+authentication. A reused slug cannot redirect restoration to another app.
+Acceptance restores control-plane state; it does not prove workload execution.
+
+Restore has no durable idempotent replay receipt. After a timeout or lost
+response, inspect the deleted record and current app by exact ID before any
+new deliberate action. Never automatically retry or fall back to slug restore.
+Older servers reject the dedicated route. The legacy slug route remains
+bodyless-compatible; its optional `expected_app_id` fence is not a substitute
+for the dedicated route in a mixed-version fleet.
 
 ## Open a shell in a fresh app VM
 

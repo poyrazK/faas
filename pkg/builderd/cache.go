@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/buildcache"
+	"github.com/onebox-faas/faas/pkg/issues"
 	"golang.org/x/sys/unix"
 )
 
@@ -35,11 +35,22 @@ type CacheEntry struct {
 // cache artifact. It is optional so cache entries written before provenance
 // metadata was introduced remain readable.
 type CacheToolchain struct {
-	BuildkitVer string `json:"buildkit_version,omitempty"`
-	RailpackVer string `json:"railpack_version,omitempty"`
+	// Unchanged GitOps reuse requires this origin to remain currently signed.
+	OriginDeploymentID string `json:"origin_deployment_id,omitempty"`
+	OriginBuildID      string `json:"origin_build_id,omitempty"`
+	// The latest target that reused the origin. It is tried only once the
+	// origin is no longer trusted, so a target that never goes live cannot
+	// displace a still-valid origin.
+	NextOriginDeploymentID string `json:"next_origin_deployment_id,omitempty"`
+	NextOriginBuildID      string `json:"next_origin_build_id,omitempty"`
+	BuildkitVer            string `json:"buildkit_version,omitempty"`
+	RailpackVer            string `json:"railpack_version,omitempty"`
 	// DevPatch keeps the producing build's ADR-740 source map so a cache hit
 	// reports the same map as the build it reuses.
-	DevPatch *api.DevPatchSourceMap `json:"dev_patch,omitempty"`
+	DevPatch                   *api.DevPatchSourceMap             `json:"dev_patch,omitempty"`
+	IssueSourceMaps            *api.PublishIssueSourceMapsRequest `json:"issue_source_maps,omitempty"`
+	IssueSourceMapsDigest      string                             `json:"issue_source_maps_digest,omitempty"`
+	IssueSourceMapsImageSHA256 string                             `json:"issue_source_maps_image_sha256,omitempty"`
 }
 
 // Cache stores produced OCI tarballs. Deployment builds use a versioned
@@ -185,8 +196,14 @@ func (c *Cache) lookupKey(sourceHash string, fw Framework, plan api.Plan) (Cache
 		return CacheEntry{}, false
 	}
 	var toolchain CacheToolchain
-	if metadata, err := os.ReadFile(filepath.Join(filepath.Dir(p), "toolchain.json")); err == nil {
-		_ = json.Unmarshal(metadata, &toolchain)
+	if root, err := os.OpenRoot(filepath.Dir(p)); err == nil {
+		if metadata, err := issues.ReadSourceMapBuildFile(root, "toolchain.json", api.IssueSourceMapBuildMetadataMaxBytes); err == nil {
+			var decoded CacheToolchain
+			if issues.DecodeSourceMapBuildJSON(metadata, &decoded) == nil {
+				toolchain = decoded
+			}
+		}
+		_ = root.Close()
 	}
 	return CacheEntry{Path: p, Bytes: st.Size(), Toolchain: toolchain}, true
 }
@@ -237,10 +254,10 @@ func (c *Cache) Store(sourceHash string, fw Framework, plan api.Plan, layerPath 
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.storeKey(sourceHash, fw, plan, layerPath, bytes, CacheToolchain{})
+	return c.storeKey(sourceHash, fw, plan, layerPath, bytes, CacheToolchain{}, false)
 }
 
-func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64, toolchain CacheToolchain) error {
+func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64, toolchain CacheToolchain, replace bool) error {
 	if c == nil || c.root == "" {
 		return errors.New("cache: not configured")
 	}
@@ -250,13 +267,13 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	}
 	// Keep only an intact entry. A corrupt or legacy entry is rebuilt from
 	// the newly produced artifact, including all its integrity metadata.
-	if _, ok := c.lookupKey(sourceHash, fw, plan); ok {
+	if _, ok := c.lookupKey(sourceHash, fw, plan); ok && !replace {
 		for _, path := range []string{dst, c.checksumPath(sourceHash, fw, plan), filepath.Join(filepath.Dir(dst), "artifact.sha256")} {
 			if err := os.Chmod(path, cacheArtifactMode); err != nil {
 				return err
 			}
 		}
-		if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil {
+		if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil || toolchain.OriginDeploymentID != "" || toolchain.IssueSourceMaps != nil {
 			if err := writeCacheMetadata(filepath.Join(filepath.Dir(dst), "toolchain.json"), toolchain); err != nil {
 				return err
 			}
@@ -335,7 +352,7 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	if err := writeCacheSidecar(filepath.Join(filepath.Dir(dst), "artifact.sha256"), hex.EncodeToString(digest.Sum(nil))); err != nil {
 		return err
 	}
-	if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil {
+	if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil || toolchain.OriginDeploymentID != "" || toolchain.IssueSourceMaps != nil {
 		if err := writeCacheMetadata(filepath.Join(filepath.Dir(dst), "toolchain.json"), toolchain); err != nil {
 			return err
 		}
@@ -395,7 +412,7 @@ func writeCacheSidecar(cs, value string) error {
 }
 
 func writeCacheMetadata(path string, toolchain CacheToolchain) error {
-	data, err := json.Marshal(toolchain)
+	data, err := boundedBuildCacheMetadata(toolchain)
 	if err != nil {
 		return fmt.Errorf("cache: marshal toolchain metadata: %w", err)
 	}

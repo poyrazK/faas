@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
@@ -56,16 +57,16 @@ func TestMCPReadinessDeploymentIdentityAndCredentialIsolation(t *testing.T) {
 				}
 				switch r.URL.Path {
 				case "/v1/apps/test-mcp":
-					writeJSONTest(w, api.AppResponse{ID: appID, Slug: "test-mcp"})
+					main.WriteJSONTest(w, api.AppResponse{ID: appID, Slug: "test-mcp"})
 				case "/v1/deployments/" + depID:
 					owner := appID
 					if foreign {
 						owner = uuid.NewString()
 					}
-					writeJSONTest(w, api.DeploymentResponse{ID: depID, AppID: owner, Status: statusLive})
+					main.WriteJSONTest(w, api.DeploymentResponse{ID: depID, AppID: owner, Status: main.StatusLive})
 				case "/v1/deployments/" + depID + "/url":
 					previews++
-					writeJSONTest(w, api.DeploymentPreviewURL{URL: endpoint.URL, Alive: true})
+					main.WriteJSONTest(w, api.DeploymentPreviewURL{URL: endpoint.URL, Alive: true})
 				default:
 					t.Errorf("unexpected platform path: %s", r.URL.Path)
 					http.NotFound(w, r)
@@ -76,10 +77,10 @@ func TestMCPReadinessDeploymentIdentityAndCredentialIsolation(t *testing.T) {
 			t.Setenv("FAAS_TOKEN", "PLATFORM_ONLY")
 			t.Setenv("MCP_PROBE_TEST_TOKEN", "MCP_PROBE_TOKEN")
 			var output bytes.Buffer
-			oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-			osStdout, osStderr, jsonOutput = &output, &output, true
-			defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
-			code := cmdMCP([]string{"readiness", "--app", "test-mcp", "--deployment", depID, "--token-env", "MCP_PROBE_TEST_TOKEN"})
+			oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+			(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &output, &output, true
+			defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
+			code := main.CmdMCP([]string{"readiness", "--app", "test-mcp", "--deployment", depID, "--token-env", "MCP_PROBE_TEST_TOKEN"})
 			if foreign {
 				if code == 0 || probes != 0 || previews != 0 {
 					t.Fatal("foreign deployment probed")
@@ -89,7 +90,7 @@ func TestMCPReadinessDeploymentIdentityAndCredentialIsolation(t *testing.T) {
 			if code != 0 || probes != 4 || previews != 1 {
 				t.Fatalf("exit=%d probes=%d previews=%d output=%s", code, probes, previews, output.String())
 			}
-			var report mcpDeploymentReadiness
+			var report main.McpDeploymentReadiness
 			if json.Unmarshal(output.Bytes(), &report) != nil || report.DeploymentID != depID || !report.Readiness.OK {
 				t.Fatalf("invalid report: %s", output.String())
 			}
@@ -108,9 +109,9 @@ func TestMCPReadinessRecordUsesPlatform(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/v1/apps/test-mcp":
-			writeJSONTest(w, api.AppResponse{ID: appID, Slug: "test-mcp"})
+			main.WriteJSONTest(w, api.AppResponse{ID: appID, Slug: "test-mcp"})
 		case "/v1/deployments/" + depID:
-			writeJSONTest(w, api.DeploymentResponse{ID: depID, AppID: appID, Status: statusLive})
+			main.WriteJSONTest(w, api.DeploymentResponse{ID: depID, AppID: appID, Status: main.StatusLive})
 		case "/v1/deployments/" + depID + "/mcp-readiness":
 			if r.Method != "POST" || r.Header.Get(api.MCPReadinessTokenHeader) != "PROBE_ONLY" {
 				t.Error("wrong platform probe request")
@@ -119,7 +120,7 @@ func TestMCPReadinessRecordUsesPlatform(t *testing.T) {
 			if json.NewDecoder(r.Body).Decode(&request) != nil || request.Role != "reader" {
 				t.Error("wrong role")
 			}
-			writeJSONTest(w, api.MCPReadinessEvidence{DeploymentID: depID, Role: "reader", Passed: true})
+			main.WriteJSONTest(w, api.MCPReadinessEvidence{DeploymentID: depID, Role: "reader", Passed: true})
 		default:
 			t.Errorf("record mode made a local probe or unexpected request: %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -130,10 +131,10 @@ func TestMCPReadinessRecordUsesPlatform(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "PLATFORM_ONLY")
 	t.Setenv("MCP_RECORDED_TEST_TOKEN", "PROBE_ONLY")
 	var output bytes.Buffer
-	oldOut, oldErr, oldJSON := osStdout, osStderr, jsonOutput
-	osStdout, osStderr, jsonOutput = &output, &output, true
-	defer func() { osStdout, osStderr, jsonOutput = oldOut, oldErr, oldJSON }()
-	if code := cmdMCPReadiness([]string{"--app", "test-mcp", "--deployment", depID, "--record", "--role", "reader", "--token-env", "MCP_RECORDED_TEST_TOKEN"}); code != 0 {
+	oldOut, oldErr, oldJSON := (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput)
+	(*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = &output, &output, true
+	defer func() { (*main.OsStdout), (*main.OsStderr), (*main.JsonOutput) = oldOut, oldErr, oldJSON }()
+	if code := main.CmdMCPReadiness([]string{"--app", "test-mcp", "--deployment", depID, "--record", "--role", "reader", "--token-env", "MCP_RECORDED_TEST_TOKEN"}); code != 0 {
 		t.Fatalf("record failed: %s", output.String())
 	}
 	if strings.Contains(output.String(), "PLATFORM_ONLY") || strings.Contains(output.String(), "PROBE_ONLY") {

@@ -44,6 +44,7 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchAccounts":         "accounts",      // authenticated tenant support + lifecycle controls
 		"dispatchBilling":          "billing",       // operator billing catalog + reconciliation diagnostics
 		"dispatchConfig":           "config",        // zero-downtime runtime configuration controls
+		"dispatchFlags":            "flags",         // ADR-1700 platform flags
 		"dispatchAudit":            "audit",         // exact operator trace correlation
 		"dispatchBuilds":           "builds",        // P2c of operator-obs mega-PR (Commit 5c)
 		"dispatchJobs":             "jobs",          // cross-account job-run incident controls

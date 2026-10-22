@@ -1,82 +1,85 @@
-package state
+package state_test
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestLegalTransitions(t *testing.T) {
-	legal := [][2]State{
-		{StateParked, StateWaking},
-		{StateWaking, StateRunning},
-		{StateWaking, StateColdBooting}, // restore failed → fallback
-		{StateColdBooting, StateRunning},
-		{StateColdBooting, StateWarm}, // paused restore retained in pool
-		{StateWarm, StateRunning},     // request resumes a pooled VM
-		{StateWarm, StateParked},      // pool scale-down / stale cleanup
-		{StateRunning, StateSnapshotting},
-		{StateRunning, StateDraining},
-		{StateDraining, StateStopped},
-		{StateDraining, StateFailed},
-		{StateDraining, StateEvictingAccountDeleting},
-		{StateSnapshotting, StateParked},
-		{StateSnapshotting, StateStopped}, // snapshot failed
-		{StateStopped, StateColdBooting},  // next wake cold boots
-		{StateRunning, StateFailed},       // crash loop
-		{StateColdBooting, StateFailed},   // boot timeout
+	legal := [][2]state.State{
+		{state.StateParked, state.StateWaking},
+		{state.StateWaking, state.StateRunning},
+		{state.StateWaking, state.StateColdBooting}, // restore failed → fallback
+		{state.StateColdBooting, state.StateRunning},
+		{state.StateColdBooting, state.StateWarm}, // paused restore retained in pool
+		{state.StateWarm, state.StateRunning},     // request resumes a pooled VM
+		{state.StateWarm, state.StateParked},      // pool scale-down / stale cleanup
+		{state.StateRunning, state.StateSnapshotting},
+		{state.StateRunning, state.StateDraining},
+		{state.StateDraining, state.StateStopped},
+		{state.StateDraining, state.StateFailed},
+		{state.StateDraining, state.StateEvictingAccountDeleting},
+		{state.StateSnapshotting, state.StateParked},
+		{state.StateSnapshotting, state.StateStopped}, // snapshot failed
+		{state.StateStopped, state.StateColdBooting},  // next wake cold boots
+		{state.StateRunning, state.StateFailed},       // crash loop
+		{state.StateColdBooting, state.StateFailed},   // boot timeout
 		// Workstream B / issue #1184 / ADR-137: the recovery_recreate
 		// primitive (Engine.RecreateInstance) lands a stranded live
 		// row in PARKED without the SNAPSHOTTING detour. The audit
 		// row's kind='recovery_recreate' tag discriminates this from
 		// a normal idle-timeout Park. Normal Parks still go
 		// RUNNING → SNAPSHOTTING → PARKED.
-		{StateRunning, StateParked},
-		{StateColdBooting, StateParked},
-		{StateWaking, StateParked},
+		{state.StateRunning, state.StateParked},
+		{state.StateColdBooting, state.StateParked},
+		{state.StateWaking, state.StateParked},
 		// ADR-1151: an idle instance freezes in place and thaws for a
 		// request; TTL, pressure and failed thaws park it.
-		{StateRunning, StateFrozen},
-		{StateFrozen, StateRunning},
-		{StateFrozen, StateParked},
-		{StateFrozen, StateStopped},
-		{StateFrozen, StateEvictingAccountDeleting},
+		{state.StateRunning, state.StateFrozen},
+		{state.StateFrozen, state.StateRunning},
+		{state.StateFrozen, state.StateParked},
+		{state.StateFrozen, state.StateStopped},
+		{state.StateFrozen, state.StateEvictingAccountDeleting},
 	}
 	for _, e := range legal {
-		if !CanTransition(e[0], e[1]) {
+		if !state.CanTransition(e[0], e[1]) {
 			t.Errorf("%s→%s should be legal", e[0], e[1])
 		}
 	}
 }
 
 func TestIllegalTransitions(t *testing.T) {
-	illegal := [][2]State{
-		{StateParked, StateRunning},      // must wake first
-		{StateParked, StateParked},       // no self-loop
-		{StateRunning, StateColdBooting}, // can't re-boot a running vm
-		{StateFailed, StateRunning},      // failed re-parks, not resumes
-		{StateStopped, StateWaking},      // stopped has no snapshot to restore
-		{StateParked, StateFrozen},       // only a running VM can freeze
-		{StateWarm, StateFrozen},         // warm VMs are already paused and billed
-		{StateSnapshotting, StateFrozen}, // freeze needs an existing snapshot
-		{StateFrozen, StateSnapshotting}, // a frozen VM is destroyed, not snapshotted
+	illegal := [][2]state.State{
+		{state.StateParked, state.StateRunning},      // must wake first
+		{state.StateParked, state.StateParked},       // no self-loop
+		{state.StateRunning, state.StateColdBooting}, // can't re-boot a running vm
+		{state.StateFailed, state.StateRunning},      // failed re-parks, not resumes
+		{state.StateStopped, state.StateWaking},      // stopped has no snapshot to restore
+		{state.StateParked, state.StateFrozen},       // only a running VM can freeze
+		{state.StateWarm, state.StateFrozen},         // warm VMs are already paused and billed
+		{state.StateSnapshotting, state.StateFrozen}, // freeze needs an existing snapshot
+		{state.StateFrozen, state.StateSnapshotting}, // a frozen VM is destroyed, not snapshotted
 	}
 	for _, e := range illegal {
-		if CanTransition(e[0], e[1]) {
+		if state.CanTransition(e[0], e[1]) {
 			t.Errorf("%s→%s should be illegal", e[0], e[1])
 		}
 	}
 }
 
 func TestEveryStateValidAndReachable(t *testing.T) {
-	if len(States) != len(transitions) {
-		t.Fatalf("States list (%d) and transition table (%d) out of sync", len(States), len(transitions))
+	if len(state.States) != len((*state.Transitions)) {
+		t.Fatalf("States list (%d) and transition table (%d) out of sync", len(state.States), len((*state.Transitions)))
 	}
 	// Every state must be a transition target of some other state (reachable),
 	// except the entry state PARKED (reached via the deploy pipeline).
-	reachable := map[State]bool{StateParked: true}
-	for _, targets := range transitions {
+	reachable := map[state.State]bool{state.StateParked: true}
+	for _, targets := range *state.Transitions {
 		for _, to := range targets {
 			reachable[to] = true
 		}
 	}
-	for _, s := range States {
+	for _, s := range state.States {
 		if !s.Valid() {
 			t.Errorf("state %s not valid", s)
 		}
@@ -88,8 +91,8 @@ func TestEveryStateValidAndReachable(t *testing.T) {
 
 func TestConcurrencyAccounting(t *testing.T) {
 	// Draining remains concurrency-accounted until its resident VM is gone.
-	want := map[State]bool{StateWaking: true, StateColdBooting: true, StateRunning: true, StateDraining: true}
-	for _, s := range States {
+	want := map[state.State]bool{state.StateWaking: true, state.StateColdBooting: true, state.StateRunning: true, state.StateDraining: true}
+	for _, s := range state.States {
 		if got := s.CountsForConcurrency(); got != want[s] {
 			t.Errorf("%s.CountsForConcurrency() = %v, want %v", s, got, want[s])
 		}
@@ -102,20 +105,20 @@ func TestRAMAccounting(t *testing.T) {
 	// snapshot is resident on the dying node during the
 	// four-phase handoff; the RAM must count against the
 	// admission ceiling so the invariant stays honest.
-	want := map[State]bool{
-		StateWaking: true, StateColdBooting: true,
-		StateRunning: true, StateSnapshotting: true,
-		StateMigrating: true,
-		StateWarm:      true, StateDraining: true,
-		StateFrozen: true,
+	want := map[state.State]bool{
+		state.StateWaking: true, state.StateColdBooting: true,
+		state.StateRunning: true, state.StateSnapshotting: true,
+		state.StateMigrating: true,
+		state.StateWarm:      true, state.StateDraining: true,
+		state.StateFrozen: true,
 	}
-	for _, s := range States {
+	for _, s := range state.States {
 		if got := s.CountsForRAM(); got != want[s] {
 			t.Errorf("%s.CountsForRAM() = %v, want %v", s, got, want[s])
 		}
 	}
 	// A parked instance must not count for RAM (§6.2-4).
-	if StateParked.CountsForRAM() {
+	if state.StateParked.CountsForRAM() {
 		t.Error("parked instances must hold zero resident RAM")
 	}
 }
@@ -142,25 +145,25 @@ func TestRAMAccounting(t *testing.T) {
 func TestIsLive(t *testing.T) {
 	// State-typed want table: rename a constant → compile error,
 	// not a silent miss.
-	want := map[State]bool{
-		StateWaking:                  true,
-		StateColdBooting:             true,
-		StateRunning:                 true,
-		StateDraining:                true,
-		StateSnapshotting:            true,
-		StateMigrating:               true,
-		StateWarm:                    true,
-		StateFrozen:                  true,
-		StateParked:                  false,
-		StateStopped:                 false,
-		StateFailed:                  false,
-		StateEvictingAccountDeleting: false,
+	want := map[state.State]bool{
+		state.StateWaking:                  true,
+		state.StateColdBooting:             true,
+		state.StateRunning:                 true,
+		state.StateDraining:                true,
+		state.StateSnapshotting:            true,
+		state.StateMigrating:               true,
+		state.StateWarm:                    true,
+		state.StateFrozen:                  true,
+		state.StateParked:                  false,
+		state.StateStopped:                 false,
+		state.StateFailed:                  false,
+		state.StateEvictingAccountDeleting: false,
 	}
-	for _, s := range States {
+	for _, s := range state.States {
 		t.Run(string(s), func(t *testing.T) {
 			// String-typed entry point — the surface schedd
 			// and pgstore actually call.
-			got := IsLive(string(s))
+			got := state.IsLive(string(s))
 			if got != want[s] {
 				t.Errorf("IsLive(%q) = %v, want %v", string(s), got, want[s])
 			}
@@ -179,16 +182,16 @@ func TestIsLive(t *testing.T) {
 // TestBillable: §4.7 bills plan RAM + 8 MB per resident second, except a
 // frozen instance, which is resident but unbilled (ADR-1151).
 func TestBillable(t *testing.T) {
-	for _, s := range States {
-		want := s.CountsForRAM() && s != StateFrozen
+	for _, s := range state.States {
+		want := s.CountsForRAM() && s != state.StateFrozen
 		if got := s.Billable(); got != want {
 			t.Errorf("%s.Billable() = %v, want %v", s, got, want)
 		}
 	}
-	if StateFrozen.Billable() {
+	if state.StateFrozen.Billable() {
 		t.Error("frozen instances must not be billed")
 	}
-	if !StateWarm.Billable() {
+	if !state.StateWarm.Billable() {
 		t.Error("warm instances stay billed: they reserve full capacity")
 	}
 }

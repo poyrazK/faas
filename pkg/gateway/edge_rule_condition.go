@@ -64,7 +64,9 @@ type EdgeRuleEvent struct {
 	Country   string
 	UserAgent string
 	// Outcome, when set, overrides Logged: a kind=waf detection
-	// (EdgeRuleEventDetected, EdgeRuleEventWarned or EdgeRuleEventBlocked).
+	// (EdgeRuleEventDetected, EdgeRuleEventWarned or EdgeRuleEventBlocked)
+	// or a kind=challenge outcome (EdgeRuleEventChallenged, Rejected, Solved
+	// or Failed).
 	Outcome string
 	// WAF* describe a kind=waf detection (ADR-831 amendment 5).
 	WAFRuleIDs    []int
@@ -187,7 +189,8 @@ func ObserveEdgeRuleMatch[T any](ctx context.Context, enforced, logged *T) *T {
 	if c, ok := any(enforced).(edgeRuleConditional); ok && enforced != nil {
 		id, app := c.edgeRuleIdentity()
 		_, quiet := any(enforced).(edgeRuleMatchEventsSuppressed)
-		m.recordHit(id, app, false, !quiet)
+		_, outcomes := any(enforced).(edgeRuleEnforcedMatchEventsSuppressed)
+		m.recordHit(id, app, false, !quiet && !outcomes)
 	}
 	if c, ok := any(logged).(edgeRuleConditional); ok && logged != nil {
 		id, app := c.edgeRuleIdentity()

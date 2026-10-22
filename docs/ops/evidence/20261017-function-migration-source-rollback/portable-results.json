@@ -1,0 +1,232 @@
+{
+  "base": "af8dd0344a475aea1b60e471a4adeb6235a2475b",
+  "go": "1.26.9",
+  "runs": [
+    {
+      "name": "default-final",
+      "race": true,
+      "test_events": {
+        "pass": 270,
+        "skip": 18
+      },
+      "packages": [
+        {
+          "package": "github.com/onebox-faas/faas/pkg/state",
+          "result": "pass",
+          "elapsed_seconds": 18.404
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "result": "pass",
+          "elapsed_seconds": 1.3820000000000001
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/vmmdgrpc",
+          "result": "pass",
+          "elapsed_seconds": 1.791
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/sched",
+          "result": "pass",
+          "elapsed_seconds": 4.556
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/runtimeadmission",
+          "result": "pass",
+          "elapsed_seconds": 1.041
+        }
+      ],
+      "skips": [
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionExecutionPostgres"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceRecoveryAdmission/node22"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceRecoveryAdmission/node24"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceUncertainRecovery/lost-ack"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceUncertainRecovery/probe"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceUncertainRecovery/deadline"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceUncertainRecovery/resume"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceUncertainRecovery/checkpoint"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceUncertainRecovery/cleanup"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceDestroyAndStaleBinding"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceCancelledCheckpointRetires"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionMigrationSourceRegistrationLostAckDoesNotReplay"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionResourceWarmRecoveryAdmission"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionResourceWarmUncertainRecoveryRetires"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionResourceWarmMeasuredAuthority"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionResourceWarmRecoveryJoinedByDestroy"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/sched",
+          "test": "TestFunctionExecutionWarmRecoveryResealsParkAdmission"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/sched",
+          "test": "TestReconcileExpiredMigrations_ConflictOnPeerRollback"
+        }
+      ],
+      "raw_jsonl_sha256": "67d4578af273bb91433690ffb62c183a7413ff80a8bc699c7a63079d4194f126",
+      "boundary": "Injected host/guest boundary, with real disposable PostgreSQL ownership transactions; no native KVM execution.",
+      "reproduction_command": [
+        "go",
+        "test",
+        "-json",
+        "-p",
+        "1",
+        "-race",
+        "./pkg/state",
+        "./pkg/fcvm",
+        "./pkg/vmmdgrpc",
+        "./pkg/sched",
+        "./pkg/runtimeadmission",
+        "-run",
+        "^Test(Function(Migration|Resource|Execution)|BeforeCheckpoint|Migration|ReconcileExpiredMigrations|MigrateOne|Freeze|Thaw|Quiet|ManagedSnapshot|MeasuredWarm|CaptureAdmitted|CaptureWarm|FrozenRefusals|SnapshotGrant|SnapshotAcknowledgment|StandardSnapshot|PgStoreFunctionMigrationSource|PgStore_(MarkInstanceMigrating|MigrateInstanceOwner|CancelInstanceMigration|ListExpiredMigrations))",
+        "-count=1",
+        "-timeout=5m"
+      ]
+    },
+    {
+      "name": "qualified-final",
+      "race": true,
+      "test_events": {
+        "pass": 300,
+        "skip": 2
+      },
+      "packages": [
+        {
+          "package": "github.com/onebox-faas/faas/pkg/state",
+          "result": "pass",
+          "elapsed_seconds": 17.726
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "result": "pass",
+          "elapsed_seconds": 11.427
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/vmmdgrpc",
+          "result": "pass",
+          "elapsed_seconds": 1.697
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/sched",
+          "result": "pass",
+          "elapsed_seconds": 4.612
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/runtimeadmission",
+          "result": "pass",
+          "elapsed_seconds": 1.042
+        }
+      ],
+      "skips": [
+        {
+          "package": "github.com/onebox-faas/faas/pkg/fcvm",
+          "test": "TestFunctionExecutionPostgres"
+        },
+        {
+          "package": "github.com/onebox-faas/faas/pkg/sched",
+          "test": "TestReconcileExpiredMigrations_ConflictOnPeerRollback"
+        }
+      ],
+      "raw_jsonl_sha256": "c654a7353a2a1d681b4c3c6350ffcef127bbb22b1bb821b03f556238f92a32eb",
+      "boundary": "Injected host/guest boundary, with real disposable PostgreSQL ownership transactions; no native KVM execution.",
+      "reproduction_command": [
+        "go",
+        "test",
+        "-json",
+        "-p",
+        "1",
+        "-race",
+        "-tags",
+        "metal,function_background_native",
+        "./pkg/state",
+        "./pkg/fcvm",
+        "./pkg/vmmdgrpc",
+        "./pkg/sched",
+        "./pkg/runtimeadmission",
+        "-run",
+        "^Test(Function(Migration|Resource|Execution)|BeforeCheckpoint|Migration|ReconcileExpiredMigrations|MigrateOne|Freeze|Thaw|Quiet|ManagedSnapshot|MeasuredWarm|CaptureAdmitted|CaptureWarm|FrozenRefusals|SnapshotGrant|SnapshotAcknowledgment|StandardSnapshot|PgStoreFunctionMigrationSource|PgStore_(MarkInstanceMigrating|MigrateInstanceOwner|CancelInstanceMigration|ListExpiredMigrations))",
+        "-count=1",
+        "-timeout=5m"
+      ]
+    },
+    {
+      "name": "replay",
+      "race": true,
+      "test_events": {
+        "pass": 1
+      },
+      "packages": [
+        {
+          "package": "github.com/onebox-faas/faas/migrations",
+          "result": "pass",
+          "elapsed_seconds": 11.429
+        }
+      ],
+      "skips": [],
+      "raw_jsonl_sha256": "8cfb88aab37053d325b9b6c343a889f49a6407a5f8e9509db281a857fb41235b",
+      "environment": {
+        "FAAS_REPLAY_CHECK_VERSIONS": "20261017094227428"
+      },
+      "reproduction_command": [
+        "go",
+        "test",
+        "-json",
+        "-p",
+        "1",
+        "-race",
+        "./migrations",
+        "-run",
+        "^TestNewMigrationsAreReplaySafe$",
+        "-count=1",
+        "-timeout=5m"
+      ]
+    }
+  ]
+}

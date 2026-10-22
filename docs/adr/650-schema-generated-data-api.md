@@ -15,14 +15,14 @@ ownership, missing grants, public-table access and executable security-definer
 functions. Migration bindings retain their release-task-only delivery boundary.
 Credential rotation and retirement use the existing binding generation workflow.
 
-ADR-1664 adds a five-second lock-wait default alongside the 15-second statement
+ADR-1733 adds a five-second lock-wait default alongside the 15-second statement
 timeout. Issuance upgrades only the exact legacy login policy, preserving its
 password and rejecting drift; new SQL sessions are required to observe changed
 defaults. Updated RPC ACL tooling accepts both exact policies. SDK lock-conflict
 and surfaced-deadlock guidance adds no HTTP retries; pinned PostgREST retains its
 existing SQL-transaction deadlock retry behavior.
 
-ADR-1665 adds opt-in owner-installed SQL deadline hooks. A gateway-owned admission
+ADR-1734 adds opt-in owner-installed SQL deadline hooks. A gateway-owned admission
 expiry survives internal transaction retries, composes around the refresh barrier
 and caps subsequent statement/lock timeouts. Startup checks the pinned engine and
 exact protected hook contract. Installation/grants remain explicit for each serving
@@ -184,13 +184,13 @@ This coupling is explicit in the pinned engine's
 [admin handler](https://github.com/PostgREST/postgrest/blob/v14.3/src/PostgREST/Admin.hs)
 and [SQL connectivity checks](https://github.com/PostgREST/postgrest/blob/v14.3/src/PostgREST/AppState.hs).
 
-[ADR-1662](1662-data-api-database-timing-telemetry.md) adds private engine
+[ADR-1731](1731-data-api-database-timing-telemetry.md) adds private engine
 request timing headers to safe request logs, CLI diagnostics and health summaries.
 The combined transaction interval includes pool acquisition and SQL. Isolated
 SQL execution and pool-wait durations remain unknown; missing/error observations
 are counted separately, and do not become zero latency or current readiness.
 
-[ADR-1663](1663-data-api-user-concurrency-limits.md) adds opt-in per-user
+[ADR-1732](1732-data-api-user-concurrency-limits.md) adds opt-in per-user
 concurrent HTTP request limits after verified identity and before SQL dispatch.
 Users share slots across JWT rotation. Unknown dispatched work keeps a bounded
 cooldown after cancellation; this is neither a SQL-session fence nor fleet-wide
@@ -233,7 +233,7 @@ reservation or scheduler mutation occurs.
 
 Only complete, fresh tenant-usable capacity evidence for the exact database
 generation and backend placement can support within/over-budget comparison.
-The optional [operator observer](1660-data-api-connection-capacity-observations.md)
+The optional [operator observer](1729-data-api-connection-capacity-observations.md)
 now populates a durable capacity cache from a qualified allocation and direct SQL
 ceilings. Without fresh matching evidence, capacity stays unknown. Reports
 expire within 30 seconds, expose aggregate counts without
@@ -762,7 +762,7 @@ the privileged local inspector. No VM lifecycle, identity-provider provisioning,
 automatic deployment, refresh-token flow or shared database role switching is
 introduced.
 
-ADR-1661 adds opt-in authenticated resident pool observations to the connection
+ADR-1730 adds opt-in authenticated resident pool observations to the connection
 budget and health report. It preserves estimates for parked/future runtimes and
 keeps full consumer coverage and aggregate enforcement unqualified. See
-[the runtime observation decision](1661-data-api-runtime-connection-demand.md).
+[the runtime observation decision](1730-data-api-runtime-connection-demand.md).

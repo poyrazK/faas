@@ -321,6 +321,7 @@ type PGBackend struct {
 	appResolver            func(ctx context.Context, appID string) (App, bool, error)
 	revisionPinResolver    func(context.Context, string, string, string) (bool, error)
 	projectReleaseResolver func(context.Context, string, string, string) (string, string, error)
+	projectCanaryResolver  func(context.Context, string, string, string) (string, string, error)
 
 	// clientForApp (Phase 2 / Gate A) returns the schedd client that
 	// owns the given app. Mandatory when appResolver is set. Production wires
@@ -431,7 +432,7 @@ type PGBackend struct {
 	// probeMu/probeChallenges hold ADR-847 route probe tokens, separate
 	// from smoke tokens so a probe never authorizes the smoke bypass.
 	probeMu         sync.Mutex
-	probeChallenges map[string][]deploymentSmokeChallenge
+	probeChallenges map[string][]routeProbeChallenge
 }
 
 type deploymentSmokeChallenge struct {
@@ -510,6 +511,17 @@ func (b *PGBackend) ResolveProjectRelease(ctx context.Context, appID, scope, req
 		return "", "", errors.New("project release resolver unavailable")
 	}
 	return b.projectReleaseResolver(ctx, appID, scope, requestedID)
+}
+
+func (b *PGBackend) WithProjectCanaryResolver(fn func(context.Context, string, string, string) (string, string, error)) *PGBackend {
+	b.projectCanaryResolver = fn
+	return b
+}
+func (b *PGBackend) ResolveProjectCanary(ctx context.Context, appID, scope, key string) (string, string, error) {
+	if b != nil && b.projectCanaryResolver != nil {
+		return b.projectCanaryResolver(ctx, appID, scope, key)
+	}
+	return b.ResolveProjectRelease(ctx, appID, scope, "")
 }
 
 // WithClientForApp sets the per-app schedd client factory used by
@@ -2026,7 +2038,8 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 //
 // Walks every per-deployment targetSet under the app's picker —
 // we don't know which bucket owns the instance without an index.
-// If the picker is empty after the walk, the picker is dropped.
+// If the picker is empty after the walk and its weights did not come
+// from the store, the picker is dropped.
 // Per-bucket targetSets are preserved even when their entries
 // become empty (cold deployment under non-zero weight); only the
 // picker-level drop happens here. The per-deployment weight
@@ -2074,7 +2087,11 @@ func (b *PGBackend) removeInstance(appID, instanceID string, quarantine bool) {
 	for _, set := range picker.sets {
 		totalRemaining += set.remove(instanceID)
 	}
-	if totalRemaining == 0 {
+	// An empty picker keeps weights read from the store: deployment_changed
+	// keeps them current, and a target recorded later (a thaw or restore
+	// another request is waiting for) is routable only through them.
+	// Without weights, HealthyCount and Pick never see it.
+	if totalRemaining == 0 && !picker.weightsAuthoritative {
 		delete(b.appsPicker, appID)
 	}
 	b.tgtMu.Unlock()

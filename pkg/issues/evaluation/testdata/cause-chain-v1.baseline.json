@@ -1,0 +1,212 @@
+{
+  "version": 1,
+  "corpus_sha256": "9eba1caab1ea16fdf3d478a7368a93b2639564637413ee193e03cc53b40affba",
+  "strategy": "cause-chain-v1",
+  "assignments": [
+    {
+      "id": "dependency-frame",
+      "group": "dependency-frame",
+      "decision": {
+        "basis": "fallback",
+        "source_kind": "exception",
+        "discriminator_kind": "message"
+      }
+    },
+    {
+      "id": "go-wrapper-0",
+      "group": "go-wrapper-0",
+      "decision": {
+        "basis": "fallback",
+        "source_kind": "worker",
+        "discriminator_kind": "error-code",
+        "cause_index": 0
+      }
+    },
+    {
+      "id": "go-wrapper-1",
+      "group": "go-wrapper-0",
+      "decision": {
+        "basis": "fallback",
+        "source_kind": "worker",
+        "discriminator_kind": "error-code",
+        "cause_index": 0
+      }
+    },
+    {
+      "id": "manual-override-0",
+      "group": "manual-override-0",
+      "decision": {
+        "basis": "override",
+        "source_kind": "exception",
+        "discriminator_kind": "override"
+      }
+    },
+    {
+      "id": "manual-override-1",
+      "group": "manual-override-0",
+      "decision": {
+        "basis": "override",
+        "source_kind": "exception",
+        "discriminator_kind": "override"
+      }
+    },
+    {
+      "id": "manual-override-other-type",
+      "group": "manual-override-other-type",
+      "decision": {
+        "basis": "override",
+        "source_kind": "exception",
+        "discriminator_kind": "override"
+      }
+    },
+    {
+      "id": "node-checkout-expired-code",
+      "group": "node-checkout-expired-code",
+      "decision": {
+        "basis": "failure-site",
+        "source_kind": "exception",
+        "discriminator_kind": "error-code",
+        "frame_indexes": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "node-checkout-handler-a",
+      "group": "node-checkout-handler-a",
+      "decision": {
+        "basis": "failure-site",
+        "source_kind": "exception",
+        "discriminator_kind": "error-code",
+        "frame_indexes": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "node-checkout-handler-b",
+      "group": "node-checkout-handler-a",
+      "decision": {
+        "basis": "failure-site",
+        "source_kind": "exception",
+        "discriminator_kind": "error-code",
+        "frame_indexes": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "node-checkout-moved-line",
+      "group": "node-checkout-handler-a",
+      "decision": {
+        "basis": "failure-site",
+        "source_kind": "exception",
+        "discriminator_kind": "error-code",
+        "frame_indexes": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "node-checkout-wrapper-0",
+      "group": "node-checkout-handler-a",
+      "decision": {
+        "basis": "failure-site",
+        "source_kind": "exception",
+        "discriminator_kind": "error-code",
+        "frame_indexes": [
+          0
+        ],
+        "cause_index": 0
+      }
+    },
+    {
+      "id": "node-checkout-wrapper-1",
+      "group": "node-checkout-handler-a",
+      "decision": {
+        "basis": "failure-site",
+        "source_kind": "exception",
+        "discriminator_kind": "error-code",
+        "frame_indexes": [
+          0
+        ],
+        "cause_index": 0
+      }
+    },
+    {
+      "id": "python-caller-0",
+      "group": "python-caller-0",
+      "decision": {
+        "basis": "failure-site",
+        "source_kind": "exception",
+        "discriminator_kind": "message",
+        "frame_indexes": [
+          1
+        ]
+      }
+    },
+    {
+      "id": "python-caller-1",
+      "group": "python-caller-0",
+      "decision": {
+        "basis": "failure-site",
+        "source_kind": "exception",
+        "discriminator_kind": "message",
+        "frame_indexes": [
+          1
+        ]
+      }
+    },
+    {
+      "id": "route-fallback-0",
+      "group": "route-fallback-0",
+      "decision": {
+        "basis": "fallback",
+        "source_kind": "http",
+        "discriminator_kind": "message"
+      }
+    },
+    {
+      "id": "route-fallback-1",
+      "group": "route-fallback-0",
+      "decision": {
+        "basis": "fallback",
+        "source_kind": "http",
+        "discriminator_kind": "message"
+      }
+    },
+    {
+      "id": "route-fallback-other-status",
+      "group": "route-fallback-other-status",
+      "decision": {
+        "basis": "fallback",
+        "source_kind": "http",
+        "discriminator_kind": "message"
+      }
+    },
+    {
+      "id": "same-frame-other-app",
+      "group": "same-frame-other-app",
+      "decision": {
+        "basis": "failure-site",
+        "source_kind": "exception",
+        "discriminator_kind": "error-code",
+        "frame_indexes": [
+          0
+        ]
+      }
+    },
+    {
+      "id": "same-frame-other-environment",
+      "group": "same-frame-other-environment",
+      "decision": {
+        "basis": "failure-site",
+        "source_kind": "exception",
+        "discriminator_kind": "error-code",
+        "frame_indexes": [
+          0
+        ]
+      }
+    }
+  ]
+}

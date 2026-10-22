@@ -2,7 +2,7 @@
 // Recovery and notifications cannot boot customer processes
 // before the exact deployment's migration release has succeeded.
 
-package sched
+package sched_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -18,7 +19,7 @@ func TestPrimeAndRecoveryRequireSuccessfulRelease(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
-			acct, app, _ := seedApp(t, store, api.PlanPro, 256, 2)
+			acct, app, _ := sched.SeedApp(t, store, api.PlanPro, 256, 2)
 			dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindDockerfile,
 				ImageDigest: "sha256:source", Status: state.DeploySnapshotting, ReleaseCommand: []string{"/app/migrate"}})
 			if err != nil {
@@ -68,11 +69,11 @@ func TestPrimeAndRecoveryRequireSuccessfulRelease(t *testing.T) {
 					}
 				}
 			}
-			vmm := &fakeVMM{}
-			engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-			loop := NewLoop(nil, engine, testLog()).WithClock(func() time.Time { return time.Now().Add(3 * time.Minute) })
-			loop.runPrimeRecovery(ctx)
-			loop.waitPrimes()
+			vmm := &sched.FakeVMM{}
+			engine := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
+			loop := sched.NewLoop(nil, engine, sched.TestLog()).WithClock(func() time.Time { return time.Now().Add(3 * time.Minute) })
+			loop.RunPrimeRecovery(ctx)
+			loop.WaitPrimes()
 			if status != "succeeded" {
 				if err := engine.Prime(ctx, app.ID, dep.ID); err != nil {
 					t.Fatal(err)
@@ -83,8 +84,8 @@ func TestPrimeAndRecoveryRequireSuccessfulRelease(t *testing.T) {
 			if status == "succeeded" {
 				want = 1
 			}
-			if err != nil || len(instances) != want || vmm.snapshots != want {
-				t.Fatalf("release=%s instances=%d snapshots=%d err=%v; want %d", status, len(instances), vmm.snapshots, err, want)
+			if err != nil || len(instances) != want || (*vmm.Snapshots()) != want {
+				t.Fatalf("release=%s instances=%d snapshots=%d err=%v; want %d", status, len(instances), (*vmm.Snapshots()), err, want)
 			}
 		})
 	}

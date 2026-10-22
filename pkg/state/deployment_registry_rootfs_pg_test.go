@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435
 
@@ -12,23 +12,24 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgRegistryRootfsLifecycle(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	registryRootfsLifecycle(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.RegistryRootfsLifecycle(t, s)
 }
 func TestPgRegistryRootfsSubstitution(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	registryRootfsRejectsSubstitution(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.RegistryRootfsRejectsSubstitution(t, s)
 }
 func TestPgRegistryRootfsCurrentKey(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	registryRootfsCurrentKey(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.RegistryRootfsCurrentKey(t, s)
 }
 func TestPgRegistryRootfsDeletionLifecycle(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	registryRootfsDeletionLifecycle(t, s)
+	s, pool := state.RegistryVerificationPGStore(t)
+	state.RegistryRootfsDeletionLifecycle(t, s)
 	var records, pointers int
 	if err := pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM deployment_registry_rootfs),(SELECT count(*) FROM deployment_registry_rootfs_current)`).Scan(&records, &pointers); err != nil || records != 0 || pointers != 0 {
 		t.Fatalf("erasure retained producer records/pointers: %d %d %v", records, pointers, err)
@@ -38,8 +39,8 @@ func TestPgRegistryRootfsDeletionLifecycle(t *testing.T) {
 func TestPgRegistryRootfsExpiredAndCancelled(t *testing.T) {
 	for _, mode := range []string{"expired", "cancelled"} {
 		t.Run(mode, func(t *testing.T) {
-			s, pool := registryVerificationPGStore(t)
-			in, parent, _, _ := registryRootfsFixture(t, s, false)
+			s, pool := state.RegistryVerificationPGStore(t)
+			in, parent, _, _ := state.RegistryRootfsFixture(t, s, false)
 			if mode == "expired" {
 				// Test-only privileged fixture creates historical expired evidence.
 				// Production writes cannot mutate these timestamps.
@@ -52,20 +53,20 @@ func TestPgRegistryRootfsExpiredAndCancelled(t *testing.T) {
 				if _, err := pool.Exec(t.Context(), `ALTER TABLE deployment_registry_verifications ENABLE TRIGGER deployment_registry_verification_immutable`); err != nil {
 					t.Fatal(err)
 				}
-			} else if err := s.UpdateDeploymentStatus(t.Context(), in.DeploymentID, DeployCancelled, ""); err != nil {
+			} else if err := s.UpdateDeploymentStatus(t.Context(), in.DeploymentID, state.DeployCancelled, ""); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.PublishDeploymentRegistryRootfs(t.Context(), in); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
+			if _, err := s.PublishDeploymentRegistryRootfs(t.Context(), in); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 				t.Fatalf("late publication: %v", err)
 			}
-			assertNoRegistryRootfs(t, s, in)
+			state.AssertNoRegistryRootfs(t, s, in)
 		})
 	}
 }
 
 func TestPgRegistryRootfsNonwaitingFences(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	in, _, _, _ := registryRootfsFixture(t, s, false)
+	s, pool := state.RegistryVerificationPGStore(t)
+	in, _, _, _ := state.RegistryRootfsFixture(t, s, false)
 	for _, which := range []string{"app", "deployment", "publisher", "artifact"} {
 		t.Run(which, func(t *testing.T) {
 			tx, err := pool.Begin(t.Context())
@@ -89,13 +90,13 @@ func TestPgRegistryRootfsNonwaitingFences(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			if _, err := s.PublishDeploymentRegistryRootfs(ctx, in); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+			if _, err := s.PublishDeploymentRegistryRootfs(ctx, in); !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 				t.Fatalf("waited/bypassed %s: %v", which, err)
 			}
 			if err := tx.Rollback(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			assertNoRegistryRootfs(t, s, in)
+			state.AssertNoRegistryRootfs(t, s, in)
 		})
 	}
 	if _, err := s.PublishDeploymentRegistryRootfs(t.Context(), in); err != nil {
@@ -104,8 +105,8 @@ func TestPgRegistryRootfsNonwaitingFences(t *testing.T) {
 }
 
 func TestPgRegistryRootfsImmutable(t *testing.T) {
-	s, pool := registryVerificationPGStore(t)
-	in, _, _, _ := registryRootfsFixture(t, s, false)
+	s, pool := state.RegistryVerificationPGStore(t)
+	in, _, _, _ := state.RegistryRootfsFixture(t, s, false)
 	if _, err := s.PublishDeploymentRegistryRootfs(t.Context(), in); err != nil {
 		t.Fatal(err)
 	}
@@ -132,8 +133,8 @@ func TestPgRegistryRootfsImmutable(t *testing.T) {
 func TestPgRegistryRootfsPublicationRollsBack(t *testing.T) {
 	for _, sidecar := range []bool{false, true} {
 		t.Run(map[bool]string{false: "main", true: "sidecar"}[sidecar], func(t *testing.T) {
-			s, pool := registryVerificationPGStore(t)
-			in, _, _, _ := registryRootfsFixture(t, s, sidecar)
+			s, pool := state.RegistryVerificationPGStore(t)
+			in, _, _, _ := state.RegistryRootfsFixture(t, s, sidecar)
 			if _, err := pool.Exec(t.Context(), `CREATE FUNCTION registry_rootfs_test_reject() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test metadata write failed'; END $$`); err != nil {
 				t.Fatal(err)
 			}
@@ -151,7 +152,7 @@ func TestPgRegistryRootfsPublicationRollsBack(t *testing.T) {
 			if err := pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM deployment_registry_rootfs WHERE id=$1),(SELECT count(*) FROM deployment_registry_rootfs_current WHERE artifact_id=$1)`, in.ID).Scan(&records, &pointers); err != nil || records != 0 || pointers != 0 {
 				t.Fatalf("failed transaction left evidence: %d %d %v", records, pointers, err)
 			}
-			assertNoRegistryRootfs(t, s, in)
+			state.AssertNoRegistryRootfs(t, s, in)
 			if sidecar {
 				layers, err := s.ListDeploymentSidecarLayers(t.Context(), in.DeploymentID)
 				if err != nil || len(layers) != 0 {

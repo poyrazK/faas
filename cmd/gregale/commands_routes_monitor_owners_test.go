@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -8,12 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routeimpact"
 )
 
 func TestRouteMonitorCodeownersLastMatchingRuleWins(t *testing.T) {
-	rules := parseRouteMonitorCodeowners([]byte("# top-level fallback\n* @org/default\n/services/api/** @org/api\n/services/api/checkout.go @org/checkout @org/platform\n/services/api/unowned.go\n[invalid] @ignored\n!negated @ignored\n"))
+	rules := main.ParseRouteMonitorCodeowners([]byte("# top-level fallback\n* @org/default\n/services/api/** @org/api\n/services/api/checkout.go @org/checkout @org/platform\n/services/api/unowned.go\n[invalid] @ignored\n!negated @ignored\n"))
 	if len(rules) != 4 {
 		t.Fatalf("parsed %d valid CODEOWNERS rules, want 4: %+v", len(rules), rules)
 	}
@@ -30,8 +31,8 @@ func TestRouteMonitorCodeownersLastMatchingRuleWins(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := routeMonitorMatchCodeowners(rules, test.path)
-			if got == nil || got.line != test.wantLine || strings.Join(got.owners, ",") != strings.Join(test.wantOwners, ",") {
+			got := main.RouteMonitorMatchCodeowners(rules, test.path)
+			if got == nil || (*got.Line()) != test.wantLine || strings.Join((*got.Owners()), ",") != strings.Join(test.wantOwners, ",") {
 				t.Fatalf("match = %#v, want owners %v from line %d", got, test.wantOwners, test.wantLine)
 			}
 		})
@@ -57,7 +58,7 @@ func TestRouteMonitorCodeownersPathPatterns(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.pattern+"_"+test.path, func(t *testing.T) {
-			if got := routeMonitorCodeownersPatternMatches(test.pattern, test.path); got != test.want {
+			if got := main.RouteMonitorCodeownersPatternMatches(test.pattern, test.path); got != test.want {
 				t.Fatalf("match(%q, %q) = %t, want %t", test.pattern, test.path, got, test.want)
 			}
 		})
@@ -96,9 +97,9 @@ func TestRouteMonitorSourceOwnershipUsesCandidateCodeownersAndSourceRoot(t *test
 		t.Fatal(err)
 	}
 
-	correlation := routeMonitorSourceCorrelation{
+	correlation := main.RouteMonitorSourceCorrelation{
 		Status: "release_pair_bound", Repository: "github.com/team/service", SourceRoot: "services/api", CandidateRevision: candidate,
-		Routes: []routeMonitorIncidentSourceRoute{{Source: &routeInvestigationSourceRoute{
+		Routes: []main.RouteMonitorIncidentSourceRoute{{Source: &main.RouteInvestigationSourceRoute{
 			Evidence: []routeimpact.Evidence{{
 				File: "handlers.py", Change: "source_changed", Revision: "candidate", Line: 8,
 				ViaSymbols: []routeimpact.SymbolLocation{{File: "shared/validation.py", Name: "validate", Line: 3}},
@@ -106,7 +107,7 @@ func TestRouteMonitorSourceOwnershipUsesCandidateCodeownersAndSourceRoot(t *test
 			BeforeLocation: &routeimpact.Location{File: "old.py", Line: 2},
 		}}},
 	}
-	addRouteMonitorSourceOwners(context.Background(), root, &correlation)
+	main.AddRouteMonitorSourceOwners(context.Background(), root, &correlation)
 	ownership := correlation.Routes[0].Ownership
 	if ownership == nil || ownership.Status != "partially_owned" || ownership.CodeownersFile != ".github/CODEOWNERS" || ownership.CandidateRevision != candidate {
 		t.Fatalf("ownership provenance = %+v", ownership)
@@ -130,7 +131,7 @@ func TestRouteMonitorSourceOwnershipUsesCandidateCodeownersAndSourceRoot(t *test
 	}
 
 	correlation.Repository = "github.com/other/service"
-	addRouteMonitorSourceOwners(context.Background(), root, &correlation)
+	main.AddRouteMonitorSourceOwners(context.Background(), root, &correlation)
 	if got := correlation.Routes[0].Ownership; got == nil || got.Status != "unavailable" || got.Reason != "local_repository_mismatch" {
 		t.Fatalf("mismatched repository ownership = %+v", got)
 	}
@@ -144,7 +145,7 @@ func TestRouteMonitorIncidentSourceCustomerImpactExportsCountsOnly(t *testing.T)
 			UnknownCustomers: 2, ViolatingCustomerIDs: []string{"customer-secret-id"},
 		}},
 	}
-	routes := correlateRouteMonitorAffectedRoutes(incident, investigationSourceFixture("POST", "/checkout"))
+	routes := main.CorrelateRouteMonitorAffectedRoutes(incident, investigationSourceFixture("POST", "/checkout"))
 	if len(routes) != 1 || routes[0].CustomerImpactStatus != "available" || routes[0].CustomerImpact == nil {
 		t.Fatalf("customer impact was not mapped to the route: %+v", routes)
 	}

@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"encoding/json"
@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -123,7 +124,7 @@ func TestAutomationEventPlanReviewExecuteAndRetry(t *testing.T) {
 			dir := t.TempDir()
 			plan := filepath.Join(dir, "plan.json")
 			args := []string{"event-recovery-plan", "--app", "consumer", "--name", "paid", "--source", "orders/?+", "--event", "evt&1", "--idempotency-key", "incident-1", "--out", plan}
-			if code := cmdAutomations(args); code != 0 {
+			if code := main.CmdAutomations(args); code != 0 {
 				t.Fatalf("export=%d", code)
 			}
 			mu.Lock()
@@ -139,16 +140,16 @@ func TestAutomationEventPlanReviewExecuteAndRetry(t *testing.T) {
 			if strings.Contains(string(data), "PRIVATE") {
 				t.Fatal("leaked private data")
 			}
-			capture := func(fn func()) string { buffer := captureAutomationStdout(t); fn(); return buffer.String() }
-			jsonOutput = true
+			capture := func(fn func()) string { buffer := main.CaptureAutomationStdout(t); fn(); return buffer.String() }
+			(*main.JsonOutput) = true
 			output := capture(func() {
-				code := cmdAutomations([]string{"event-recover", "--plan", plan, "--journal", filepath.Join(dir, "first.jsonl")})
+				code := main.CmdAutomations([]string{"event-recover", "--plan", plan, "--journal", filepath.Join(dir, "first.jsonl")})
 				if (mode == "success" || mode == "legacy") && code != 0 || mode != "success" && mode != "legacy" && code != 1 {
 					t.Errorf("execute=%d", code)
 				}
 			})
 			expectedReasons := map[string]string{"success": "routing_replay_accepted", "server_conflict": "routing_state_changed", "legacy": "routing_replay_accepted", "lost_reply": "replay_unconfirmed", "uncommitted": "replay_unconfirmed", "revision_changed": "automation_revision_changed", "expired": "event_expired", "deadline_expired": "delivery_deadline_expired", "generation_changed": "routing_state_changed", "unsafe_action": "routing_action_unsupported", "read_error": "receipt_unavailable"}
-			var outcomes []automationEventPlanOutcome
+			var outcomes []main.AutomationEventPlanOutcome
 			if err := json.Unmarshal([]byte(output), &outcomes); err != nil {
 				t.Fatalf("decode outcomes: %v: %s", err, output)
 			}
@@ -179,7 +180,7 @@ func TestAutomationEventPlanReviewExecuteAndRetry(t *testing.T) {
 			}
 			if mode == "uncommitted" {
 				capture(func() {
-					if cmdAutomations([]string{"event-recover", "--plan", plan, "--journal", filepath.Join(dir, "retry.jsonl")}) != 0 {
+					if main.CmdAutomations([]string{"event-recover", "--plan", plan, "--journal", filepath.Join(dir, "retry.jsonl")}) != 0 {
 						t.Error("uncommitted retry failed")
 					}
 				})
@@ -191,7 +192,7 @@ func TestAutomationEventPlanReviewExecuteAndRetry(t *testing.T) {
 			}
 			if mode == "success" || mode == "legacy" || mode == "lost_reply" {
 				capture(func() {
-					if cmdAutomations([]string{"event-recover", "--plan", plan, "--journal", filepath.Join(dir, "retry.jsonl")}) != 1 {
+					if main.CmdAutomations([]string{"event-recover", "--plan", plan, "--journal", filepath.Join(dir, "retry.jsonl")}) != 1 {
 						t.Error("retry adopted generation")
 					}
 				})
@@ -206,17 +207,17 @@ func TestAutomationEventPlanReviewExecuteAndRetry(t *testing.T) {
 }
 
 func TestAutomationEventPlanRejectsInvalidSelections(t *testing.T) {
-	p := automationEventPlan{Version: 1, App: "consumer", AppID: inspectorAppID, Name: "paid", Revision: 3, Source: "orders/?+", Key: "key", CreatedAt: time.Now(), Events: []automationEventPlanItem{{ID: "evt&1", Subscription: "selected", Action: recoveryRecipient("routing_replay").RecoveryActions[0]}}}
-	if err := validateAutomationEventPlan(p); err != nil {
+	p := main.AutomationEventPlan{Version: 1, App: "consumer", AppID: inspectorAppID, Name: "paid", Revision: 3, Source: "orders/?+", Key: "key", CreatedAt: time.Now(), Events: []main.AutomationEventPlanItem{{ID: "evt&1", Subscription: "selected", Action: recoveryRecipient("routing_replay").RecoveryActions[0]}}}
+	if err := main.ValidateAutomationEventPlan(p); err != nil {
 		t.Fatal(err)
 	}
 	p.Events = append(p.Events, p.Events[0])
-	if validateAutomationEventPlan(p) == nil {
+	if main.ValidateAutomationEventPlan(p) == nil {
 		t.Fatal("accepted duplicate")
 	}
 	p.Events = p.Events[:1]
 	p.Events[0].Action.Body.AllowExpired = true
-	if validateAutomationEventPlan(p) == nil {
+	if main.ValidateAutomationEventPlan(p) == nil {
 		t.Fatal("accepted age override")
 	}
 	p.Events[0].Action.Body.AllowExpired = false
@@ -226,7 +227,7 @@ func TestAutomationEventPlanRejectsInvalidSelections(t *testing.T) {
 		if err := os.WriteFile(file, []byte(text), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := readAutomationEventPlan(file); err == nil {
+		if _, err := main.ReadAutomationEventPlan(file); err == nil {
 			t.Fatal("accepted malformed plan")
 		}
 	}

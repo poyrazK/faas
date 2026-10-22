@@ -1,5 +1,5 @@
 // adr: 568 — environment intent and runtime ownership contracts.
-package sched
+package sched_test
 
 import (
 	"errors"
@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -61,16 +62,16 @@ func TestQueuePollerEnvironmentIdentityKeepsConsumersAndLegacyBacklogSeparate(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := newQueuePoller(pool, prodTrigger, nil)
+	source, err := sched.NewQueuePoller(pool, prodTrigger, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	prodPoller := source.(*queuePoller)
-	source, err = newQueuePoller(pool, stageTrigger, nil)
+	prodPoller := source.(*sched.QueuePoller)
+	source, err = sched.NewQueuePoller(pool, stageTrigger, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stagePoller := source.(*queuePoller)
+	stagePoller := source.(*sched.QueuePoller)
 	if _, err := store.ClaimQueueTriggerInvocation(ctx, staging.ID, prodTrigger.ID.String(), app.ID, "orders", 600); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("production claimed staging: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestQueuePollerEnvironmentIdentityKeepsConsumersAndLegacyBacklogSeparate(t 
 		t.Fatalf("scoped consumer adopted old name-based backlog: %v", err)
 	}
 	for _, item := range []struct {
-		poller *queuePoller
+		poller *sched.QueuePoller
 		scope  string
 		inv    state.Invocation
 	}{{prodPoller, "production", production}, {stagePoller, "staging", staging}} {
@@ -98,7 +99,7 @@ func TestQueuePollerEnvironmentIdentityKeepsConsumersAndLegacyBacklogSeparate(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stagePoller.Nack(ctx, stageTrigger, []string{staging.ID}, triggerReasonMaxAttempts); err != nil {
+	if err := stagePoller.Nack(ctx, stageTrigger, []string{staging.ID}, sched.TriggerReasonMaxAttempts); err != nil {
 		t.Fatal(err)
 	}
 	name := "payments"

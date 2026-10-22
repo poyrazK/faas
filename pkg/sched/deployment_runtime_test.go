@@ -1,5 +1,5 @@
 // adr: 053
-package sched
+package sched_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -31,7 +32,7 @@ func TestDeploymentRuntimePort(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := deploymentRuntimePort(tc.dep); got != tc.want {
+			if got := sched.XDeploymentRuntimePort(tc.dep); got != tc.want {
 				t.Fatalf("deploymentRuntimePort() = %d, want %d", got, tc.want)
 			}
 		})
@@ -70,9 +71,9 @@ func TestDeploymentScopedRuntimePortAndHealthMatchGuestManifest(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			grpc, service := healthcheckGRPCFromDep(dep)
-			if deploymentRuntimePort(dep) != tc.port || deploymentRuntimePort(dep) != guest.Port || healthcheckPathFromDep(dep) != tc.path || grpc != tc.grpc || service != tc.service {
-				t.Fatalf("scoped runtime differs between host and guest: guest=%+v port=%d path=%s grpc=%v service=%s", guest, deploymentRuntimePort(dep), healthcheckPathFromDep(dep), grpc, service)
+			grpc, service := sched.HealthcheckGRPCFromDep(dep)
+			if sched.XDeploymentRuntimePort(dep) != tc.port || sched.XDeploymentRuntimePort(dep) != guest.Port || sched.HealthcheckPathFromDep(dep) != tc.path || grpc != tc.grpc || service != tc.service {
+				t.Fatalf("scoped runtime differs between host and guest: guest=%+v port=%d path=%s grpc=%v service=%s", guest, sched.XDeploymentRuntimePort(dep), sched.HealthcheckPathFromDep(dep), grpc, service)
 			}
 		})
 	}

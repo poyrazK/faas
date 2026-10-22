@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/datarepair"
 )
 
@@ -51,10 +52,10 @@ func TestDataRepairValidationCLIIsReadOnlyAndReturnsDriftJSON(t *testing.T) {
 				args = append(args, "--url", server.URL)
 			}
 			var output bytes.Buffer
-			old := osStdout
-			osStdout = &output
-			status := cmdDataRepair(args)
-			osStdout = old
+			old := (*main.OsStdout)
+			(*main.OsStdout) = &output
+			status := main.CmdDataRepair(args)
+			(*main.OsStdout) = old
 			server.Close()
 			var got datarepair.ValidationReport
 			if calls != 1 || (status != 0) != drift || json.Unmarshal(output.Bytes(), &got) != nil || !got.Valid() || got.PlanID != id || got.Matches == drift {

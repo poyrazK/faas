@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -58,7 +59,7 @@ func TestPollCheckedRollbackPinsReceiptAndCompletion(t *testing.T) {
 				got.Status = "done"
 			}
 			client := &rollbackPollClient{rows: []api.RollbackOperation{pin, got}}
-			last, err := pollRollbackOperation(t.Context(), client, "app", pin, true, time.Millisecond)
+			last, err := main.PollRollbackOperation(t.Context(), client, "app", pin, true, time.Millisecond)
 			if scenario == "complete" {
 				if err != nil || last.Status != "complete" {
 					t.Fatalf("wait: %+v %v", last, err)
@@ -78,7 +79,7 @@ func TestPollCheckedRollbackTimeoutPreservesBlockers(t *testing.T) {
 	client := &rollbackPollClient{rows: []api.RollbackOperation{blocked}}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Millisecond)
 	defer cancel()
-	last, err := pollRollbackOperation(ctx, client, "app", pin, true, time.Millisecond)
+	last, err := main.PollRollbackOperation(ctx, client, "app", pin, true, time.Millisecond)
 	if !errors.Is(err, context.DeadlineExceeded) || len(last.Blockers) != 1 {
 		t.Fatalf("lost last blocker: %+v %v", last, err)
 	}
@@ -120,14 +121,14 @@ func TestCmdCheckedRollbackPostsOnceAndWaitsWithGET(t *testing.T) {
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
-	code := cmdRollback([]string{"demo", "--to", pin.TargetDeploymentID, "--expected-current", pin.CurrentDeploymentID, "--wait", "--poll-interval", "1ms", "--timeout", "1s"})
+	code := main.CmdRollback([]string{"demo", "--to", pin.TargetDeploymentID, "--expected-current", pin.CurrentDeploymentID, "--wait", "--poll-interval", "1ms", "--timeout", "1s"})
 	if code != 0 || posts != 1 || gets != 2 {
 		t.Fatalf("exit=%d POST=%d GET=%d", code, posts, gets)
 	}
 }
 func TestCmdCheckedRollbackInvalidFlagsMakeNoWrites(t *testing.T) {
-	for _, args := range [][]string{{"demo", "--to", "v1", "--expected-current="}, {"demo", "--wait"}, {"demo", "--expected-current", "v2"}, {"demo", "--to", "v1", "--expected-current", "v2", "--timeout", "0s"}, {"demo", "--to", "v1", "--reason", "test"}} {
-		if code := cmdRollback(args); code != 1 {
+	for _, args := range [][]string{{"demo", "--to", "v1", "--expected-current="}, {"demo", "--wait", "--no-wait"}, {"demo", "--expected-current", "v2"}, {"demo", "--to", "v1", "--expected-current", "v2", "--timeout", "0s"}, {"demo", "--to", "v1", "--reason", "test"}} {
+		if code := main.CmdRollback(args); code != 1 {
 			t.Fatalf("args %s accepted: %d", strings.Join(args, " "), code)
 		}
 	}

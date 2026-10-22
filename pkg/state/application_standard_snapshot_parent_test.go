@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 595 Actual stores fence new capture authority from a simulated serving restore.
 
@@ -10,17 +10,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func standardServingRestoreCapture(t *testing.T, s standardSnapshotPublicationTestStore, mode, variant string) {
+func standardServingRestoreCapture(t *testing.T, s state.StandardSnapshotPublicationTestStore, mode, variant string) {
 	t.Helper()
-	f := standardRestoreTestFixture(t, s)
+	f := state.StandardRestoreTestFixture(t, s)
 	b, err := s.IssueInstanceApplicationStandardBoot(t.Context(), f.Target.State, f.Binding)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent := standardConsumedRestoreReceipt(b, f)
-	ins, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), f.Target.State, StateRunning, parent)
+	parent := state.StandardConsumedRestoreReceipt(b, f)
+	ins, err := s.PublishInstanceApplicationStandardRuntime(t.Context(), f.Target.State, state.StateRunning, parent)
 	if err != nil {
 		t.Fatal("publish simulated serving restore", err)
 	}
@@ -30,38 +31,38 @@ func standardServingRestoreCapture(t *testing.T, s standardSnapshotPublicationTe
 		}
 	}
 	if mode == "park" {
-		if err := s.UpdateInstanceStateWithTimestamp(t.Context(), ins.ID, string(StateSnapshotting), time.Now()); err != nil {
+		if err := s.UpdateInstanceStateWithTimestamp(t.Context(), ins.ID, string(state.StateSnapshotting), time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		ins.State = string(StateSnapshotting)
+		ins.State = string(state.StateSnapshotting)
 	}
 	token := uuid.NewString()
-	prefix := strings.TrimSuffix(SnapshotCaptureMemKey(b.DeploymentID, mode, token), "mem")
-	req := ApplicationStandardSnapshotCaptureRequest{Token: token, InstanceID: ins.ID, MemoryKey: prefix + "mem", VMStateKey: prefix + "vmstate", PrivateDriveKey: prefix + "drive",
+	prefix := strings.TrimSuffix(state.SnapshotCaptureMemKey(b.DeploymentID, mode, token), "mem")
+	req := state.ApplicationStandardSnapshotCaptureRequest{Token: token, InstanceID: ins.ID, MemoryKey: prefix + "mem", VMStateKey: prefix + "vmstate", PrivateDriveKey: prefix + "drive",
 		FCVersion: f.Grant.FCVersion, Mode: mode, SourceStartedAtUnixNano: ins.StartedAt.UnixNano()}
 	g, err := s.IssueApplicationStandardSnapshotCapture(t.Context(), ins.State, req)
 	if err != nil || !g.Parent.Equal(parent) || g.Token == parent.SnapshotConsumption.CaptureToken {
 		t.Fatal("fresh capture did not retain the actual serving receipt", err)
 	}
-	a := standardSnapshotAck(g)
+	a := state.StandardSnapshotAck(g)
 	a.Capture.Memory.Bytes = int64(ins.RAMMB) << 20
 	if variant == "wrong parent" {
 		a.Capture.Parent = f.Grant.Parent.Clone()
 	}
 	if variant == "changed policy" {
 		policy := api.AppSecurityPolicyEnforce
-		if _, err := s.UpdateApp(t.Context(), ins.AppID, UpdateAppParams{SetSecurityPolicy: true, SecurityPolicy: &policy}); err != nil {
+		if _, err := s.UpdateApp(t.Context(), ins.AppID, state.UpdateAppParams{SetSecurityPolicy: true, SecurityPolicy: &policy}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	err = s.PublishApplicationStandardSnapshotCapture(t.Context(), a)
 	if variant == "wrong parent" || variant == "changed policy" {
-		if !errors.Is(err, ErrApplicationStandardRuntimeStale) || standardSnapshotGet(t, s, g).Acknowledgment != nil {
+		if !errors.Is(err, state.ErrApplicationStandardRuntimeStale) || state.StandardSnapshotGet(t, s, g).Acknowledgment != nil {
 			t.Fatal("stale parent or current policy published new capture", err)
 		}
 		return
 	}
-	if err != nil || !standardSnapshotGet(t, s, g).Acknowledgment.Capture.Parent.Equal(parent) {
+	if err != nil || !state.StandardSnapshotGet(t, s, g).Acknowledgment.Capture.Parent.Equal(parent) {
 		t.Fatal("serving restored lineage lost at acknowledgment", err)
 	}
 	// The cache has one row per deployment/tier. Its owner retires the old
@@ -71,16 +72,16 @@ func standardServingRestoreCapture(t *testing.T, s standardSnapshotPublicationTe
 			t.Fatal("retire previous warm cache slot", count, err)
 		}
 	}
-	snap, err := s.PublishSnapshotIfRuntimeFresh(t.Context(), standardSnapshotCacheRow(ins.DeploymentID, g, a), ins.ID, ins.StartedAt)
+	snap, err := s.PublishSnapshotIfRuntimeFresh(t.Context(), state.StandardSnapshotCacheRow(ins.DeploymentID, g, a), ins.ID, ins.StartedAt)
 	if err != nil || snap.ApplicationStandardCaptureToken != g.Token {
 		t.Fatal("new cache did not retain serving-parent lineage", err)
 	}
-	if !standardSnapshotGet(t, s, f.Grant).Acknowledgment.Capture.Equal(f.Evidence.Capture) {
+	if !state.StandardSnapshotGet(t, s, f.Grant).Acknowledgment.Capture.Equal(f.Evidence.Capture) {
 		t.Fatal("new capture rewrote its historical input catalog")
 	}
 }
 
-func standardServingRestoreCaptureCases(t *testing.T, newStore func(*testing.T) standardSnapshotPublicationTestStore) {
+func standardServingRestoreCaptureCases(t *testing.T, newStore func(*testing.T) state.StandardSnapshotPublicationTestStore) {
 	t.Helper()
 	for _, mode := range []string{"warm", "park"} {
 		for _, variant := range []string{"complete", "collected input cache", "wrong parent", "changed policy"} {
@@ -90,5 +91,5 @@ func standardServingRestoreCaptureCases(t *testing.T, newStore func(*testing.T) 
 }
 
 func TestMemStandardServingRestoreCapture(t *testing.T) {
-	standardServingRestoreCaptureCases(t, func(*testing.T) standardSnapshotPublicationTestStore { return NewMemStore() })
+	standardServingRestoreCaptureCases(t, func(*testing.T) state.StandardSnapshotPublicationTestStore { return state.NewMemStore() })
 }

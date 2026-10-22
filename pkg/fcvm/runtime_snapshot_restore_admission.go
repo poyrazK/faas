@@ -43,6 +43,9 @@ func checkAdmittedSnapshotRestore(b runtimeadmission.Binding, req WakeRequest) e
 	if req.Snapshot == nil {
 		return runtimeadmission.ErrUnavailable
 	}
+	if g := req.functionMigrationDestination; g != nil {
+		return g.CheckRestore(b, req.ArtifactSources, *req.SnapshotRestore, req.Snapshot.StorageKey, req.Snapshot.VMStateStorageKey, req.Snapshot.FCVersion, int64(wakeGuestMemoryMiB(req))<<20, time.Now())
+	}
 	return req.SnapshotRestore.Check(b, req.ArtifactSources, req.Snapshot.StorageKey, req.Snapshot.VMStateStorageKey, req.Snapshot.FCVersion, int64(wakeGuestMemoryMiB(req))<<20, time.Now())
 }
 
@@ -51,7 +54,7 @@ func (m *Manager) restoreWithAdmission(ctx context.Context, lease Lease, nc netn
 		return m.vmm.Restore(ctx, lease, spec)
 	}
 	v, ok := m.vmm.(consumedSnapshotVMM)
-	if !ok || m.runtimeSnapshotRestoreVersion() != runtimeadmission.SnapshotRestoreVersion || req.admission == nil {
+	if !ok || m.runtimeSnapshotRestoreVersion() != runtimeadmission.SnapshotRestoreVersion && (req.functionMigrationDestination == nil || m.FunctionMigrationDestinationVersion() != 1) || req.admission == nil {
 		return runtimeadmission.ErrUnavailable
 	}
 	if err := checkAdmittedSnapshotRestore(*req.admission, req); err != nil {
@@ -63,7 +66,7 @@ func (m *Manager) restoreWithAdmission(ctx context.Context, lease Lease, nc netn
 		}
 	}
 	inputs := SnapshotRestoreInputs{Binding: *req.admission, Capture: req.SnapshotRestore.Capture.Clone(), Snapshot: *req.Snapshot,
-		Runtime: m.coldBootSpecForWake(nc, req, discoveryIP), Sources: req.ArtifactSources}
+		Runtime: m.coldBootSpecForWake(nc, req, discoveryIP), Sources: req.ArtifactSources, FunctionMigration: req.functionMigrationDestination}
 	return v.RestoreSnapshotVerified(ctx, lease, inputs, req.KeepPaused)
 }
 
@@ -73,12 +76,16 @@ func (m *Manager) admittedRuntimeConsumption(ctx context.Context, binding runtim
 		return drives, runtimeadmission.SnapshotConsumption{}, err
 	}
 	v, ok := m.vmm.(consumedSnapshotVMM)
-	if !ok || m.runtimeSnapshotRestoreVersion() != runtimeadmission.SnapshotRestoreVersion {
+	if !ok || m.runtimeSnapshotRestoreVersion() != runtimeadmission.SnapshotRestoreVersion && (req.functionMigrationDestination == nil || m.FunctionMigrationDestinationVersion() != 1) {
 		return runtimeadmission.ArtifactConsumption{}, runtimeadmission.SnapshotConsumption{}, runtimeadmission.ErrUnavailable
 	}
 	drives, proof, err := v.ObservedRuntimeSnapshotConsumption(ctx, inst.Lease)
 	if err == nil {
-		err = proof.CheckEvidence(binding, drives, inst.Paused, *req.SnapshotRestore, time.Now())
+		if g := req.functionMigrationDestination; g != nil {
+			err = g.CheckConsumption(binding, drives, inst.Paused, proof, time.Now())
+		} else {
+			err = proof.CheckEvidence(binding, drives, inst.Paused, *req.SnapshotRestore, time.Now())
+		}
 	}
 	if err = errors.Join(err, ctx.Err()); err != nil {
 		return runtimeadmission.ArtifactConsumption{}, runtimeadmission.SnapshotConsumption{}, err
@@ -110,6 +117,7 @@ func (m *Manager) coldBootSpecForWake(nc netns.Config, req WakeRequest, serviceD
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		StartupDeadlineS:         req.StartupDeadlineS,
 		ExecutionMode:            req.ExecutionMode,
+		ProvenWorker:             m.workerProven(req),
 		// One-shot guests use a vsock dispatch protocol rather than the app
 		// HTTP listener. App tasks remain networked; executions do not.
 		SkipReady: req.ExportDir != "" || req.ExecutionOnly || req.AppTaskOnly,

@@ -1256,12 +1256,58 @@ failure prevents a passing comparison. Upgraded completion workers must record
 receiver fingerprints. Ordinary suppressed lifecycle events are counted, without
 being treated as successful managed business actions.
 
+Servers with event capture (`event_capture_version: 1`) also seal two more kinds
+of evidence:
+- **Published events.** Every event an enrolled app publishes through the in-guest
+  event endpoint is captured into the run and never enters the account's event
+  bus, in both capture-only and contained rehearsals. It must pass the same
+  envelope and schema validation as a production publish. Events compare as a
+  multiset per workload, source and type, by schema version and canonical data.
+  A second publish of the same event fails the comparison; event IDs and times
+  never count.
+- **Suppressed ordinary webhook events.** These compare by count per workload and
+  event type. Their payloads contain platform-generated identifiers, so they do
+  not compare.
+
+Events published after sealing are refused. More than 256 events, or event data
+over 64 KiB, make the evidence incomplete. A comparison between servers with
+different event capture versions is inconclusive. See
+[ADR-20261020090000](adr/20261020090000-rehearsal-event-capture.md).
+
+Enrolled apps also never receive the account's events: their event
+subscriptions and workflow event triggers are left out of every fan-out, so
+production traffic during a run cannot reach candidate code or change its
+evidence. Drive event-driven behaviour from the recipe instead. See
+[ADR-20261021210000](adr/20261021210000-rehearsal-event-fanout-exclusion.md).
+
+A repeated publish with the same source and `id` counts once, as in production.
+The same content is a duplicate; different content is refused with
+`409 Event identity conflict`. Contained apps can also publish through the
+public API routes (`/v1/events:publish` and `:publish-batch`) at the run-local
+platform API described under containment. Those publishes are validated like
+the public API and captured the same way. See
+[ADR-20261021120000](adr/20261021120000-rehearsal-public-api-event-capture.md).
+
 This setting covers Gregale-managed webhooks. Direct application HTTP calls,
 email/payment SDKs and workload network containment are separate capabilities.
 A passing action comparison applies to the declared scope; existing `behavior`
 observations remain application-reported. Hosted/native qualification requires
 the supported acceptance hosts. See the
 [sealed comparison decision](adr/20261017201004-sealed-rehearsal-action-comparison.md).
+
+Platform work done on behalf of an enrolled app stays inside the run as well,
+in both capture-only and contained rehearsals:
+- Account-wide alert rules do not count the app; app-scoped rules still do.
+- Its route-discovery events do not fan out to other apps.
+- Workflow outbound steps are refused, so they never use live provider credentials.
+- Log drains, deployment-failure mail and Kafka/NATS/Redis Streams/SQS triggers do not run for it.
+- Its crons never fire from the clock. To exercise one, send the cron's request or run its command from the recipe, so both revisions see the same work ([ADR-20261020200000](adr/20261020200000-rehearsal-crons-fire-from-the-recipe.md)).
+
+Contained enrollment refuses an app that already holds real managed PostgreSQL
+or object-storage bindings; declare the isolated fixtures below instead. Builds
+of the candidate revision keep ordinary builder egress, so a receipt makes no
+claim about build-script side effects. See
+[ADR-20261019180000](adr/20261019180000-rehearsal-side-effects-stay-inside-the-run.md).
 
 ### Contain serving-VM outbound traffic
 
@@ -1275,8 +1321,11 @@ actions:
 
 The complete serving fleet must run the new scheduler, vmmd and internal gateway
 code, with database-backed runtime policy reads. After native qualification,
-the operator enables enrollment with `FAAS_REHEARSAL_NETWORK_CONTAINMENT=1` on
-apid. It is disabled by default. Registration must echo `network_mode: contained`
+the operator sets `FAAS_REHEARSAL_NETWORK_CONTAINMENT=1` on every serving vmmd
+(which turns on its durable policy reads) and then on apid (which enables
+enrollment). It is disabled by default. A vmmd without the flag makes no
+rehearsal reads on ordinary wakes and resumes and refuses contained boots
+([ADR-20261019120000](adr/20261019120000-rehearsal-runtime-hot-path-isolation.md)). Registration must echo `network_mode: contained`
 before the runner deploys anything; every VM must also acknowledge the exact run
 before the scheduler accepts its boot. An older runtime refuses the dedicated
 boot methods. Policy read or firewall installation failures stop boot/resume.
@@ -1287,15 +1336,70 @@ contained members of the same run through TCP 10081 (for example,
 redirected to a private-only resolver, including before the app becomes ready;
 it never uses a public upstream. Direct HTTP/HTTPS, SMTP, public DNS, private-network
 routes, direct service TCP, aliases, development tunnels and operator egress
-exceptions are blocked. Host-mediated live outbound relay, federated identity and
-guest event publishing are refused as well; the IP firewall alone cannot
-contain those channels.
+exceptions are blocked. Host-mediated live outbound relay and federated identity
+are refused as well; the IP firewall alone cannot contain those channels. Guest
+event publishes are captured into the run (see above).
+
+Queue sends and delayed tasks use a run-local platform API. The scheduler sets
+`GREGALE_API_URL=http://api.svc.gregale:10081` for every contained boot and
+command, so a client configured from that variable keeps working unchanged:
+
+```js
+const client = new FaaSClient(process.env.GREGALE_API_URL, { token: process.env.GREGALE_TOKEN });
+```
+
+`POST /v1/apps/{slug}/queues/send` and `POST /v1/apps/{slug}/delayed-tasks` are
+validated like the public API. They answer `201` with
+`X-Gregale-Rehearsal: captured`, and are recorded as run evidence instead of
+being enqueued. The target is named by workload for a member of the same run and
+by slug otherwise. A delayed task compares by its `delay_seconds`, or only as
+`absolute` when it gives `scheduled_at`.
+
+Sealed snapshots carry `queue_capture_version: 1` and `queue_messages`.
+Requests compare as a multiset per workload, kind, target and queue, by
+schedule and canonical request body, so a duplicate or missing send fails the
+comparison. Captured messages are not delivered, even to a run member; drive a
+consumer from the recipe.
+
+More than 256 requests or a body over 64 KiB make the evidence incomplete.
+Requests after sealing are refused with `409`. A customer *secret* named
+`GREGALE_API_URL` overrides the platform value and stays blocked. Org-scoped
+routes are not served. See
+[ADR-20261021090000](adr/20261021090000-rehearsal-queue-capture.md).
+
+The same endpoint captures workflow calls:
+`POST /v1/apps/{slug}/workflows/{name}/runs` and
+`POST /v1/workflows/runs/{id}/events`. A start answers `201` with a run in
+status `pending`; an event answers `200 received`. Neither runs anything.
+Idempotency keys replay as in production. An event to a run the rehearsal
+started is named by its starter, workflow and start order
+(`run:primary/workload:billing/invoice#2`), so "the second invoice run" compares
+across runs. Sealed snapshots carry `platform_capture_version: 1` and
+`platform_calls`, compared per workload, kind, target and name by canonical
+content. Workflow definitions, plan gates and run status are not checked, and
+run reads are not served. See
+[ADR-20261021150000](adr/20261021150000-rehearsal-workflow-capture.md).
+
+Realtime channel publishes and backend signals are captured the same way:
+`…/realtime/endpoints/{id}/channels/{channel}/publish`, `…/signals` and
+`…/activity-scopes/{scope}/signals`. They are validated like the public API and
+never delivered. A publish answers with no subscribers; a retained publish
+gets no history sequence. A run member's endpoint is named by workload and
+creation order (`workload:chat/endpoint#1`), so preview endpoint IDs never
+compare. `publish-batch`, publisher-credential publishes and realtime reads are
+not served. See
+[ADR-20261021180000](adr/20261021180000-rehearsal-realtime-capture.md).
+
 Database and object-store access require future isolated adapters. Ordinary app tasks,
 live migration, managed application-standard native admission and GitOps
 qualification remain unsupported for contained apps. Explicit
 [contained rehearsal commands](#execute-rehearsal-commands-in-microvms) extend the
-boundary to deployment-attached command VMs. Builds, other job VMs and standalone
-Runs remain outside this boundary.
+boundary to deployment-attached command VMs. A candidate's own release command,
+for example a database migration, runs the same way: it executes as the run's
+pinned contained command against the isolated fixtures before the deployment
+primes. This requires `FAAS_REHEARSAL_COMMAND_EXECUTION=1` on imaged and apid;
+without it, the candidate fails with `release_phase_unavailable` rather than
+waiting. Builds, other job VMs and standalone Runs remain outside this boundary.
 
 The receipt records `actions.network: contained`; comparisons with a different
 network policy are inconclusive. Blocked requests are not simulated or captured
@@ -1540,15 +1644,28 @@ unfinished SQL, collector loss or unconfirmed cleanup is inconclusive.
 
 Version 1 supports one fixture database per run on a dedicated, local PostgreSQL
 16+ cluster, 1–16 ordinary persistent `public` tables, 1–32 selected columns per
-table, and at most 1000 rows per table. All ordinary user tables must be declared;
-views, foreign/partitioned tables, forced row-security filtering, non-built-in scalar column types and additional
-extensions are refused. Select only stable, non-sensitive columns; omitted
+table, and at most 1000 rows per table. Declared tables must be ordinary
+persistent tables whose selected columns have built-in scalar types; other
+relations (up to 64 in total) and columns appear in the schema inventory below.
+Forced row-security filtering and additional extensions are refused. Select only stable, non-sensitive columns; omitted
 columns, sequence counters, schema/index differences and intermediate statements
 are outside the comparison scope. SQL fixtures are bounded to 64 KiB; each
 snapshot to 256 KiB and the full evidence document to 1 MiB. Overflow cannot pass.
 The collector samples lock waits approximately every 50ms; short waits may be
 missed. A command or startup migration failure remains a failed execution with
-its existing task/deployment diagnostics. Arbitrary detached work and external
+its existing task/deployment diagnostics.
+
+A deployment's release command runs against this fixture as the run's contained
+release, before the candidate primes (see
+[ADR-20261020150000](adr/20261020150000-rehearsal-contained-release-commands.md)).
+Declared tables compare row by row.
+
+The collector also seals a schema inventory
+([ADR-20261020180000](adr/20261020180000-rehearsal-postgres-schema-inventory.md)). It covers every relation (with column types), index, constraint, user type, function and trigger, and a bounded row count for each undeclared table. A migration that creates tables, types or indexes is therefore compared as `schema_changes` rather than refused.
+
+Two limits remain:
+- Extensions, views replacing declared tables and forced row security are still refused.
+- An intended migration still reports `failed`, with the exact schema differences listed. Arbitrary detached work and external
 queues still require explicit recipe completion checks.
 
 The adapter is **disabled pending dedicated native qualification**. Operators

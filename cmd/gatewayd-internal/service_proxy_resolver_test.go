@@ -176,3 +176,67 @@ func TestServiceProxyResolverPreservesProductionAndLegacyFallback(t *testing.T) 
 		}
 	}
 }
+
+func TestServiceProxyResolverAndPolicyUseProjectAliases(t *testing.T) {
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(t.Context(), "mapped-services@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(t.Context(), state.Project{AccountID: account.ID, Slug: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	callers := []string{"web"}
+	scopes := api.ServiceCallerScopes{"web": {Methods: []string{"GET"}, PathPrefixes: []string{"/checkout"}}}
+	target, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-backend", WorkloadName: "api", Manifest: state.AppManifest{AllowedServiceCallers: &callers, AllowedServiceCallScopes: &scopes}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-frontend", WorkloadName: "web", Manifest: state.AppManifest{ServiceBindingPolicy: api.ServiceBindingPolicyDeclared, ServiceReliability: map[string]api.ServiceReliabilityPolicy{"api": {TimeoutMS: 800}}, ServiceBindings: []api.AppServiceBinding{{Binding: "GREGALE_SERVICE_API_URL", Service: "api"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err := newServiceProxyResolver(store)(t.Context(), caller.ID, "api")
+	if err != nil || !ok || resolved.AppID != target.ID {
+		t.Fatalf("wrong mapped target: %+v %v", resolved, err)
+	}
+	authorized, err := newServiceProxyAuthorizer(store)(t.Context(), caller.ID, resolved.AppID)
+	if err != nil {
+		t.Fatalf("logical dependency authorization failed: %v", err)
+	}
+	if authorized.CallScope == nil || authorized.CallScope.PathPrefixes[0] != "/checkout" || authorized.Reliability == nil || authorized.Reliability.TimeoutMS != 800 {
+		t.Fatalf("logical dependency policies lost: %+v", authorized)
+	}
+	// Changing the caller's project cannot grant permission through its alias.
+	otherProject, err := store.CreateProject(t.Context(), state.Project{AccountID: account.ID, Slug: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCaller, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: otherProject.ID, Slug: "other-web", WorkloadName: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newServiceProxyAuthorizer(store)(t.Context(), otherCaller.ID, target.ID); err == nil {
+		t.Fatal("cross-project logical caller grant accepted")
+	}
+	preview, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-7-shop-frontend", WorkloadName: "web", PreviewOfSlug: caller.Slug, PreviewPrNumber: 7, Manifest: caller.Manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback, ok, err := newServiceProxyResolver(store)(t.Context(), preview.ID, "api")
+	if err != nil || !ok || fallback.AppID != target.ID {
+		t.Fatalf("mapped production fallback lost: %+v %v", fallback, err)
+	}
+	if _, err := newServiceProxyAuthorizer(store)(t.Context(), preview.ID, target.ID); err == nil {
+		t.Fatal("preview fallback bypassed project policy")
+	}
+	policy := state.DefaultGitHubDeployPolicy(project.ID, account.ID)
+	policy.PreviewServicePolicy = state.PreviewServicePolicyAllowMarked
+	if _, err := store.UpsertGitHubDeployPolicy(t.Context(), policy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newServiceProxyAuthorizer(store)(t.Context(), preview.ID, target.ID); err != nil {
+		t.Fatalf("permitted mapped preview fallback denied: %v", err)
+	}
+}

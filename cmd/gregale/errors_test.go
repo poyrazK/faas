@@ -1,8 +1,9 @@
-package main
+package main_test
 
 import (
 	"testing"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -51,8 +52,8 @@ func TestDocsURLForCode_KnownCodes(t *testing.T) {
 	}
 	for _, code := range codes {
 		t.Run(code, func(t *testing.T) {
-			got := docsURLForCode(code)
-			if got != cliDocsURL && got != deployFromSourceDocsURL {
+			got := main.DocsURLForCode(code)
+			if got != main.CliDocsURL && got != main.DeployFromSourceDocsURL {
 				t.Errorf("code %q → URL %q is not a valid public docs route", code, got)
 			}
 		})
@@ -67,7 +68,7 @@ func TestDocsURLForCode_UnknownFallsBackToGeneric(t *testing.T) {
 	cases := []string{"", "unknown_thing", "plan_limit_apps_typo"}
 	for _, code := range cases {
 		t.Run("code="+code, func(t *testing.T) {
-			if got, want := docsURLForCode(code), docsURLPrefix; got != want {
+			if got, want := main.DocsURLForCode(code), (*main.DocsURLPrefix); got != want {
 				t.Errorf("docsURLForCode(%q) = %q, want generic %q", code, got, want)
 			}
 		})

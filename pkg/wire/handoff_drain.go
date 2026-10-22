@@ -10,7 +10,7 @@ import (
 )
 
 // OldGenerationDrain returns the context a hand-off's old generation
-// finishes its requests in (docs/adr/1580-zero-downtime-daemon-restarts.md).
+// finishes its requests in (docs/adr/1736-zero-downtime-daemon-restarts.md).
 // It ends api.HandoffDrainMaxSeconds from now. endStreams runs one grace
 // before that, so SSE and WebSocket clients reconnect to the successor
 // before the bound cuts them; when stopping ends (the unit is stopping, or a
@@ -38,8 +38,9 @@ func OldGenerationDrain(stopping context.Context, grace time.Duration, endStream
 }
 
 // WatchHandoffs starts a successor on each SIGUSR2 until one serves, then
-// calls handedOff. A failed hand-off leaves this generation serving.
-func WatchHandoffs(ctx context.Context, daemon string, log *slog.Logger, handedOff func()) {
+// calls handedOff. A failed hand-off leaves this generation serving. checks
+// run against each successor before it takes traffic (handoff_check.go).
+func WatchHandoffs(ctx context.Context, daemon string, log *slog.Logger, handedOff func(), checks ...HandoffCheck) {
 	requests := HandoffRequests(ctx)
 	go func() {
 		for {
@@ -47,7 +48,7 @@ func WatchHandoffs(ctx context.Context, daemon string, log *slog.Logger, handedO
 			case <-ctx.Done():
 				return
 			case <-requests:
-				if _, err := Handoff(ctx, HandoffOptions{Log: log}); err != nil {
+				if _, err := Handoff(ctx, HandoffOptions{Log: log, Checks: checks}); err != nil {
 					log.Warn(daemon+": hand-off failed; this generation keeps serving", "err", err)
 					continue
 				}

@@ -14,18 +14,8 @@ import (
 func buildConsumerControlRequest(verb string, f consumerFlags) (any, bool, error) {
 	switch verb {
 	case "trial-set":
-		if (f.trialDays == 0) == (f.endsAt == "") {
-			return nil, true, errors.New("set --days or --ends-at")
-		}
-		req := api.PutAPIConsumerTrialRequest{Days: f.trialDays}
-		if f.endsAt != "" {
-			at, err := time.Parse(time.RFC3339, f.endsAt)
-			if err != nil {
-				return nil, true, fmt.Errorf("--ends-at: %w", err)
-			}
-			req.EndsAt = &at
-		}
-		return req, true, nil
+		req, err := trialRequest(verb, f.trialDays, f.endsAt)
+		return req, true, err
 	case "trial", "trial-end", "billing-policy", "billing-policy-delete", "overdue-holds":
 		return nil, true, nil
 	case "billing-policy-set":
@@ -36,6 +26,26 @@ func buildConsumerControlRequest(verb string, f consumerFlags) (any, bool, error
 		return api.PutAPIConsumerBillingPolicyRequest{BlockOverdueAfterDays: &days}, true, nil
 	}
 	return nil, false, nil
+}
+
+// trialRequest builds a trial-set request from --days or --ends-at
+// (ADR-1314, ADR-1322); other verbs need none.
+func trialRequest(verb string, days int, endsAt string) (api.PutAPIConsumerTrialRequest, error) {
+	if verb != "trial-set" {
+		return api.PutAPIConsumerTrialRequest{}, nil
+	}
+	if (days == 0) == (endsAt == "") {
+		return api.PutAPIConsumerTrialRequest{}, errors.New("set --days or --ends-at")
+	}
+	req := api.PutAPIConsumerTrialRequest{Days: days}
+	if endsAt != "" {
+		at, err := time.Parse(time.RFC3339, endsAt)
+		if err != nil {
+			return req, fmt.Errorf("--ends-at: %w", err)
+		}
+		req.EndsAt = &at
+	}
+	return req, nil
 }
 
 // callConsumerControls calls the trial and overdue policy endpoints;

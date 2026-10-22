@@ -268,10 +268,12 @@ type SnapshotSpec struct {
 	operatorGeneration string // ADR-1525: checked before quiet resume or snapshot.
 	// Only Manager can populate the retained parent. Wire callers never supply
 	// an admission receipt as authority for a snapshot of another live VM.
-	admittedParent runtimeadmission.Receipt
-	admittedGrant  *runtimeadmission.SnapshotGrant
-	StageMemPath   string // vmmd-allocated; never caller-supplied post-#96 slice 3
-	VMStatePath    string // host location vmmd hands to the FC socket during pause
+	admittedParent         runtimeadmission.Receipt
+	admittedGrant          *runtimeadmission.SnapshotGrant
+	functionMigrationGrant *runtimeadmission.FunctionMigrationGrant
+	functionMigration      *FunctionMigrationBinding
+	StageMemPath           string // vmmd-allocated; never caller-supplied post-#96 slice 3
+	VMStatePath            string // host location vmmd hands to the FC socket during pause
 	// StorageKey (mem only) is the storage key the mem blob is published
 	// under post-snapshot.
 	StorageKey string
@@ -284,11 +286,12 @@ type SnapshotSpec struct {
 	// ResumeBeforePublish is set only by the warm-snapshot path. Once
 	// Firecracker has atomically created the local snapshot files, resume
 	// the guest before slower shared-storage uploads so ordinary traffic is
-	// paused for snapshot creation rather than registry latency. Migration
-	// and terminal park captures leave this false and remain paused.
+	// paused for snapshot creation rather than registry latency. Qualified
+	// Node resource recovery, migration and terminal park leave this false.
 	ResumeBeforePublish bool
-	// BeforeCheckpoint requests the guest-local callback for a new terminal
-	// init capture. Warm and migration captures must leave this false.
+	// BeforeCheckpoint requests the guest-local callback before capture.
+	// Qualified Node warm captures recover resources under the same flight;
+	// ordinary warm and unqualified migration captures must leave this false.
 	BeforeCheckpoint bool
 	// Storage, when set, carries this capture's objects instead of the
 	// shared backend (ADR-733 sealed crash captures: a crashcrypt.Backend

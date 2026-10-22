@@ -1,18 +1,19 @@
-package state
+package state_test
 
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 	"time"
 )
 
 func TestMemStoreProjectEnvironmentPromotionRollbackState(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
+	store := state.NewMemStore()
 	completedAt := time.Now().UTC().Add(-time.Minute)
 
-	promotion, workloads, err := store.CreateProjectEnvironmentPromotion(ctx, ProjectEnvironmentPromotion{
+	promotion, workloads, err := store.CreateProjectEnvironmentPromotion(ctx, state.ProjectEnvironmentPromotion{
 		AccountID:       "acct-1",
 		ProjectID:       "project-1",
 		ProjectSlug:     "shop",
@@ -22,7 +23,7 @@ func TestMemStoreProjectEnvironmentPromotionRollbackState(t *testing.T) {
 		IdempotencyKey:  "promotion-1",
 		Status:          "succeeded",
 		CompletedAt:     &completedAt,
-	}, []ProjectEnvironmentPromotionWorkload{{
+	}, []state.ProjectEnvironmentPromotionWorkload{{
 		WorkloadSlug:               "api",
 		WorkloadName:               "api",
 		SourceDeploymentID:         "source-1",
@@ -36,9 +37,9 @@ func TestMemStoreProjectEnvironmentPromotionRollbackState(t *testing.T) {
 	if promotion.ID == "" || len(workloads) != 1 || workloads[0].PromotionID != promotion.ID {
 		t.Fatalf("created promotion=%+v workloads=%+v", promotion, workloads)
 	}
-	if _, _, err := store.CreateProjectEnvironmentPromotion(ctx, ProjectEnvironmentPromotion{
+	if _, _, err := store.CreateProjectEnvironmentPromotion(ctx, state.ProjectEnvironmentPromotion{
 		AccountID: "acct-1", IdempotencyKey: "promotion-1",
-	}, nil); !errors.Is(err, ErrConflict) {
+	}, nil); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate promotion error=%v, want ErrConflict", err)
 	}
 
@@ -49,23 +50,23 @@ func TestMemStoreProjectEnvironmentPromotionRollbackState(t *testing.T) {
 	if got.CompletedAt == nil || got.CompletedAt.Equal(completedAt) == false || len(gotWorkloads) != 1 {
 		t.Fatalf("promotion lookup=%+v workloads=%+v", got, gotWorkloads)
 	}
-	if _, _, err := store.ProjectEnvironmentPromotionByID(ctx, "other", "shop", "production", promotion.ID); !errors.Is(err, ErrNotFound) {
+	if _, _, err := store.ProjectEnvironmentPromotionByID(ctx, "other", "shop", "production", promotion.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("wrong-account lookup error=%v, want ErrNotFound", err)
 	}
 	if _, _, err := store.ProjectEnvironmentPromotionByIdempotencyKey(ctx, "acct-1", "shop", "promotion-1"); err != nil {
 		t.Fatalf("ProjectEnvironmentPromotionByIdempotencyKey: %v", err)
 	}
-	if _, _, err := store.ProjectEnvironmentPromotionByIdempotencyKey(ctx, "acct-1", "shop", "missing"); !errors.Is(err, ErrNotFound) {
+	if _, _, err := store.ProjectEnvironmentPromotionByIdempotencyKey(ctx, "acct-1", "shop", "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing idempotency lookup error=%v, want ErrNotFound", err)
 	}
 
-	if _, err := store.StartProjectEnvironmentPromotionRollback(ctx, "other", promotion.ID, "rollback-1"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.StartProjectEnvironmentPromotionRollback(ctx, "other", promotion.ID, "rollback-1"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("wrong-account rollback start error=%v, want ErrNotFound", err)
 	}
 	if _, err := store.StartProjectEnvironmentPromotionRollback(ctx, "acct-1", promotion.ID, "rollback-1"); err != nil {
 		t.Fatalf("StartProjectEnvironmentPromotionRollback: %v", err)
 	}
-	if _, err := store.StartProjectEnvironmentPromotionRollback(ctx, "acct-1", promotion.ID, "different-key"); !errors.Is(err, ErrConflict) {
+	if _, err := store.StartProjectEnvironmentPromotionRollback(ctx, "acct-1", promotion.ID, "different-key"); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("different rollback key error=%v, want ErrConflict", err)
 	}
 
@@ -76,7 +77,7 @@ func TestMemStoreProjectEnvironmentPromotionRollbackState(t *testing.T) {
 	if updatedWorkload.RollbackStatus != "restored" || updatedWorkload.RestoredTargetDeploymentID != "target-old" {
 		t.Fatalf("updated rollback workload=%+v", updatedWorkload)
 	}
-	if _, err := store.UpdateProjectEnvironmentPromotionRollbackWorkload(ctx, "acct-1", promotion.ID, "missing", "failed", "", "lost"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.UpdateProjectEnvironmentPromotionRollbackWorkload(ctx, "acct-1", promotion.ID, "missing", "failed", "", "lost"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing rollback workload error=%v, want ErrNotFound", err)
 	}
 
@@ -97,14 +98,14 @@ func TestMemStoreProjectEnvironmentPromotionRollbackState(t *testing.T) {
 	if err != nil || updated.Status != "failed" || updated.Error != "promotion failed" {
 		t.Fatalf("UpdateProjectEnvironmentPromotion=%+v err=%v", updated, err)
 	}
-	if _, err := store.UpdateProjectEnvironmentPromotion(ctx, "other", promotion.ID, "failed", "", nil); !errors.Is(err, ErrNotFound) {
+	if _, err := store.UpdateProjectEnvironmentPromotion(ctx, "other", promotion.ID, "failed", "", nil); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("wrong-account promotion update error=%v, want ErrNotFound", err)
 	}
 	updatedWorkload, err = store.UpdateProjectEnvironmentPromotionWorkload(ctx, "acct-1", promotion.ID, workloads[0].ID, "failed", "", "promotion failed")
 	if err != nil || updatedWorkload.Status != "failed" || updatedWorkload.Error != "promotion failed" {
 		t.Fatalf("UpdateProjectEnvironmentPromotionWorkload=%+v err=%v", updatedWorkload, err)
 	}
-	if _, err := store.UpdateProjectEnvironmentPromotionWorkload(ctx, "acct-1", promotion.ID, "missing", "failed", "", ""); !errors.Is(err, ErrNotFound) {
+	if _, err := store.UpdateProjectEnvironmentPromotionWorkload(ctx, "acct-1", promotion.ID, "missing", "failed", "", ""); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("missing promotion workload error=%v, want ErrNotFound", err)
 	}
 }

@@ -33,6 +33,9 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
+# Shares the split-box control plane with PostgreSQL; yield CPU to the
+# database under contention (roles/postgres raises its slice).
+CPUWeight={{ prom_cpu_weight | default(50) }}
 
 # Hardening (spec §11 baseline).
 NoNewPrivileges=true

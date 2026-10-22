@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ErrMigrationLeaseExpired distinguishes a live lease from one that can no
@@ -66,6 +67,10 @@ func (s *PgStore) ReserveMigrationLease(ctx context.Context, lease MigrationLeas
 	`, lease.InstanceID, lease.LeaseToken, lease.SourceNodeID,
 		lease.CreatedAt.UTC(), lease.LeaseExpiresAt.UTC())
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "function_migration_sources_lease_token_fkey" {
+			return ErrConflict
+		}
 		return fmt.Errorf("state: reserve migration lease: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {

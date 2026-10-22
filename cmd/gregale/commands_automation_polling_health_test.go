@@ -1,10 +1,11 @@
-package main
+package main_test
 
 import (
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -29,8 +30,8 @@ func TestRecoveryPollingHealthObservations(t *testing.T) {
 			if tc.alert != "" {
 				policy.PollingNotification = &api.WorkflowRecoveryPollingNotification{Status: "queued", CapturedAt: at, ReceiverWebhookIDs: []string{"receiver"}, Payload: api.WorkflowRecoveryPollingWebhookPayload{State: tc.alert, InspectionURL: "/v1/apps/consumer/recovery-policy"}}
 			}
-			out := captureAutomationStdout(t)
-			printRecoveryPollingHealth(policy)
+			out := main.CaptureAutomationStdout(t)
+			main.PrintRecoveryPollingHealth(policy)
 			if !strings.Contains(out.String(), tc.want) {
 				t.Fatalf("missing %q: %s", tc.want, out)
 			}

@@ -20,6 +20,10 @@ export type UpdateTriggerRequest = {
   batch_window_ms?: number | null;
   max_attempts?: number | null;
   /**
+   * Switch between record and batch delivery; not available for cron or queue triggers (ADR-1321).
+   */
+  delivery?: 'record' | 'batch';
+  /**
    * Retry delay and jitter configuration; pass {} to clear the stored curve.
    */
   retry_policy?: RetryPolicyDTO;

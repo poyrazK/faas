@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -16,11 +17,15 @@ class RealtimeTicketResponse:
 
     ticket: str
     """Opaque bearer credential returned once; store only in client memory."""
+    ticket_id: UUID
+    """Identifies the ticket for revocation; safe to log and store."""
     expires_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         ticket = self.ticket
+
+        ticket_id = str(self.ticket_id)
 
         expires_at = self.expires_at.isoformat()
 
@@ -29,6 +34,7 @@ class RealtimeTicketResponse:
         field_dict.update(
             {
                 "ticket": ticket,
+                "ticket_id": ticket_id,
                 "expires_at": expires_at,
             }
         )
@@ -40,10 +46,13 @@ class RealtimeTicketResponse:
         d = dict(src_dict)
         ticket = d.pop("ticket")
 
+        ticket_id = UUID(d.pop("ticket_id"))
+
         expires_at = datetime.datetime.fromisoformat(d.pop("expires_at"))
 
         realtime_ticket_response = cls(
             ticket=ticket,
+            ticket_id=ticket_id,
             expires_at=expires_at,
         )
 

@@ -43,6 +43,7 @@ func TestWriteHandlerFailureClassifiesCustomerCodeAsTerminal(t *testing.T) {
 		{name: "timeout", err: fmt.Errorf("handler timeout: %w", context.DeadlineExceeded), terminal: false},
 		{name: "worker pipe broke", err: fmt.Errorf("workerpool: read response: %w", errors.New("EOF")), terminal: false},
 		{name: "worker frame undecodable", err: fmt.Errorf("workerpool: decode response: %w", errors.New("bad")), terminal: false},
+		{name: "background admission refused after handler ran", err: fmt.Errorf("workerpool: read response: %w", errBackgroundCapacity), terminal: true, message: "background task capacity exceeded"},
 		{name: "interpreter missing", err: fmt.Errorf("handler exec: %w", exec.ErrNotFound), terminal: false},
 	}
 	for _, tc := range cases {

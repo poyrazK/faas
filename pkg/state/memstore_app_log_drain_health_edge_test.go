@@ -1,44 +1,45 @@
-package state
+package state_test
 
 import (
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"sort"
 	"testing"
 )
 
 func TestMemStoreAppLogDrainHealthEdgeCases(t *testing.T) {
 	store, ctx, account, app := appLogDrainFixture(t)
-	if err := store.UpsertAppLogDrainHealth(ctx, AppLogDrainHealth{DrainID: "missing"}); !errors.Is(err, ErrNotFound) {
+	if err := store.UpsertAppLogDrainHealth(ctx, state.AppLogDrainHealth{DrainID: "missing"}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("UpsertAppLogDrainHealth missing = %v, want ErrNotFound", err)
 	}
 
-	first, err := store.CreateAppLogDrain(ctx, AppLogDrain{
-		AppID: app.ID, AccountID: account.ID, Kind: AppLogDrainKindHTTPJSON,
+	first, err := store.CreateAppLogDrain(ctx, state.AppLogDrain{
+		AppID: app.ID, AccountID: account.ID, Kind: state.AppLogDrainKindHTTPJSON,
 		TargetURL: "https://logs.example/edge-first",
 	})
 	if err != nil {
 		t.Fatalf("CreateAppLogDrain first: %v", err)
 	}
-	second, err := store.CreateAppLogDrain(ctx, AppLogDrain{
-		AppID: app.ID, AccountID: account.ID, Kind: AppLogDrainKindHTTPJSON,
+	second, err := store.CreateAppLogDrain(ctx, state.AppLogDrain{
+		AppID: app.ID, AccountID: account.ID, Kind: state.AppLogDrainKindHTTPJSON,
 		TargetURL: "https://logs.example/edge-second",
 	})
 	if err != nil {
 		t.Fatalf("CreateAppLogDrain second: %v", err)
 	}
-	otherApp, err := store.CreateApp(ctx, App{AccountID: account.ID, Slug: "log-drain-health-other-" + newID()})
+	otherApp, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "log-drain-health-other-" + state.NewID()})
 	if err != nil {
 		t.Fatalf("CreateApp other: %v", err)
 	}
-	other, err := store.CreateAppLogDrain(ctx, AppLogDrain{
-		AppID: otherApp.ID, AccountID: account.ID, Kind: AppLogDrainKindHTTPJSON,
+	other, err := store.CreateAppLogDrain(ctx, state.AppLogDrain{
+		AppID: otherApp.ID, AccountID: account.ID, Kind: state.AppLogDrainKindHTTPJSON,
 		TargetURL: "https://logs.example/edge-other",
 	})
 	if err != nil {
 		t.Fatalf("CreateAppLogDrain other: %v", err)
 	}
 
-	if err := store.UpsertAppLogDrainHealth(ctx, AppLogDrainHealth{DrainID: first.ID}); err != nil {
+	if err := store.UpsertAppLogDrainHealth(ctx, state.AppLogDrainHealth{DrainID: first.ID}); err != nil {
 		t.Fatalf("UpsertAppLogDrainHealth default: %v", err)
 	}
 	firstHealth, err := store.AppLogDrainHealthByDrainID(ctx, first.ID)
@@ -48,10 +49,10 @@ func TestMemStoreAppLogDrainHealthEdgeCases(t *testing.T) {
 	if firstHealth.Status != "unknown" || firstHealth.UpdatedAt.IsZero() {
 		t.Fatalf("default health fields = %+v, want unknown status and timestamp", firstHealth)
 	}
-	if err := store.UpsertAppLogDrainHealth(ctx, AppLogDrainHealth{DrainID: second.ID, Status: "healthy"}); err != nil {
+	if err := store.UpsertAppLogDrainHealth(ctx, state.AppLogDrainHealth{DrainID: second.ID, Status: "healthy"}); err != nil {
 		t.Fatalf("UpsertAppLogDrainHealth second: %v", err)
 	}
-	if err := store.UpsertAppLogDrainHealth(ctx, AppLogDrainHealth{DrainID: other.ID, Status: "degraded"}); err != nil {
+	if err := store.UpsertAppLogDrainHealth(ctx, state.AppLogDrainHealth{DrainID: other.ID, Status: "degraded"}); err != nil {
 		t.Fatalf("UpsertAppLogDrainHealth other: %v", err)
 	}
 
