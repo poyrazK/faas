@@ -47,6 +47,9 @@ type ProductPlanTerms struct {
 	// MonthlyFeeMillicents is the plan's monthly fee (ADR-20261021154511);
 	// omitted when zero, so earlier previews hash as before.
 	MonthlyFeeMillicents int64 `json:"monthly_fee_millicents,omitempty"`
+	// TrialDays is the plan's free trial for a customer who has not had one
+	// (ADR-20261021195901); omitted when zero.
+	TrialDays int64 `json:"trial_days,omitempty"`
 }
 
 type ProductPlanOptions struct {
