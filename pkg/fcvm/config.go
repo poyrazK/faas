@@ -272,6 +272,10 @@ type ColdBootSpec struct {
 	// so guest-init reports it after api.ProvenWorkerCharacterizationWindow
 	// (ADR-20261018101500).
 	ProvenWorker bool
+	// FunctionRunner boots a function's runner (WakeRequest.Runtime is set
+	// only for functions) with api.FunctionRunnerBootArg so guest-init skips
+	// characterization's L7 probes, which would run the customer's handler.
+	FunctionRunner bool
 	// SkipReady suppresses readiness probing for builder VMs. Builder guests
 	// run a finite build and power off instead of binding port 8080.
 	// Networkless execution guests use the vsock execution protocol instead of
@@ -453,6 +457,9 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	}
 	if s.ProvenWorker && s.ExecutionMode == api.ExecutionModeWorker {
 		bootArgs = strings.TrimSpace(bootArgs) + " " + api.ProvenWorkerBootArg
+	}
+	if s.FunctionRunner && !s.Networkless {
+		bootArgs = strings.TrimSpace(bootArgs) + " " + api.FunctionRunnerBootArg
 	}
 	return VMConfig{
 		BootSource:        BootSource{KernelImagePath: s.KernelKey, BootArgs: bootArgs},

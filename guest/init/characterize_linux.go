@@ -123,6 +123,10 @@ type RunArgs struct {
 	// api.ProvenWorkerCharacterizationWindow: vmmd booted a declared worker
 	// whose deployment already passed the full window (ADR-20261018101500).
 	ProvenWorker bool
+	// FunctionRunner skips the L7 probes: vmmd booted a function's runner
+	// (api.FunctionRunnerBootArg), which hands every request, probes
+	// included, to the customer's handler (Hunt 12 H12-6).
+	FunctionRunner bool
 }
 
 // runCharacterization is the boot-side entry point. It observes the
@@ -301,10 +305,16 @@ func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult)
 
 // bootProvenWorker reports whether vmmd booted this guest with
 // api.ProvenWorkerBootArg.
-var bootProvenWorker = sync.OnceValue(func() bool {
+var bootProvenWorker = sync.OnceValue(func() bool { return bootArgSet(api.ProvenWorkerBootArg) })
+
+// bootFunctionRunner reports whether vmmd booted this guest with
+// api.FunctionRunnerBootArg.
+var bootFunctionRunner = sync.OnceValue(func() bool { return bootArgSet(api.FunctionRunnerBootArg) })
+
+func bootArgSet(arg string) bool {
 	cmdline, err := os.ReadFile("/proc/cmdline")
-	return err == nil && hasBootArg(string(cmdline), api.ProvenWorkerBootArg)
-})
+	return err == nil && hasBootArg(string(cmdline), arg)
+}
 
 func hasBootArg(cmdline, arg string) bool {
 	return slices.Contains(strings.Fields(cmdline), arg)
@@ -492,49 +502,22 @@ func collectSocketInodes(pid int, depth int, out map[uint64]struct{}, visited ma
 //
 // ADR-122 §D4: probeHTTP ALWAYS runs; the body capture is the load-bearing
 // endpoint discovery path. The HTTP/2-preface gRPC probe runs only when
-// neither HTTP/1.1 probe got an HTTP/1.x answer (collectL7Probes): sent to
-// an HTTP/1 server it only produced an error line in the customer's own
-// logs at every cold boot (gunicorn: "Invalid HTTP Version: (2, 0)",
-// Hunt 11 H11-5).
-func runL7Probes(ctx context.Context, _ RunArgs, port int) (string, []byte, bool) {
-	if port <= 0 {
+// the HTTP/1.1 probe got no HTTP/1.x answer (collectL7Probes): sent to an
+// HTTP/1 server it only produced an error line in the customer's own logs
+// at every cold boot (gunicorn: "Invalid HTTP Version: (2, 0)", Hunt 11
+// H11-5). There is no GraphQL probe: it POSTed an introspection query to
+// the app's `/`, a request with side effects for any handler that acts on
+// POSTs (Hunt 12 H12-6); "graphql" only refined "http" on the host.
+func runL7Probes(ctx context.Context, args RunArgs, port int) (string, []byte, bool) {
+	if port <= 0 || args.FunctionRunner {
 		// No bind means there is no L7 class hint. The caller combines the
 		// terminal status with this observation; the host re-derives it again.
+		// A function's runner would hand the probes to the customer's handler.
 		return "", nil, false
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	return collectL7Probes(probeCtx, []func() probeResult{probeGraphQL(port), probeHTTP(port)}, probeGRPC(port))
-}
-
-func probeGraphQL(port int) func() probeResult {
-	return func() probeResult {
-		c := &http.Client{Timeout: 1 * time.Second}
-		// GraphQL `__schema` introspection — most servers reply 200
-		// with a body containing "data.__schema". We use a small
-		// POST with a valid query and check the body contains the
-		// canonical field.
-		//
-		// ADR-122 §D4: GraphQL introspection capture is OUT of
-		// scope for this PR — left as a discard. GraphQL schema
-		// capture is issue #975 item #2 (separate ADR).
-		body := strings.NewReader(`{"query":"{__schema{queryType{name}}}"}`)
-		req, _ := http.NewRequest("POST", fmt.Sprintf("http://127.0.0.1:%d/", port), body)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := c.Do(req)
-		if err != nil {
-			return probeResult{}
-		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode != http.StatusOK {
-			return probeResult{HTTP1: true}
-		}
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		if bytes.Contains(raw, []byte("__schema")) {
-			return probeResult{Class: classGraphQL, HTTP1: true}
-		}
-		return probeResult{HTTP1: true}
-	}
+	return collectL7Probes(probeCtx, []func() probeResult{probeHTTP(port)}, probeGRPC(port))
 }
 
 func probeGRPC(port int) func() probeResult {

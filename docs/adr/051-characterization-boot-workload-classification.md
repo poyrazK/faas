@@ -219,3 +219,21 @@ private TCP service on 5432 could be characterized as HTTP on 5432 (H10-56).
 Readiness then probed the TCP port and every later cold boot timed out.
 Snapshot restores do not characterize, so only cold boots of apps that never
 bind their expected port pay the grace.
+
+## Amendment (2026-10-22): no probe requests with side effects
+
+Owner decision after production-us Hunt 12 (H12-6). The L7 probes are
+requests into the customer's process, so they must not act on it:
+
+- There is no GraphQL probe. It POSTed an introspection query to the app's
+  `/`, which a handler that acts on POSTs (a webhook receiver, a queue
+  consumer) processes like any other request. `graphql` only refined `http`
+  on the host, which still accepts it from older guests. The OpenAPI
+  `GET /openapi.json` capture (ADR-122) stays.
+- A function's cold boot skips the L7 probes. Its runner hands every request
+  to the customer's handler: during a queue worker's deploy prime the handler
+  processed two probe requests as jobs. vmmd adds `faas.runner=function`
+  (`api.FunctionRunnerBootArg`) to the kernel command line when the wake has a
+  runner runtime, and guest-init reports the bind without probing.
+- The HTTP/2-preface gRPC probe runs only when the HTTP/1.1 probe got no
+  HTTP/1.x answer (H11-5): an HTTP/1 server logged it as a protocol error.

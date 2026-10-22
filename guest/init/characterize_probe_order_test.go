@@ -45,10 +45,31 @@ func TestCollectL7ProbesSendsPrefaceOnlyToSilentListeners(t *testing.T) {
 	}
 }
 
-// TestRunL7ProbesKeepsPrefaceOffHTTP1Servers drives the real probes against
-// an HTTP/1.1-only listener (like gunicorn) that records the request lines it
-// receives. Before H11-5 the preface reached it at every characterization.
-func TestRunL7ProbesKeepsPrefaceOffHTTP1Servers(t *testing.T) {
+// TestRunL7ProbesRequests drives the real probes against an HTTP/1.1-only
+// listener (like gunicorn) that records the request lines it receives.
+// Before H11-5 the HTTP/2 preface reached it at every characterization, and
+// before H12-6 a GraphQL POST / did too; a function's runner gets nothing.
+func TestRunL7ProbesRequests(t *testing.T) {
+	tests := []struct {
+		name string
+		args RunArgs
+		want []string
+	}{
+		{"app gets only the OpenAPI GET", RunArgs{}, []string{"GET /openapi.json HTTP/1.1"}},
+		{"function runner gets no probes", RunArgs{FunctionRunner: true}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := recordProbeRequestLines(t, tt.args)
+			if strings.Join(lines, "|") != strings.Join(tt.want, "|") {
+				t.Fatalf("request lines = %q, want %q", lines, tt.want)
+			}
+		})
+	}
+}
+
+func recordProbeRequestLines(t *testing.T, args RunArgs) []string {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -75,20 +96,12 @@ func TestRunL7ProbesKeepsPrefaceOffHTTP1Servers(t *testing.T) {
 			}(c)
 		}
 	}()
-	class, _, _ := runL7Probes(context.Background(), RunArgs{}, ln.Addr().(*net.TCPAddr).Port)
+	if class, _, _ := runL7Probes(context.Background(), args, ln.Addr().(*net.TCPAddr).Port); class != "" {
+		t.Errorf("class = %q, want none for a 404-only server", class)
+	}
 	// Give the listener's goroutines a moment to record every connection.
 	time.Sleep(100 * time.Millisecond)
 	mu.Lock()
 	defer mu.Unlock()
-	if class != "" {
-		t.Errorf("class = %q, want none for a 404-only server", class)
-	}
-	for _, line := range lines {
-		if strings.HasPrefix(line, "PRI * HTTP/2.0") {
-			t.Fatalf("HTTP/1 server received the HTTP/2 preface; request lines: %q", lines)
-		}
-	}
-	if len(lines) != 2 {
-		t.Fatalf("request lines = %q, want the GraphQL POST and the OpenAPI GET", lines)
-	}
+	return append([]string(nil), lines...)
 }
